@@ -1,0 +1,22 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Variables ? may contain secrets
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Credentials
+*.pem
+*.key
+.env
+
+# OS
+Thumbs.db
+.DS_Store
