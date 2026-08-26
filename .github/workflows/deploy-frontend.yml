@@ -1,0 +1,36 @@
+name: Deploy front end
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/deploy-frontend.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-2
+  BUCKET: arqedia-dev-frontend-667523685221
+  DISTRIBUTION: E34TKKQEJQ5B4
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume AWS role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::667523685221:role/arqedia-dev-github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload site
+        run: aws s3 sync web/ "s3://${BUCKET}/" --delete
+
+      - name: Clear CloudFront cache
+        run: aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" --paths "/*"
