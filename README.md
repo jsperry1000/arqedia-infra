@@ -26,3 +26,14 @@ PowerShell splits `-out=file` at the equals sign. Use a space: `-out file`.
 `terraform` here always targets ARQEDIA via the `arqedia` AWS profile, and the
 provider refuses any other account. eBL infrastructure lives in `ebl-infra` and
 is entirely separate.
+
+
+
+Push summary — arqedia-infra initial commit: bootstrap state backend (S3, versioned, encrypted, public access blocked, native locking), root config with backend wired and region/scope as variables, README and .gitignore. Nothing sensitive committed.
+
+Pre-build is now complete except two items:
+
+Centralize root access and move the ARQEDIA root email off personal Gmail
+AWS Budgets alert
+
+Both are console jobs, neither blocks anything technical.
