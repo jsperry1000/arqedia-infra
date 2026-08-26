@@ -31,7 +31,10 @@ data "aws_iam_policy_document" "github_assume" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:jsperry1000/arqedia-infra:*"]
+      values = [
+        "repo:jsperry1000/arqedia-infra:*",
+        "repo:jsperry1000@*/arqedia-infra@*:*",
+      ]
     }
   }
 }
@@ -77,3 +80,4 @@ output "github_deploy_role_arn" {
 output "cloudfront_distribution_id" {
   value = aws_cloudfront_distribution.frontend.id
 }
+
