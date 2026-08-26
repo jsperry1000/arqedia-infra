@@ -23,3 +23,5 @@ Thumbs.db
 
 # Build artefacts
 build/
+
+memo-result.json
