@@ -24,6 +24,7 @@ import time
 import boto3
 from botocore.exceptions import ClientError
 
+import pack
 import template
 
 _s3 = boto3.client("s3")
@@ -78,7 +79,7 @@ def _load_values(tenant_id, engagement):
     result = _sql(
         """
         SELECT v.value_id, v.field_id, v.value, v.locator_kind,
-               v.locator_index, v.document_id, d.filename
+               v.locator_index, v.row_ordinal, v.document_id, d.filename
         FROM extracted_value v
         JOIN document d ON d.document_id = v.document_id
         WHERE v.tenant_id = :tenant_id
@@ -98,31 +99,21 @@ def _load_values(tenant_id, engagement):
             "value": _col(r, 2),
             "locator_kind": _col(r, 3),
             "locator_index": _col(r, 4),
-            "document_id": _col(r, 5),
-            "filename": _col(r, 6),
+            "row_ordinal": _col(r, 5),
+            "document_id": _col(r, 6),
+            "filename": _col(r, 7),
         }
         for r in result.get("records", [])
     ]
 
-
 def _label_for(field_id):
-    """Human label from the pack. Falls back to the identifier."""
-    for schema in _PACK_FIELDS:
-        if schema[0] == field_id:
-            return schema[1]
-    return field_id
-
-
-# Field labels, mirrored from the extraction pack. Stage 2 reads these from
-# the configuration registry instead.
-_PACK_FIELDS = [
-    ("f_registered_name", "Registered Name"),
-    ("f_company_number", "Company Number"),
-    ("f_jurisdiction", "Jurisdiction"),
-    ("f_legal_form", "Legal Form"),
-    ("f_incorporation_date", "Incorporation Date"),
-    ("f_registered_office", "Registered Office"),
-]
+    """Label from the pack. Group columns resolve to their own column label."""
+    if "." in field_id:
+        group = field_id.split(".", 1)[0]
+        for col in (pack.group_columns(group) or []):
+            if col[0] == field_id:
+                return col[1]
+    return pack.label_for(field_id)
 
 
 def _citation(v):
@@ -140,8 +131,15 @@ def _assemble_extract(section, values):
     name produce three blocks. Where they disagree, the reader sees the
     disagreement and its source. Merging would hide it silently, and a
     contradiction the reader cannot see is worse than one they can.
+
+    A section naming a group field renders it as a table, one line per record.
     """
-    used = [v for v in values if v["field_id"] in section["fields"]]
+    wanted = set(section["fields"])
+    used = []
+    for v in values:
+        fid = v["field_id"]
+        if fid in wanted or fid.split(".", 1)[0] in wanted:
+            used.append(v)
     if not used:
         return "_No information available._\n", []
 
@@ -153,7 +151,14 @@ def _assemble_extract(section, values):
     for document_id in sorted(by_document):
         rows = by_document[document_id]
         blocks.append("**Source: " + rows[0]["filename"] + "**\n")
+
         for field_id in section["fields"]:
+            columns = pack.group_columns(field_id)
+
+            if columns:
+                blocks.extend(_render_group(field_id, columns, rows))
+                continue
+
             for v in rows:
                 if v["field_id"] == field_id:
                     blocks.append("- **" + _label_for(field_id) + ":** "
@@ -161,6 +166,41 @@ def _assemble_extract(section, values):
         blocks.append("")
 
     return "\n".join(blocks) + "\n", used
+
+
+def _render_group(field_id, columns, rows):
+    """A repeating-row field as a markdown table. Only columns that actually
+    carry a value are shown - an empty column tells the reader nothing."""
+    records = {}
+    for v in rows:
+        if v["field_id"].split(".", 1)[0] != field_id:
+            continue
+        records.setdefault(v["row_ordinal"], {})[v["field_id"]] = v
+
+    if not records:
+        return []
+
+    live = [c for c in columns
+            if any(c[0] in r for r in records.values())]
+    if not live:
+        return []
+
+    out = ["**" + pack.label_for(field_id) + "**", ""]
+    out.append("| " + " | ".join(c[1] for c in live) + " |")
+    out.append("|" + "|".join(["---"] * len(live)) + "|")
+    for ordinal in sorted(records):
+        record = records[ordinal]
+        cells = []
+        for c in live:
+            got = record.get(c[0])
+            cells.append(str(got["value"]).replace("|", "\\|") if got else "")
+        out.append("| " + " | ".join(cells) + " |")
+
+    any_value = next(iter(next(iter(records.values())).values()))
+    out.append("")
+    out.append("_" + _citation(any_value) + "_")
+    out.append("")
+    return out
 
 def _invoke(prompt):
     response = _bedrock.invoke_model(
@@ -366,4 +406,6 @@ def lambda_handler(event, context):
         "claims": claims,
         "tokens": {"input": tokens_in, "output": tokens_out},
     }
+
+
 
