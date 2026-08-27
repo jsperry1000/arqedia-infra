@@ -2,14 +2,23 @@
 pack.py - ARQEDIA Stage 1 configuration, hard-coded.
 
 Field definitions ported from the eBL Finance schemas, which have been run
-against real counterparty documents. Descriptions are kept verbatim: they
-are the part that was earned through use.
+against real counterparty documents. Descriptions are kept verbatim: they are
+the part that was earned through use.
 
 Field IDs are stable and must never change. Extracted values reference them,
 and renaming one orphans everything already extracted.
 
-cardinality: 'one' or 'many'.
-data types are PROPOSED: assigned by field semantics, default 'text'.
+Field shape: (field_id, label, data_type, cardinality, description)
+  cardinality 'one'   - a single value
+  cardinality 'many'  - a list of values
+  cardinality 'group' - a repeating row. A sixth element holds the columns:
+                        (sub_id, label, data_type, description). Each row is
+                        stored under one row number so a person's nationality
+                        stays attached to that person's name. One level deep
+                        only: a row cannot contain its own table.
+
+Sub-field IDs are scoped to their group - f_persons.full_name - so the group
+is the unit a template binds to, not a floating column.
 """
 
 SCHEMAS = {
@@ -133,6 +142,38 @@ SCHEMAS = {
              "Date the screening was performed, if stated."),
             ("f_risk_notes", "Risk Notes", "text", "one",
              "Any stated risk commentary, disposition, or analyst note."),
+            ("f_persons", "Persons", "group", "group",
+             "objectOne record per natural person (UBO, director, or authorised signatory) named in the document. Include only persons actually named; do not invent.",
+             [
+                 ("f_persons.full_name", "Full Name", "entity_name",
+                  "full legal name as stated"),
+                 ("f_persons.role", "Role", "text",
+                  "role/capacity: UBO, director, signatory, or as stated"),
+                 ("f_persons.ownership_pct", "Ownership Pct", "number",
+                  "percentage owned, if stated for this person"),
+                 ("f_persons.date_of_birth", "Date Of Birth", "date",
+                  "date of birth, if stated"),
+                 ("f_persons.nationality", "Nationality", "text",
+                  "nationality/nationalities, if stated"),
+                 ("f_persons.residential_address", "Residential Address", "address",
+                  "residential address, if stated"),
+                 ("f_persons.id_document", "Id Document", "identifier",
+                  "ID document type and number, if stated"),
+                 ("f_persons.pep_status", "Pep Status", "text",
+                  "PEP status/flag for this person, if stated"),
+             ]),
+            ("f_financial_counterparties", "Financial Counterparties", "group", "group",
+             "objectOne record per BANK, INSURER, INSURANCE BROKER or WAREHOUSE/COLLATERAL OPERATOR the source connects to the entity. These are the counterparties a lender must see: who holds the cash, who carries the cargo and credit risk, and who holds the goods. Capture each one the source identifies, including those also named elsewhere in the document. Do not include buyers, suppliers, parents, subsidiaries, inspection or certification bodies, or regulators — those belong to other fields.",
+             [
+                 ("f_financial_counterparties.name", "Name", "entity_name",
+                  "institution name exactly as the source gives it; transcribe, never expand an abbreviation or correct a spelling"),
+                 ("f_financial_counterparties.type", "Type", "text",
+                  "one of: bank, insurer, insurance-broker, warehouse. Use the term the source supports; if the source does not make the type clear, leave null rather than guessing"),
+                 ("f_financial_counterparties.role", "Role", "text",
+                  "what it does for the entity as stated (e.g. operating account, collections, stock throughput cover, credit insurance, storage), if stated"),
+                 ("f_financial_counterparties.jurisdiction", "Jurisdiction", "text",
+                  "country or location of the institution, if stated"),
+             ]),
         ],
     },
     "aml-policies-summary": {
@@ -217,6 +258,34 @@ SCHEMAS = {
              "Where the business is actually headquartered or principally operates from, if stated. This may differ from the registered office."),
             ("f_financing_requested", "Financing Requested", "text", "one",
              "The financing being sought: amount, currency, tenor, facility type, advance rate, and pricing expectation, to the extent stated."),
+            ("f_suppliers", "Suppliers", "group", "group",
+             "objectOne record per supplier the source identifies, whether the source lists them in a table or describes them in prose. Capture every supplier it identifies, in the order given. Where a supplier is identified only by a positional or placeholder label rather than a company name (e.g. 'Supplier 1' in an anonymised schedule), still capture the record and put that label in `name` exactly as written: whether such a label counts as a name is not a judgement to make here, and the remaining details are needed either way. Never substitute or infer a name. Do not add suppliers the source does not iden",
+             [
+                 ("f_suppliers.name", "Name", "entity_name",
+                  "supplier identifier exactly as the source gives it: the company name where named, or the row label verbatim (e.g. 'Supplier 1') where the source uses positional labels. Transcribe; never substitute, infer or blank it."),
+                 ("f_suppliers.location", "Location", "text",
+                  "country, region, or city of the supplier, if stated"),
+                 ("f_suppliers.commodity", "Commodity", "text",
+                  "what is bought from this supplier, if stated"),
+                 ("f_suppliers.payment_terms", "Payment Terms", "text",
+                  "payment terms expected or in place with this supplier (e.g. CAD, prepayment, 30 days, LC), if stated"),
+                 ("f_suppliers.relationship_length", "Relationship Length", "text",
+                  "how long the entity has traded with them, if stated"),
+             ]),
+            ("f_buyers", "Buyers", "group", "group",
+             "objectOne record per buyer or customer the source identifies, whether the source lists them in a table or describes them in prose. Capture every buyer it identifies, in the order given. Where a buyer is identified only by a positional or placeholder label rather than a company name (e.g. 'Buyer 1' in an anonymised schedule), still capture the record and put that label in `name` exactly as written: whether such a label counts as a name is not a judgement to make here, and the remaining details are needed either way. Never substitute or infer a name. Do not add buyers the source does not identif",
+             [
+                 ("f_buyers.name", "Name", "entity_name",
+                  "buyer identifier exactly as the source gives it: the company name where named, or the row label verbatim (e.g. 'Buyer 1') where the source uses positional labels. Transcribe; never substitute, infer or blank it."),
+                 ("f_buyers.location", "Location", "text",
+                  "country, region, or city of the buyer, if stated"),
+                 ("f_buyers.commodity", "Commodity", "text",
+                  "what is sold to this buyer, if stated"),
+                 ("f_buyers.payment_terms", "Payment Terms", "text",
+                  "payment terms sought or in place with this buyer (e.g. CAD, LC, open account, days credit), if stated"),
+                 ("f_buyers.relationship_length", "Relationship Length", "text",
+                  "how long the entity has traded with them, if stated"),
+             ]),
         ],
     },
 }
@@ -328,3 +397,12 @@ def label_for(field_id):
             if f[0] == field_id:
                 return f[1]
     return field_id
+
+
+def group_columns(field_id):
+    """Column definitions for a repeating-row field, or None."""
+    for schema in SCHEMAS.values():
+        for f in schema["fields"]:
+            if f[0] == field_id and f[3] == "group":
+                return f[5]
+    return None

@@ -83,7 +83,13 @@ def _build_prompt(schema, envelope):
     count = len(units)
 
     lines = []
-    for field_id, label, ftype, card, desc in schema["fields"]:
+    for field in schema["fields"]:
+        field_id, label, ftype, card, desc = field[0], field[1], field[2], field[3], field[4]
+        if card == "group":
+            cols = ", ".join('"' + c[0].split(".", 1)[1] + '": string | null' for c in field[5])
+            lines.append('  "' + field_id + '": { "rows": [ { ' + cols +
+                         ' } ], "unit": integer | null },  // ' + label + " - " + desc)
+            continue
         hint = "[string] | null" if card == "many" else "string | null"
         lines.append(
             '  "' + field_id + '": { "value": ' + hint + ', "unit": integer | null },'
@@ -178,16 +184,68 @@ def _resolve_locator(unit_value, units):
     return "none", None, None, None, None
 
 
+def _write_value(envelope, field_id, value, row_ordinal,
+                 kind, index, char_start, char_end, cell_range):
+    """One row in extracted_value. Every row carries a locator or 'none'."""
+    _sql(
+        """
+        INSERT INTO extracted_value
+          (tenant_id, document_id, field_id, value, row_ordinal,
+           config_revision, locator_kind, locator_index,
+           char_start, char_end, cell_range)
+        VALUES
+          (:tenant_id, :document_id, :field_id, :value, :row_ordinal,
+           :config_revision, :locator_kind, :locator_index,
+           :char_start, :char_end, :cell_range)
+        """,
+        [
+            _p("tenant_id", envelope["tenant_id"]),
+            _p("document_id", envelope["document_id"]),
+            _p("field_id", field_id),
+            _p("value", str(value)),
+            _p("row_ordinal", row_ordinal),
+            _p("config_revision", pack.CONFIG_REVISION),
+            _p("locator_kind", kind),
+            _p("locator_index", index),
+            _p("char_start", char_start),
+            _p("char_end", char_end),
+            _p("cell_range", cell_range),
+        ],
+    )
+
+
 def _persist(envelope, schema_key, extracted):
     """Write one row per field. Every row carries a locator or 'none'."""
     schema = pack.get_schema(schema_key)
     units = envelope["units"]
     written = 0
 
-    for field_id, _label, _ftype, _card, _desc in schema["fields"]:
+    for field in schema["fields"]:
+        field_id, card = field[0], field[3]
         item = extracted.get(field_id) or {}
-        value = item.get("value") if isinstance(item, dict) else item
         unit = item.get("unit") if isinstance(item, dict) else None
+        kind, index, start, end, cell = _resolve_locator(unit, units)
+
+        # Repeating rows. Each record is written under its own row number so
+        # a person's nationality stays attached to that person's name.
+        if card == "group":
+            rows = item.get("rows") if isinstance(item, dict) else None
+            if not isinstance(rows, list):
+                continue
+            for ordinal, row in enumerate(rows):
+                if not isinstance(row, dict):
+                    continue
+                for col in field[5]:
+                    col_id = col[0]
+                    cell_value = row.get(col_id.split(".", 1)[1])
+                    if cell_value is None or cell_value == "":
+                        continue
+                    _write_value(envelope, col_id, cell_value, ordinal,
+                                 kind, index, start, end, cell)
+                    written += 1
+            continue
+
+        value = item.get("value") if isinstance(item, dict) else item
 
         if value is None or value == "" or value == []:
             continue
@@ -199,32 +257,8 @@ def _persist(envelope, schema_key, extracted):
             if not value:
                 continue
 
-        kind, index, start, end, cell = _resolve_locator(unit, units)
-
-        _sql(
-            """
-            INSERT INTO extracted_value
-              (tenant_id, document_id, field_id, value, row_ordinal,
-               config_revision, locator_kind, locator_index,
-               char_start, char_end, cell_range)
-            VALUES
-              (:tenant_id, :document_id, :field_id, :value, 0,
-               :config_revision, :locator_kind, :locator_index,
-               :char_start, :char_end, :cell_range)
-            """,
-            [
-                _p("tenant_id", envelope["tenant_id"]),
-                _p("document_id", envelope["document_id"]),
-                _p("field_id", field_id),
-                _p("value", str(value)),
-                _p("config_revision", pack.CONFIG_REVISION),
-                _p("locator_kind", kind),
-                _p("locator_index", index),
-                _p("char_start", start),
-                _p("char_end", end),
-                _p("cell_range", cell),
-            ],
-        )
+        _write_value(envelope, field_id, value, 0,
+                     kind, index, start, end, cell)
         written += 1
 
     return written
@@ -308,6 +342,7 @@ def lambda_handler(event, context):
         "values_written": total_written,
         "results": results,
     }
+
 
 
 
