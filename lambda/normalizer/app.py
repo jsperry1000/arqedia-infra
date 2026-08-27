@@ -25,6 +25,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 import extractors
+import classify
 
 _s3 = boto3.client("s3")
 _rds = boto3.client("rds-data")
@@ -102,10 +103,10 @@ def _record_document(envelope):
         """
         INSERT INTO document
           (tenant_id, engagement_id, s3_bucket, s3_key, s3_version_id,
-           sha256, filename, page_count, extraction_method, config_revision)
+           sha256, filename, page_count, extraction_method, document_type, config_revision)
         VALUES
           (:tenant_id, :engagement_id, :s3_bucket, :s3_key, :s3_version_id,
-           :sha256, :filename, :page_count, :extraction_method, :config_revision)
+           :sha256, :filename, :page_count, :extraction_method, :document_type, :config_revision)
         """,
         [
             _p("tenant_id", envelope["tenant_id"]),
@@ -117,6 +118,7 @@ def _record_document(envelope):
             _p("filename", envelope["filename"]),
             _p("page_count", len(envelope["units"])),
             _p("extraction_method", envelope["extraction_method"]),
+            _p("document_type", envelope.get("document_type")),
             _p("config_revision", CONFIG_REVISION),
         ],
     )
@@ -143,8 +145,14 @@ def lambda_handler(event, context):
         print("[unreadable] key={} reason={}".format(src_key, exc.reason))
         return {"status": "unreadable", "reason": exc.reason, "key": src_key}
 
+    document_type, confidence = classify.classify(raw_text)
+
     envelope = {
         "tenant_id": tenant_id,
+        "document_type": document_type,
+        "document_type_proposed": document_type,
+        "document_type_confidence": confidence,
+        "document_type_confirmed": False,
         "engagement": engagement,
         "filename": filename,
         "source_bucket": src_bucket,
@@ -176,3 +184,4 @@ def lambda_handler(event, context):
         "extraction_method": method,
         "units": len(units),
     }
+

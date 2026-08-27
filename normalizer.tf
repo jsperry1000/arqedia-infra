@@ -73,6 +73,15 @@ data "aws_iam_policy_document" "normalizer" {
     actions   = ["secretsmanager:GetSecretValue"]
     resources = [aws_rds_cluster.main.master_user_secret[0].secret_arn]
   }
+
+  statement {
+    effect  = "Allow"
+    actions = ["bedrock:InvokeModel"]
+    resources = [
+      "arn:aws:bedrock:*::foundation-model/*",
+      "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+    ]
+  }
 }
 
 resource "aws_iam_role_policy" "normalizer" {
@@ -97,7 +106,8 @@ resource "aws_lambda_function" "normalizer" {
       REVIEW_BUCKET = aws_s3_bucket.data["review"].id
       CLUSTER_ARN   = aws_rds_cluster.main.arn
       SECRET_ARN    = aws_rds_cluster.main.master_user_secret[0].secret_arn
-      DATABASE      = "arqedia"
+      DATABASE            = "arqedia"
+      CLASSIFIER_MODEL_ID = var.extraction_model_id
     }
   }
 
@@ -146,4 +156,5 @@ resource "aws_cloudwatch_event_target" "normalizer" {
 output "normalizer_function" {
   value = aws_lambda_function.normalizer.function_name
 }
+
 

@@ -83,9 +83,10 @@ def _build_prompt(schema, envelope):
     count = len(units)
 
     lines = []
-    for field_id, label, ftype, desc in schema["fields"]:
+    for field_id, label, ftype, card, desc in schema["fields"]:
+        hint = "[string] | null" if card == "many" else "string | null"
         lines.append(
-            '  "' + field_id + '": { "value": string | null, "unit": integer | null },'
+            '  "' + field_id + '": { "value": ' + hint + ', "unit": integer | null },'
             + "  // " + label + " (" + ftype + ") - " + desc
         )
 
@@ -183,13 +184,20 @@ def _persist(envelope, schema_key, extracted):
     units = envelope["units"]
     written = 0
 
-    for field_id, _label, _ftype, _desc in schema["fields"]:
+    for field_id, _label, _ftype, _card, _desc in schema["fields"]:
         item = extracted.get(field_id) or {}
         value = item.get("value") if isinstance(item, dict) else item
         unit = item.get("unit") if isinstance(item, dict) else None
 
-        if value is None or value == "":
+        if value is None or value == "" or value == []:
             continue
+
+        # A multi-value field arrives as a list. Store it readably rather
+        # than as Python list syntax, which would render into a memo verbatim.
+        if isinstance(value, list):
+            value = "; ".join(str(v) for v in value if v not in (None, ""))
+            if not value:
+                continue
 
         kind, index, start, end, cell = _resolve_locator(unit, units)
 
@@ -300,6 +308,7 @@ def lambda_handler(event, context):
         "values_written": total_written,
         "results": results,
     }
+
 
 
 
