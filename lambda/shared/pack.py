@@ -307,65 +307,92 @@ CATEGORIES = {
 DOCUMENT_TYPES = {
     # Corporate
     "articles":                {"category": "corp", "label": "Articles of Association",
+                                "description": "The entity's articles of association or constitutional document, setting out share classes, director powers and internal rules.",
                                 "schemas": ["corporate-structure"]},
     "bylaws":                  {"category": "corp", "label": "Bylaws",
+                                "description": "Internal governance rules or bylaws adopted by the entity.",
                                 "schemas": ["corporate-structure"]},
     "good-standing":           {"category": "corp", "label": "Certificate of Good Standing",
+                                "description": "A certificate issued by a registry confirming the entity exists and is in good standing at a stated date.",
                                 "schemas": ["corporate-structure"]},
     "certificate-of-incorporation": {"category": "corp", "label": "Certificate of Incorporation",
+                                "description": "The registry certificate recording that the entity was incorporated: legal name, registration number and date.",
                                 "schemas": ["corporate-structure"]},
     "board-resolution":        {"category": "corp", "label": "Board Resolution",
+                                "description": "A minuted resolution of the board or members, typically authorising an act or appointing signatories.",
                                 "schemas": ["corporate-structure"]},
     "beneficial-ownership":    {"category": "corp", "label": "Beneficial Ownership Declaration",
+                                "description": "A declaration naming the ultimate beneficial owners and their percentage holdings.",
                                 "schemas": ["KYC", "corporate-structure"]},
     "regulatory-filings":      {"category": "corp", "label": "Regulatory Filings",
+                                "description": "An extract or filing made to a company registry or regulator: annual return, register extract, officer or shareholder filing. Records what the registry holds, not what the entity says about itself.",
                                 "schemas": ["corporate-structure"]},
     "cap-table":               {"category": "corp", "label": "Cap Table or Share Instrument",
+                                "description": "A share register, cap table, or an instrument affecting share ownership: share purchase agreement, option, warrant or pledge.",
                                 "schemas": ["capital-structure"]},
 
     # KYC, AML and screening
     "aml-policy":              {"category": "kyc-aml-pep", "label": "AML Policy",
+                                "description": "The entity's own anti-money-laundering or counter-terrorist-financing policy document.",
                                 "schemas": ["aml-policies-summary"]},
     "cdd-questionnaire":       {"category": "kyc-aml-pep", "label": "CDD Questionnaire",
+                                "description": "A completed questionnaire or information request in which the entity answers questions about ITSELF: legal name, ownership, directors, business activity, banking, trade flows, financing sought. Question-and-answer or form format, completed by or on behalf of the entity being reviewed.",
                                 "schemas": ["KYC", "business-overview",
                                             "corporate-structure", "trade-flow-profile"]},
     "id-verification":         {"category": "kyc-aml-pep", "label": "Identity Verification",
+                                "description": "Identity documents or verification evidence for a named individual: passport, national identity card, proof of address.",
                                 "schemas": ["KYC"]},
     "pep-screen":              {"category": "kyc-aml-pep", "label": "PEP Screening",
+                                "description": "The output of a politically-exposed-person screening run against named individuals.",
                                 "schemas": ["KYC"]},
     "sanctions-screen":        {"category": "kyc-aml-pep", "label": "Sanctions Screening",
+                                "description": "The output of a sanctions list screening run against the entity or named individuals.",
                                 "schemas": ["KYC"]},
     "source-of-funds":         {"category": "kyc-aml-pep", "label": "Source of Funds",
+                                "description": "A statement or evidence of where the entity's funds or a person's wealth originated.",
                                 "schemas": ["KYC"]},
 
     # Financial
     "audited-statements":      {"category": "financial", "label": "Audited Financial Statements",
+                                "description": "Financial statements bearing an auditor's report.",
                                 "schemas": ["financial-output"]},
     "interim-statements":      {"category": "financial", "label": "Interim Financial Statements",
+                                "description": "Management-prepared or unaudited financial statements for a period.",
                                 "schemas": ["financial-output"]},
     "tax-returns":             {"category": "financial", "label": "Tax Returns",
+                                "description": "A filed tax return or tax assessment.",
                                 "schemas": ["financial-output"]},
     "bank-statements":         {"category": "financial", "label": "Bank Statements",
+                                "description": "Statements of account issued by a bank showing transactions over a period.",
                                 "schemas": ["financial-output"]},
     "aging-reports":           {"category": "financial", "label": "Aged Debtors or Creditors",
+                                "description": "An aged debtors or aged creditors schedule showing amounts outstanding by age.",
                                 "schemas": ["financial-output"]},
 
     # Business
     "counterparty-list":       {"category": "business", "label": "Customer or Supplier List",
+                                "description": "A schedule or list OF the entity's customers, buyers or suppliers - names, locations, volumes or terms, usually tabular. A list of third parties, not a questionnaire about the entity itself.",
                                 "schemas": ["business-overview", "trade-flow-profile"]},
     "market-analysis":         {"category": "business", "label": "Market Analysis",
+                                "description": "Analysis or commentary on the market, sector or commodity the entity trades in.",
                                 "schemas": ["business-overview", "trade-flow-profile"]},
     "operations-memo":         {"category": "business", "label": "Operations Memorandum",
+                                "description": "A description of how the entity operates: sourcing, logistics, processing, warehousing, settlement.",
                                 "schemas": ["business-overview", "trade-flow-profile"]},
     "trade-references":        {"category": "business", "label": "Trade References",
+                                "description": "A reference given by a trading partner, bank or customer about dealings with the entity.",
                                 "schemas": ["business-overview", "trade-flow-profile"]},
     "trade-summary":           {"category": "business", "label": "Trade Summary",
+                                "description": "A summary of completed or planned trades, typically tabular: counterparties, commodities, volumes, values.",
                                 "schemas": ["business-overview"]},
     "licenses-certificates":   {"category": "business", "label": "Licences and Certificates",
+                                "description": "A licence, permit, registration or certification held by a named party: regulatory licence, import permit, quality or scheme certification.",
                                 "schemas": ["licenses-certifications"]},
     "insurance-coverage":      {"category": "business", "label": "Insurance Policy",
+                                "description": "An insurance policy, certificate or schedule: cargo, stock throughput, credit or liability cover.",
                                 "schemas": ["KYC", "business-overview"]},
     "banking-relationships":   {"category": "business", "label": "Bank Reference",
+                                "description": "A bank reference letter or confirmation of the entity's banking relationships.",
                                 "schemas": ["KYC"]},
 }
 
@@ -386,7 +413,8 @@ def get_schema(schema_key):
 def document_type_list():
     """For the classifier prompt: key, label and category."""
     return [
-        {"key": k, "label": v["label"], "category": CATEGORIES[v["category"]]}
+        {"key": k, "label": v["label"], "category": CATEGORIES[v["category"]],
+         "description": v.get("description", "")}
         for k, v in DOCUMENT_TYPES.items()
     ]
 
