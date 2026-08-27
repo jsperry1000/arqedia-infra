@@ -84,6 +84,7 @@ resource "aws_lambda_function" "extraction" {
   source_code_hash = data.archive_file.extraction.output_base64sha256
   timeout          = 300
   memory_size      = 512
+  layers           = [aws_lambda_layer_version.docprocessing.arn]
 
   environment {
     variables = {
@@ -135,3 +136,4 @@ resource "aws_lambda_permission" "extraction_events" {
 output "extraction_function" {
   value = aws_lambda_function.extraction.function_name
 }
+

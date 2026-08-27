@@ -21,10 +21,15 @@ if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
 
 Remove-Item "$build\requirements.txt"
 
+# Shared application modules travel in the layer so both functions import one
+# copy. Duplicating pack.py per function is how the two silently diverge.
+Copy-Item "$root\lambda\shared\*.py" "$build\python\"
+
 Get-ChildItem "$build\python" -Recurse -Directory |
   Where-Object { $_.Name -eq "__pycache__" } |
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
 Compress-Archive -Path "$build\python" -DestinationPath $zip -Force
 Write-Host "built $zip ($([math]::Round((Get-Item $zip).Length/1MB,1)) MB)" -ForegroundColor Green
+
 
