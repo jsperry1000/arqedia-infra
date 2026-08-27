@@ -34,7 +34,8 @@ def classify(raw_text):
 
     catalogue = []
     for t in pack.document_type_list():
-        catalogue.append("  %-32s %s - %s" % (t["key"], t["label"], t["category"]))
+        catalogue.append("  " + t["key"] + "  (" + t["category"] + ")")
+        catalogue.append("      " + t["label"] + ". " + t.get("description", ""))
 
     prompt = (
         "Identify which type of document this is, from the list below.\n\n"
@@ -80,3 +81,4 @@ def classify(raw_text):
         return None, None
 
     return proposed, result.get("confidence")
+
