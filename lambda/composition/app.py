@@ -134,20 +134,33 @@ def _citation(v):
 
 
 def _assemble_extract(section, values):
-    """Deterministic section. Returns (markdown, values_used)."""
+    """Deterministic section, rendered one block per source document.
+
+    Values are NOT merged across documents. Three documents stating a company
+    name produce three blocks. Where they disagree, the reader sees the
+    disagreement and its source. Merging would hide it silently, and a
+    contradiction the reader cannot see is worse than one they can.
+    """
     used = [v for v in values if v["field_id"] in section["fields"]]
     if not used:
         return "_No information available._\n", []
 
-    lines = []
-    for field_id in section["fields"]:
-        for v in used:
-            if v["field_id"] == field_id:
-                lines.append("- **{}:** {}  \n  _Source: {}_".format(
-                    _label_for(field_id), v["value"], _citation(v)))
+    by_document = {}
+    for v in used:
+        by_document.setdefault(v["document_id"], []).append(v)
 
-    return "\n".join(lines) + "\n", used
+    blocks = []
+    for document_id in sorted(by_document):
+        rows = by_document[document_id]
+        blocks.append("**Source: " + rows[0]["filename"] + "**\n")
+        for field_id in section["fields"]:
+            for v in rows:
+                if v["field_id"] == field_id:
+                    blocks.append("- **" + _label_for(field_id) + ":** "
+                                  + str(v["value"]) + "  \n  _" + _citation(v) + "_")
+        blocks.append("")
 
+    return "\n".join(blocks) + "\n", used
 
 def _invoke(prompt):
     response = _bedrock.invoke_model(
@@ -353,3 +366,4 @@ def lambda_handler(event, context):
         "claims": claims,
         "tokens": {"input": tokens_in, "output": tokens_out},
     }
+
