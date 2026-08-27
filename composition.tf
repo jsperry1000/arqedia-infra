@@ -83,6 +83,7 @@ resource "aws_lambda_function" "composition" {
   source_code_hash = data.archive_file.composition.output_base64sha256
   timeout          = 600
   memory_size      = 512
+  layers           = [aws_lambda_layer_version.docprocessing.arn]
 
   environment {
     variables = {

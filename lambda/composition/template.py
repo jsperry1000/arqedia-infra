@@ -24,11 +24,18 @@ MEMO_SECTIONS = [
         ],
     },
     {
-        "key": "summary",
+        "key": "people",
         "num": "II",
+        "title": "Individuals and Related Parties",
+        "kind": "extract",
+        "fields": ["f_persons", "f_financial_counterparties"],
+    },
+    {
+        "key": "summary",
+        "num": "III",
         "title": "Summary",
         "kind": "composed",
-        "context_sections": ["identity"],
+        "context_sections": ["identity", "people"],
         "prompt": (
             "Draft the SUMMARY section of a due diligence memorandum on the "
             "entity described in the context below.\n"
@@ -48,10 +55,10 @@ MEMO_SECTIONS = [
     },
     {
         "key": "open_items",
-        "num": "III",
+        "num": "IV",
         "title": "Open Items",
         "kind": "composed",
-        "context_sections": ["identity"],
+        "context_sections": ["identity", "people"],
         "prompt": (
             "Draft the OPEN ITEMS section. List every fact a due diligence "
             "file on this entity would normally contain that the context does "
@@ -82,3 +89,5 @@ def section(key):
 
 def sections_of_kind(kind):
     return [s for s in MEMO_SECTIONS if s["kind"] == kind]
+
+
