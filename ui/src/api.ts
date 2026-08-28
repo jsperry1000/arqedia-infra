@@ -48,6 +48,7 @@ export type Doc = {
   state: string;
   deactivated_by: string | null;
   deactivated_at: string | null;
+  extracted_at: string | null;
   values: number;
 };
 
@@ -90,6 +91,18 @@ export type Memo = {
   modified_at: string | null;
   markdown: string;
   pdf_url: string | null;
+  sources: { document_id: number; filename: string }[];
+};
+
+export type Passage = {
+  document_id: number;
+  filename: string;
+  unit: number | null;
+  unit_kind: string;
+  unit_label: string | null;
+  pages: number | null;
+  text: string;
+  source_url: string;
 };
 
 export type ExtractedValue = {
@@ -146,6 +159,10 @@ export const api = {
     call(`/engagements/${encodeURIComponent(id)}/generate`, { method: "POST" }),
 
   memo: (memoId: number): Promise<Memo> => call(`/memos/${memoId}`),
+
+  passage: (documentId: number, unit: number | null): Promise<Passage> =>
+    call(`/documents/${documentId}/passage`
+      + (unit ? `?unit=${unit}` : "")),
 
   // Two steps: ask for a signed link, then send the file straight to S3.
   // The file never passes through our servers.

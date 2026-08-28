@@ -1,8 +1,8 @@
+import { MemoView } from "./Memo";
 import { EngagementView } from "./Review";
 import { useEffect, useState } from "react";
 import { Amplify } from "aws-amplify";
 import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
-import ReactMarkdown from "react-markdown";
 import { config } from "./config";
 import { api, type Engagement } from "./api";
 
@@ -120,23 +120,6 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
 // --- one engagement --------------------------------------------------------
 
 // --- memo ------------------------------------------------------------------
-
-function MemoView({ memoId, onBack }: { memoId: number; onBack: () => void }) {
-  const [markdown, setMarkdown] = useState("");
-
-  useEffect(() => {
-    api.memo(memoId).then((m) => setMarkdown(m.markdown));
-  }, [memoId]);
-
-  return (
-    <div>
-      <a onClick={onBack} className="back">Back</a>
-      <article className="memo">
-        <ReactMarkdown>{markdown}</ReactMarkdown>
-      </article>
-    </div>
-  );
-}
 
 // --- shell -----------------------------------------------------------------
 

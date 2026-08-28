@@ -332,6 +332,17 @@ def lambda_handler(event, context):
         ContentType="application/json",
     )
 
+    # Mark the document extracted. Without this the list cannot tell a
+    # document still being read from one that yielded nothing - both show as
+    # zero values, and they mean very different things to a reader.
+    document_id = envelope.get("document_id")
+    if document_id:
+        _sql(
+            "UPDATE document SET extracted_at = UTC_TIMESTAMP() "
+            "WHERE tenant_id = :t AND document_id = :d",
+            [_p("t", envelope["tenant_id"]), _p("d", int(document_id))],
+        )
+
     print("[extracted] doc={} schemas={} values={} tokens_in={} tokens_out={}".format(
         envelope.get("document_id"), list(results.keys()),
         total_written, tokens_in, tokens_out))

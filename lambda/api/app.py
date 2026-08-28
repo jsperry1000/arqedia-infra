@@ -11,17 +11,18 @@ upload, generate, deactivate, edit - because in a compliance record the author
 of an act matters as much as the act.
 
 Routes:
-  GET  /engagements                     what this tenant has
-  GET  /engagements/{id}/pending        analysed, awaiting confirmation
-  POST /engagements/{id}/file           confirm types and file
-  GET  /engagements/{id}/documents      filed documents
-  POST /documents/{document_id}/active  include or exclude from future memos
-  GET  /documents/{document_id}/values  what was extracted, and what was not
-  GET  /engagements/{id}/memos          memos generated for it
-  POST /engagements/{id}/generate       compose a memo (deliberate act)
-  GET  /memos/{memo_id}                 a rendered memo, with a link to its PDF
-  POST /uploads                         a signed link to upload one file
-  GET  /document-types                  the type list, for the dropdown
+  GET  /engagements                      what this tenant has
+  GET  /engagements/{id}/pending         analysed, awaiting confirmation
+  POST /engagements/{id}/file            confirm types and file
+  GET  /engagements/{id}/documents       filed documents
+  POST /documents/{document_id}/active   include or exclude from future memos
+  GET  /documents/{document_id}/values   what was extracted, and what was not
+  GET  /documents/{document_id}/passage  the text of one page, for a citation
+  GET  /engagements/{id}/memos           memos generated for it
+  POST /engagements/{id}/generate        compose a memo (deliberate act)
+  GET  /memos/{memo_id}                  a memo, its PDF link and its sources
+  POST /uploads                          a signed link to upload one file
+  GET  /document-types                   the type list, for the dropdown
 """
 
 import json
@@ -123,6 +124,15 @@ def _reply(status, body):
         "headers": {"content-type": "application/json"},
         "body": json.dumps(body),
     }
+
+
+def _label_for(field_id):
+    if "." in field_id:
+        group = field_id.split(".", 1)[0]
+        for col in (pack.group_columns(group) or []):
+            if col[0] == field_id:
+                return col[1]
+    return pack.label_for(field_id)
 
 
 # --- engagements -----------------------------------------------------------
@@ -239,7 +249,8 @@ def file_documents(tenant_id, decisions):
 
         _sql("UPDATE document SET document_type = :ty, type_confirmed = 1, "
              "state = 'filed' WHERE tenant_id = :t AND document_id = :d",
-             [_p("ty", document_type), _p("t", tenant_id), _p("d", document_id)])
+             [_p("ty", document_type), _p("t", tenant_id),
+              _p("d", document_id)])
 
         # Extraction listens for .normalized.json. Renaming the envelope is
         # what starts it - filing, not uploading.
@@ -261,12 +272,12 @@ def file_documents(tenant_id, decisions):
 
 def list_documents(tenant_id, engagement):
     """Filed documents. `reading` documents are included so the screen can see
-    that something is still in flight and hold the generate action."""
+    that something is in flight and hold the generate action."""
     result = _sql(
         """
         SELECT document_id, filename, document_type, page_count,
                extraction_method, filed_at, uploaded_by, active, state,
-               deactivated_by, deactivated_at,
+               deactivated_by, deactivated_at, extracted_at,
                (SELECT COUNT(*) FROM extracted_value v
                  WHERE v.document_id = d.document_id
                    AND v.tenant_id = d.tenant_id) AS values_found
@@ -291,7 +302,10 @@ def list_documents(tenant_id, engagement):
          "state": _col(r, 8),
          "deactivated_by": _col(r, 9),
          "deactivated_at": _col(r, 10),
-         "values": _col(r, 11)}
+         # Null means extraction has not run. Zero values with a null here is
+         # "still working"; zero values with a timestamp is a finding.
+         "extracted_at": _col(r, 11),
+         "values": _col(r, 12)}
         for r in result.get("records", [])
     ]
 
@@ -328,8 +342,6 @@ def document_values(tenant_id, document_id):
     records = head.get("records", [])
     if not records:
         return None
-    filename = _col(records[0], 0)
-    document_type = _col(records[0], 1)
 
     result = _sql(
         """
@@ -341,8 +353,7 @@ def document_values(tenant_id, document_id):
         [_p("t", tenant_id), _p("d", int(document_id))],
     )
 
-    values = []
-    found = set()
+    values, found = [], set()
     for r in result.get("records", []):
         field_id = _col(r, 0)
         found.add(field_id.split(".", 1)[0])
@@ -355,6 +366,7 @@ def document_values(tenant_id, document_id):
             "row": _col(r, 4),
         })
 
+    document_type = _col(records[0], 1)
     expected, missing = [], []
     for schema_key in pack.schemas_for(document_type):
         schema = pack.get_schema(schema_key)
@@ -367,7 +379,7 @@ def document_values(tenant_id, document_id):
 
     return {
         "document_id": int(document_id),
-        "filename": filename,
+        "filename": _col(records[0], 0),
         "document_type": document_type,
         "pages": _col(records[0], 2),
         "method": _col(records[0], 3),
@@ -377,13 +389,55 @@ def document_values(tenant_id, document_id):
     }
 
 
-def _label_for(field_id):
-    if "." in field_id:
-        group = field_id.split(".", 1)[0]
-        for col in (pack.group_columns(group) or []):
-            if col[0] == field_id:
-                return col[1]
-    return pack.label_for(field_id)
+def document_passage(tenant_id, document_id, unit):
+    """The text of one page, so a citation can be checked against what the
+    system actually read.
+
+    This is what was read, not the original image - which is arguably the more
+    useful thing when checking an extraction, since a wrong value is usually a
+    misreading rather than a misprint."""
+    row = _sql(
+        "SELECT s3_key, filename, page_count FROM document "
+        "WHERE tenant_id = :t AND document_id = :d",
+        [_p("t", tenant_id), _p("d", int(document_id))],
+    )
+    records = row.get("records", [])
+    if not records:
+        return None
+
+    s3_key = _col(records[0], 0)
+    envelope = json.loads(
+        _s3.get_object(Bucket=REVIEW_BUCKET,
+                       Key=s3_key + ".normalized.json")["Body"].read()
+        .decode("utf-8"))
+
+    raw = envelope.get("raw_text") or ""
+    units = envelope.get("units") or []
+
+    text, kind, label = raw, "document", None
+    if unit:
+        for u in units:
+            if u.get("index") == int(unit):
+                text = raw[u.get("char_start", 0):u.get("char_end", len(raw))]
+                kind = u.get("kind") or "page"
+                label = u.get("label")
+                break
+
+    source_url = _s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": DOCS_BUCKET, "Key": s3_key},
+        ExpiresIn=3600)
+
+    return {
+        "document_id": int(document_id),
+        "filename": _col(records[0], 1),
+        "unit": int(unit) if unit else None,
+        "unit_kind": kind,
+        "unit_label": label,
+        "pages": _col(records[0], 2),
+        "text": text[:20000],
+        "source_url": source_url,
+    }
 
 
 # --- memos -----------------------------------------------------------------
@@ -417,8 +471,11 @@ def list_memos(tenant_id, engagement):
 
 
 def get_memo(tenant_id, memo_id):
-    """The tenant is in the WHERE clause, so another tenant's memo id simply
-    returns nothing rather than someone else's document."""
+    """A memo, a signed link to its PDF, and the documents behind it.
+
+    The sources are returned so the reader can turn a citation - which names a
+    filename - into something it can open. The memo text has no document
+    identifiers in it; this is the map."""
     result = _sql(
         """
         SELECT s3_bucket, s3_key, generated_at, generated_by, pdf_key,
@@ -435,6 +492,16 @@ def get_memo(tenant_id, memo_id):
 
     markdown = _s3.get_object(
         Bucket=_col(r, 0), Key=_col(r, 1))["Body"].read().decode("utf-8")
+
+    sources = _sql(
+        """
+        SELECT d.document_id, d.filename
+        FROM memo_source ms
+        JOIN document d ON d.document_id = ms.document_id
+        WHERE ms.tenant_id = :t AND ms.memo_id = :m
+        """,
+        [_p("t", tenant_id), _p("m", int(memo_id))],
+    )
 
     pdf_url = None
     pdf_key = _col(r, 4)
@@ -457,15 +524,22 @@ def get_memo(tenant_id, memo_id):
         "modified_at": _col(r, 8),
         "markdown": markdown,
         "pdf_url": pdf_url,
+        "sources": [{"document_id": _col(s, 0), "filename": _col(s, 1)}
+                    for s in sources.get("records", [])],
     }
 
 
 # --- uploads and generation ------------------------------------------------
 
-def upload_url(tenant_id, engagement, filename):
+def upload_url(tenant_id, email, engagement, filename):
     """A short-lived signed link. The browser uploads straight to S3; the file
     never passes through here. The key is built from the token's tenant, so a
-    caller cannot place a file in another tenant's space."""
+    caller cannot place a file in another tenant's space.
+
+    The caller's email travels as object metadata: this function knows who is
+    asking, the normalizer does not, so the answer has to arrive with the
+    object. It also stays with the object permanently, which is better
+    provenance than a lookup table."""
     engagement = _clean(engagement)
     filename = _clean(filename)
     if not engagement or not filename:
@@ -475,9 +549,10 @@ def upload_url(tenant_id, engagement, filename):
     url = _s3.generate_presigned_url(
         "put_object",
         Params={"Bucket": DOCS_BUCKET, "Key": key,
-                "ServerSideEncryption": "aws:kms"},
+                "ServerSideEncryption": "aws:kms",
+                "Metadata": {"uploaded-by": email}},
         ExpiresIn=900)
-    return {"url": url, "key": key}
+    return {"url": url, "key": key, "uploaded_by": email}
 
 
 def generate(tenant_id, email, engagement):
@@ -513,7 +588,9 @@ def lambda_handler(event, context):
 
     route = event.get("routeKey", "")
     params = event.get("pathParameters") or {}
-    engagement = urllib.parse.unquote(params.get("id", "")) if params.get("id") else None
+    query = event.get("queryStringParameters") or {}
+    engagement = urllib.parse.unquote(params.get("id", "")) \
+        if params.get("id") else None
 
     try:
         if route == "GET /engagements":
@@ -543,6 +620,13 @@ def lambda_handler(event, context):
                 return _reply(404, {"error": "not found"})
             return _reply(200, detail)
 
+        if route == "GET /documents/{document_id}/passage":
+            passage = document_passage(tenant_id, params.get("document_id"),
+                                       query.get("unit"))
+            if passage is None:
+                return _reply(404, {"error": "not found"})
+            return _reply(200, passage)
+
         if route == "GET /engagements/{id}/memos":
             return _reply(200, {"memos": list_memos(tenant_id, engagement)})
 
@@ -557,7 +641,7 @@ def lambda_handler(event, context):
 
         if route == "POST /uploads":
             body = json.loads(event.get("body") or "{}")
-            return _reply(200, upload_url(tenant_id,
+            return _reply(200, upload_url(tenant_id, email,
                                           body.get("engagement", ""),
                                           body.get("filename", "")))
 

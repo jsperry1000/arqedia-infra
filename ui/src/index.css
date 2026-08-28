@@ -198,3 +198,34 @@ p.warn { color: #b45309; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* --- memo reader --------------------------------------------------------- */
+
+.memo-head {
+  display: flex; align-items: flex-start; gap: 20px; margin-bottom: 18px;
+}
+.memo-head h2 { margin-bottom: 4px; }
+.memo-head p { margin: 0; font-size: 13px; }
+.memo-head .pdf {
+  margin-left: auto; white-space: nowrap;
+  padding: 9px 16px; border-radius: 3px;
+  background: var(--deep); color: #fff; font-size: 13px; font-weight: 500;
+}
+.memo-head .pdf:hover { background: var(--medium); text-decoration: none; }
+
+/* A citation that resolves to one of this memo's sources is clickable. One
+   that does not stays quiet rather than promising something it cannot do. */
+.cite {
+  color: var(--medium); font-size: 12px; font-style: italic;
+  cursor: pointer; border-bottom: 1px dotted var(--medium);
+}
+.cite:hover { color: var(--deep); border-bottom-color: var(--deep); }
+
+.passage {
+  background: var(--wash); border: 1px solid var(--line); border-radius: 3px;
+  padding: 14px 16px; margin: 12px 0 16px;
+  font: 12px/1.6 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 55vh; overflow-y: auto;
+}
+.small { font-size: 12px; }
