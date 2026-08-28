@@ -1,16 +1,21 @@
 """
 app.py - document normalizer.
 
-Fires on an object landing in the docs bucket. Reads it, extracts text and
-unit boundaries, writes an envelope to the review bucket, and records a row
-in `document`.
+Fires on an object landing in the docs bucket. Reads it, extracts text and unit
+boundaries, proposes what the document is, and records a row in `document`. It
+does NOT start extraction: filing does that, once a person has confirmed the
+proposal.
 
 Key layout in the docs bucket:
     tenants/<tenant_id>/docs/<engagement_id>/<file_id>--<filename>
 
 tenant_id is taken from the KEY PATH, never from a tag. Tags are eventually
-consistent on a fresh object and returned null intermittently in the eBL
+consistent on a fresh object and were returned null intermittently in the eBL
 build; the key path cannot race.
+
+Who uploaded travels as object metadata, set by the browser when it PUTs the
+file against a signed link the API issued. The API knows the caller; the
+normalizer does not, so the answer has to arrive with the object.
 """
 
 import datetime
@@ -24,8 +29,8 @@ import urllib.parse
 import boto3
 from botocore.exceptions import ClientError
 
-import extractors
 import classify
+import extractors
 
 _s3 = boto3.client("s3")
 _rds = boto3.client("rds-data")
@@ -44,6 +49,9 @@ CONFIG_REVISION = 1
 _THIN_CHARS_PER_PAGE = 200
 _IMAGE_BYTES_PER_PAGE = 100000
 
+_KEY_RE = re.compile(
+    r"^tenants/(?P<tenant>\d+)/docs/(?P<engagement>[^/]+)/(?P<file>.+)$")
+
 
 def _is_thin(text, pages, byte_size):
     """True when the text is implausibly short for a file this size."""
@@ -53,20 +61,18 @@ def _is_thin(text, pages, byte_size):
     heavy = (byte_size / pages) > _IMAGE_BYTES_PER_PAGE
     return thin and heavy
 
-_KEY_RE = re.compile(r"^tenants/(?P<tenant>\d+)/docs/(?P<engagement>[^/]+)/(?P<file>.+)$")
-
 
 def _now():
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
 
 
 def _sql(statement, params=None):
     """Execute over the Data API, retrying while the cluster wakes.
 
     The cluster pauses at zero capacity and takes roughly fifteen seconds to
-    resume. DatabaseResumingException is normal operation, not a fault.
-    """
-    for attempt in range(12):
+    resume. DatabaseResumingException is normal operation, not a fault."""
+    for _ in range(12):
         try:
             return _rds.execute_statement(
                 resourceArn=CLUSTER_ARN,
@@ -98,15 +104,15 @@ def _p(name, value):
 def _parse_key(key):
     m = _KEY_RE.match(key)
     if not m:
-        raise ValueError("key does not match the expected layout: {}".format(key))
+        raise ValueError("key does not match the expected layout: " + key)
     return int(m.group("tenant")), m.group("engagement"), m.group("file")
 
 
-def _write_envelope(tenant_id, key, envelope):
-    # .analysed.json, not .normalized.json. Extraction listens for the latter,
-    # so writing this does not start extraction - filing does, by renaming the
-    # envelope once a person has confirmed what the document is.
-    review_key = "{}.analysed.json".format(key)
+def _write_envelope(key, envelope):
+    """.analysed.json, not .normalized.json. Extraction listens for the latter,
+    so writing this does not start extraction - filing does, by renaming the
+    envelope once a person has confirmed what the document is."""
+    review_key = key + ".analysed.json"
     _s3.put_object(
         Bucket=REVIEW_BUCKET,
         Key=review_key,
@@ -123,12 +129,12 @@ def _record_document(envelope):
           (tenant_id, engagement_id, s3_bucket, s3_key, s3_version_id,
            sha256, filename, page_count, extraction_method, document_type,
            state, thin_text, char_count, byte_size,
-           type_confidence, type_reason, config_revision)
+           type_confidence, type_reason, uploaded_by, config_revision)
         VALUES
           (:tenant_id, :engagement_id, :s3_bucket, :s3_key, :s3_version_id,
            :sha256, :filename, :page_count, :extraction_method, :document_type,
            :state, :thin_text, :char_count, :byte_size,
-           :type_confidence, :type_reason, :config_revision)
+           :type_confidence, :type_reason, :uploaded_by, :config_revision)
         """,
         [
             _p("tenant_id", envelope["tenant_id"]),
@@ -147,19 +153,34 @@ def _record_document(envelope):
             _p("byte_size", envelope.get("byte_size")),
             _p("type_confidence", envelope.get("document_type_confidence")),
             _p("type_reason", envelope.get("document_type_reason")),
+            _p("uploaded_by", envelope.get("uploaded_by")),
             _p("config_revision", CONFIG_REVISION),
         ],
     )
     return result.get("generatedFields", [{}])[0].get("longValue")
 
 
-def lambda_handler(event, context):
-    detail = event["detail"]
-    src_bucket = detail["bucket"]["name"]
-    src_key = urllib.parse.unquote_plus(detail["object"]["key"])
+def _source_from_event(event):
+    """Accept either shape: S3 bucket notification or EventBridge."""
+    records = event.get("Records")
+    if records and records[0].get("s3"):
+        s3 = records[0]["s3"]
+        return s3["bucket"]["name"], urllib.parse.unquote_plus(
+            s3["object"]["key"])
 
-    if src_key.endswith(".normalized.json"):
-        return {"status": "skipped", "reason": "already-normalized"}
+    detail = event.get("detail")
+    if detail and "bucket" in detail:
+        return detail["bucket"]["name"], urllib.parse.unquote_plus(
+            detail["object"]["key"])
+
+    raise ValueError("unrecognised event shape")
+
+
+def lambda_handler(event, context):
+    src_bucket, src_key = _source_from_event(event)
+
+    if src_key.endswith(".analysed.json") or src_key.endswith(".normalized.json"):
+        return {"status": "skipped", "reason": "already-processed"}
 
     tenant_id, engagement, filename = _parse_key(src_key)
 
@@ -167,10 +188,14 @@ def lambda_handler(event, context):
     body = obj["Body"].read()
     sha = hashlib.sha256(body).hexdigest()
 
+    # Set by the browser against the signed link. The API knew who was asking;
+    # this function does not, so the answer arrives with the object.
+    uploaded_by = (obj.get("Metadata") or {}).get("uploaded-by")
+
     try:
         raw_text, units, method = extractors.extract(src_key, body)
     except extractors.UnreadableDocument as exc:
-        print("[unreadable] key={} reason={}".format(src_key, exc.reason))
+        print("[unreadable] key=%s reason=%s" % (src_key, exc.reason))
         return {"status": "unreadable", "reason": exc.reason, "key": src_key}
 
     document_type, confidence, why = classify.classify(raw_text)
@@ -181,10 +206,11 @@ def lambda_handler(event, context):
         "document_type_proposed": document_type,
         "document_type_confidence": confidence,
         "document_type_reason": why,
+        "document_type_confirmed": False,
         "byte_size": len(body),
         "thin_text": _is_thin(raw_text, len(units), len(body)),
         "state": "analysed",
-        "document_type_confirmed": False,
+        "uploaded_by": uploaded_by,
         "engagement": engagement,
         "filename": filename,
         "source_bucket": src_bucket,
@@ -203,10 +229,10 @@ def lambda_handler(event, context):
     document_id = _record_document(envelope)
     envelope["document_id"] = document_id
 
-    review_key = _write_envelope(tenant_id, src_key, envelope)
+    review_key = _write_envelope(src_key, envelope)
 
-    print("[normalized] doc={} method={} units={} key={}".format(
-        document_id, method, len(units), src_key))
+    print("[analysed] doc=%s method=%s units=%d type=%s by=%s key=%s" % (
+        document_id, method, len(units), document_type, uploaded_by, src_key))
 
     return {
         "status": "ok",
@@ -214,10 +240,6 @@ def lambda_handler(event, context):
         "tenant_id": tenant_id,
         "review_key": review_key,
         "extraction_method": method,
+        "document_type": document_type,
         "units": len(units),
     }
-
-
-
-
-

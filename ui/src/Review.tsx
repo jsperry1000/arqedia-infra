@@ -79,9 +79,14 @@ export function EngagementView({ id, onBack, onMemo }: {
 
   async function upload(files: FileList | null) {
     if (!files) return;
-    for (const file of Array.from(files)) {
-      setBusy("Uploading " + file.name);
-      await api.upload(id, file);
+    const list = Array.from(files);
+    for (let i = 0; i < list.length; i++) {
+      setBusy(`Uploading ${i + 1} of ${list.length} \u2014 ${list[i].name}`);
+      await api.upload(id, list[i]);
+      // Refresh as each lands. Waiting for all of them made a twenty-file
+      // upload look frozen, and polling could not start because there was
+      // nothing pending for it to see yet.
+      refresh();
     }
     setBusy("");
     refresh();
@@ -292,7 +297,11 @@ export function EngagementView({ id, onBack, onMemo }: {
                       ? <span className="warn">reading&hellip;</span>
                       : (d.document_type ?? "unclassified")}
                   </td>
-                  <td className="muted">{d.values}</td>
+                  <td className="muted">
+                    {d.state === "reading" || !d.extracted_at
+                      ? <span className="warn">extracting&hellip;</span>
+                      : d.values}
+                  </td>
                   <td className="muted">{(d.filed_at ?? "").slice(0, 16)}</td>
                   <td className="muted">{d.uploaded_by ?? "\u2014"}</td>
                 </tr>
