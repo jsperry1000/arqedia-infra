@@ -1,16 +1,28 @@
-import { useEffect, useState } from "react";
-import { api, type Pending, type DocType, type Decision, type Doc, type MemoRef } from "./api";
+import { useEffect, useMemo, useState } from "react";
+import {
+  api,
+  type Pending,
+  type DocType,
+  type Decision,
+  type Doc,
+  type MemoRef,
+  type DocumentDetail,
+} from "./api";
 
 /**
- * The review step. Uploading analyses a document and proposes what it is;
- * a person confirms; filing starts extraction.
+ * The engagement. Three states of a document are visible here:
  *
- * The proposal is made from whatever text was readable. A certified scan
- * carries only its stamp, so the proposal will sometimes be confidently
- * wrong - which is why this screen exists rather than filing automatically.
+ *   ready to file   analysed, type proposed, awaiting confirmation
+ *   filed           extracted, and either in use or set aside
+ *   memos           what has been generated from the documents in use
+ *
+ * Setting a document aside excludes it from the NEXT memo. It never deletes,
+ * and never alters a memo already generated - that memo cited what was
+ * current when it was written.
  */
 
 type Choice = { type: string | null; include: boolean };
+type SortKey = "filename" | "document_type" | "filed_at" | "values" | "active";
 
 export function EngagementView({ id, onBack, onMemo }: {
   id: string;
@@ -23,6 +35,12 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [types, setTypes] = useState<DocType[]>([]);
   const [choices, setChoices] = useState<Record<number, Choice>>({});
   const [busy, setBusy] = useState("");
+
+  const [sortKey, setSortKey] = useState<SortKey>("filename");
+  const [sortDown, setSortDown] = useState(false);
+  const [nameFilter, setNameFilter] = useState("");
+  const [showInactive, setShowInactive] = useState(true);
+  const [detail, setDetail] = useState<DocumentDetail | null>(null);
 
   async function refresh() {
     const [p, d, m] = await Promise.all([
@@ -44,16 +62,14 @@ export function EngagementView({ id, onBack, onMemo }: {
     });
   }
 
-  useEffect(() => {
-    api.documentTypes().then((r) => setTypes(r.types));
-  }, []);
-
+  useEffect(() => { api.documentTypes().then((r) => setTypes(r.types)); }, []);
   useEffect(() => { refresh(); }, [id]);
 
-  // Poll only while something is unsettled: uploading, filing, or analysed
-  // documents still waiting to be filed. A settled engagement polls not at all.
-  const settling = busy !== "" || pending.length > 0 ||
-    docs.some((d) => d.values === 0);
+  // A document being read by OCR is still in flight. Generating now would
+  // produce a memo missing whatever it is about to say.
+  const reading = docs.filter((d) => d.state === "reading").length;
+  const unfiled = pending.length;
+  const settling = busy !== "" || reading > 0 || unfiled > 0;
 
   useEffect(() => {
     if (!settling) return;
@@ -84,11 +100,46 @@ export function EngagementView({ id, onBack, onMemo }: {
     refresh();
   }
 
+  async function toggleActive(d: Doc) {
+    // Optimistic: the row flips at once, and refresh confirms it.
+    setDocs((prev) => prev.map((x) =>
+      x.document_id === d.document_id ? { ...x, active: !x.active } : x));
+    await api.setActive(d.document_id, !d.active);
+    refresh();
+  }
+
   async function generate() {
     setBusy("Generating - this takes a minute or two");
     await api.generate(id);
-    setTimeout(() => { setBusy(""); refresh(); }, 120000);
+    setTimeout(() => { setBusy(""); refresh(); }, 150000);
   }
+
+  function sortBy(key: SortKey) {
+    if (key === sortKey) setSortDown(!sortDown);
+    else { setSortKey(key); setSortDown(false); }
+  }
+
+  const visible = useMemo(() => {
+    const needle = nameFilter.trim().toLowerCase();
+    let rows = docs.filter((d) =>
+      (showInactive || d.active) &&
+      (!needle || d.filename.toLowerCase().includes(needle) ||
+        (d.document_type ?? "").toLowerCase().includes(needle)));
+
+    rows = [...rows].sort((a, b) => {
+      let x: string | number = "";
+      let y: string | number = "";
+      if (sortKey === "values") { x = a.values; y = b.values; }
+      else if (sortKey === "active") { x = a.active ? 1 : 0; y = b.active ? 1 : 0; }
+      else { x = (a[sortKey] ?? "") as string; y = (b[sortKey] ?? "") as string; }
+      if (x < y) return sortDown ? 1 : -1;
+      if (x > y) return sortDown ? -1 : 1;
+      return 0;
+    });
+    return rows;
+  }, [docs, nameFilter, showInactive, sortKey, sortDown]);
+
+  const activeCount = docs.filter((d) => d.active && d.state === "filed").length;
 
   const byCategory = types.reduce<Record<string, DocType[]>>((acc, t) => {
     (acc[t.category] ||= []).push(t);
@@ -97,6 +148,11 @@ export function EngagementView({ id, onBack, onMemo }: {
 
   const includedCount = pending.filter(
     (p) => choices[p.document_id]?.include ?? true).length;
+
+  function arrow(key: SortKey) {
+    if (key !== sortKey) return "";
+    return sortDown ? " \u2193" : " \u2191";
+  }
 
   return (
     <div>
@@ -110,8 +166,9 @@ export function EngagementView({ id, onBack, onMemo }: {
         <>
           <h3>Ready to file</h3>
           {pending.map((p) => {
-            const choice = choices[p.document_id] ?? {
-              type: p.proposed_type, include: true };
+            const choice = choices[p.document_id] ??
+              { type: p.proposed_type, include: true };
+            const chosen = types.find((t) => t.key === choice.type);
             return (
               <div className="review" key={p.document_id}>
                 <div className="review-head">
@@ -153,18 +210,16 @@ export function EngagementView({ id, onBack, onMemo }: {
                     </span>
                   )}
 
-                  {p.thin_text && (
-                    <span className="warn" title="Only a stamp or header was readable. Filing this will run optical character recognition.">
-                      scan
-                    </span>
+                  {(p.thin_text || chosen?.always_ocr) && (
+                    <span className="warn">will be read by OCR</span>
                   )}
                 </div>
 
                 {p.why && <p className="why">{p.why}</p>}
                 {p.thin_text && (
                   <p className="why warn">
-                    Little readable text - {p.chars} characters across {p.pages} pages.
-                    Confirm the type and file it to read the scan.
+                    Little readable text &mdash; {p.chars} characters across{" "}
+                    {p.pages} pages. Confirm the type and file it to read the scan.
                   </p>
                 )}
               </div>
@@ -178,35 +233,152 @@ export function EngagementView({ id, onBack, onMemo }: {
       )}
 
       <h3>Filed</h3>
+
       {docs.length === 0 && <p className="muted">Nothing filed yet.</p>}
-      <table>
-        <tbody>
-          {docs.map((d) => (
-            <tr key={d.document_id}>
-              <td>{d.filename}</td>
-              <td className="muted">{d.document_type ?? "unclassified"}</td>
-              <td className="muted">{d.pages ?? "-"} pages</td>
-              <td className="muted">{d.values} values</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+
+      {docs.length > 0 && (
+        <>
+          <div className="filters">
+            <input
+              placeholder="Filter by name or type"
+              value={nameFilter}
+              onChange={(e) => setNameFilter(e.target.value)}
+            />
+            <label className="inline-check">
+              <input
+                type="checkbox"
+                checked={showInactive}
+                onChange={(e) => setShowInactive(e.target.checked)}
+              />
+              Show set aside
+            </label>
+            <span className="muted">{activeCount} of {docs.length} in use</span>
+          </div>
+
+          <table className="docs">
+            <thead>
+              <tr>
+                <th onClick={() => sortBy("active")}>Use{arrow("active")}</th>
+                <th onClick={() => sortBy("filename")}>Document{arrow("filename")}</th>
+                <th onClick={() => sortBy("document_type")}>Type{arrow("document_type")}</th>
+                <th onClick={() => sortBy("values")}>Values{arrow("values")}</th>
+                <th onClick={() => sortBy("filed_at")}>Uploaded{arrow("filed_at")}</th>
+                <th>By</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((d) => (
+                <tr key={d.document_id} className={d.active ? "" : "aside"}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={d.active}
+                      disabled={d.state === "reading"}
+                      onChange={() => toggleActive(d)}
+                      title={d.active
+                        ? "In use. Uncheck to leave it out of the next memo."
+                        : "Set aside" + (d.deactivated_by
+                          ? " by " + d.deactivated_by : "")}
+                    />
+                  </td>
+                  <td>
+                    <a onClick={() =>
+                      api.documentValues(d.document_id).then(setDetail)}>
+                      {d.filename}
+                    </a>
+                  </td>
+                  <td className="muted">
+                    {d.state === "reading"
+                      ? <span className="warn">reading&hellip;</span>
+                      : (d.document_type ?? "unclassified")}
+                  </td>
+                  <td className="muted">{d.values}</td>
+                  <td className="muted">{(d.filed_at ?? "").slice(0, 16)}</td>
+                  <td className="muted">{d.uploaded_by ?? "\u2014"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
 
       <h3>Memos</h3>
-      <button onClick={generate} disabled={docs.length === 0 || !!busy}>
-        Generate memo
+
+      <button onClick={generate} disabled={settling || activeCount === 0}>
+        {reading > 0
+          ? `Wait \u2014 reading ${reading} ${reading === 1 ? "document" : "documents"}`
+          : unfiled > 0
+            ? `Wait \u2014 ${unfiled} to file`
+            : busy
+              ? "Wait\u2026"
+              : `Generate memo from ${activeCount} ${activeCount === 1 ? "document" : "documents"}`}
       </button>
+
       <table>
         <tbody>
           {memos.map((m) => (
             <tr key={m.memo_id} onClick={() => onMemo(m.memo_id)}>
-              <td><a>Memo {m.memo_id}</a></td>
-              <td className="muted">{m.generated_at}</td>
+              <td><a>Memo {m.label}</a></td>
+              <td className="muted">{(m.generated_at ?? "").slice(0, 16)}</td>
+              <td className="muted">
+                {m.modified_by
+                  ? "modified by " + m.modified_by
+                  : m.generated_by ?? "\u2014"}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+
+      {detail && <ValuePanel detail={detail} onClose={() => setDetail(null)} />}
     </div>
   );
 }
 
+/** What one document yielded, and what its type called for but did not. */
+function ValuePanel({ detail, onClose }: {
+  detail: DocumentDetail;
+  onClose: () => void;
+}) {
+  return (
+    <div className="panel-backdrop" onClick={onClose}>
+      <aside className="panel" onClick={(e) => e.stopPropagation()}>
+        <a onClick={onClose} className="panel-close">Close</a>
+        <h3>{detail.filename}</h3>
+        <p className="muted">
+          {detail.document_type ?? "unclassified"} &middot; {detail.pages} pages
+          &middot; read by {detail.method ?? "unknown"}
+        </p>
+
+        <h4>Extracted &mdash; {detail.values.length} of {detail.expected} fields</h4>
+        {detail.values.length === 0 && (
+          <p className="muted">Nothing was extracted from this document.</p>
+        )}
+        <table>
+          <tbody>
+            {detail.values.map((v, i) => (
+              <tr key={i}>
+                <td className="muted">{v.label}</td>
+                <td>{v.value}</td>
+                <td className="ref">
+                  {v.locator_kind && v.locator_kind !== "none"
+                    ? `${v.locator_kind} ${v.locator_index}`
+                    : "\u2014"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {detail.missing.length > 0 && (
+          <>
+            <h4>Looked for, not found</h4>
+            <p className="muted">
+              {detail.missing.map((m) => m.label).join(", ")}
+            </p>
+          </>
+        )}
+      </aside>
+    </div>
+  );
+}
