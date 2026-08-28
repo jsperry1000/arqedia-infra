@@ -1,0 +1,128 @@
+:root {
+  --deep:   #002561;
+  --medium: #278ACA;
+  --light:  #C7E4F8;
+  --gold:   #FFDD00;
+  --green:  #9ACA3C;
+
+  --ink:    #0d1b2a;
+  --muted:  #64748b;
+  --line:   #e2e8f0;
+  --paper:  #ffffff;
+  --wash:   #f7fafd;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--wash);
+  color: var(--ink);
+  font: 15px/1.55 "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+
+h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; color: var(--deep); }
+h1 { font-size: 22px; margin: 0 0 20px; }
+h2 { font-size: 19px; margin: 0 0 14px; }
+h3 { font-size: 15px; margin: 26px 0 8px; text-transform: uppercase;
+     letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+
+a { color: var(--medium); cursor: pointer; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.muted { color: var(--muted); }
+.error { color: #b91c1c; }
+.busy  { color: var(--medium); }
+
+/* --- shell --------------------------------------------------------------- */
+
+.shell header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 12px 24px;
+  background: var(--deep);
+  color: #fff;
+}
+.shell header strong { letter-spacing: 0.14em; font-size: 13px; }
+.shell header .muted  { color: var(--light); margin-left: auto; font-size: 13px; }
+.shell header a       { color: var(--light); font-size: 13px; }
+
+main { max-width: 940px; margin: 32px auto; padding: 0 24px; }
+
+/* --- sign in ------------------------------------------------------------- */
+
+.centre {
+  min-height: 100vh; display: grid; place-items: center;
+  background: var(--deep);
+}
+.card {
+  background: var(--paper); padding: 36px; border-radius: 4px;
+  width: 320px; display: flex; flex-direction: column; gap: 12px;
+}
+.card h1 { letter-spacing: 0.18em; font-size: 18px; margin-bottom: 8px; }
+
+/* --- controls ------------------------------------------------------------ */
+
+input[type="text"], input[type="password"], input:not([type]) {
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 3px;
+  font: inherit; width: 100%;
+}
+input:focus-visible, button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--medium); outline-offset: 2px;
+}
+
+button {
+  padding: 10px 18px; border: 0; border-radius: 3px;
+  background: var(--deep); color: #fff; font: inherit; font-weight: 500;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { background: var(--medium); }
+button:disabled { background: var(--line); color: var(--muted); cursor: default; }
+
+/* Generating a memo is the deliberate act - and the one that will cost money.
+   Gold appears here and nowhere else. */
+main button { background: var(--gold); color: var(--deep); }
+main button:hover:not(:disabled) { background: #f5d400; }
+
+.inline { display: flex; gap: 8px; margin-top: 20px; }
+.inline input { flex: 1; }
+
+.back { display: inline-block; margin-bottom: 12px; font-size: 13px; }
+
+input[type="file"] {
+  padding: 20px; border: 1px dashed var(--medium); border-radius: 4px;
+  background: var(--paper); width: 100%; cursor: pointer;
+}
+
+/* --- tables -------------------------------------------------------------- */
+
+table { width: 100%; border-collapse: collapse; }
+td { padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 14px; }
+tr:hover td { background: var(--paper); }
+
+/* --- memo ---------------------------------------------------------------- */
+
+.memo {
+  background: var(--paper); padding: 40px 48px;
+  border: 1px solid var(--line); border-radius: 4px;
+  max-width: 760px;
+}
+.memo h1 { font-size: 20px; }
+.memo h2 {
+  font-size: 15px; text-transform: uppercase; letter-spacing: 0.05em;
+  margin: 32px 0 12px; padding-bottom: 6px;
+  border-bottom: 2px solid var(--light);
+}
+.memo table { margin: 12px 0; }
+.memo th {
+  text-align: left; padding: 8px 12px; font-size: 12px;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); border-bottom: 1px solid var(--line);
+}
+
+/* The citation under every fact. Quiet, but always there. */
+.memo em { color: var(--muted); font-size: 13px; font-style: normal; }
+.memo li { margin-bottom: 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
