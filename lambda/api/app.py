@@ -1,4 +1,3 @@
-import pack
 """
 app.py - the API.
 
@@ -9,11 +8,14 @@ tenant from a request parameter and the boundary is gone.
 
 Routes:
   GET  /engagements                     what this tenant has
-  GET  /engagements/{id}/documents      documents in one engagement
+  GET  /engagements/{id}/pending        analysed, awaiting confirmation
+  POST /engagements/{id}/file           confirm types and file
+  GET  /engagements/{id}/documents      filed documents
   GET  /engagements/{id}/memos          memos generated for it
   POST /engagements/{id}/generate       compose a memo (deliberate act)
   GET  /memos/{memo_id}                 a rendered memo
   POST /uploads                         a signed link to upload one file
+  GET  /document-types                  the type list, for the dropdown
 """
 
 import json
@@ -25,6 +27,9 @@ import urllib.parse
 import boto3
 from botocore.exceptions import ClientError
 
+import pack
+import textract
+
 _s3 = boto3.client("s3")
 _rds = boto3.client("rds-data")
 _lambda = boto3.client("lambda")
@@ -33,20 +38,19 @@ CLUSTER_ARN = os.environ["CLUSTER_ARN"]
 SECRET_ARN = os.environ["SECRET_ARN"]
 DATABASE = os.environ["DATABASE"]
 DOCS_BUCKET = os.environ["DOCS_BUCKET"]
-CURATED_BUCKET = os.environ["CURATED_BUCKET"]
 REVIEW_BUCKET = os.environ["REVIEW_BUCKET"]
+CURATED_BUCKET = os.environ["CURATED_BUCKET"]
 COMPOSITION_FUNCTION = os.environ["COMPOSITION_FUNCTION"]
+TEXTRACT_TOPIC_ARN = os.environ["TEXTRACT_TOPIC_ARN"]
+TEXTRACT_ROLE_ARN = os.environ["TEXTRACT_ROLE_ARN"]
 
-# Engagement and file names appear in S3 keys. Constrain them rather than
-# trusting what arrives.
-_SAFE = re.compile(r"^[A-Za-z0-9._-]{1,120}$")
 
 def _clean(name):
     """Make a name safe for a storage key while keeping it recognisable.
 
     Real documents are called things like "KCCA Trade Licence 2026.pdf".
     Rejecting them was a rule written for a machine rather than a person:
-    spaces and brackets become dashes, anything else unsafe is dropped."""
+    whitespace becomes a dash, anything else unsafe is dropped."""
     name = re.sub(r"\s+", "-", (name or "").strip())
     name = re.sub(r"[^A-Za-z0-9._-]", "", name)
     name = re.sub(r"-{2,}", "-", name).strip("-.")
@@ -54,6 +58,7 @@ def _clean(name):
 
 
 def _sql(statement, params=None):
+    """Data API call, retrying while the cluster wakes from zero capacity."""
     for _ in range(12):
         try:
             return _rds.execute_statement(
@@ -76,6 +81,8 @@ def _sql(statement, params=None):
 def _p(name, value):
     if value is None:
         return {"name": name, "value": {"isNull": True}}
+    if isinstance(value, bool):
+        return {"name": name, "value": {"booleanValue": value}}
     if isinstance(value, int):
         return {"name": name, "value": {"longValue": value}}
     return {"name": name, "value": {"stringValue": str(value)}}
@@ -137,6 +144,120 @@ def list_engagements(tenant_id):
          "last_activity": _col(r, 2)}
         for r in result.get("records", [])
     ]
+
+
+def list_pending(tenant_id, engagement):
+    """Analysed but not yet filed: the proposed type, how sure, and why."""
+    result = _sql(
+        """
+        SELECT document_id, filename, document_type, page_count,
+               thin_text, char_count, type_confidence, type_reason, state
+        FROM document
+        WHERE tenant_id = :tenant_id
+          AND state IN ('analysed', 'reading')
+          AND s3_key LIKE :prefix
+        ORDER BY document_id
+        """,
+        [_p("tenant_id", tenant_id),
+         _p("prefix", "%/docs/" + engagement + "/%")],
+    )
+    return [
+        {"document_id": _col(r, 0),
+         "filename": _col(r, 1),
+         "proposed_type": _col(r, 2),
+         "pages": _col(r, 3),
+         "thin_text": bool(_col(r, 4)),
+         "chars": _col(r, 5),
+         "confidence": _col(r, 6),
+         "why": _col(r, 7),
+         "state": _col(r, 8)}
+        for r in result.get("records", [])
+    ]
+
+
+def _start_ocr(tenant_id, document_id, s3_key, document_type):
+    """Send a scan to OCR rather than to extraction.
+
+    The read mode comes from the confirmed type, which is why confirmation
+    happens before filing. The job runs asynchronously; the collector picks it
+    up on completion and releases the document to extraction then."""
+    job_id, mode = textract.start(
+        DOCS_BUCKET, s3_key, document_type,
+        TEXTRACT_TOPIC_ARN, TEXTRACT_ROLE_ARN,
+    )
+    _sql(
+        """
+        UPDATE document
+        SET document_type = :ty, type_confirmed = 1, state = 'reading',
+            textract_job_id = :job, textract_api = :mode
+        WHERE tenant_id = :t AND document_id = :d
+        """,
+        [
+            _p("ty", document_type),
+            _p("job", job_id),
+            _p("mode", mode),
+            _p("t", tenant_id),
+            _p("d", document_id),
+        ],
+    )
+    return job_id, mode
+
+
+def file_documents(tenant_id, decisions):
+    """Confirm types and file. The deliberate act that starts extraction -
+    and, later, the point at which money changes hands.
+
+    A document that could not be read goes to OCR instead, and reaches
+    extraction when the OCR finishes. A rejected document is marked and kept,
+    never deleted."""
+    filed, rejected, reading = 0, 0, 0
+
+    for d in decisions:
+        document_id = int(d.get("document_id"))
+
+        if not d.get("include", True):
+            _sql("UPDATE document SET state = 'rejected' "
+                 "WHERE tenant_id = :t AND document_id = :d",
+                 [_p("t", tenant_id), _p("d", document_id)])
+            rejected += 1
+            continue
+
+        document_type = d.get("document_type") or None
+
+        row = _sql("SELECT s3_key, thin_text FROM document "
+                   "WHERE tenant_id = :t AND document_id = :d",
+                   [_p("t", tenant_id), _p("d", document_id)])
+        records = row.get("records", [])
+        if not records:
+            continue
+        s3_key = _col(records[0], 0)
+        thin = bool(_col(records[0], 1))
+
+        if thin or textract.always_ocr(document_type):
+            _start_ocr(tenant_id, document_id, s3_key, document_type)
+            reading += 1
+            continue
+
+        _sql("UPDATE document SET document_type = :ty, type_confirmed = 1, "
+             "state = 'filed' WHERE tenant_id = :t AND document_id = :d",
+             [_p("ty", document_type), _p("t", tenant_id), _p("d", document_id)])
+
+        # Extraction listens for .normalized.json. Renaming the envelope is
+        # what starts it - filing, not uploading.
+        body = _s3.get_object(Bucket=REVIEW_BUCKET,
+                              Key=s3_key + ".analysed.json")["Body"].read()
+        envelope = json.loads(body.decode("utf-8"))
+        envelope["document_type"] = document_type
+        envelope["document_type_confirmed"] = True
+        _s3.put_object(
+            Bucket=REVIEW_BUCKET,
+            Key=s3_key + ".normalized.json",
+            Body=json.dumps(envelope, ensure_ascii=False).encode("utf-8"),
+            ContentType="application/json",
+        )
+        filed += 1
+
+    return {"filed": filed, "reading": reading, "rejected": rejected}
 
 
 def list_documents(tenant_id, engagement):
@@ -241,6 +362,22 @@ def generate(tenant_id, engagement):
     return {"status": "started", "engagement": engagement}
 
 
+def document_types():
+    """The type list for the dropdown, with what filing each one will do -
+    so the screen can say whether confirming a type triggers OCR."""
+    out = []
+    for t in pack.document_type_list():
+        out.append({
+            "key": t["key"],
+            "label": t["label"],
+            "category": t["category"],
+            "description": t["description"],
+            "read_mode": textract.read_mode_for(t["key"]),
+            "always_ocr": textract.always_ocr(t["key"]),
+        })
+    return out
+
+
 # --- dispatch --------------------------------------------------------------
 
 def lambda_handler(event, context):
@@ -256,9 +393,6 @@ def lambda_handler(event, context):
     try:
         if route == "GET /engagements":
             return _reply(200, {"engagements": list_engagements(tenant_id)})
-
-        if route == "GET /document-types":
-            return _reply(200, {"types": pack.document_type_list()})
 
         if route == "GET /engagements/{id}/pending":
             return _reply(200, {"pending": list_pending(tenant_id, engagement)})
@@ -288,6 +422,9 @@ def lambda_handler(event, context):
                                           body.get("engagement", ""),
                                           body.get("filename", "")))
 
+        if route == "GET /document-types":
+            return _reply(200, {"types": document_types()})
+
         return _reply(404, {"error": "unknown route"})
 
     except ValueError as exc:
@@ -295,8 +432,3 @@ def lambda_handler(event, context):
     except Exception as exc:  # noqa: BLE001 - never leak internals to a client
         print("[api-error] route=%s tenant=%s %r" % (route, tenant_id, exc))
         return _reply(500, {"error": "internal error"})
-
-
-
-
-
