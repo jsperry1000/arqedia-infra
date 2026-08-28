@@ -25,3 +25,7 @@ Thumbs.db
 build/
 
 memo-result.json
+
+__pycache__/
+*.pyc
+*.pdf
