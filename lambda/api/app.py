@@ -1,3 +1,4 @@
+import pack
 """
 app.py - the API.
 
@@ -33,6 +34,7 @@ SECRET_ARN = os.environ["SECRET_ARN"]
 DATABASE = os.environ["DATABASE"]
 DOCS_BUCKET = os.environ["DOCS_BUCKET"]
 CURATED_BUCKET = os.environ["CURATED_BUCKET"]
+REVIEW_BUCKET = os.environ["REVIEW_BUCKET"]
 COMPOSITION_FUNCTION = os.environ["COMPOSITION_FUNCTION"]
 
 # Engagement and file names appear in S3 keys. Constrain them rather than
@@ -45,7 +47,7 @@ def _clean(name):
     Real documents are called things like "KCCA Trade Licence 2026.pdf".
     Rejecting them was a rule written for a machine rather than a person:
     spaces and brackets become dashes, anything else unsafe is dropped."""
-    name = re.sub(r"[\\s]+", "-", (name or "").strip())
+    name = re.sub(r"\s+", "-", (name or "").strip())
     name = re.sub(r"[^A-Za-z0-9._-]", "", name)
     name = re.sub(r"-{2,}", "-", name).strip("-.")
     return name[:120]
@@ -147,6 +149,7 @@ def list_documents(tenant_id, engagement):
                    AND v.tenant_id = d.tenant_id) AS values_found
         FROM document d
         WHERE tenant_id = :tenant_id
+          AND state = 'filed'
           AND s3_key LIKE :prefix
         ORDER BY document_id
         """,
@@ -254,6 +257,16 @@ def lambda_handler(event, context):
         if route == "GET /engagements":
             return _reply(200, {"engagements": list_engagements(tenant_id)})
 
+        if route == "GET /document-types":
+            return _reply(200, {"types": pack.document_type_list()})
+
+        if route == "GET /engagements/{id}/pending":
+            return _reply(200, {"pending": list_pending(tenant_id, engagement)})
+
+        if route == "POST /engagements/{id}/file":
+            body = json.loads(event.get("body") or "{}")
+            return _reply(200, file_documents(tenant_id, body.get("decisions", [])))
+
         if route == "GET /engagements/{id}/documents":
             return _reply(200, {"documents": list_documents(tenant_id, engagement)})
 
@@ -282,4 +295,8 @@ def lambda_handler(event, context):
     except Exception as exc:  # noqa: BLE001 - never leak internals to a client
         print("[api-error] route=%s tenant=%s %r" % (route, tenant_id, exc))
         return _reply(500, {"error": "internal error"})
+
+
+
+
 

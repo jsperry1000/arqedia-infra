@@ -38,6 +38,21 @@ DATABASE = os.environ["DATABASE"]
 # Stage 1 runs a single hard-coded configuration.
 CONFIG_REVISION = 1
 
+# A page yielding less than this, in a file large enough to be an image, is a
+# scan carrying only a stamp. Characters per page alone let 68 characters
+# through as a readable certificate of incorporation.
+_THIN_CHARS_PER_PAGE = 200
+_IMAGE_BYTES_PER_PAGE = 100000
+
+
+def _is_thin(text, pages, byte_size):
+    """True when the text is implausibly short for a file this size."""
+    if pages < 1:
+        return True
+    thin = (len(text) / pages) < _THIN_CHARS_PER_PAGE
+    heavy = (byte_size / pages) > _IMAGE_BYTES_PER_PAGE
+    return thin and heavy
+
 _KEY_RE = re.compile(r"^tenants/(?P<tenant>\d+)/docs/(?P<engagement>[^/]+)/(?P<file>.+)$")
 
 
@@ -88,7 +103,10 @@ def _parse_key(key):
 
 
 def _write_envelope(tenant_id, key, envelope):
-    review_key = "{}.normalized.json".format(key)
+    # .analysed.json, not .normalized.json. Extraction listens for the latter,
+    # so writing this does not start extraction - filing does, by renaming the
+    # envelope once a person has confirmed what the document is.
+    review_key = "{}.analysed.json".format(key)
     _s3.put_object(
         Bucket=REVIEW_BUCKET,
         Key=review_key,
@@ -103,10 +121,14 @@ def _record_document(envelope):
         """
         INSERT INTO document
           (tenant_id, engagement_id, s3_bucket, s3_key, s3_version_id,
-           sha256, filename, page_count, extraction_method, document_type, config_revision)
+           sha256, filename, page_count, extraction_method, document_type,
+           state, thin_text, char_count, byte_size,
+           type_confidence, type_reason, config_revision)
         VALUES
           (:tenant_id, :engagement_id, :s3_bucket, :s3_key, :s3_version_id,
-           :sha256, :filename, :page_count, :extraction_method, :document_type, :config_revision)
+           :sha256, :filename, :page_count, :extraction_method, :document_type,
+           :state, :thin_text, :char_count, :byte_size,
+           :type_confidence, :type_reason, :config_revision)
         """,
         [
             _p("tenant_id", envelope["tenant_id"]),
@@ -119,6 +141,12 @@ def _record_document(envelope):
             _p("page_count", len(envelope["units"])),
             _p("extraction_method", envelope["extraction_method"]),
             _p("document_type", envelope.get("document_type")),
+            _p("state", "analysed"),
+            _p("thin_text", 1 if envelope.get("thin_text") else 0),
+            _p("char_count", len(envelope.get("raw_text") or "")),
+            _p("byte_size", envelope.get("byte_size")),
+            _p("type_confidence", envelope.get("document_type_confidence")),
+            _p("type_reason", envelope.get("document_type_reason")),
             _p("config_revision", CONFIG_REVISION),
         ],
     )
@@ -145,13 +173,17 @@ def lambda_handler(event, context):
         print("[unreadable] key={} reason={}".format(src_key, exc.reason))
         return {"status": "unreadable", "reason": exc.reason, "key": src_key}
 
-    document_type, confidence = classify.classify(raw_text)
+    document_type, confidence, why = classify.classify(raw_text)
 
     envelope = {
         "tenant_id": tenant_id,
         "document_type": document_type,
         "document_type_proposed": document_type,
         "document_type_confidence": confidence,
+        "document_type_reason": why,
+        "byte_size": len(body),
+        "thin_text": _is_thin(raw_text, len(units), len(body)),
+        "state": "analysed",
         "document_type_confirmed": False,
         "engagement": engagement,
         "filename": filename,
@@ -184,4 +216,8 @@ def lambda_handler(event, context):
         "extraction_method": method,
         "units": len(units),
     }
+
+
+
+
 
