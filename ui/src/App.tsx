@@ -1,9 +1,10 @@
+import { EngagementView } from "./Review";
 import { useEffect, useState } from "react";
 import { Amplify } from "aws-amplify";
 import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
 import ReactMarkdown from "react-markdown";
 import { config } from "./config";
-import { api, type Engagement, type Doc, type MemoRef } from "./api";
+import { api, type Engagement } from "./api";
 
 Amplify.configure({
   Auth: {
@@ -118,89 +119,6 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
 
 // --- one engagement --------------------------------------------------------
 
-function EngagementView({ id, onBack, onMemo }: {
-  id: string; onBack: () => void; onMemo: (memoId: number) => void;
-}) {
-  const [docs, setDocs] = useState<Doc[]>([]);
-  const [memos, setMemos] = useState<MemoRef[]>([]);
-  const [busy, setBusy] = useState("");
-
-  async function refresh() {
-    const [d, m] = await Promise.all([api.documents(id), api.memos(id)]);
-    setDocs(d.documents);
-    setMemos(m.memos);
-  }
-
-  // Documents are processed in the background, so poll - but only while
-  // something is actually unfinished. Polling a settled engagement forever
-  // is thousands of pointless requests from one open tab.
-  const settling = docs.some((d) => !d.document_type || d.values === 0);
-
-  useEffect(() => { refresh(); }, [id]);
-
-  useEffect(() => {
-    if (!settling && !busy) return;
-    const timer = setInterval(refresh, 5000);
-    return () => clearInterval(timer);
-  }, [id, settling, busy]);
-
-  async function upload(files: FileList | null) {
-    if (!files) return;
-    for (const file of Array.from(files)) {
-      setBusy("Uploading " + file.name);
-      await api.upload(id, file);
-    }
-    setBusy("");
-    refresh();
-  }
-
-  async function generate() {
-    setBusy("Generating - this takes a minute or two");
-    await api.generate(id);
-    setTimeout(() => { setBusy(""); refresh(); }, 90000);
-  }
-
-  return (
-    <div>
-      <a onClick={onBack} className="back">Back</a>
-      <h2>{id}</h2>
-
-      <input type="file" multiple onChange={(e) => upload(e.target.files)} />
-      {busy && <p className="busy">{busy}</p>}
-
-      <h3>Documents</h3>
-      {docs.length === 0 && <p className="muted">No documents yet.</p>}
-      <table>
-        <tbody>
-          {docs.map((d) => (
-            <tr key={d.document_id}>
-              <td>{d.filename}</td>
-              <td className="muted">{d.document_type ?? "unclassified"}</td>
-              <td className="muted">{d.pages ?? "-"} pages</td>
-              <td className="muted">{d.values} values</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <h3>Memos</h3>
-      <button onClick={generate} disabled={docs.length === 0 || !!busy}>
-        Generate memo
-      </button>
-      <table>
-        <tbody>
-          {memos.map((m) => (
-            <tr key={m.memo_id} onClick={() => onMemo(m.memo_id)}>
-              <td><a>Memo {m.memo_id}</a></td>
-              <td className="muted">{m.generated_at}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 // --- memo ------------------------------------------------------------------
 
 function MemoView({ memoId, onBack }: { memoId: number; onBack: () => void }) {
@@ -266,5 +184,6 @@ export default function App() {
     </div>
   );
 }
+
 
 

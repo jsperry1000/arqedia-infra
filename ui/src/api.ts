@@ -39,7 +39,42 @@ export type MemoRef = {
   generated_at: string;
 };
 
+export type Pending = {
+  document_id: number;
+  filename: string;
+  proposed_type: string | null;
+  pages: number | null;
+  thin_text: boolean;
+  chars: number | null;
+  confidence: string | null;
+  why: string | null;
+};
+
+export type DocType = {
+  key: string;
+  label: string;
+  category: string;
+  description: string;
+};
+
+export type Decision = {
+  document_id: number;
+  document_type: string | null;
+  include: boolean;
+};
+
 export const api = {
+  documentTypes: (): Promise<{ types: DocType[] }> => call("/document-types"),
+
+  pending: (id: string): Promise<{ pending: Pending[] }> =>
+    call(`/engagements/${encodeURIComponent(id)}/pending`),
+
+  file: (id: string, decisions: Decision[]) =>
+    call(`/engagements/${encodeURIComponent(id)}/file`, {
+      method: "POST",
+      body: JSON.stringify({ decisions }),
+    }),
+
   engagements: (): Promise<{ engagements: Engagement[] }> =>
     call("/engagements"),
 
@@ -70,3 +105,4 @@ export const api = {
     if (!put.ok) throw new Error("upload failed");
   },
 };
+
