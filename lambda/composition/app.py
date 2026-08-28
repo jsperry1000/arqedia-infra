@@ -39,12 +39,14 @@ import template
 _s3 = boto3.client("s3")
 _rds = boto3.client("rds-data")
 _bedrock = boto3.client("bedrock-runtime")
+_lambda = boto3.client("lambda")
 
 CURATED_BUCKET = os.environ["CURATED_BUCKET"]
 CLUSTER_ARN = os.environ["CLUSTER_ARN"]
 SECRET_ARN = os.environ["SECRET_ARN"]
 DATABASE = os.environ["DATABASE"]
 MODEL_ID = os.environ["MODEL_ID"]
+RENDER_FUNCTION = os.environ["RENDER_FUNCTION"]
 
 # A single section's assembled draft. Long enough for fifty documents' worth of
 # one section, short enough that the consolidation stays sharp.
@@ -459,6 +461,17 @@ def lambda_handler(event, context):
         _record_claim(tenant_id, memo_id, section["key"], ordinal,
                       block["markdown"], block["values"])
         claims += 1
+
+    # Render the PDF now, so it exists by the time anyone looks for it.
+    # Asynchronous: a slow render must not fail a memo that is already written.
+    try:
+        _lambda.invoke(
+            FunctionName=RENDER_FUNCTION,
+            InvocationType="Event",
+            Payload=json.dumps({"tenant_id": tenant_id, "memo_id": memo_id}),
+        )
+    except Exception as exc:  # noqa: BLE001
+        print("[render-start-failed] memo=%s %r" % (memo_id, exc))
 
     print("[composed] memo={} docs={} values={} claims={} empty={} "
           "tokens_in={} tokens_out={}".format(
