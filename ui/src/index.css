@@ -213,10 +213,10 @@ p.warn { color: #b45309; }
 }
 .memo-head .pdf:hover { background: var(--medium); text-decoration: none; }
 
-/* A citation that resolves to one of this memo's sources is clickable. One
-   that does not stays quiet rather than promising something it cannot do. */
+/* Each filename in a citation line that resolves to one of this memo's own
+   sources is separately clickable. The rest of the line stays quiet rather
+   than promising something it cannot do. */
 .cite {
-  color: var(--medium); font-size: 12px; font-style: italic;
   cursor: pointer; border-bottom: 1px dotted var(--medium);
 }
 .cite:hover { color: var(--deep); border-bottom-color: var(--deep); }

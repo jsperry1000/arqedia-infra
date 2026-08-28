@@ -175,7 +175,7 @@ def _render_group(field_id, columns, rows):
 
     any_value = next(iter(next(iter(records.values())).values()))
     out.append("")
-    out.append("_" + _citation(any_value) + "_")
+    out.append("*" + _citation(any_value) + "*")
     out.append("")
     return out
 
@@ -209,7 +209,7 @@ def _assemble_extract(section, values):
             for v in rows:
                 if v["field_id"] == field_id:
                     blocks.append("- **" + _label_for(field_id) + ":** "
-                                  + str(v["value"]) + "  \n  _" + _citation(v) + "_")
+                                  + str(v["value"]) + "  \n  *" + _citation(v) + "*")
         blocks.append("")
 
     return "\n".join(blocks) + "\n", used
@@ -404,7 +404,7 @@ def lambda_handler(event, context):
 
         sources = sorted({_citation(v) for v in block["values"]})
         if sources:
-            parts.append("_Sources: " + "; ".join(sources) + "._")
+            parts.append("*Sources: " + "; ".join(sources) + ".*")
             parts.append("")
 
     memo_body = "\n".join(parts)
