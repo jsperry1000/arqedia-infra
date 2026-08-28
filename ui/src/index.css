@@ -126,3 +126,22 @@ tr:hover td { background: var(--paper); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* --- review rows --------------------------------------------------------- */
+
+.review {
+  background: var(--paper); border: 1px solid var(--line);
+  border-radius: 4px; padding: 14px 16px; margin-bottom: 10px;
+}
+.review-head { display: flex; align-items: center; gap: 12px; }
+.review-head label { display: flex; align-items: center; gap: 10px; flex: 1; }
+.review-head input[type="checkbox"] { width: auto; }
+.review-body { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.review-body select {
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 3px;
+  font: inherit; min-width: 280px; background: var(--paper);
+}
+.why { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+.low  { color: #b45309; font-size: 13px; }
+.warn { color: #b45309; font-size: 13px; font-weight: 500; }
+p.warn { color: #b45309; }
