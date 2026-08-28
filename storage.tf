@@ -68,6 +68,22 @@ resource "aws_s3_bucket_public_access_block" "data" {
   restrict_public_buckets = true
 }
 
+# The browser uploads straight to S3, so the bucket must accept requests from
+# the application origin - including the encryption header the signed link
+# requires. Without this the browser blocks the upload before it is sent.
+resource "aws_s3_bucket_cors_configuration" "docs" {
+  bucket = aws_s3_bucket.data["docs"].id
+
+  cors_rule {
+    allowed_origins = ["https://${aws_cloudfront_distribution.frontend.domain_name}",
+                       "http://localhost:5173"]
+    allowed_methods = ["PUT"]
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3600
+  }
+}
+
 resource "aws_s3_bucket_ownership_controls" "data" {
   for_each = aws_s3_bucket.data
   bucket   = each.value.id
@@ -106,3 +122,4 @@ output "data_buckets" {
 output "data_kms_key_arn" {
   value = aws_kms_key.data.arn
 }
+
