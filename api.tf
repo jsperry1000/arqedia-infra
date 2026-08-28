@@ -102,6 +102,8 @@ resource "aws_lambda_function" "api" {
       CURATED_BUCKET       = aws_s3_bucket.data["curated"].id
       REVIEW_BUCKET        = aws_s3_bucket.data["review"].id
       COMPOSITION_FUNCTION = aws_lambda_function.composition.function_name
+      TEXTRACT_TOPIC_ARN   = aws_sns_topic.textract.arn
+      TEXTRACT_ROLE_ARN    = aws_iam_role.textract_publish.arn
     }
   }
 
@@ -190,5 +192,6 @@ resource "aws_lambda_permission" "api_gateway" {
 output "api_url" {
   value = aws_apigatewayv2_stage.default.invoke_url
 }
+
 
 
