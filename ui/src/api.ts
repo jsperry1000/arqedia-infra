@@ -23,22 +23,6 @@ export type Engagement = {
   last_activity: string;
 };
 
-export type Doc = {
-  document_id: number;
-  filename: string;
-  document_type: string | null;
-  pages: number | null;
-  method: string | null;
-  filed_at: string;
-  values: number;
-};
-
-export type MemoRef = {
-  memo_id: number;
-  template: string;
-  generated_at: string;
-};
-
 export type Pending = {
   document_id: number;
   filename: string;
@@ -48,6 +32,23 @@ export type Pending = {
   chars: number | null;
   confidence: string | null;
   why: string | null;
+  state: string;
+  uploaded_by: string | null;
+};
+
+export type Doc = {
+  document_id: number;
+  filename: string;
+  document_type: string | null;
+  pages: number | null;
+  method: string | null;
+  filed_at: string;
+  uploaded_by: string | null;
+  active: boolean;
+  state: string;
+  deactivated_by: string | null;
+  deactivated_at: string | null;
+  values: number;
 };
 
 export type DocType = {
@@ -55,6 +56,8 @@ export type DocType = {
   label: string;
   category: string;
   description: string;
+  read_mode: string;
+  always_ocr: boolean;
 };
 
 export type Decision = {
@@ -63,8 +66,57 @@ export type Decision = {
   include: boolean;
 };
 
+export type MemoRef = {
+  memo_id: number;
+  template: string;
+  generated_at: string;
+  generated_by: string | null;
+  parent_memo_id: number | null;
+  revision: number;
+  modified_by: string | null;
+  modified_at: string | null;
+  label: string;
+  has_pdf: boolean;
+};
+
+export type Memo = {
+  memo_id: number;
+  generated_at: string;
+  generated_by: string | null;
+  parent_memo_id: number | null;
+  revision: number;
+  label: string;
+  modified_by: string | null;
+  modified_at: string | null;
+  markdown: string;
+  pdf_url: string | null;
+};
+
+export type ExtractedValue = {
+  field_id: string;
+  label: string;
+  value: string | null;
+  locator_kind: string | null;
+  locator_index: number | null;
+  row: number;
+};
+
+export type DocumentDetail = {
+  document_id: number;
+  filename: string;
+  document_type: string | null;
+  pages: number | null;
+  method: string | null;
+  values: ExtractedValue[];
+  missing: { field_id: string; label: string }[];
+  expected: number;
+};
+
 export const api = {
   documentTypes: (): Promise<{ types: DocType[] }> => call("/document-types"),
+
+  engagements: (): Promise<{ engagements: Engagement[] }> =>
+    call("/engagements"),
 
   pending: (id: string): Promise<{ pending: Pending[] }> =>
     call(`/engagements/${encodeURIComponent(id)}/pending`),
@@ -75,11 +127,17 @@ export const api = {
       body: JSON.stringify({ decisions }),
     }),
 
-  engagements: (): Promise<{ engagements: Engagement[] }> =>
-    call("/engagements"),
-
   documents: (id: string): Promise<{ documents: Doc[] }> =>
     call(`/engagements/${encodeURIComponent(id)}/documents`),
+
+  setActive: (documentId: number, active: boolean) =>
+    call(`/documents/${documentId}/active`, {
+      method: "POST",
+      body: JSON.stringify({ active }),
+    }),
+
+  documentValues: (documentId: number): Promise<DocumentDetail> =>
+    call(`/documents/${documentId}/values`),
 
   memos: (id: string): Promise<{ memos: MemoRef[] }> =>
     call(`/engagements/${encodeURIComponent(id)}/memos`),
@@ -87,8 +145,7 @@ export const api = {
   generate: (id: string) =>
     call(`/engagements/${encodeURIComponent(id)}/generate`, { method: "POST" }),
 
-  memo: (memoId: number): Promise<{ markdown: string; generated_at: string }> =>
-    call(`/memos/${memoId}`),
+  memo: (memoId: number): Promise<Memo> => call(`/memos/${memoId}`),
 
   // Two steps: ask for a signed link, then send the file straight to S3.
   // The file never passes through our servers.
@@ -105,4 +162,3 @@ export const api = {
     if (!put.ok) throw new Error("upload failed");
   },
 };
-

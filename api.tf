@@ -155,6 +155,8 @@ locals {
     "GET /memos/{memo_id}",
     "POST /uploads",
     "GET /document-types",
+    "POST /documents/{document_id}/active",
+    "GET /documents/{document_id}/values",
   ]
 }
 
@@ -192,6 +194,7 @@ resource "aws_lambda_permission" "api_gateway" {
 output "api_url" {
   value = aws_apigatewayv2_stage.default.invoke_url
 }
+
 
 
 

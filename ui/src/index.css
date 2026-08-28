@@ -21,11 +21,12 @@ body {
   font: 15px/1.55 "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
 }
 
-h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; color: var(--deep); }
+h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; color: var(--deep); }
 h1 { font-size: 22px; margin: 0 0 20px; }
 h2 { font-size: 19px; margin: 0 0 14px; }
 h3 { font-size: 15px; margin: 26px 0 8px; text-transform: uppercase;
      letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+h4 { font-size: 13px; margin: 20px 0 6px; }
 
 a { color: var(--medium); cursor: pointer; text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -33,6 +34,14 @@ a:hover { text-decoration: underline; }
 .muted { color: var(--muted); }
 .error { color: #b91c1c; }
 .busy  { color: var(--medium); }
+
+/* A citation. Small, italic, in the brand mid blue - present on every fact,
+   quiet enough not to interrupt the reading. */
+.ref {
+  color: var(--medium);
+  font-size: 12px;
+  font-style: italic;
+}
 
 /* --- shell --------------------------------------------------------------- */
 
@@ -46,7 +55,7 @@ a:hover { text-decoration: underline; }
 .shell header .muted  { color: var(--light); margin-left: auto; font-size: 13px; }
 .shell header a       { color: var(--light); font-size: 13px; }
 
-main { max-width: 940px; margin: 32px auto; padding: 0 24px; }
+main { max-width: 1040px; margin: 32px auto; padding: 0 24px; }
 
 /* --- sign in ------------------------------------------------------------- */
 
@@ -66,7 +75,8 @@ input[type="text"], input[type="password"], input:not([type]) {
   padding: 10px 12px; border: 1px solid var(--line); border-radius: 3px;
   font: inherit; width: 100%;
 }
-input:focus-visible, button:focus-visible, a:focus-visible {
+input:focus-visible, button:focus-visible, a:focus-visible,
+select:focus-visible {
   outline: 2px solid var(--medium); outline-offset: 2px;
 }
 
@@ -78,10 +88,11 @@ button {
 button:hover:not(:disabled) { background: var(--medium); }
 button:disabled { background: var(--line); color: var(--muted); cursor: default; }
 
-/* Generating a memo is the deliberate act - and the one that will cost money.
+/* Generating is the deliberate act - and the one that will cost money.
    Gold appears here and nowhere else. */
 main button { background: var(--gold); color: var(--deep); }
 main button:hover:not(:disabled) { background: #f5d400; }
+main button:disabled { background: var(--line); color: var(--muted); }
 
 .inline { display: flex; gap: 8px; margin-top: 20px; }
 .inline input { flex: 1; }
@@ -98,6 +109,63 @@ input[type="file"] {
 table { width: 100%; border-collapse: collapse; }
 td { padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 14px; }
 tr:hover td { background: var(--paper); }
+
+table.docs th {
+  text-align: left; padding: 8px 12px; font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); border-bottom: 1px solid var(--line);
+  cursor: pointer; user-select: none; white-space: nowrap;
+}
+table.docs th:hover { color: var(--deep); }
+table.docs td input[type="checkbox"] { width: auto; }
+
+/* A document set aside is still visible - the file keeps what it was given. */
+tr.aside td { opacity: 0.45; }
+tr.aside td a { color: var(--muted); }
+
+.filters {
+  display: flex; align-items: center; gap: 16px; margin-bottom: 10px;
+}
+.filters input { flex: 0 1 280px; }
+.inline-check {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--muted); white-space: nowrap;
+}
+.inline-check input { width: auto; }
+
+/* --- review rows --------------------------------------------------------- */
+
+.review {
+  background: var(--paper); border: 1px solid var(--line);
+  border-radius: 4px; padding: 14px 16px; margin-bottom: 10px;
+}
+.review-head { display: flex; align-items: center; gap: 12px; }
+.review-head label { display: flex; align-items: center; gap: 10px; flex: 1; }
+.review-head input[type="checkbox"] { width: auto; }
+.review-body { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.review-body select {
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 3px;
+  font: inherit; min-width: 280px; background: var(--paper);
+}
+.why { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+.low  { color: #b45309; font-size: 13px; }
+.warn { color: #b45309; font-size: 13px; font-weight: 500; }
+p.warn { color: #b45309; }
+
+/* --- panel --------------------------------------------------------------- */
+
+.panel-backdrop {
+  position: fixed; inset: 0; background: rgba(13, 27, 42, 0.35);
+  display: flex; justify-content: flex-end; z-index: 10;
+}
+.panel {
+  background: var(--paper); width: min(620px, 92vw); height: 100%;
+  overflow-y: auto; padding: 28px 32px;
+  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.12);
+}
+.panel-close { float: right; font-size: 13px; }
+.panel h3 { margin-top: 0; text-transform: none; letter-spacing: 0;
+            color: var(--deep); font-size: 16px; }
 
 /* --- memo ---------------------------------------------------------------- */
 
@@ -118,30 +186,15 @@ tr:hover td { background: var(--paper); }
   text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--muted); border-bottom: 1px solid var(--line);
 }
-
-/* The citation under every fact. Quiet, but always there. */
-.memo em { color: var(--muted); font-size: 13px; font-style: normal; }
+.memo em {
+  color: var(--medium); font-size: 12px; font-style: italic;
+}
 .memo li { margin-bottom: 4px; }
+.memo blockquote {
+  margin: 12px 0; padding: 10px 14px;
+  background: #FDF6DA; border-left: 3px solid var(--gold);
+}
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
-
-/* --- review rows --------------------------------------------------------- */
-
-.review {
-  background: var(--paper); border: 1px solid var(--line);
-  border-radius: 4px; padding: 14px 16px; margin-bottom: 10px;
-}
-.review-head { display: flex; align-items: center; gap: 12px; }
-.review-head label { display: flex; align-items: center; gap: 10px; flex: 1; }
-.review-head input[type="checkbox"] { width: auto; }
-.review-body { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
-.review-body select {
-  padding: 8px 10px; border: 1px solid var(--line); border-radius: 3px;
-  font: inherit; min-width: 280px; background: var(--paper);
-}
-.why { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
-.low  { color: #b45309; font-size: 13px; }
-.warn { color: #b45309; font-size: 13px; font-weight: 500; }
-p.warn { color: #b45309; }

@@ -76,6 +76,8 @@ def _sql(statement, params=None):
 def _p(name, value):
     if value is None:
         return {"name": name, "value": {"isNull": True}}
+    if isinstance(value, bool):
+        return {"name": name, "value": {"booleanValue": value}}
     if isinstance(value, int):
         return {"name": name, "value": {"longValue": value}}
     return {"name": name, "value": {"stringValue": str(value)}}
@@ -99,6 +101,7 @@ def _load_values(tenant_id, engagement):
         JOIN document d ON d.document_id = v.document_id
         WHERE v.tenant_id = :tenant_id
           AND d.state = 'filed'
+          AND d.active = 1
           AND d.s3_key LIKE :engagement_prefix
         ORDER BY v.document_id, v.value_id
         """,
@@ -324,6 +327,7 @@ def _record_claim(tenant_id, memo_id, section_key, ordinal, text, values):
 def lambda_handler(event, context):
     tenant_id = int(event["tenant_id"])
     engagement = event["engagement"]
+    generated_by = event.get("generated_by")
 
     values = _load_values(tenant_id, engagement)
     if not values:
@@ -423,10 +427,10 @@ def lambda_handler(event, context):
         """
         INSERT INTO memo
           (tenant_id, template_key, config_revision, s3_bucket, s3_key,
-           s3_version_id, sha256)
+           s3_version_id, sha256, generated_by)
         VALUES
           (:tenant_id, :template_key, :config_revision, :s3_bucket, :s3_key,
-           :s3_version_id, :sha256)
+           :s3_version_id, :sha256, :generated_by)
         """,
         [
             _p("tenant_id", tenant_id),
@@ -436,6 +440,7 @@ def lambda_handler(event, context):
             _p("s3_key", memo_key),
             _p("s3_version_id", put.get("VersionId")),
             _p("sha256", sha),
+            _p("generated_by", generated_by),
         ],
     )
     memo_id = memo_result.get("generatedFields", [{}])[0].get("longValue")
@@ -463,7 +468,7 @@ def lambda_handler(event, context):
         claims += 1
 
     # Render the PDF now, so it exists by the time anyone looks for it.
-    # Asynchronous: a slow render must not fail a memo that is already written.
+    # Asynchronous: a slow render must not fail a memo already written.
     try:
         _lambda.invoke(
             FunctionName=RENDER_FUNCTION,
