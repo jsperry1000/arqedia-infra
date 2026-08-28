@@ -12,7 +12,12 @@ import { api, type Memo, type Passage } from "./api";
  * than a misprint. The original document is one click further, downloadable.
  */
 
-type Ref = { documentId: number; filename: string; unit: number | null };
+type Ref = {
+  documentId: number;
+  filename: string;
+  unit: number | null;
+  text: string;
+};
 
 export function MemoView({ memoId, onBack }: {
   memoId: number;
@@ -32,15 +37,36 @@ export function MemoView({ memoId, onBack }: {
     return map;
   }, [memo]);
 
-  /** Turn "filename.pdf, page 3" into something openable, or null. */
-  function parseRef(text: string): Ref | null {
-    const cleaned = text.replace(/^_+|_+$/g, "").trim();
-    const m = cleaned.match(
-      /([A-Za-z0-9._()\-]+\.(?:pdf|docx|xlsx|txt|json|xml))(?:\s*,\s*(?:page|section|sheet)\s*(\d+))?/i);
-    if (!m) return null;
-    const documentId = byFilename[m[1]];
-    if (!documentId) return null;
-    return { documentId, filename: m[1], unit: m[2] ? Number(m[2]) : null };
+  /**
+   * Split a citation line into its parts. "Sources: a.pdf, page 1;
+   * b.docx, section 2." is EIGHT citations on some sections, not one - and
+   * matching only the first meant every click opened the same document.
+   *
+   * Returns the line as alternating text and openable references, so the
+   * unmatched parts still read as ordinary citation text.
+   */
+  function parseRefs(text: string): (string | Ref)[] {
+    const pattern =
+      /([A-Za-z0-9._()\-]+\.(?:pdf|docx|xlsx|txt|json|xml))(\s*,\s*(?:page|section|sheet)\s*(\d+))?/gi;
+
+    const out: (string | Ref)[] = [];
+    let last = 0;
+    let m: RegExpExecArray | null;
+
+    while ((m = pattern.exec(text)) !== null) {
+      const documentId = byFilename[m[1]];
+      if (!documentId) continue;
+      if (m.index > last) out.push(text.slice(last, m.index));
+      out.push({
+        documentId,
+        filename: m[1],
+        unit: m[3] ? Number(m[3]) : null,
+        text: m[0],
+      });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) out.push(text.slice(last));
+    return out;
   }
 
   async function openRef(ref: Ref) {
@@ -52,16 +78,27 @@ export function MemoView({ memoId, onBack }: {
     }
   }
 
-  /** A citation renders in the brand mid blue, small and italic. Where the
-   *  file is one of this memo's sources it is also clickable. */
+  /** A citation renders in the brand mid blue, small and italic. Each
+   *  filename that is one of this memo's sources is separately clickable. */
   function Citation({ children }: { children?: React.ReactNode }) {
     const text = String(children ?? "");
-    const ref = parseRef(text);
-    if (!ref) return <em>{children}</em>;
+    const parts = parseRefs(text);
+
+    if (parts.every((p) => typeof p === "string")) {
+      return <em className="ref">{children}</em>;
+    }
+
     return (
-      <em className="cite" onClick={() => openRef(ref)}
-          title={"Open " + ref.filename}>
-        {children}
+      <em className="ref">
+        {parts.map((p, i) =>
+          typeof p === "string" ? (
+            <span key={i}>{p}</span>
+          ) : (
+            <span key={i} className="cite" onClick={() => openRef(p)}
+                  title={"Open " + p.filename}>
+              {p.text}
+            </span>
+          ))}
       </em>
     );
   }
