@@ -43,6 +43,14 @@ data "aws_iam_policy_document" "api" {
     resources = ["${aws_s3_bucket.data["curated"].arn}/*"]
   }
 
+  # Filing reads the analysed envelope and writes it back as normalized,
+  # which is what starts extraction.
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObject"]
+    resources = ["${aws_s3_bucket.data["review"].arn}/*"]
+  }
+
   statement {
     effect    = "Allow"
     actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
@@ -83,6 +91,7 @@ resource "aws_lambda_function" "api" {
   source_code_hash = data.archive_file.api.output_base64sha256
   timeout          = 30
   memory_size      = 512
+  layers           = [aws_lambda_layer_version.docprocessing.arn]
 
   environment {
     variables = {
@@ -91,6 +100,7 @@ resource "aws_lambda_function" "api" {
       DATABASE             = "arqedia"
       DOCS_BUCKET          = aws_s3_bucket.data["docs"].id
       CURATED_BUCKET       = aws_s3_bucket.data["curated"].id
+      REVIEW_BUCKET        = aws_s3_bucket.data["review"].id
       COMPOSITION_FUNCTION = aws_lambda_function.composition.function_name
     }
   }
@@ -136,10 +146,13 @@ locals {
   api_routes = [
     "GET /engagements",
     "GET /engagements/{id}/documents",
+    "GET /engagements/{id}/pending",
+    "POST /engagements/{id}/file",
     "GET /engagements/{id}/memos",
     "POST /engagements/{id}/generate",
     "GET /memos/{memo_id}",
     "POST /uploads",
+    "GET /document-types",
   ]
 }
 
@@ -177,3 +190,5 @@ resource "aws_lambda_permission" "api_gateway" {
 output "api_url" {
   value = aws_apigatewayv2_stage.default.invoke_url
 }
+
+

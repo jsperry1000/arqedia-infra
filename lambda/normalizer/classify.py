@@ -30,7 +30,7 @@ _SAMPLE_CHARS = 4000
 def classify(raw_text):
     """Returns (document_type_key or None, confidence or None)."""
     if not MODEL_ID or not (raw_text or "").strip():
-        return None, None
+        return None, None, ""
 
     catalogue = []
     for t in pack.document_type_list():
@@ -42,7 +42,7 @@ def classify(raw_text):
         + "\n".join(catalogue)
         + "\n\nReturn JSON: "
         '{ "document_type": "<key from the list>" | null, '
-        '"confidence": "high" | "medium" | "low" }\n\n'
+        '"confidence": "high" | "medium" | "low", "why": "<one short sentence>" }\n\n'
         "Return null if the document does not clearly match any type on the "
         "list. A wrong classification causes the wrong facts to be extracted, "
         "so null is the right answer when uncertain.\n"
@@ -71,14 +71,15 @@ def classify(raw_text):
     try:
         result = json.loads(cleaned)
     except json.JSONDecodeError:
-        return None, None
+        return None, None, ""
 
     proposed = result.get("document_type")
 
     # Validate against the real list. The model can invent a key; it cannot
     # get an invented key past this.
     if proposed not in pack.DOCUMENT_TYPES:
-        return None, None
+        return None, None, ""
 
-    return proposed, result.get("confidence")
+    return proposed, result.get("confidence"), (result.get("why") or "")[:400]
+
 
