@@ -39,6 +39,17 @@ COMPOSITION_FUNCTION = os.environ["COMPOSITION_FUNCTION"]
 # trusting what arrives.
 _SAFE = re.compile(r"^[A-Za-z0-9._-]{1,120}$")
 
+def _clean(name):
+    """Make a name safe for a storage key while keeping it recognisable.
+
+    Real documents are called things like "KCCA Trade Licence 2026.pdf".
+    Rejecting them was a rule written for a machine rather than a person:
+    spaces and brackets become dashes, anything else unsafe is dropped."""
+    name = re.sub(r"[\\s]+", "-", (name or "").strip())
+    name = re.sub(r"[^A-Za-z0-9._-]", "", name)
+    name = re.sub(r"-{2,}", "-", name).strip("-.")
+    return name[:120]
+
 
 def _sql(statement, params=None):
     for _ in range(12):
@@ -201,8 +212,10 @@ def upload_url(tenant_id, engagement, filename):
     """A short-lived signed link. The browser uploads straight to S3; the file
     never passes through here. The key is built from the token's tenant, so a
     caller cannot place a file in another tenant's space."""
-    if not _SAFE.match(engagement) or not _SAFE.match(filename):
-        raise ValueError("engagement and filename must be letters, digits, dot, dash or underscore")
+    engagement = _clean(engagement)
+    filename = _clean(filename)
+    if not engagement or not filename:
+        raise ValueError("engagement and file name are required")
 
     key = "tenants/%d/docs/%s/%s" % (tenant_id, engagement, filename)
     url = _s3.generate_presigned_url(
@@ -269,3 +282,4 @@ def lambda_handler(event, context):
     except Exception as exc:  # noqa: BLE001 - never leak internals to a client
         print("[api-error] route=%s tenant=%s %r" % (route, tenant_id, exc))
         return _reply(500, {"error": "internal error"})
+
