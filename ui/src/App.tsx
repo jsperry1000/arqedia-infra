@@ -131,12 +131,18 @@ function EngagementView({ id, onBack, onMemo }: {
     setMemos(m.memos);
   }
 
+  // Documents are processed in the background, so poll - but only while
+  // something is actually unfinished. Polling a settled engagement forever
+  // is thousands of pointless requests from one open tab.
+  const settling = docs.some((d) => !d.document_type || d.values === 0);
+
+  useEffect(() => { refresh(); }, [id]);
+
   useEffect(() => {
-    refresh();
-    // Documents are processed in the background, so poll while the page is open.
+    if (!settling && !busy) return;
     const timer = setInterval(refresh, 5000);
     return () => clearInterval(timer);
-  }, [id]);
+  }, [id, settling, busy]);
 
   async function upload(files: FileList | null) {
     if (!files) return;
@@ -260,4 +266,5 @@ export default function App() {
     </div>
   );
 }
+
 
