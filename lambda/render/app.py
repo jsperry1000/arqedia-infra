@@ -90,6 +90,20 @@ _ITALIC_U = re.compile(r"(?:(?<=\s)|(?<=^))_([^_\n]+?)_(?=\s|$|[.,;:)])")
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 
 
+_CITE_COLOUR = "#278ACA"
+
+
+def _set_cite_colour(palette):
+    """Inline citations take the tenant's mid colour. Module-level because
+    _inline is called from a dozen places and threading a palette through all
+    of them would obscure what it does."""
+    global _CITE_COLOUR
+    _CITE_COLOUR = "#%02X%02X%02X" % (
+        int(palette["mid"].red * 255),
+        int(palette["mid"].green * 255),
+        int(palette["mid"].blue * 255))
+
+
 def _inline(text):
     """Markdown emphasis to the small markup Paragraph understands. Escaped
     first, so a stray ampersand in a company name cannot break the layout."""
@@ -97,8 +111,12 @@ def _inline(text):
                 .replace("<", "&lt;")
                 .replace(">", "&gt;"))
     text = _BOLD.sub(r"<b>\1</b>", text)
-    text = _ITALIC.sub(r"<i>\1</i>", text)
-    text = _ITALIC_U.sub(r"<i>\1</i>", text)
+    # Italic in a memo is a citation, not emphasis. Rendered one size smaller
+    # and in the brand mid blue, so a paragraph carrying three of them stays
+    # readable as prose rather than reading as one continuous run.
+    cite = '<font size="8" color="%s"><i>\\1</i></font>' % _CITE_COLOUR
+    text = _ITALIC.sub(cite, text)
+    text = _ITALIC_U.sub(cite, text)
     text = _LINK.sub(r"\1", text)
     return text
 
@@ -600,6 +618,7 @@ def lambda_handler(event, context):
 
     palette, logo, show_footer = _branding(tenant)
     styles = style.build_styles(palette)
+    _set_cite_colour(palette)
 
     subject = _front(markdown, "Subject") or "Subject not stated"
     engagement = _front(markdown, "Engagement")

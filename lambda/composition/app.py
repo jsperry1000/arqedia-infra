@@ -27,6 +27,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import time
 
 import boto3
@@ -265,24 +266,81 @@ def _compose(section, assembled):
 
 # --- stage 3: consolidate --------------------------------------------------
 
+_CITATION = re.compile(r"\*([^*\n]+?\.(?:pdf|docx|xlsx|txt|json|xml)[^*\n]*?)\*")
+
+
+def _mask_citations(markdown):
+    """Replace every citation with an opaque token before consolidation.
+
+    Asking the model to preserve citations does not work: told to write for a
+    reader, it turns "01.-Certificate-of-Incorporation-Cocoa-Empire-Uganda-Ltd
+    .pdf, page 1" into "Certificate of Incorporation". That reads well and
+    proves nothing - it names no file and no page, so it cannot be checked
+    against anything.
+
+    A token has nothing to paraphrase. The model moves it around; the text is
+    restored afterwards, character for character.
+
+    Returns (masked_text, {token: original}).
+    """
+    seen, tokens = {}, {}
+
+    def swap(m):
+        original = m.group(0)
+        if original not in seen:
+            token = "[[C%d]]" % (len(seen) + 1)
+            seen[original] = token
+            tokens[token] = original
+        return seen[original]
+
+    return _CITATION.sub(swap, markdown), tokens
+
+
+def _restore_citations(text, tokens):
+    """Put the citations back. Returns (text, dropped) - dropped names the
+    tokens the model did not return, which is a fact worth logging rather
+    than a fault to hide."""
+    for token, original in tokens.items():
+        text = text.replace(token, original)
+
+    dropped = [tokens[t] for t in tokens if t not in text and t in tokens]
+    # A token the model invented has no source and must not survive as text.
+    text = re.sub(r"\[\[C\d+\]\]", "", text)
+    return text, dropped
+
+
 def _consolidate(section, markdown):
     """Turn one assembled section into the version a reader receives.
 
     Runs per section, not per memo: a single prompt over fifty documents
-    produces mush, and per-section lets one section carry its own shape."""
+    produces mush, and per-section lets one section carry its own shape.
+
+    Citations are masked before the call and restored after, so consolidation
+    cannot rewrite them. That is deterministic on the TEXT of a citation. It
+    is not deterministic on which statement a citation ends up attached to -
+    the model still moves the tokens - and nothing here can verify that."""
     if not markdown.strip():
         return markdown, {}
+
+    masked, tokens = _mask_citations(markdown[:_SECTION_INPUT_CHARS])
 
     prompt = (
         cleanup.CLEANUP_PROMPT
         + cleanup.presentation_for(section["key"])
+        + cleanup.CITATION_TOKENS
         + "\n\n--- SECTION START ---\n"
         + "## {}. {}\n\n".format(section["num"], section["title"])
-        + markdown[:_SECTION_INPUT_CHARS]
+        + masked
         + "\n--- SECTION END ---"
     )
 
     text, usage = _invoke(prompt, system=cleanup.CLEANUP_PREAMBLE)
+    text, dropped = _restore_citations(text, tokens)
+
+    if dropped:
+        print("[citations-dropped] section=%s count=%d of %d" % (
+            section["key"], len(dropped), len(tokens)))
+
     return text + "\n", usage
 
 

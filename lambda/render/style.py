@@ -110,9 +110,11 @@ def build_styles(palette):
             fontName="Helvetica-Bold", fontSize=9, leading=12,
             textColor=deep, spaceAfter=0),
 
+        # A citation line beneath a table. Same colour and near enough the
+        # same size as an inline citation, so the two read as one thing.
         "citation": ParagraphStyle(
             "citation", parent=base,
-            fontSize=7.5, leading=10, textColor=MUTED, spaceAfter=8),
+            fontSize=8, leading=11, textColor=palette["mid"], spaceAfter=8),
 
         "callout": ParagraphStyle(
             "callout", parent=base,
