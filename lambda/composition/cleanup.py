@@ -191,3 +191,24 @@ def subject_from(values):
         return sorted(names.items(), key=lambda kv: (kv[1], len(kv[0])))[-1][0]
     except Exception:
         return None
+
+
+# Appended to every consolidation prompt. Citations arrive as opaque tokens
+# rather than as text, because a model told to write for a reader turns a
+# filename into a description - which reads well and proves nothing. A token
+# has nothing to paraphrase.
+CITATION_TOKENS = (
+    "\n\nCITATIONS\n"
+    "Passages of the form [[C1]], [[C2]] are citation tokens. They stand for "
+    "a source reference and will be replaced afterwards.\n"
+    "- Reproduce every token EXACTLY as written. Do not alter, translate, "
+    "renumber, merge or describe them, and never write a citation in your own "
+    "words in place of one.\n"
+    "- Keep each token with the statement it supports. Where you merge two "
+    "statements that carry different tokens, keep both tokens on the merged "
+    "statement.\n"
+    "- Do not invent a token. A token you were not given has no source behind "
+    "it and will be discarded.\n"
+    "- Do not drop a token. A statement that loses its token becomes an "
+    "assertion nobody can check.\n"
+)
