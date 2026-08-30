@@ -166,6 +166,7 @@ locals {
     "POST /uploads",
     "GET /settings",
     "POST /settings",
+    "GET /settings/preview",
     "POST /settings/logo",
     "POST /settings/logo/confirm",
     "GET /document-types",
@@ -209,6 +210,7 @@ resource "aws_lambda_permission" "api_gateway" {
 output "api_url" {
   value = aws_apigatewayv2_stage.default.invoke_url
 }
+
 
 
 

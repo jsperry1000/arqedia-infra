@@ -209,3 +209,4 @@ output "brand_bucket" {
 output "render_function" {
   value = aws_lambda_function.render.function_name
 }
+

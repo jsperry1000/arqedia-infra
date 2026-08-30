@@ -765,6 +765,25 @@ def update_settings(tenant_id, role, body):
     return get_settings(tenant_id)
 
 
+def preview_branding(tenant_id):
+    """Render a sample memo against the tenant's current branding.
+
+    A colour change never rewrites an existing PDF - that is a record of what
+    was issued. So this is the only way to see a setting take effect before
+    the next memo is generated, which is what the setting is for.
+
+    Synchronous: it is one page, and the person is waiting."""
+    response = _lambda.invoke(
+        FunctionName=RENDER_FUNCTION,
+        InvocationType="RequestResponse",
+        Payload=json.dumps({"tenant_id": tenant_id, "preview": True}))
+
+    result = json.loads(response["Payload"].read())
+    if result.get("status") != "ok":
+        raise ValueError("the preview could not be rendered")
+    return {"url": result["url"], "plan": result.get("plan")}
+
+
 def logo_upload_url(tenant_id, role, content_type):
     """A signed link, as documents use. The browser sends the file straight to
     storage and the key is recorded only once the upload has succeeded, so a
@@ -930,6 +949,9 @@ def lambda_handler(event, context):
         if route == "POST /settings":
             body = json.loads(event.get("body") or "{}")
             return _reply(200, update_settings(tenant_id, role, body))
+
+        if route == "GET /settings/preview":
+            return _reply(200, preview_branding(tenant_id))
 
         if route == "POST /settings/logo":
             body = json.loads(event.get("body") or "{}")

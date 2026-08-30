@@ -25,6 +25,7 @@ const SWATCHES: {
 export function SettingsView({ onBack }: { onBack: () => void }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [busy, setBusy] = useState("");
+  const [previewUrl, setPreviewUrl] = useState("");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
 
@@ -60,6 +61,19 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
     try {
       setSettings(await api.uploadLogo(files[0]));
       setSaved(true);
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function preview() {
+    setBusy("Rendering a sample");
+    setError("");
+    try {
+      const { url } = await api.previewBranding();
+      setPreviewUrl(url);
     } catch (err) {
       setError(message(err));
     } finally {
@@ -164,10 +178,28 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
         </tbody>
       </table>
 
+      <h3>Preview</h3>
       <p className="muted small">
-        A colour applies to memos rendered from now on. Existing PDFs are
-        unchanged &mdash; they are records of what was issued.
+        A colour or logo applies to memos rendered from now on. Existing PDFs
+        are unchanged &mdash; they are records of what was issued, and a
+        setting changed today does not rewrite a document already sent. This
+        renders a sample so you can see the effect before the next memo.
       </p>
+
+      <button onClick={preview} disabled={!!busy}>
+        {busy ? "Rendering\u2026" : "Render a sample memo"}
+      </button>
+
+      {previewUrl && (
+        <>
+          <iframe className="preview-pdf" src={previewUrl} title="Sample memo" />
+          <p>
+            <a href={previewUrl} target="_blank" rel="noreferrer">
+              Open the sample in a new tab
+            </a>
+          </p>
+        </>
+      )}
     </div>
   );
 }
