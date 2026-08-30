@@ -574,8 +574,21 @@ def revise_memo(tenant_id, email, memo_id, markdown):
     )
     known = {_col(r, 0) for r in sources.get("records", [])}
 
-    cited = set(re.findall(
-        r"[A-Za-z0-9._()\-]+\.(?:pdf|docx|xlsx|txt|json|xml)", markdown))
+    # Anything of the form "<name>, page 3" is making a citation claim,
+    # whether or not it looks like a filename. Requiring an extension let
+    # "made-up-ref-1.0, page 1" through: it named no real document, cited a
+    # page, and read as authoritative.
+    cited = set()
+    for m in re.finditer(
+        r"([A-Za-z0-9._()\-]{3,})\s*,\s*(?:page|section|sheet)\s+\d+",
+        markdown, re.I,
+    ):
+        cited.add(m.group(1).strip())
+    for m in re.finditer(
+        r"[A-Za-z0-9._()\-]+\.(?:pdf|docx|xlsx|txt|json|xml)", markdown
+    ):
+        cited.add(m.group(0))
+
     unknown = sorted(c for c in cited if c not in known)
     if unknown:
         raise ValueError(
