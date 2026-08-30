@@ -45,6 +45,48 @@ SECRET_ARN = os.environ["SECRET_ARN"]
 DATABASE = os.environ["DATABASE"]
 
 
+# A short memo in the shape of a real one: masthead, status bar, a section
+# heading, prose carrying citations, a table and a gap callout. Enough to show
+# every place a colour lands, and nothing more - a preview that takes a minute
+# to render is not a preview.
+PREVIEW_MARKDOWN = """
+| | |
+|---|---|
+| **Subject** | Example Counterparty Limited |
+| **Engagement** | Preview |
+| **Generated** | Sample |
+| **Documents reviewed** | 4 |
+
+> **Coverage.** This memorandum was generated without the following material,
+> and any section depending on it is incomplete: Financial Position.
+
+## I. Entity Identification
+
+Example Counterparty Limited is a private company limited by shares,
+incorporated on 4 March 2019 under registration number 128456, with its
+registered office at 44 Esplanade, St Helier.
+*certificate-of-incorporation.pdf, page 1*
+
+**Directors and Officers.** The sources identify the following individuals in
+governance roles:
+
+| Role | Name | Holding |
+|---|---|---|
+| **Director** | Maria Santos | 60 per cent |
+| **Secretary** | John Reilly | 40 per cent |
+
+*Sources: certificate-of-incorporation.pdf, page 1; shareholder-register.pdf, page 2.*
+
+## II. Ownership and Control
+
+> **Gap.** No beneficial ownership declaration has been provided, so ultimate
+> control cannot be confirmed from the registered position alone.
+
+This is a preview of how your memoranda will look. It is not a real
+memorandum and is not recorded against any engagement.
+"""
+
+
 def _sql(statement, params=None):
     for _ in range(12):
         try:
@@ -606,15 +648,28 @@ def _branding(tenant):
 
 def lambda_handler(event, context):
     tenant_id = int(event["tenant_id"])
-    memo_id = int(event["memo_id"])
+    preview = bool(event.get("preview"))
 
     tenant = _tenant(tenant_id)
-    memo = _memo(tenant_id, memo_id)
-    if not tenant or not memo:
+    if not tenant:
         return {"status": "not-found"}
 
-    markdown = _s3.get_object(
-        Bucket=memo["bucket"], Key=memo["key"])["Body"].read().decode("utf-8")
+    # A preview renders a sample against the tenant's current branding. It is
+    # written to the brand bucket rather than the curated one, and recorded
+    # against nothing: an existing memo's PDF is a record of what was issued
+    # and is never rewritten because a colour changed.
+    if preview:
+        memo = {"key": "tenants/%d/preview.md" % tenant_id,
+                "generated_at": "Sample"}
+        markdown = PREVIEW_MARKDOWN
+    else:
+        memo_id = int(event["memo_id"])
+        memo = _memo(tenant_id, memo_id)
+        if not memo:
+            return {"status": "not-found"}
+        markdown = _s3.get_object(
+            Bucket=memo["bucket"],
+            Key=memo["key"])["Body"].read().decode("utf-8")
 
     palette, logo, show_footer = _branding(tenant)
     styles = style.build_styles(palette)
@@ -641,6 +696,18 @@ def lambda_handler(event, context):
 
     pdf = buffer.getvalue()
     pdf_key = memo["key"].rsplit(".", 1)[0] + ".pdf"
+
+    if preview:
+        _s3.put_object(Bucket=BRAND_BUCKET, Key=pdf_key, Body=pdf,
+                       ContentType="application/pdf")
+        url = _s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": BRAND_BUCKET, "Key": pdf_key},
+            ExpiresIn=3600)
+        print("[preview] tenant=%d plan=%s bytes=%d" % (
+            tenant_id, tenant["plan"], len(pdf)))
+        return {"status": "ok", "preview": True, "url": url,
+                "bytes": len(pdf), "plan": tenant["plan"]}
 
     put = _s3.put_object(Bucket=CURATED_BUCKET, Key=pdf_key, Body=pdf,
                          ContentType="application/pdf")

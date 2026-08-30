@@ -148,6 +148,9 @@ export const api = {
   // straight to storage, then record the key. The key is recorded only after
   // the upload succeeds, so a failure cannot leave the tenant pointing at a
   // logo that is not there.
+  previewBranding: (): Promise<{ url: string; plan: string }> =>
+    call("/settings/preview"),
+
   uploadLogo: async (file: File): Promise<Settings> => {
     const { url, key } = await call("/settings/logo", {
       method: "POST",
