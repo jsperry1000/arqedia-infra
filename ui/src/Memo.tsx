@@ -3,13 +3,18 @@ import ReactMarkdown from "react-markdown";
 import { api, type Memo, type Passage } from "./api";
 
 /**
- * Reading a memo.
+ * Reading and revising a memo.
  *
  * Every citation names a file and a page. Clicking one opens the passage the
  * system actually read - not the original page image, which is a later piece
  * of work, but what was extracted from it. For checking an extraction that is
  * arguably the more useful thing: a wrong value is usually a misreading rather
  * than a misprint. The original document is one click further, downloadable.
+ *
+ * Editing produces a NEW memo, numbered 11.2, not an overwrite. The generated
+ * memo keeps its machine evidence record; a revision is explicitly a human
+ * document, signed by whoever edited it. Which of the two you are reading is
+ * never ambiguous.
  */
 
 type Ref = {
@@ -19,15 +24,25 @@ type Ref = {
   text: string;
 };
 
-export function MemoView({ memoId, onBack }: {
+export function MemoView({ memoId, onBack, onOpen }: {
   memoId: number;
   onBack: () => void;
+  onOpen: (memoId: number) => void;
 }) {
   const [memo, setMemo] = useState<Memo | null>(null);
   const [passage, setPassage] = useState<Passage | null>(null);
   const [loadingRef, setLoadingRef] = useState(false);
 
-  useEffect(() => { api.memo(memoId).then(setMemo); }, [memoId]);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  useEffect(() => {
+    setEditing(false);
+    setSaveError("");
+    api.memo(memoId).then(setMemo);
+  }, [memoId]);
 
   // filename -> document_id, so a citation naming a file can be opened. The
   // memo text carries no identifiers; this is the map.
@@ -103,7 +118,36 @@ export function MemoView({ memoId, onBack }: {
     );
   }
 
+  function startEditing() {
+    if (!memo) return;
+    setDraft(memo.markdown);
+    setSaveError("");
+    setEditing(true);
+  }
+
+  async function save() {
+    setSaving(true);
+    setSaveError("");
+    try {
+      const revised = await api.revise(memoId, draft);
+      setEditing(false);
+      onOpen(revised.memo_id);
+    } catch (err: any) {
+      // A citation naming a document that is not a source of this memo is
+      // refused rather than saved. The message names which.
+      let message = String(err?.message ?? err);
+      try {
+        message = JSON.parse(message).error ?? message;
+      } catch { /* not JSON; show it as it came */ }
+      setSaveError(message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (!memo) return <p className="muted">Loading&hellip;</p>;
+
+  const isRevision = memo.revision > 1;
 
   return (
     <div>
@@ -116,23 +160,65 @@ export function MemoView({ memoId, onBack }: {
             Generated {(memo.generated_at ?? "").slice(0, 16)}
             {memo.generated_by ? " by " + memo.generated_by : ""}
             {memo.modified_by
-              ? ` \u00b7 modified ${(memo.modified_at ?? "").slice(0, 16)} by ${memo.modified_by}`
+              ? ` \u00b7 revised ${(memo.modified_at ?? "").slice(0, 16)} by ${memo.modified_by}`
               : ""}
           </p>
         </div>
-        {memo.pdf_url && (
-          <a className="pdf" href={memo.pdf_url} target="_blank"
-             rel="noreferrer">Download PDF</a>
+
+        {!editing && (
+          <>
+            <a className="secondary" onClick={startEditing}>Edit</a>
+            {memo.pdf_url && (
+              <a className="pdf" href={memo.pdf_url} target="_blank"
+                 rel="noreferrer">Download PDF</a>
+            )}
+          </>
         )}
       </div>
 
+      {isRevision && !editing && (
+        <p className="revision-note">
+          This is a revision. It was edited by a person, so the citations are
+          their responsibility rather than the system's. Memo{" "}
+          <a onClick={() => onOpen(memo.parent_memo_id!)}>
+            {memo.parent_memo_id}.1
+          </a>{" "}
+          is the generated original and is unchanged.
+        </p>
+      )}
+
       {loadingRef && <p className="busy">Opening source&hellip;</p>}
 
-      <article className="memo">
-        <ReactMarkdown components={{ em: Citation }}>
-          {memo.markdown}
-        </ReactMarkdown>
-      </article>
+      {editing ? (
+        <>
+          <div className="edit-bar">
+            <span className="muted">
+              Saving creates a new memo. This one stays as it is.
+            </span>
+            <button onClick={save} disabled={saving || !draft.trim()}>
+              {saving ? "Saving\u2026" : "Save as a new revision"}
+            </button>
+            <a className="secondary" onClick={() => setEditing(false)}>
+              Cancel
+            </a>
+          </div>
+
+          {saveError && <p className="error">{saveError}</p>}
+
+          <textarea
+            className="editor"
+            value={draft}
+            spellCheck={false}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+        </>
+      ) : (
+        <article className="memo">
+          <ReactMarkdown components={{ em: Citation }}>
+            {memo.markdown}
+          </ReactMarkdown>
+        </article>
+      )}
 
       {passage && (
         <PassagePanel passage={passage} onClose={() => setPassage(null)} />

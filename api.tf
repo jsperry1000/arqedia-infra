@@ -104,6 +104,7 @@ resource "aws_lambda_function" "api" {
       COMPOSITION_FUNCTION = aws_lambda_function.composition.function_name
       TEXTRACT_TOPIC_ARN   = aws_sns_topic.textract.arn
       TEXTRACT_ROLE_ARN    = aws_iam_role.textract_publish.arn
+      RENDER_FUNCTION      = aws_lambda_function.render.function_name
     }
   }
 
@@ -153,6 +154,7 @@ locals {
     "GET /engagements/{id}/memos",
     "POST /engagements/{id}/generate",
     "GET /memos/{memo_id}",
+    "POST /memos/{memo_id}/revise",
     "POST /uploads",
     "GET /document-types",
     "POST /documents/{document_id}/active",
@@ -195,6 +197,7 @@ resource "aws_lambda_permission" "api_gateway" {
 output "api_url" {
   value = aws_apigatewayv2_stage.default.invoke_url
 }
+
 
 
 

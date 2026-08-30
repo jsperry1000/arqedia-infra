@@ -171,8 +171,23 @@ resource "aws_lambda_function" "render" {
   tags = { Name = "${local.name_prefix}-render" }
 }
 
-# Composition starts the render once the memo is written, so the PDF exists by
-# the time the person looks for it.
+# Composition starts the render once a memo is written, and the API starts it
+# again when a person saves a revision - so the PDF exists by the time anyone
+# looks for it in either case.
+resource "aws_iam_role_policy" "api_render" {
+  name = "${local.name_prefix}-api-render"
+  role = aws_iam_role.api.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "lambda:InvokeFunction"
+      Resource = aws_lambda_function.render.arn
+    }]
+  })
+}
+
 resource "aws_iam_role_policy" "composition_render" {
   name = "${local.name_prefix}-composition-render"
   role = aws_iam_role.composition.id
