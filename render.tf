@@ -118,7 +118,7 @@ data "aws_iam_policy_document" "render" {
 
   statement {
     effect    = "Allow"
-    actions   = ["s3:GetObject"]
+    actions   = ["s3:GetObject", "s3:PutObject"]
     resources = ["${aws_s3_bucket.brand.arn}/*"]
   }
 

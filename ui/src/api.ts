@@ -216,16 +216,28 @@ export const api = {
 
   // Two steps: ask for a signed link, then send the file straight to S3.
   // The file never passes through our servers.
+  //
+  // Every header the link was signed with must be sent back, or S3 refuses
+  // the request. The uploader's email is one of them: the API knows who is
+  // asking and the normalizer does not, so it travels with the object.
   upload: async (engagement: string, file: File) => {
-    const { url } = await call("/uploads", {
+    const { url, uploaded_by } = await call("/uploads", {
       method: "POST",
       body: JSON.stringify({ engagement, filename: file.name }),
     });
+
     const put = await fetch(url, {
       method: "PUT",
       body: file,
-      headers: { "x-amz-server-side-encryption": "aws:kms" },
+      headers: {
+        "x-amz-server-side-encryption": "aws:kms",
+        "x-amz-meta-uploaded-by": uploaded_by,
+      },
     });
-    if (!put.ok) throw new Error("upload failed");
+
+    if (!put.ok) {
+      throw new Error(
+        `${file.name} was refused by storage (${put.status}).`);
+    }
   },
 };
