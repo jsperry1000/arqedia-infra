@@ -35,6 +35,7 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [types, setTypes] = useState<DocType[]>([]);
   const [choices, setChoices] = useState<Record<number, Choice>>({});
   const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
 
   const [sortKey, setSortKey] = useState<SortKey>("filename");
   const [sortDown, setSortDown] = useState(false);
@@ -80,14 +81,26 @@ export function EngagementView({ id, onBack, onMemo }: {
   async function upload(files: FileList | null) {
     if (!files) return;
     const list = Array.from(files);
+    setError("");
+
     for (let i = 0; i < list.length; i++) {
       setBusy(`Uploading ${i + 1} of ${list.length} \u2014 ${list[i].name}`);
-      await api.upload(id, list[i]);
+      try {
+        await api.upload(id, list[i]);
+      } catch (err) {
+        // A failure used to leave "Uploading" on screen indefinitely, which
+        // reads as a hang rather than as the refusal it is.
+        setError(String((err as Error)?.message ?? err));
+        setBusy("");
+        refresh();
+        return;
+      }
       // Refresh as each lands. Waiting for all of them made a twenty-file
       // upload look frozen, and polling could not start because there was
       // nothing pending for it to see yet.
       refresh();
     }
+
     setBusy("");
     refresh();
   }
@@ -166,6 +179,7 @@ export function EngagementView({ id, onBack, onMemo }: {
 
       <input type="file" multiple onChange={(e) => upload(e.target.files)} />
       {busy && <p className="busy">{busy}</p>}
+      {error && <p className="error">{error}</p>}
 
       {pending.length > 0 && (
         <>
