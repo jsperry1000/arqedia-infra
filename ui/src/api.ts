@@ -125,7 +125,46 @@ export type DocumentDetail = {
   expected: number;
 };
 
+export type Settings = {
+  name: string;
+  plan: string;
+  may_brand: boolean;
+  may_remove_footer: boolean;
+  logo_key: string | null;
+  logo_url: string | null;
+  deep: string | null;
+  mid: string | null;
+  highlight: string | null;
+};
+
 export const api = {
+  settings: (): Promise<Settings> => call("/settings"),
+
+  saveSettings: (body: Partial<Record<"deep" | "mid" | "highlight" | "logo_key", string | null>>):
+    Promise<Settings> =>
+    call("/settings", { method: "POST", body: JSON.stringify(body) }),
+
+  // Two steps, as documents use: ask for a signed link, send the file
+  // straight to storage, then record the key. The key is recorded only after
+  // the upload succeeds, so a failure cannot leave the tenant pointing at a
+  // logo that is not there.
+  uploadLogo: async (file: File): Promise<Settings> => {
+    const { url, key } = await call("/settings/logo", {
+      method: "POST",
+      body: JSON.stringify({ content_type: file.type }),
+    });
+    const put = await fetch(url, {
+      method: "PUT",
+      body: file,
+      headers: { "content-type": file.type },
+    });
+    if (!put.ok) throw new Error("upload failed");
+    return call("/settings/logo/confirm", {
+      method: "POST",
+      body: JSON.stringify({ key }),
+    });
+  },
+
   documentTypes: (): Promise<{ types: DocType[] }> => call("/document-types"),
 
   engagements: (): Promise<{ engagements: Engagement[] }> =>

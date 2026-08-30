@@ -49,6 +49,7 @@ DATABASE = os.environ["DATABASE"]
 DOCS_BUCKET = os.environ["DOCS_BUCKET"]
 REVIEW_BUCKET = os.environ["REVIEW_BUCKET"]
 CURATED_BUCKET = os.environ["CURATED_BUCKET"]
+BRAND_BUCKET = os.environ["BRAND_BUCKET"]
 COMPOSITION_FUNCTION = os.environ["COMPOSITION_FUNCTION"]
 TEXTRACT_TOPIC_ARN = os.environ["TEXTRACT_TOPIC_ARN"]
 TEXTRACT_ROLE_ARN = os.environ["TEXTRACT_ROLE_ARN"]
@@ -103,7 +104,8 @@ def _col(record, i):
 
 
 def caller(event):
-    """THE isolation control, plus the author of whatever follows.
+    """THE isolation control, plus the author of whatever follows and what
+    they are permitted to do.
 
     The tenant comes from the claims API Gateway verified on the token, and
     from nowhere else. It is never read from the path, the query string or the
@@ -118,7 +120,12 @@ def caller(event):
     if raw is None:
         raise PermissionError("no tenant on token")
     email = claims.get("email") or claims.get("cognito:username") or "unknown"
-    return int(raw), email
+    # Role is signed into the token and excluded from the client's writable
+    # attributes, so a user cannot promote themselves. Every user is an admin
+    # today; the check is here so Component 9's seat model can begin creating
+    # members without any rule being rewritten.
+    role = claims.get("custom:role") or "member"
+    return int(raw), email, role
 
 
 def _reply(status, body):
@@ -665,6 +672,131 @@ def revise_memo(tenant_id, email, memo_id, markdown):
             "label": "%s.%s" % (root_id, next_revision)}
 
 
+# --- settings --------------------------------------------------------------
+
+_HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_LOGO_TYPES = {"image/png": ".png", "image/jpeg": ".jpg"}
+
+
+def get_settings(tenant_id):
+    """The tenant's name, plan and branding. Branding is returned whatever the
+    plan, so a Base tenant can see what a paid plan would let them set rather
+    than finding an empty screen."""
+    result = _sql(
+        """
+        SELECT name, plan, brand_logo_key, brand_deep, brand_mid,
+               brand_highlight
+        FROM tenant WHERE tenant_id = :t
+        """,
+        [_p("t", tenant_id)],
+    )
+    records = result.get("records", [])
+    if not records:
+        return None
+    r = records[0]
+
+    plan = (_col(r, 1) or "base").lower()
+    logo_key = _col(r, 2)
+
+    logo_url = None
+    if logo_key:
+        try:
+            logo_url = _s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": BRAND_BUCKET, "Key": logo_key},
+                ExpiresIn=3600)
+        except Exception:  # noqa: BLE001 - a missing logo is not an error
+            logo_url = None
+
+    return {
+        "name": _col(r, 0),
+        "plan": plan,
+        "may_brand": plan in ("business", "enterprise"),
+        "may_remove_footer": plan == "enterprise",
+        "logo_key": logo_key,
+        "logo_url": logo_url,
+        "deep": _col(r, 3),
+        "mid": _col(r, 4),
+        "highlight": _col(r, 5),
+    }
+
+
+def _require_branding(tenant_id, role):
+    """Two gates, and they fail differently on purpose: one is about who you
+    are, the other about what the tenant pays for."""
+    if role != "admin":
+        raise PermissionError("only an administrator may change branding")
+
+    result = _sql("SELECT plan FROM tenant WHERE tenant_id = :t",
+                  [_p("t", tenant_id)])
+    records = result.get("records", [])
+    plan = (_col(records[0], 0) if records else "base") or "base"
+    if plan.lower() not in ("business", "enterprise"):
+        raise ValueError("branding is available on Business and Enterprise")
+    return plan.lower()
+
+
+def update_settings(tenant_id, role, body):
+    """Set the three colours, or clear them. Clearing returns the tenant to
+    the platform palette rather than leaving a half-set page."""
+    _require_branding(tenant_id, role)
+
+    fields, params = [], [_p("t", tenant_id)]
+    for key, column in (("deep", "brand_deep"),
+                        ("mid", "brand_mid"),
+                        ("highlight", "brand_highlight")):
+        if key not in body:
+            continue
+        value = (body.get(key) or "").strip() or None
+        if value and not _HEX.match(value):
+            raise ValueError("%s must be a colour like #002561" % key)
+        fields.append("%s = :%s" % (column, column))
+        params.append(_p(column, value))
+
+    if "logo_key" in body and not body.get("logo_key"):
+        fields.append("brand_logo_key = :brand_logo_key")
+        params.append(_p("brand_logo_key", None))
+
+    if not fields:
+        return get_settings(tenant_id)
+
+    _sql("UPDATE tenant SET " + ", ".join(fields) + " WHERE tenant_id = :t",
+         params)
+    return get_settings(tenant_id)
+
+
+def logo_upload_url(tenant_id, role, content_type):
+    """A signed link, as documents use. The browser sends the file straight to
+    storage and the key is recorded only once the upload has succeeded, so a
+    failed upload cannot leave the tenant pointing at a logo that is not
+    there."""
+    _require_branding(tenant_id, role)
+
+    suffix = _LOGO_TYPES.get((content_type or "").lower())
+    if not suffix:
+        raise ValueError("a logo must be a PNG or a JPEG")
+
+    key = "tenants/%d/logo%s" % (tenant_id, suffix)
+    url = _s3.generate_presigned_url(
+        "put_object",
+        Params={"Bucket": BRAND_BUCKET, "Key": key,
+                "ContentType": content_type},
+        ExpiresIn=900)
+    return {"url": url, "key": key}
+
+
+def confirm_logo(tenant_id, role, key):
+    """Record the logo only after the browser reports the upload succeeded."""
+    _require_branding(tenant_id, role)
+
+    if not key or not key.startswith("tenants/%d/" % tenant_id):
+        raise ValueError("that logo does not belong to this tenant")
+
+    _sql("UPDATE tenant SET brand_logo_key = :k WHERE tenant_id = :t",
+         [_p("k", key), _p("t", tenant_id)])
+    return get_settings(tenant_id)
+
+
 # --- uploads and generation ------------------------------------------------
 
 def upload_url(tenant_id, email, engagement, filename):
@@ -718,7 +850,7 @@ def document_types():
 
 def lambda_handler(event, context):
     try:
-        tenant_id, email = caller(event)
+        tenant_id, email, role = caller(event)
     except (PermissionError, ValueError, TypeError):
         return _reply(403, {"error": "no tenant on token"})
 
@@ -789,11 +921,33 @@ def lambda_handler(event, context):
                                           body.get("engagement", ""),
                                           body.get("filename", "")))
 
+        if route == "GET /settings":
+            settings = get_settings(tenant_id)
+            if settings is None:
+                return _reply(404, {"error": "not found"})
+            return _reply(200, settings)
+
+        if route == "POST /settings":
+            body = json.loads(event.get("body") or "{}")
+            return _reply(200, update_settings(tenant_id, role, body))
+
+        if route == "POST /settings/logo":
+            body = json.loads(event.get("body") or "{}")
+            return _reply(200, logo_upload_url(tenant_id, role,
+                                               body.get("content_type", "")))
+
+        if route == "POST /settings/logo/confirm":
+            body = json.loads(event.get("body") or "{}")
+            return _reply(200, confirm_logo(tenant_id, role,
+                                            body.get("key", "")))
+
         if route == "GET /document-types":
             return _reply(200, {"types": document_types()})
 
         return _reply(404, {"error": "unknown route"})
 
+    except PermissionError as exc:
+        return _reply(403, {"error": str(exc)})
     except ValueError as exc:
         return _reply(400, {"error": str(exc)})
     except Exception as exc:  # noqa: BLE001 - never leak internals to a client

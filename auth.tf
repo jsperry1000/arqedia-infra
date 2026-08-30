@@ -1,12 +1,18 @@
 # ---------------------------------------------------------------------------
-# Authentication. Cognito holds the users; each carries a tenant number as a
-# custom attribute, written by us at creation.
+# Authentication. Cognito holds the users; each carries a tenant number and a
+# role as custom attributes.
 #
-# The attribute is mutable = false: the user cannot change it, and it is
-# signed into every token they present. Every API function reads the tenant
-# from the token and from nowhere else. That single rule is the whole
-# isolation model - one function reading a tenant from a request parameter
-# and the boundary is gone.
+# tenant_id is mutable = false: the user cannot change it, and it is signed
+# into every token they present. Every API function reads the tenant from the
+# token and from nowhere else. That single rule is the whole isolation model -
+# one function reading a tenant from a request parameter and the boundary is
+# gone.
+#
+# role is mutable, because promoting a member to admin is a normal act, but it
+# is excluded from the client's writable attributes so a user cannot promote
+# themselves. Today every user is an admin and nothing is refused; the check
+# is in place from the start so that Component 9's seat model can begin
+# creating members without any rule being rewritten.
 # ---------------------------------------------------------------------------
 
 resource "aws_cognito_user_pool" "main" {
@@ -51,6 +57,19 @@ resource "aws_cognito_user_pool" "main" {
   }
 
   schema {
+    name                     = "role"
+    attribute_data_type      = "String"
+    mutable                  = true
+    developer_only_attribute = false
+    required                 = false
+
+    string_attribute_constraints {
+      min_length = 1
+      max_length = 16
+    }
+  }
+
+  schema {
     name                = "name"
     attribute_data_type = "String"
     mutable             = true
@@ -63,13 +82,23 @@ resource "aws_cognito_user_pool" "main" {
   }
 
   tags = { Name = "${local.name_prefix}-users" }
+
+  # The provider has treated a schema change as forcing replacement since
+  # 2018, and reports remain open. Replacing this pool would destroy every
+  # user and every password in it. A new custom attribute is therefore added
+  # to the live pool first, with the AddCustomAttributes API, and the schema
+  # here is brought into line afterwards - ignored so that no edit to it can
+  # ever produce a destroy.
+  lifecycle {
+    ignore_changes = [schema]
+  }
 }
 
 resource "aws_cognito_user_pool_client" "web" {
   name         = "${local.name_prefix}-web"
   user_pool_id = aws_cognito_user_pool.main.id
 
-  generate_secret = false  # a browser cannot keep a secret
+  generate_secret = false # a browser cannot keep a secret
 
   explicit_auth_flows = [
     "ALLOW_USER_SRP_AUTH",
@@ -86,30 +115,37 @@ resource "aws_cognito_user_pool_client" "web" {
     refresh_token = "days"
   }
 
-  read_attributes  = ["email", "name", "custom:tenant_id"]
-  write_attributes = ["name"]   # deliberately NOT tenant_id
+  read_attributes = ["email", "name", "custom:tenant_id", "custom:role"]
+
+  # Deliberately neither tenant_id nor role: a user may not move themselves
+  # between tenants, nor promote themselves.
+  write_attributes = ["name"]
 }
 
 # --- Users -----------------------------------------------------------------
 # Two tenants: one firm on its own, one firm with two people sharing a
 # workspace. Tests isolation between firms and collaboration within one.
+#
+# All three are admins. Until Component 9 there is no way to create a member,
+# so nothing is refused - but the boundary is real rather than added later.
 
 resource "aws_cognito_user" "testco_a" {
   user_pool_id = aws_cognito_user_pool.main.id
   username     = "sperry@vmac.com"
 
   attributes = {
-    email          = "sperry@vmac.com"
-    email_verified = true
-    name           = "S Perry"
+    email              = "sperry@vmac.com"
+    email_verified     = true
+    name               = "S Perry"
     "custom:tenant_id" = "1"
+    "custom:role"      = "admin"
   }
 
-  # Immutable by design, and the provider reads it back without the custom:
-  # prefix - so every plan would show a phantom change and every apply would
-  # fail against Cognito refusing to update it. Set once at creation, ignored
-  # thereafter. Moving a user between tenants means deleting and recreating,
-  # which is the correct amount of friction.
+  # Attributes are set at creation and ignored thereafter. tenant_id is
+  # immutable, and the provider reads it back without the custom: prefix - so
+  # every plan would show a phantom change and every apply would fail against
+  # Cognito refusing to update it. Moving a user between tenants means
+  # deleting and recreating, which is the correct amount of friction.
   lifecycle {
     ignore_changes = [attributes]
   }
@@ -120,10 +156,11 @@ resource "aws_cognito_user" "testco_b_1" {
   username     = "joeschmoe1000@gmail.com"
 
   attributes = {
-    email          = "joeschmoe1000@gmail.com"
-    email_verified = true
-    name           = "Joe Schmoe"
+    email              = "joeschmoe1000@gmail.com"
+    email_verified     = true
+    name               = "Joe Schmoe"
     "custom:tenant_id" = "2"
+    "custom:role"      = "admin"
   }
 
   lifecycle {
@@ -136,10 +173,11 @@ resource "aws_cognito_user" "testco_b_2" {
   username     = "jonathanscottperry@gmail.com"
 
   attributes = {
-    email          = "jonathanscottperry@gmail.com"
-    email_verified = true
-    name           = "Jonathan Perry"
+    email              = "jonathanscottperry@gmail.com"
+    email_verified     = true
+    name               = "Jonathan Perry"
     "custom:tenant_id" = "2"
+    "custom:role"      = "admin"
   }
 
   lifecycle {
@@ -154,6 +192,3 @@ output "user_pool_id" {
 output "user_pool_client_id" {
   value = aws_cognito_user_pool_client.web.id
 }
-
-
-
