@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { api, type Memo, type Passage } from "./api";
 
@@ -38,6 +38,12 @@ export function MemoView({ memoId, onBack, onOpen }: {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
+  const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const previewRef = useRef<HTMLElement | null>(null);
+  // Which pane the pointer last touched. Without this, one pane scrolling the
+  // other would scroll it back, and the two would fight.
+  const driver = useRef<"editor" | "preview" | null>(null);
+
   useEffect(() => {
     setEditing(false);
     setSaveError("");
@@ -56,9 +62,6 @@ export function MemoView({ memoId, onBack, onOpen }: {
    * Split a citation line into its parts. "Sources: a.pdf, page 1;
    * b.docx, section 2." is EIGHT citations on some sections, not one - and
    * matching only the first meant every click opened the same document.
-   *
-   * Returns the line as alternating text and openable references, so the
-   * unmatched parts still read as ordinary citation text.
    */
   function parseRefs(text: string): (string | Ref)[] {
     const pattern =
@@ -118,6 +121,24 @@ export function MemoView({ memoId, onBack, onOpen }: {
     );
   }
 
+  /**
+   * Proportional scroll sync. The two panes have different heights for the
+   * same content, so anything better than proportional would mean mapping
+   * source lines to rendered elements - real work for a small gain. Either
+   * pane can be scrolled alone; only the one under the pointer drives.
+   */
+  const syncFrom = useCallback((from: "editor" | "preview") => {
+    if (driver.current !== from) return;
+    const a = from === "editor" ? editorRef.current : previewRef.current;
+    const b = from === "editor" ? previewRef.current : editorRef.current;
+    if (!a || !b) return;
+
+    const travel = a.scrollHeight - a.clientHeight;
+    if (travel <= 0) return;
+    const ratio = a.scrollTop / travel;
+    b.scrollTop = ratio * (b.scrollHeight - b.clientHeight);
+  }, []);
+
   function startEditing() {
     if (!memo) return;
     setDraft(memo.markdown);
@@ -149,8 +170,14 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
   const isRevision = memo.revision > 1;
 
+  const rendered = (
+    <ReactMarkdown components={{ em: Citation }}>
+      {editing ? draft : memo.markdown}
+    </ReactMarkdown>
+  );
+
   return (
-    <div>
+    <div className={editing ? "wide" : ""}>
       <a onClick={onBack} className="back">Back</a>
 
       <div className="memo-head">
@@ -165,7 +192,14 @@ export function MemoView({ memoId, onBack, onOpen }: {
           </p>
         </div>
 
-        {!editing && (
+        {editing ? (
+          <>
+            <button onClick={save} disabled={saving || !draft.trim()}>
+              {saving ? "Saving\u2026" : "Save as a new revision"}
+            </button>
+            <a className="secondary" onClick={() => setEditing(false)}>Cancel</a>
+          </>
+        ) : (
           <>
             <a className="secondary" onClick={startEditing}>Edit</a>
             {memo.pdf_url && (
@@ -187,37 +221,38 @@ export function MemoView({ memoId, onBack, onOpen }: {
         </p>
       )}
 
+      {editing && (
+        <p className="muted small edit-note">
+          Saving creates a new memo. This one stays as it is. The panes scroll
+          together; scroll either one on its own to move it alone.
+        </p>
+      )}
+
+      {saveError && <p className="error">{saveError}</p>}
       {loadingRef && <p className="busy">Opening source&hellip;</p>}
 
       {editing ? (
-        <>
-          <div className="edit-bar">
-            <span className="muted">
-              Saving creates a new memo. This one stays as it is.
-            </span>
-            <button onClick={save} disabled={saving || !draft.trim()}>
-              {saving ? "Saving\u2026" : "Save as a new revision"}
-            </button>
-            <a className="secondary" onClick={() => setEditing(false)}>
-              Cancel
-            </a>
-          </div>
-
-          {saveError && <p className="error">{saveError}</p>}
-
+        <div className="split">
           <textarea
+            ref={editorRef}
             className="editor"
             value={draft}
             spellCheck={false}
+            onMouseEnter={() => (driver.current = "editor")}
+            onScroll={() => syncFrom("editor")}
             onChange={(e) => setDraft(e.target.value)}
           />
-        </>
+          <article
+            ref={previewRef as React.RefObject<HTMLElement>}
+            className="memo preview"
+            onMouseEnter={() => (driver.current = "preview")}
+            onScroll={() => syncFrom("preview")}
+          >
+            {rendered}
+          </article>
+        </div>
       ) : (
-        <article className="memo">
-          <ReactMarkdown components={{ em: Citation }}>
-            {memo.markdown}
-          </ReactMarkdown>
-        </article>
+        <article className="memo">{rendered}</article>
       )}
 
       {passage && (
