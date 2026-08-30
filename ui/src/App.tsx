@@ -1,3 +1,4 @@
+import { SettingsView } from "./Settings";
 import { MemoView } from "./Memo";
 import { EngagementView } from "./Review";
 import { useEffect, useState } from "react";
@@ -128,6 +129,7 @@ export default function App() {
   const [who, setWho] = useState("");
   const [engagement, setEngagement] = useState<string | null>(null);
   const [memoId, setMemoId] = useState<number | null>(null);
+  const [settings, setSettings] = useState(false);
 
   async function check() {
     try {
@@ -152,10 +154,13 @@ export default function App() {
         <img src="/icon-white.png" alt="" width="22" height="22" />
         <strong>ARQEDIA</strong>
         <span className="muted">{who}</span>
+        <a className="settings" onClick={() => { setSettings(true); setMemoId(null); }}>Settings</a>
         <a onClick={async () => { await signOut(); setSignedIn(false); }}>Sign out</a>
       </header>
       <main>
-        {memoId !== null ? (
+        {settings ? (
+          <SettingsView onBack={() => setSettings(false)} />
+        ) : memoId !== null ? (
           <MemoView memoId={memoId} onBack={() => setMemoId(null)} onOpen={setMemoId} />
         ) : engagement !== null ? (
           <EngagementView id={engagement} onBack={() => setEngagement(null)}

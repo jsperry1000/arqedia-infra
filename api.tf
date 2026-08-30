@@ -39,7 +39,7 @@ data "aws_iam_policy_document" "api" {
 
   statement {
     effect    = "Allow"
-    actions   = ["s3:GetObject"]
+    actions   = ["s3:GetObject", "s3:PutObject"]
     resources = ["${aws_s3_bucket.data["curated"].arn}/*"]
   }
 
@@ -49,6 +49,13 @@ data "aws_iam_policy_document" "api" {
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:PutObject"]
     resources = ["${aws_s3_bucket.data["review"].arn}/*"]
+  }
+
+  # Settings reads a logo to show it back, and writes one on upload.
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObject"]
+    resources = ["${aws_s3_bucket.brand.arn}/*"]
   }
 
   statement {
@@ -100,6 +107,7 @@ resource "aws_lambda_function" "api" {
       DATABASE             = "arqedia"
       DOCS_BUCKET          = aws_s3_bucket.data["docs"].id
       CURATED_BUCKET       = aws_s3_bucket.data["curated"].id
+      BRAND_BUCKET         = aws_s3_bucket.brand.id
       REVIEW_BUCKET        = aws_s3_bucket.data["review"].id
       COMPOSITION_FUNCTION = aws_lambda_function.composition.function_name
       TEXTRACT_TOPIC_ARN   = aws_sns_topic.textract.arn
@@ -156,6 +164,10 @@ locals {
     "GET /memos/{memo_id}",
     "POST /memos/{memo_id}/revise",
     "POST /uploads",
+    "GET /settings",
+    "POST /settings",
+    "POST /settings/logo",
+    "POST /settings/logo/confirm",
     "GET /document-types",
     "POST /documents/{document_id}/active",
     "GET /documents/{document_id}/values",
@@ -197,6 +209,7 @@ resource "aws_lambda_permission" "api_gateway" {
 output "api_url" {
   value = aws_apigatewayv2_stage.default.invoke_url
 }
+
 
 
 
