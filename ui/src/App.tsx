@@ -156,7 +156,7 @@ export default function App() {
       </header>
       <main>
         {memoId !== null ? (
-          <MemoView memoId={memoId} onBack={() => setMemoId(null)} />
+          <MemoView memoId={memoId} onBack={() => setMemoId(null)} onOpen={setMemoId} />
         ) : engagement !== null ? (
           <EngagementView id={engagement} onBack={() => setEngagement(null)}
                           onMemo={setMemoId} />

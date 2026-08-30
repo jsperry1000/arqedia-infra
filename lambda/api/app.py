@@ -25,6 +25,8 @@ Routes:
   GET  /document-types                   the type list, for the dropdown
 """
 
+import datetime
+import hashlib
 import json
 import os
 import re
@@ -50,6 +52,7 @@ CURATED_BUCKET = os.environ["CURATED_BUCKET"]
 COMPOSITION_FUNCTION = os.environ["COMPOSITION_FUNCTION"]
 TEXTRACT_TOPIC_ARN = os.environ["TEXTRACT_TOPIC_ARN"]
 TEXTRACT_ROLE_ARN = os.environ["TEXTRACT_ROLE_ARN"]
+RENDER_FUNCTION = os.environ["RENDER_FUNCTION"]
 
 
 def _clean(name):
@@ -529,6 +532,126 @@ def get_memo(tenant_id, memo_id):
     }
 
 
+def revise_memo(tenant_id, email, memo_id, markdown):
+    """Save an edited memo as a NEW row. The original and its PDF are never
+    touched: a compliance record is not overwritten, and which version anyone
+    read stays answerable.
+
+    Sources carry forward - the revision rests on the same documents. Claims
+    do not. A claim binds a generated sentence to the values behind it, and
+    once a person has rewritten that sentence the binding describes text that
+    no longer exists. The editor's review is the evidence for a revision; that
+    is what signing off means, and it belongs to a person rather than to the
+    machinery.
+    """
+    parent = _sql(
+        """
+        SELECT s3_key, template_key, config_revision, parent_memo_id, revision
+        FROM memo WHERE tenant_id = :t AND memo_id = :m
+        """,
+        [_p("t", tenant_id), _p("m", int(memo_id))],
+    )
+    records = parent.get("records", [])
+    if not records:
+        return None
+
+    parent_key = _col(records[0], 0)
+    template_key = _col(records[0], 1)
+    config_revision = _col(records[0], 2)
+    root_id = _col(records[0], 3) or int(memo_id)
+
+    # A citation naming a file that is not one of this memo's sources cannot
+    # be checked against anything. Refuse the save rather than accept an
+    # assertion nobody can verify.
+    sources = _sql(
+        """
+        SELECT DISTINCT d.filename
+        FROM memo_source ms
+        JOIN document d ON d.document_id = ms.document_id
+        WHERE ms.tenant_id = :t AND ms.memo_id = :m
+        """,
+        [_p("t", tenant_id), _p("m", root_id)],
+    )
+    known = {_col(r, 0) for r in sources.get("records", [])}
+
+    cited = set(re.findall(
+        r"[A-Za-z0-9._()\-]+\.(?:pdf|docx|xlsx|txt|json|xml)", markdown))
+    unknown = sorted(c for c in cited if c not in known)
+    if unknown:
+        raise ValueError(
+            "these citations name documents that are not sources of this "
+            "memo: " + ", ".join(unknown[:6]))
+
+    # The next revision of this memo's line, not of this row.
+    highest = _sql(
+        """
+        SELECT COALESCE(MAX(revision), 0) FROM memo
+        WHERE tenant_id = :t
+          AND (memo_id = :root OR parent_memo_id = :root)
+        """,
+        [_p("t", tenant_id), _p("root", root_id)],
+    )
+    next_revision = int(_col(highest.get("records", [[{}]])[0], 0) or 0) + 1
+
+    encoded = markdown.encode("utf-8")
+    sha = hashlib.sha256(encoded).hexdigest()
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y%m%dT%H%M%SZ")
+    new_key = "%s-r%d-%s.md" % (parent_key.rsplit(".", 1)[0],
+                                next_revision, stamp)
+
+    put = _s3.put_object(Bucket=CURATED_BUCKET, Key=new_key, Body=encoded,
+                         ContentType="text/markdown")
+
+    created = _sql(
+        """
+        INSERT INTO memo
+          (tenant_id, template_key, config_revision, s3_bucket, s3_key,
+           s3_version_id, sha256, parent_memo_id, revision,
+           modified_by, modified_at)
+        VALUES
+          (:tenant_id, :template_key, :config_revision, :s3_bucket, :s3_key,
+           :s3_version_id, :sha256, :parent_memo_id, :revision,
+           :modified_by, UTC_TIMESTAMP())
+        """,
+        [
+            _p("tenant_id", tenant_id),
+            _p("template_key", template_key),
+            _p("config_revision", config_revision),
+            _p("s3_bucket", CURATED_BUCKET),
+            _p("s3_key", new_key),
+            _p("s3_version_id", put.get("VersionId")),
+            _p("sha256", sha),
+            _p("parent_memo_id", root_id),
+            _p("revision", next_revision),
+            _p("modified_by", email),
+        ],
+    )
+    new_id = created.get("generatedFields", [{}])[0].get("longValue")
+
+    # Sources carry forward: the revision rests on the same documents.
+    _sql(
+        """
+        INSERT IGNORE INTO memo_source (memo_id, document_id, tenant_id)
+        SELECT :new_id, document_id, tenant_id
+        FROM memo_source WHERE tenant_id = :t AND memo_id = :root
+        """,
+        [_p("new_id", new_id), _p("t", tenant_id), _p("root", root_id)],
+    )
+
+    _lambda.invoke(
+        FunctionName=RENDER_FUNCTION,
+        InvocationType="Event",
+        Payload=json.dumps({"tenant_id": tenant_id, "memo_id": new_id}))
+
+    print("[revised] memo=%s from=%s revision=%d by=%s" % (
+        new_id, memo_id, next_revision, email))
+
+    return {"memo_id": new_id, "parent_memo_id": root_id,
+            "revision": next_revision,
+            "label": "%s.%s" % (root_id, next_revision)}
+
+
 # --- uploads and generation ------------------------------------------------
 
 def upload_url(tenant_id, email, engagement, filename):
@@ -632,6 +755,14 @@ def lambda_handler(event, context):
 
         if route == "POST /engagements/{id}/generate":
             return _reply(202, generate(tenant_id, email, engagement))
+
+        if route == "POST /memos/{memo_id}/revise":
+            body = json.loads(event.get("body") or "{}")
+            revised = revise_memo(tenant_id, email, params.get("memo_id"),
+                                  body.get("markdown", ""))
+            if revised is None:
+                return _reply(404, {"error": "not found"})
+            return _reply(201, revised)
 
         if route == "GET /memos/{memo_id}":
             memo = get_memo(tenant_id, params.get("memo_id"))

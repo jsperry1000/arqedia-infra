@@ -229,3 +229,40 @@ p.warn { color: #b45309; }
   max-height: 55vh; overflow-y: auto;
 }
 .small { font-size: 12px; }
+
+/* --- editing ------------------------------------------------------------- */
+
+.memo-head .secondary {
+  margin-left: auto; white-space: nowrap; font-size: 13px;
+  padding: 9px 16px; border: 1px solid var(--line); border-radius: 3px;
+  color: var(--deep); background: var(--paper);
+}
+.memo-head .secondary:hover { border-color: var(--medium); text-decoration: none; }
+.memo-head .secondary + .pdf { margin-left: 8px; }
+
+.edit-bar {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
+}
+.edit-bar .muted { flex: 1; font-size: 13px; }
+.edit-bar .secondary {
+  font-size: 13px; padding: 9px 14px;
+  border: 1px solid var(--line); border-radius: 3px; color: var(--muted);
+}
+.edit-bar .secondary:hover { color: var(--deep); text-decoration: none; }
+
+.editor {
+  width: 100%; min-height: 68vh; padding: 24px 28px;
+  border: 1px solid var(--line); border-radius: 4px; background: var(--paper);
+  font: 13px/1.7 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  color: var(--ink); resize: vertical;
+}
+.editor:focus-visible { outline: 2px solid var(--medium); outline-offset: 2px; }
+
+/* A revision is a human document. Saying so is not decoration: a reader
+   should never have to work out whether they are looking at what the system
+   produced or what somebody wrote. */
+.revision-note {
+  background: var(--paper); border-left: 3px solid var(--medium);
+  padding: 10px 14px; margin: 0 0 16px;
+  font-size: 13px; color: var(--muted);
+}

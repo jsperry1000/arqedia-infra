@@ -160,6 +160,14 @@ export const api = {
 
   memo: (memoId: number): Promise<Memo> => call(`/memos/${memoId}`),
 
+  revise: (memoId: number, markdown: string): Promise<{
+    memo_id: number; parent_memo_id: number; revision: number; label: string;
+  }> =>
+    call(`/memos/${memoId}/revise`, {
+      method: "POST",
+      body: JSON.stringify({ markdown }),
+    }),
+
   passage: (documentId: number, unit: number | null): Promise<Passage> =>
     call(`/documents/${documentId}/passage`
       + (unit ? `?unit=${unit}` : "")),
