@@ -186,8 +186,11 @@ p.warn { color: #b45309; }
   text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--muted); border-bottom: 1px solid var(--line);
 }
+/* A citation. Bracketed, smaller and in the brand mid blue, so a paragraph
+   carrying four of them still reads as prose. */
 .memo em {
   color: var(--medium); font-size: 12px; font-style: italic;
+  margin: 0 2px; white-space: normal;
 }
 .memo li { margin-bottom: 4px; }
 .memo blockquote {

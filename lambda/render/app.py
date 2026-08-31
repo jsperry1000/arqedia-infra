@@ -156,9 +156,21 @@ def _inline(text):
     # Italic in a memo is a citation, not emphasis. Rendered one size smaller
     # and in the brand mid blue, so a paragraph carrying three of them stays
     # readable as prose rather than reading as one continuous run.
-    cite = '<font size="8" color="%s"><i>\\1</i></font>' % _CITE_COLOUR
+    #
+    # And bracketed, because colour and size alone were not carrying the
+    # boundary: "page 1 Its registered office" read as continuous prose, and
+    # two consecutive citations read as one long reference. A bracket makes
+    # both edges unambiguous at a glance. The text inside is untouched -
+    # fidelity is deterministic by design and this is presentation.
+    cite = (' <font size="8" color="%s">[<i>\\1</i>]</font> ' % _CITE_COLOUR)
     text = _ITALIC.sub(cite, text)
     text = _ITALIC_U.sub(cite, text)
+
+    # The added spaces are for the eye, not the layout: collapse any run of
+    # them, and take back the one before a full stop or comma.
+    text = re.sub(r"[ ]{2,}", " ", text)
+    text = re.sub(r"\s+([.,;:)])", r"\1", text)
+    text = text.strip()
     text = _LINK.sub(r"\1", text)
     return text
 
@@ -402,12 +414,27 @@ def to_flowables(markdown, styles, palette):
             i += 1
             continue
 
-        if stripped.startswith("_") and stripped.endswith("_") \
-                and len(stripped) > 2:
-            flow.append(Paragraph(_inline(stripped), styles["citation"]))
-        else:
-            flow.append(Paragraph(_inline(stripped), styles["body"]))
+        # A markdown paragraph runs until a blank line. Treating each line as
+        # its own paragraph broke any wrapped text into separate lines with a
+        # paragraph gap between them - invisible while the model emitted one
+        # long line per paragraph, and wrong the moment it did not.
+        block = [stripped]
         i += 1
+        while i < len(lines):
+            nxt = lines[i].strip()
+            if not nxt:
+                break
+            if (nxt.startswith(("#", ">", "- ", "* ", "|", "---"))):
+                break
+            block.append(nxt)
+            i += 1
+        paragraph = " ".join(block)
+
+        if paragraph.startswith("_") and paragraph.endswith("_") \
+                and len(paragraph) > 2:
+            flow.append(Paragraph(_inline(paragraph), styles["citation"]))
+        else:
+            flow.append(Paragraph(_inline(paragraph), styles["body"]))
 
     return flow
 
