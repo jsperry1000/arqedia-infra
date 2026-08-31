@@ -36,7 +36,7 @@ import urllib.parse
 import boto3
 from botocore.exceptions import ClientError
 
-import pack
+import config
 import textract
 
 _s3 = boto3.client("s3")
@@ -136,13 +136,13 @@ def _reply(status, body):
     }
 
 
-def _label_for(field_id):
+def _label_for(registry, field_id):
     if "." in field_id:
         group = field_id.split(".", 1)[0]
-        for col in (pack.group_columns(group) or []):
+        for col in (registry.group_columns(group) or []):
             if col[0] == field_id:
                 return col[1]
-    return pack.label_for(field_id)
+    return registry.label_for(field_id)
 
 
 # --- engagements -----------------------------------------------------------
@@ -200,7 +200,7 @@ def list_pending(tenant_id, engagement):
     ]
 
 
-def _start_ocr(tenant_id, document_id, s3_key, document_type):
+def _start_ocr(registry, tenant_id, document_id, s3_key, document_type):
     """Send a scan to OCR rather than to extraction.
 
     The read mode comes from the confirmed type, which is why confirmation
@@ -208,7 +208,8 @@ def _start_ocr(tenant_id, document_id, s3_key, document_type):
     up on completion and releases the document to extraction then."""
     job_id, mode = textract.start(
         DOCS_BUCKET, s3_key, document_type,
-        TEXTRACT_TOPIC_ARN, TEXTRACT_ROLE_ARN)
+        TEXTRACT_TOPIC_ARN, TEXTRACT_ROLE_ARN,
+        read_mode=registry.read_mode_for(document_type))
     _sql(
         """
         UPDATE document
@@ -229,6 +230,7 @@ def file_documents(tenant_id, decisions):
     A document that could not be read goes to OCR instead, and reaches
     extraction when the OCR finishes. A rejected document is marked and kept,
     never deleted."""
+    registry = config.for_tenant(tenant_id)
     filed, rejected, reading = 0, 0, 0
 
     for d in decisions:
@@ -252,8 +254,9 @@ def file_documents(tenant_id, decisions):
         s3_key = _col(records[0], 0)
         thin = bool(_col(records[0], 1))
 
-        if thin or textract.always_ocr(document_type):
-            _start_ocr(tenant_id, document_id, s3_key, document_type)
+        if thin or registry.always_ocr(document_type):
+            _start_ocr(registry, tenant_id, document_id, s3_key,
+                       document_type)
             reading += 1
             continue
 
@@ -344,7 +347,8 @@ def document_values(tenant_id, document_id):
     fields that were looked for and missed."""
     head = _sql(
         """
-        SELECT filename, document_type, page_count, extraction_method
+        SELECT filename, document_type, page_count, extraction_method,
+               config_revision
         FROM document WHERE tenant_id = :t AND document_id = :d
         """,
         [_p("t", tenant_id), _p("d", int(document_id))],
@@ -363,13 +367,17 @@ def document_values(tenant_id, document_id):
         [_p("t", tenant_id), _p("d", int(document_id))],
     )
 
+    # The revision the document was filed under, so "looked for, not found"
+    # names the fields that were actually looked for at the time.
+    registry = config.load(tenant_id, _col(records[0], 4) or 1)
+
     values, found = [], set()
     for r in result.get("records", []):
         field_id = _col(r, 0)
         found.add(field_id.split(".", 1)[0])
         values.append({
             "field_id": field_id,
-            "label": _label_for(field_id),
+            "label": _label_for(registry, field_id),
             "value": _col(r, 1),
             "locator_kind": _col(r, 2),
             "locator_index": _col(r, 3),
@@ -378,8 +386,8 @@ def document_values(tenant_id, document_id):
 
     document_type = _col(records[0], 1)
     expected, missing = [], []
-    for schema_key in pack.schemas_for(document_type):
-        schema = pack.get_schema(schema_key)
+    for schema_key in registry.schemas_for(document_type):
+        schema = registry.get_schema(schema_key)
         if not schema:
             continue
         for f in schema["fields"]:
@@ -873,16 +881,13 @@ def generate(tenant_id, email, engagement):
     return {"status": "started", "engagement": engagement}
 
 
-def document_types():
-    """The type list for the dropdown, with what filing each one will do - so
-    the screen can say whether confirming a type triggers OCR."""
-    return [
-        {"key": t["key"], "label": t["label"], "category": t["category"],
-         "description": t["description"],
-         "read_mode": textract.read_mode_for(t["key"]),
-         "always_ocr": textract.always_ocr(t["key"])}
-        for t in pack.document_type_list()
-    ]
+def document_types(tenant_id):
+    """The tenant's own type list, with what filing each one will do - so the
+    screen can say whether confirming a type triggers OCR.
+
+    Read mode and always-OCR are properties of the TYPE now, not of a
+    hard-coded table, because the type is what a person confirms."""
+    return config.for_tenant(tenant_id).document_type_list()
 
 
 # --- dispatch --------------------------------------------------------------
@@ -987,7 +992,7 @@ def lambda_handler(event, context):
                                             body.get("key", "")))
 
         if route == "GET /document-types":
-            return _reply(200, {"types": document_types()})
+            return _reply(200, {"types": document_types(tenant_id)})
 
         return _reply(404, {"error": "unknown route"})
 
