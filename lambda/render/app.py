@@ -389,11 +389,53 @@ def _callout(text, styles, palette):
     return table
 
 
+_DIVIDER = re.compile(r"\|(?:\s*:?-{2,}:?\s*\|)+")
+
+
+def _unwrap_tables(markdown):
+    """Split a table emitted on one line back into rows.
+
+    The consolidation sometimes returns a whole table as a single line -
+    "| Item | Status | |---|---| | ... |" - which renders as a run of pipes
+    rather than a table. Telling it not to did not hold, so it is repaired
+    here instead: the divider is an unambiguous anchor, since "|---|---|"
+    cannot occur in prose, and its column count gives the width of a row.
+
+    Deterministic, and it repairs memos already written rather than only the
+    next one."""
+    out = []
+    for line in markdown.split("\n"):
+        stripped = line.strip()
+        m = _DIVIDER.search(stripped)
+
+        # A line is only broken if the divider has content after it.
+        if not m or not stripped.startswith("|") or not stripped[m.end():].strip():
+            out.append(line)
+            continue
+
+        width = m.group(0).count("|") - 1
+        if width < 1:
+            out.append(line)
+            continue
+
+        out.append(stripped[:m.start()].strip())
+        out.append(m.group(0))
+
+        cells = [c for c in re.split(r"\s*\|\s*", stripped[m.end():].strip())
+                 if c != ""]
+        for i in range(0, len(cells), width):
+            row = cells[i:i + width]
+            if row:
+                out.append("| " + " | ".join(row) + " |")
+
+    return "\n".join(out)
+
+
 def to_flowables(markdown, styles, palette):
     """Markdown to flowables. Handles the shapes the consolidation produces:
     headings, paragraphs, tables, blockquote gaps, bullets."""
     flow = []
-    lines = markdown.split("\n")
+    lines = _unwrap_tables(markdown).split("\n")
     i = 0
     front_matter_done = False
 

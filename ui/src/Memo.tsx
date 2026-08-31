@@ -25,6 +25,49 @@ type Ref = {
 };
 
 /**
+ * Split a table emitted on one line back into rows.
+ *
+ * The consolidation sometimes returns a whole table as a single line -
+ * "| Item | Status | |---|---| | ... |" - which renders as a run of pipes
+ * rather than a table. Telling it not to did not hold, so it is repaired
+ * here: the divider is an unambiguous anchor, since "|---|---|" cannot occur
+ * in prose, and its column count gives the width of a row.
+ *
+ * Deterministic, and it repairs memos already written rather than only the
+ * next one.
+ */
+function unwrapTables(markdown: string): string {
+  const divider = /\|(?:\s*:?-{2,}:?\s*\|)+/;
+  const out: string[] = [];
+
+  for (const line of markdown.split("\n")) {
+    const trimmed = line.trim();
+    const m = trimmed.match(divider);
+
+    if (!m || !trimmed.startsWith("|") ||
+        !trimmed.slice(m.index! + m[0].length).trim()) {
+      out.push(line);
+      continue;
+    }
+
+    const width = (m[0].match(/\|/g) || []).length - 1;
+    if (width < 1) { out.push(line); continue; }
+
+    out.push(trimmed.slice(0, m.index!).trim());
+    out.push(m[0]);
+
+    const cells = trimmed.slice(m.index! + m[0].length).trim()
+      .split(/\s*\|\s*/).filter((c) => c !== "");
+    for (let i = 0; i < cells.length; i += width) {
+      out.push("| " + cells.slice(i, i + width).join(" | ") + " |");
+    }
+  }
+
+  return out.join("\n");
+}
+
+
+/**
  * The text inside a node, however deeply nested.
  *
  * String() on React children gives "[object Object]" the moment they are
@@ -229,7 +272,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
   const rendered = (
     <ReactMarkdown components={{ em: Citation }}>
-      {protectFilenames(editing ? draft : memo.markdown)}
+      {protectFilenames(unwrapTables(editing ? draft : memo.markdown))}
     </ReactMarkdown>
   );
 
