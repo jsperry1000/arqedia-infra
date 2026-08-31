@@ -322,3 +322,47 @@ p.warn { color: #b45309; }
 .memo-head .pdf[aria-disabled="true"] {
   background: var(--line); color: var(--muted); cursor: default;
 }
+
+/* --- configure a report --------------------------------------------------- */
+
+.in-use {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--green); font-weight: 600;
+}
+
+/* A fatal fault is not a warning: it says the memo would be wrong, not
+   incomplete. It reads differently on purpose. */
+.revision-note.fatal {
+  border-left-color: #b91c1c; background: #fef2f2; color: var(--ink);
+}
+.revision-note.fatal ul { margin: 8px 0 0; padding-left: 18px; }
+.revision-note.fatal li { font-size: 13px; margin-bottom: 4px; }
+
+.binder {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 4px 16px;
+}
+.binder p { grid-column: 1 / -1; margin: 0 0 6px; }
+
+.bind {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; padding: 3px 0; cursor: pointer;
+}
+.bind input { width: auto; }
+
+.warnings {
+  background: var(--paper); border: 1px solid var(--line); border-radius: 4px;
+  padding: 12px 16px; margin-bottom: 12px;
+}
+.warnings summary {
+  cursor: pointer; font-size: 13px; color: var(--muted); font-weight: 500;
+}
+.warnings summary:hover { color: var(--deep); }
+.warnings ul { margin: 10px 0 0; padding-left: 18px; }
+.warnings li { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+
+.panel h4 {
+  margin: 16px 0 4px; font-size: 12px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted);
+}

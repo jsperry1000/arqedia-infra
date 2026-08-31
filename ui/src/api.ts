@@ -136,7 +136,148 @@ export type Settings = {
   highlight: string | null;
 };
 
+export type ConfigSection = {
+  key: string;
+  numeral: string;
+  title: string;
+  kind: string;
+  prompt: string | null;
+  template_key: string;
+  fields: string[];
+};
+
+export type ConfigField = {
+  key: string;
+  label: string;
+  type: string;
+  cardinality: string;
+  description: string | null;
+  is_group: boolean;
+  found_in: string[];
+};
+
+export type ConfigDocumentType = {
+  key: string;
+  label: string;
+  category: string;
+  description: string;
+  read_mode: string;
+  always_ocr: boolean;
+};
+
+export type ConfigCategory = { key: string; label: string };
+
+export type Draft = {
+  sections: ConfigSection[];
+  fields: ConfigField[];
+  document_types: ConfigDocumentType[];
+  categories: ConfigCategory[];
+};
+
+export type ConfigState = {
+  active_revision: number;
+  revisions: {
+    revision: number; status: string; note: string | null;
+    published_at: string | null; published_by: string | null;
+  }[];
+  draft: { revision: number; created_at: string; created_by: string } | null;
+  validation?: Validation;
+};
+
+export type Validation = {
+  revision: number;
+  may_publish: boolean;
+  fatal: { kind: string; detail: string }[];
+  warnings: { kind: string; detail: string }[];
+};
+
+export type Pack = {
+  revision: number;
+  note: string | null;
+  document_types: number;
+  fields: number;
+};
+
 export const api = {
+  // --- configuration -------------------------------------------------
+
+  configState: (): Promise<ConfigState> => call("/config"),
+
+  packs: (): Promise<{ packs: Pack[] }> => call("/config/packs"),
+
+  forkPack: (revision: number) =>
+    call("/config/fork", {
+      method: "POST",
+      body: JSON.stringify({ revision }),
+    }),
+
+  openDraft: () =>
+    call("/config/draft", { method: "POST", body: "{}" }),
+
+  discardDraft: () => call("/config/draft", { method: "DELETE" }),
+
+  draft: (): Promise<Draft> => call("/config/draft"),
+
+  validateDraft: (): Promise<Validation> => call("/config/draft/validate"),
+
+  publish: (note: string) =>
+    call("/config/publish", {
+      method: "POST",
+      body: JSON.stringify({ note }),
+    }),
+
+  saveSection: (body: Partial<ConfigSection>) =>
+    call("/config/draft/sections", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  deleteSection: (key: string) =>
+    call(`/config/draft/sections/${encodeURIComponent(key)}`,
+         { method: "DELETE" }),
+
+  setSectionFields: (key: string, fields: string[]) =>
+    call(`/config/draft/sections/${encodeURIComponent(key)}/fields`, {
+      method: "PUT",
+      body: JSON.stringify({ fields }),
+    }),
+
+  saveField: (body: Partial<ConfigField>) =>
+    call("/config/draft/fields", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  deleteField: (key: string) =>
+    call(`/config/draft/fields/${encodeURIComponent(key)}`,
+         { method: "DELETE" }),
+
+  setFieldDocuments: (key: string, documents: string[]) =>
+    call(`/config/draft/fields/${encodeURIComponent(key)}/documents`, {
+      method: "PUT",
+      body: JSON.stringify({ documents }),
+    }),
+
+  saveDocumentType: (body: Partial<ConfigDocumentType>) =>
+    call("/config/draft/types", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  deleteDocumentType: (key: string) =>
+    call(`/config/draft/types/${encodeURIComponent(key)}`,
+         { method: "DELETE" }),
+
+  saveCategory: (body: Partial<ConfigCategory>) =>
+    call("/config/draft/categories", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  deleteCategory: (key: string) =>
+    call(`/config/draft/categories/${encodeURIComponent(key)}`,
+         { method: "DELETE" }),
+
   settings: (): Promise<Settings> => call("/settings"),
 
   saveSettings: (body: Partial<Record<"deep" | "mid" | "highlight" | "logo_key", string | null>>):

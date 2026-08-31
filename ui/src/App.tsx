@@ -1,3 +1,4 @@
+import { ConfigureView } from "./Configure";
 import { SettingsView } from "./Settings";
 import { MemoView } from "./Memo";
 import { EngagementView } from "./Review";
@@ -130,6 +131,7 @@ export default function App() {
   const [engagement, setEngagement] = useState<string | null>(null);
   const [memoId, setMemoId] = useState<number | null>(null);
   const [settings, setSettings] = useState(false);
+  const [configuring, setConfiguring] = useState(false);
 
   async function check() {
     try {
@@ -154,11 +156,14 @@ export default function App() {
         <img src="/icon-white.png" alt="" width="22" height="22" />
         <strong>ARQEDIA</strong>
         <span className="muted">{who}</span>
-        <a className="settings" onClick={() => { setSettings(true); setMemoId(null); }}>Settings</a>
+        <a className="settings" onClick={() => { setConfiguring(true); setSettings(false); setMemoId(null); }}>Configure a Report</a>
+        <a className="settings" onClick={() => { setSettings(true); setConfiguring(false); setMemoId(null); }}>Settings</a>
         <a onClick={async () => { await signOut(); setSignedIn(false); }}>Sign out</a>
       </header>
       <main>
-        {settings ? (
+        {configuring ? (
+          <ConfigureView onBack={() => setConfiguring(false)} />
+        ) : settings ? (
           <SettingsView onBack={() => setSettings(false)} />
         ) : memoId !== null ? (
           <MemoView memoId={memoId} onBack={() => setMemoId(null)} onOpen={setMemoId} />
@@ -172,6 +177,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 
