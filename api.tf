@@ -126,7 +126,7 @@ resource "aws_apigatewayv2_api" "main" {
   cors_configuration {
     allow_origins = ["https://${aws_cloudfront_distribution.frontend.domain_name}",
                      "http://localhost:5173"]
-    allow_methods = ["GET", "POST", "DELETE", "OPTIONS"]
+    allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
     allow_headers = ["authorization", "content-type"]
     max_age       = 3600
   }
@@ -178,6 +178,17 @@ locals {
     "GET /config/draft/validate",
     "POST /config/publish",
     "GET /config/packs",
+    "GET /config/draft",
+    "POST /config/draft/sections",
+    "DELETE /config/draft/sections/{key}",
+    "PUT /config/draft/sections/{key}/fields",
+    "POST /config/draft/fields",
+    "DELETE /config/draft/fields/{key}",
+    "PUT /config/draft/fields/{key}/documents",
+    "POST /config/draft/types",
+    "DELETE /config/draft/types/{key}",
+    "POST /config/draft/categories",
+    "DELETE /config/draft/categories/{key}",
     "POST /config/fork",
     "POST /documents/{document_id}/active",
     "GET /documents/{document_id}/values",
@@ -219,6 +230,7 @@ resource "aws_lambda_permission" "api_gateway" {
 output "api_url" {
   value = aws_apigatewayv2_stage.default.invoke_url
 }
+
 
 
 
