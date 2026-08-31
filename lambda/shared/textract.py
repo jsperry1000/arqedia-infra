@@ -70,12 +70,16 @@ def always_ocr(document_type):
 
 
 def start(s3_bucket, s3_key, document_type, topic_arn, role_arn,
-          page_start=None, page_end=None):
+          page_start=None, page_end=None, read_mode=None):
     """Start a job. Returns (job_id, mode). Does not wait.
+
+    read_mode comes from the tenant's configuration, where it is a property of
+    the document type - the thing a person confirms. The table below is the
+    fallback for a type the configuration does not describe.
 
     page_start and page_end are for a split file: the document occupies only
     part of it. Absent, the whole file is read."""
-    mode = read_mode_for(document_type)
+    mode = read_mode or read_mode_for(document_type)
 
     document = {"S3Object": {"Bucket": s3_bucket, "Name": s3_key}}
     notify = {"SNSTopicArn": topic_arn, "RoleArn": role_arn}

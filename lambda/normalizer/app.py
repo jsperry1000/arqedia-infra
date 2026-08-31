@@ -30,6 +30,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 import classify
+import config
 import extractors
 
 _s3 = boto3.client("s3")
@@ -39,9 +40,6 @@ REVIEW_BUCKET = os.environ["REVIEW_BUCKET"]
 CLUSTER_ARN = os.environ["CLUSTER_ARN"]
 SECRET_ARN = os.environ["SECRET_ARN"]
 DATABASE = os.environ["DATABASE"]
-
-# Stage 1 runs a single hard-coded configuration.
-CONFIG_REVISION = 1
 
 # A page yielding less than this, in a file large enough to be an image, is a
 # scan carrying only a stamp. Characters per page alone let 68 characters
@@ -154,7 +152,7 @@ def _record_document(envelope):
             _p("type_confidence", envelope.get("document_type_confidence")),
             _p("type_reason", envelope.get("document_type_reason")),
             _p("uploaded_by", envelope.get("uploaded_by")),
-            _p("config_revision", CONFIG_REVISION),
+            _p("config_revision", envelope.get("config_revision") or 1),
         ],
     )
     return result.get("generatedFields", [{}])[0].get("longValue")
@@ -198,7 +196,12 @@ def lambda_handler(event, context):
         print("[unreadable] key=%s reason=%s" % (src_key, exc.reason))
         return {"status": "unreadable", "reason": exc.reason, "key": src_key}
 
-    document_type, confidence, why = classify.classify(raw_text)
+    # The tenant's own type list, at whatever revision they are working
+    # under. A firm doing shipping finance is offered shipping documents.
+    revision = config.active_revision(tenant_id)
+    registry = config.load(tenant_id, revision)
+
+    document_type, confidence, why = classify.classify(raw_text, registry)
 
     envelope = {
         "tenant_id": tenant_id,
@@ -219,7 +222,7 @@ def lambda_handler(event, context):
         "sha256_source": sha,
         "extraction_method": method,
         "extracted_at": _now(),
-        "config_revision": CONFIG_REVISION,
+        "config_revision": revision,
         "raw_text": raw_text,
         "units": units,
         "extracted_values": [],

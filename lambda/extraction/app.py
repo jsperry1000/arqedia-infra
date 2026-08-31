@@ -21,7 +21,7 @@ import urllib.parse
 import boto3
 from botocore.exceptions import ClientError
 
-import pack
+import config
 
 _s3 = boto3.client("s3")
 _rds = boto3.client("rds-data")
@@ -204,7 +204,7 @@ def _write_value(envelope, field_id, value, row_ordinal,
             _p("field_id", field_id),
             _p("value", str(value)),
             _p("row_ordinal", row_ordinal),
-            _p("config_revision", pack.CONFIG_REVISION),
+            _p("config_revision", envelope.get("config_revision") or 1),
             _p("locator_kind", kind),
             _p("locator_index", index),
             _p("char_start", char_start),
@@ -214,9 +214,9 @@ def _write_value(envelope, field_id, value, row_ordinal,
     )
 
 
-def _persist(envelope, schema_key, extracted):
+def _persist(envelope, registry, schema_key, extracted):
     """Write one row per field. Every row carries a locator or 'none'."""
-    schema = pack.get_schema(schema_key)
+    schema = registry.get_schema(schema_key)
     units = envelope["units"]
     written = 0
 
@@ -291,12 +291,19 @@ def lambda_handler(event, context):
     if envelope.get("extraction_complete"):
         return {"status": "skipped", "reason": "already-extracted"}
 
-    schema_keys = pack.schemas_for(envelope.get("document_type"))
+    # The revision the document was FILED under, not the tenant's current
+    # one. A document filed under revision 11 resolves against revision 11 for
+    # ever - that is what a snapshot is for, and it is why a memo written in
+    # March still reproduces in September.
+    registry = config.load(envelope["tenant_id"],
+                           envelope.get("config_revision") or 1)
+
+    schema_keys = registry.schemas_for(envelope.get("document_type"))
     results, total_written = {}, 0
     tokens_in = tokens_out = 0
 
     for schema_key in schema_keys:
-        schema = pack.get_schema(schema_key)
+        schema = registry.get_schema(schema_key)
         if not schema:
             results[schema_key] = {"status": "no-schema"}
             continue
@@ -311,7 +318,7 @@ def lambda_handler(event, context):
             results[schema_key] = {"status": "invalid-json"}
             continue
 
-        written = _persist(envelope, schema_key, extracted)
+        written = _persist(envelope, registry, schema_key, extracted)
         total_written += written
 
         results[schema_key] = {

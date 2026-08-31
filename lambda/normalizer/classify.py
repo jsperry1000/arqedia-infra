@@ -3,12 +3,17 @@ classify.py - decide what a document is.
 
 Returns a proposed document type, never a settled one. eBL has an operator
 pick from a list at upload; we have no operator, so the model reads the text
-and proposes. The envelope records it as a proposal so a review screen can
+and proposes. The envelope records it as a proposal so the review screen can
 confirm it later.
 
 Returns None when the model cannot tell. An unclassified document extracts
 nothing, which is correct: extracting the wrong fields is worse than
 extracting none.
+
+The type list comes from the tenant's configuration rather than a built-in
+pack, so a firm doing shipping finance is offered shipping documents. The
+registry is passed in because this function does not know which tenant it is
+working for - the normalizer does, from the key path.
 """
 
 import json
@@ -16,8 +21,6 @@ import os
 import re
 
 import boto3
-
-import pack
 
 _bedrock = boto3.client("bedrock-runtime")
 
@@ -27,15 +30,21 @@ MODEL_ID = os.environ.get("CLASSIFIER_MODEL_ID")
 _SAMPLE_CHARS = 4000
 
 
-def classify(raw_text):
-    """Returns (document_type_key or None, confidence or None)."""
+def classify(raw_text, registry):
+    """Returns (document_type_key or None, confidence or None, why).
+
+    `registry` is the tenant's configuration at its active revision. A
+    description is not decoration: it is what the model reads to tell one type
+    from another, and Stage 1 showed the same document classified differently
+    as a PDF and as a Word file until every type carried a sentence describing
+    itself."""
     if not MODEL_ID or not (raw_text or "").strip():
         return None, None, ""
 
     catalogue = []
-    for t in pack.document_type_list():
+    for t in registry.document_type_list():
         catalogue.append("  " + t["key"] + "  (" + t["category"] + ")")
-        catalogue.append("      " + t["label"] + ". " + t.get("description", ""))
+        catalogue.append("      " + t["label"] + ". " + (t.get("description") or ""))
 
     prompt = (
         "Identify which type of document this is, from the list below.\n\n"
@@ -66,7 +75,8 @@ def classify(raw_text):
         b.get("text", "") for b in payload.get("content", [])
         if b.get("type") == "text"
     )
-    cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
+    cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(),
+                     flags=re.MULTILINE).strip()
 
     try:
         result = json.loads(cleaned)
@@ -77,9 +87,7 @@ def classify(raw_text):
 
     # Validate against the real list. The model can invent a key; it cannot
     # get an invented key past this.
-    if proposed not in pack.DOCUMENT_TYPES:
+    if proposed not in registry.DOCUMENT_TYPES:
         return None, None, ""
 
     return proposed, result.get("confidence"), (result.get("why") or "")[:400]
-
-

@@ -34,8 +34,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 import cleanup
-import pack
-import template
+import config
 
 _s3 = boto3.client("s3")
 _rds = boto3.client("rds-data")
@@ -127,14 +126,16 @@ def _load_values(tenant_id, engagement):
     ]
 
 
-def _label_for(field_id):
-    """Label from the pack. Group columns resolve to their own column label."""
+def _label_for(registry, field_id):
+    """Label from the tenant's configuration. A group column resolves to its
+    own column label, which the registry deliberately does not carry in its
+    label map - so it is looked up here, as it always was."""
     if "." in field_id:
         group = field_id.split(".", 1)[0]
-        for col in (pack.group_columns(group) or []):
+        for col in (registry.group_columns(group) or []):
             if col[0] == field_id:
                 return col[1]
-    return pack.label_for(field_id)
+    return registry.label_for(field_id)
 
 
 def _citation(v):
@@ -147,7 +148,7 @@ def _citation(v):
 
 # --- stage 1: assemble -----------------------------------------------------
 
-def _render_group(field_id, columns, rows):
+def _render_group(registry, field_id, columns, rows):
     """A repeating-row field as a markdown table. Only columns that carry a
     value are shown - an empty column tells the reader nothing."""
     records = {}
@@ -163,7 +164,7 @@ def _render_group(field_id, columns, rows):
     if not live:
         return []
 
-    out = ["**" + pack.label_for(field_id) + "**", ""]
+    out = ["**" + registry.label_for(field_id) + "**", ""]
     out.append("| " + " | ".join(c[1] for c in live) + " |")
     out.append("|" + "|".join(["---"] * len(live)) + "|")
     for ordinal in sorted(records):
@@ -181,7 +182,7 @@ def _render_group(field_id, columns, rows):
     return out
 
 
-def _assemble_extract(section, values):
+def _assemble_extract(registry, section, values):
     """One block per source document. Nothing is merged here - consolidation
     does that, and only after it has seen everything."""
     wanted = set(section["fields"])
@@ -203,13 +204,13 @@ def _assemble_extract(section, values):
         blocks.append("**Source: " + rows[0]["filename"] + "**\n")
 
         for field_id in section["fields"]:
-            columns = pack.group_columns(field_id)
+            columns = registry.group_columns(field_id)
             if columns:
-                blocks.extend(_render_group(field_id, columns, rows))
+                blocks.extend(_render_group(registry, field_id, columns, rows))
                 continue
             for v in rows:
                 if v["field_id"] == field_id:
-                    blocks.append("- **" + _label_for(field_id) + ":** "
+                    blocks.append("- **" + _label_for(registry, field_id) + ":** "
                                   + str(v["value"]) + "  \n  *" + _citation(v) + "*")
         blocks.append("")
 
@@ -326,7 +327,7 @@ def _consolidate(section, markdown):
 
     prompt = (
         cleanup.CLEANUP_PROMPT
-        + cleanup.presentation_for(section["key"])
+        + cleanup.presentation_for(section.get("shape") or section["key"])
         + cleanup.CITATION_TOKENS
         + "\n\n--- SECTION START ---\n"
         + "## {}. {}\n\n".format(section["num"], section["title"])
@@ -387,6 +388,12 @@ def lambda_handler(event, context):
     engagement = event["engagement"]
     generated_by = event.get("generated_by")
 
+    # The tenant's configuration at the revision they are working under. The
+    # memo records it, so this memo can be reproduced later even after the
+    # configuration has moved on.
+    revision = config.active_revision(tenant_id)
+    registry = config.load(tenant_id, revision)
+
     values = _load_values(tenant_id, engagement)
     if not values:
         return {"status": "no-values", "engagement": engagement}
@@ -397,8 +404,8 @@ def lambda_handler(event, context):
 
     # 1. Assemble the deterministic sections. They are the context for the rest.
     assembled = {}
-    for section in template.sections_of_kind("extract"):
-        markdown, used = _assemble_extract(section, values)
+    for section in registry.sections_of_kind("extract"):
+        markdown, used = _assemble_extract(registry, section, values)
         assembled[section["key"]] = {
             "title": section["title"],
             "num": section["num"],
@@ -407,7 +414,7 @@ def lambda_handler(event, context):
         }
 
     # 2. Draft the composed sections from that context.
-    for section in template.sections_of_kind("composed"):
+    for section in registry.sections_of_kind("composed"):
         markdown, used, usage = _compose(section, assembled)
         tokens_in += usage.get("input_tokens", 0)
         tokens_out += usage.get("output_tokens", 0)
@@ -420,7 +427,7 @@ def lambda_handler(event, context):
 
     # 3. Consolidate each section into what a reader receives.
     empty_sections = []
-    for section in template.MEMO_SECTIONS:
+    for section in registry.MEMO_SECTIONS:
         block = assembled[section["key"]]
         if not block["markdown"].strip():
             empty_sections.append(section["title"])
@@ -441,7 +448,7 @@ def lambda_handler(event, context):
         cleanup.coverage_callout(empty_sections),
     ]
 
-    for section in template.MEMO_SECTIONS:
+    for section in registry.MEMO_SECTIONS:
         block = assembled[section["key"]]
         body = block["markdown"].strip()
 
@@ -470,7 +477,7 @@ def lambda_handler(event, context):
     sha = hashlib.sha256(encoded).hexdigest()
 
     memo_key = "tenants/{}/memos/{}/{}-{}.md".format(
-        tenant_id, engagement, template.TEMPLATE_KEY,
+        tenant_id, engagement, registry.TEMPLATE_KEY,
         generated_at.strftime("%Y%m%dT%H%M%SZ"))
 
     put = _s3.put_object(
@@ -492,8 +499,8 @@ def lambda_handler(event, context):
         """,
         [
             _p("tenant_id", tenant_id),
-            _p("template_key", template.TEMPLATE_KEY),
-            _p("config_revision", template.CONFIG_REVISION),
+            _p("template_key", registry.TEMPLATE_KEY),
+            _p("config_revision", revision),
             _p("s3_bucket", CURATED_BUCKET),
             _p("s3_key", memo_key),
             _p("s3_version_id", put.get("VersionId")),
@@ -517,7 +524,7 @@ def lambda_handler(event, context):
         )
 
     claims = 0
-    for ordinal, section in enumerate(template.MEMO_SECTIONS, start=1):
+    for ordinal, section in enumerate(registry.MEMO_SECTIONS, start=1):
         block = assembled[section["key"]]
         if not block["values"]:
             continue
