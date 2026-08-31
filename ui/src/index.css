@@ -338,12 +338,17 @@ p.warn { color: #b45309; }
 .revision-note.fatal ul { margin: 8px 0 0; padding-left: 18px; }
 .revision-note.fatal li { font-size: 13px; margin-bottom: 4px; }
 
+/* Column-wise, not row-wise. A grid fills across, so an alphabetical list
+   read A B C along the first row and D E F along the second - which is
+   unscannable when you are hunting for one name among eighty. Columns let the
+   eye go straight down. */
 .binder {
   margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 4px 16px;
+  columns: 3 240px;
+  column-gap: 24px;
 }
-.binder p { grid-column: 1 / -1; margin: 0 0 6px; }
+.binder p { column-span: all; margin: 0 0 8px; }
+.binder .bind { break-inside: avoid; }
 
 .bind {
   display: flex; align-items: center; gap: 8px;
