@@ -366,3 +366,62 @@ p.warn { color: #b45309; }
   margin: 16px 0 4px; font-size: 12px; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--muted);
 }
+
+/* --- configuration forms -------------------------------------------------- */
+
+.form {
+  background: var(--paper); border: 1px solid var(--medium);
+  border-radius: 4px; padding: 20px 24px; margin-bottom: 16px;
+}
+.form h4 { margin-top: 0; font-size: 14px; text-transform: none;
+           letter-spacing: 0; color: var(--deep); }
+
+.form .row {
+  display: block; margin-bottom: 12px;
+}
+.form .row > span {
+  display: block; font-size: 12px; color: var(--muted);
+  margin-bottom: 4px;
+}
+.form textarea, .form select {
+  width: 100%; padding: 9px 11px; font: inherit; font-size: 14px;
+  border: 1px solid var(--line); border-radius: 3px; background: var(--paper);
+  color: var(--ink);
+}
+.form textarea { resize: vertical; }
+.form select:disabled { color: var(--muted); background: var(--wash); }
+
+/* The key. Shown because when somebody renames a field and wonders whether
+   they have broken two years of extracted values, this is the reassurance. */
+.keyline {
+  margin: 14px 0 4px; padding-top: 12px; border-top: 1px solid var(--line);
+}
+.keyline code {
+  font: 12px ui-monospace, "SFMono-Regular", Consolas, monospace;
+  color: var(--muted); background: var(--wash);
+  padding: 2px 6px; border-radius: 3px;
+}
+
+.form-actions {
+  display: flex; align-items: center; gap: 14px; margin-top: 16px;
+}
+.form-actions .secondary { font-size: 13px; color: var(--muted); }
+.form-actions .secondary:hover { color: var(--deep); }
+.danger { color: #b91c1c; margin-left: auto; }
+.danger:hover { color: #7f1d1d; }
+
+.columns {
+  margin: 16px 0; padding: 14px 16px;
+  background: var(--wash); border-radius: 4px;
+}
+.columns h4 { margin: 0 0 4px; }
+.column-row {
+  display: grid; grid-template-columns: 1fr 2fr auto;
+  gap: 8px; align-items: center; margin-bottom: 8px;
+}
+
+a.add {
+  display: inline-block; margin: 4px 0 8px;
+  padding: 7px 14px; border: 1px dashed var(--medium); border-radius: 3px;
+}
+a.add:hover { background: var(--paper); text-decoration: none; }

@@ -146,6 +146,13 @@ export type ConfigSection = {
   fields: string[];
 };
 
+export type ConfigColumn = {
+  key: string;
+  label: string;
+  type: string;
+  description: string | null;
+};
+
 export type ConfigField = {
   key: string;
   label: string;
@@ -153,6 +160,7 @@ export type ConfigField = {
   cardinality: string;
   description: string | null;
   is_group: boolean;
+  columns: ConfigColumn[];
   found_in: string[];
 };
 

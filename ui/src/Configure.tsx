@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   api,
+  type ConfigCategory,
+  type ConfigDocumentType,
+  type ConfigField,
+  type ConfigSection,
   type ConfigState,
   type Draft,
   type Pack,
@@ -27,6 +31,331 @@ import {
  * published revision is never edited - it is what memos were composed against.
  */
 
+/**
+ * A key is a field's permanent identity. Every extracted value points at it,
+ * which is why renaming a label is free and deleting a field is not. It is
+ * derived from the label so nobody has to invent an identifier, editable
+ * until first saved, and fixed thereafter.
+ */
+function slugKey(label: string, prefix = ""): string {
+  const body = label.toLowerCase().replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return (prefix + (body || "item")).slice(0, 64);
+}
+
+function KeyLine({ value }: { value: string }) {
+  return (
+    <div className="keyline">
+      <span className="muted small">Identity</span> <code>{value}</code>
+      <div className="muted small">
+        Fixed once saved. Renaming the label afterwards changes nothing that
+        was already extracted.
+      </div>
+    </div>
+  );
+}
+
+type FieldDraft = {
+  key?: string;
+  label: string;
+  type: string;
+  cardinality: string;
+  description: string;
+  columns: { key?: string; label: string; type: string;
+             description: string }[];
+};
+
+function FieldForm({ initial, onSave, onCancel, onDelete }: {
+  initial?: ConfigField;
+  onSave: (f: FieldDraft) => void;
+  onCancel: () => void;
+  onDelete?: () => void;
+}) {
+  const existing = Boolean(initial);
+  const [f, setF] = useState<FieldDraft>({
+    key: initial?.key,
+    label: initial?.label ?? "",
+    type: initial?.type ?? "text",
+    cardinality: initial?.cardinality ?? "one",
+    description: initial?.description ?? "",
+    columns: (initial?.columns ?? []).map((c) => ({
+      key: c.key, label: c.label, type: c.type,
+      description: c.description ?? "",
+    })),
+  });
+
+  const key = f.key ?? slugKey(f.label, "f_").replace(/-/g, "_");
+  const isTable = f.cardinality === "group";
+
+  return (
+    <div className="form">
+      <h4>{existing ? "Edit field" : "New field"}</h4>
+
+      <label className="row">
+        <span>Name</span>
+        <input value={f.label} autoFocus
+               onChange={(e) => setF({ ...f, label: e.target.value })} />
+      </label>
+
+      <label className="row">
+        <span>What it is</span>
+        <textarea rows={2} value={f.description}
+          placeholder="What this fact is, in a sentence. This is what the system reads when deciding whether it has found it."
+          onChange={(e) => setF({ ...f, description: e.target.value })} />
+      </label>
+
+      <label className="row">
+        <span>Shape</span>
+        <select value={f.cardinality}
+                disabled={existing}
+                onChange={(e) => setF({ ...f, cardinality: e.target.value })}>
+          <option value="one">A single fact</option>
+          <option value="many">Several values</option>
+          <option value="group">A table &mdash; several rows with columns</option>
+        </select>
+      </label>
+      {existing && (
+        <p className="muted small">
+          The shape cannot change once values have been extracted under it.
+        </p>
+      )}
+
+      {isTable && (
+        <div className="columns">
+          <h4>Columns</h4>
+          <p className="muted small">
+            What each row holds. A name means nothing without the things
+            beside it &mdash; a bank without its role, a shipper without its
+            route.
+          </p>
+
+          {f.columns.map((c, i) => (
+            <div className="column-row" key={i}>
+              <input placeholder="Column" value={c.label}
+                onChange={(e) => {
+                  const next = [...f.columns];
+                  next[i] = { ...c, label: e.target.value };
+                  setF({ ...f, columns: next });
+                }} />
+              <input placeholder="What it holds" value={c.description}
+                onChange={(e) => {
+                  const next = [...f.columns];
+                  next[i] = { ...c, description: e.target.value };
+                  setF({ ...f, columns: next });
+                }} />
+              <a className="small" onClick={() =>
+                setF({ ...f,
+                       columns: f.columns.filter((_, j) => j !== i) })}>
+                Remove
+              </a>
+            </div>
+          ))}
+
+          <a className="small" onClick={() => setF({ ...f, columns: [
+            ...f.columns, { label: "", type: "text", description: "" }] })}>
+            Add a column
+          </a>
+        </div>
+      )}
+
+      <KeyLine value={key} />
+
+      <div className="form-actions">
+        <button disabled={!f.label.trim()}
+                onClick={() => onSave({ ...f, key })}>Save</button>
+        <a className="secondary" onClick={onCancel}>Cancel</a>
+        {existing && onDelete && (
+          <a className="danger small" onClick={onDelete}>Delete this field</a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TypeForm({ initial, categories, onSave, onCancel, onDelete }: {
+  initial?: ConfigDocumentType;
+  categories: ConfigCategory[];
+  onSave: (t: Partial<ConfigDocumentType>) => void;
+  onCancel: () => void;
+  onDelete?: () => void;
+}) {
+  const existing = Boolean(initial);
+  const [t, setT] = useState({
+    key: initial?.key,
+    label: initial?.label ?? "",
+    category: initial?.category ?? (categories[0]?.key ?? ""),
+    description: initial?.description ?? "",
+    read_mode: initial?.read_mode ?? "text",
+    always_ocr: initial?.always_ocr ?? false,
+  });
+
+  const key = t.key ?? slugKey(t.label);
+
+  return (
+    <div className="form">
+      <h4>{existing ? "Edit document" : "New document"}</h4>
+
+      <label className="row">
+        <span>Name</span>
+        <input value={t.label} autoFocus
+               onChange={(e) => setT({ ...t, label: e.target.value })} />
+      </label>
+
+      <label className="row">
+        <span>How to recognise it</span>
+        <textarea rows={3} value={t.description}
+          placeholder="A sentence describing this document. This is what the system reads to tell it from every other kind, so it is worth writing well."
+          onChange={(e) => setT({ ...t, description: e.target.value })} />
+      </label>
+
+      <label className="row">
+        <span>Group</span>
+        <select value={t.category}
+                onChange={(e) => setT({ ...t, category: e.target.value })}>
+          {categories.map((c) => (
+            <option key={c.key} value={c.key}>{c.label}</option>
+          ))}
+        </select>
+      </label>
+
+      <label className="row">
+        <span>Read as</span>
+        <select value={t.read_mode}
+                onChange={(e) => setT({ ...t, read_mode: e.target.value })}>
+          <option value="text">Prose</option>
+          <option value="forms">Forms and tables</option>
+          <option value="expense">Invoices</option>
+        </select>
+      </label>
+
+      <label className="inline-check">
+        <input type="checkbox" checked={t.always_ocr}
+               onChange={(e) => setT({ ...t, always_ocr: e.target.checked })} />
+        Always read by OCR, even where the file carries text
+      </label>
+      <p className="muted small">
+        Worth setting where a garbled text layer would corrupt figures &mdash;
+        statements and ledgers, chiefly.
+      </p>
+
+      <KeyLine value={key} />
+
+      <div className="form-actions">
+        <button disabled={!t.label.trim() || !t.description.trim()}
+                onClick={() => onSave({ ...t, key })}>Save</button>
+        <a className="secondary" onClick={onCancel}>Cancel</a>
+        {existing && onDelete && (
+          <a className="danger small" onClick={onDelete}>
+            Delete this document
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CategoryForm({ initial, onSave, onCancel, onDelete }: {
+  initial?: ConfigCategory;
+  onSave: (c: Partial<ConfigCategory>) => void;
+  onCancel: () => void;
+  onDelete?: () => void;
+}) {
+  const existing = Boolean(initial);
+  const [c, setC] = useState({
+    key: initial?.key, label: initial?.label ?? "",
+  });
+  const key = c.key ?? slugKey(c.label);
+
+  return (
+    <div className="form">
+      <h4>{existing ? "Edit group" : "New group"}</h4>
+      <label className="row">
+        <span>Name</span>
+        <input value={c.label} autoFocus
+               onChange={(e) => setC({ ...c, label: e.target.value })} />
+      </label>
+      <KeyLine value={key} />
+      <div className="form-actions">
+        <button disabled={!c.label.trim()}
+                onClick={() => onSave({ ...c, key })}>Save</button>
+        <a className="secondary" onClick={onCancel}>Cancel</a>
+        {existing && onDelete && (
+          <a className="danger small" onClick={onDelete}>Delete this group</a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SectionForm({ initial, onSave, onCancel, onDelete }: {
+  initial?: ConfigSection;
+  onSave: (s: Partial<ConfigSection>) => void;
+  onCancel: () => void;
+  onDelete?: () => void;
+}) {
+  const existing = Boolean(initial);
+  const [s, setS] = useState({
+    key: initial?.key,
+    numeral: initial?.numeral ?? "",
+    title: initial?.title ?? "",
+    kind: initial?.kind ?? "extract",
+    prompt: initial?.prompt ?? "",
+  });
+  const key = s.key ?? slugKey(s.title);
+
+  return (
+    <div className="form">
+      <h4>{existing ? "Edit section" : "New section"}</h4>
+
+      <label className="row">
+        <span>Number</span>
+        <input value={s.numeral} placeholder="IX"
+               onChange={(e) => setS({ ...s, numeral: e.target.value })} />
+      </label>
+
+      <label className="row">
+        <span>Title</span>
+        <input value={s.title} autoFocus
+               onChange={(e) => setS({ ...s, title: e.target.value })} />
+      </label>
+
+      <label className="row">
+        <span>How it is written</span>
+        <select value={s.kind}
+                onChange={(e) => setS({ ...s, kind: e.target.value })}>
+          <option value="extract">
+            Assembled from what was found
+          </option>
+          <option value="composed">Written by the model</option>
+        </select>
+      </label>
+
+      {s.kind === "composed" && (
+        <label className="row">
+          <span>Instruction</span>
+          <textarea rows={4} value={s.prompt}
+            placeholder="What this section should say, and what it must not."
+            onChange={(e) => setS({ ...s, prompt: e.target.value })} />
+        </label>
+      )}
+
+      <KeyLine value={key} />
+
+      <div className="form-actions">
+        <button disabled={!s.title.trim()}
+                onClick={() => onSave({ ...s, key })}>Save</button>
+        <a className="secondary" onClick={onCancel}>Cancel</a>
+        {existing && onDelete && (
+          <a className="danger small" onClick={onDelete}>
+            Delete this section
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 export function ConfigureView({ onBack }: { onBack: () => void }) {
   const [state, setState] = useState<ConfigState | null>(null);
   const [packs, setPacks] = useState<Pack[]>([]);
@@ -39,6 +368,14 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   const [note, setNote] = useState("");
   const [openSection, setOpenSection] = useState<string | null>(null);
   const [openField, setOpenField] = useState<string | null>(null);
+  const [fieldFilter, setFieldFilter] = useState("");
+
+  // What is being added or amended. Null is nothing open; a key is that item;
+  // the empty string is a new one.
+  const [editField, setEditField] = useState<string | null>(null);
+  const [editType, setEditType] = useState<string | null>(null);
+  const [editCategory, setEditCategory] = useState<string | null>(null);
+  const [editSection, setEditSection] = useState<string | null>(null);
 
   function message(err: unknown) {
     let text = String((err as Error)?.message ?? err);
@@ -77,6 +414,15 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     for (const f of draft?.fields ?? []) map[f.key] = f.label;
     return map;
   }, [draft]);
+
+  const sortedFields = useMemo(() => {
+    const needle = fieldFilter.trim().toLowerCase();
+    return [...(draft?.fields ?? [])]
+      .filter((f) => !needle ||
+        f.label.toLowerCase().includes(needle) ||
+        (f.description ?? "").toLowerCase().includes(needle))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [draft, fieldFilter]);
 
   const bound = useMemo(() => {
     const set = new Set<string>();
@@ -211,6 +557,21 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         bound to it and nothing else.
       </p>
 
+      {editSection !== null && (
+        <SectionForm
+          initial={draft?.sections.find((x) => x.key === editSection)}
+          onCancel={() => setEditSection(null)}
+          onSave={(body) => act("Saving", async () => {
+            await api.saveSection(body);
+            setEditSection(null);
+          })}
+          onDelete={editSection ? () => act("Deleting", async () => {
+            await api.deleteSection(editSection);
+            setEditSection(null);
+          }) : undefined}
+        />
+      )}
+
       {draft?.sections.map((s) => (
         <div className="review" key={s.key}>
           <div className="review-head">
@@ -225,6 +586,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
               setOpenSection(openSection === s.key ? null : s.key)}>
               {openSection === s.key ? "Close" : "Fields"}
             </a>
+            <a className="small" onClick={() => setEditSection(s.key)}>Edit</a>
           </div>
 
           {openSection === s.key && (
@@ -234,7 +596,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 that no longer exists would report it absent whether or not it
                 was found, so that is refused here rather than at publish.
               </p>
-              {draft.fields.map((f) => {
+              {sortedFields.map((f) => {
                 const on = s.fields.includes(f.key);
                 return (
                   <label className="bind" key={f.key}>
@@ -256,12 +618,39 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </div>
       ))}
 
+      <a className="small add" onClick={() => setEditSection("")}>
+        Add a section
+      </a>
+
       {/* 2 --- what it needs ----------------------------------------------- */}
       <h3>What it needs</h3>
       <p className="muted small">
         Every fact the report can draw on. A field bound to no section is
         extracted and never read; one found in no document is never extracted.
       </p>
+
+      {editField !== null && (
+        <FieldForm
+          initial={draft?.fields.find((x) => x.key === editField)}
+          onCancel={() => setEditField(null)}
+          onSave={(body) => act("Saving", async () => {
+            await api.saveField(body as never);
+            setEditField(null);
+          })}
+          onDelete={editField ? () => act("Deleting", async () => {
+            await api.deleteField(editField);
+            setEditField(null);
+          }) : undefined}
+        />
+      )}
+
+      <div className="filters">
+        <input placeholder="Filter fields" value={fieldFilter}
+               onChange={(e) => setFieldFilter(e.target.value)} />
+        <span className="muted">
+          {sortedFields.length} of {draft?.fields.length ?? 0}
+        </span>
+      </div>
 
       <table className="docs">
         <thead>
@@ -272,24 +661,29 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           </tr>
         </thead>
         <tbody>
-          {draft?.fields.map((f) => (
+          {sortedFields.map((f) => (
             <tr key={f.key} className={bound.has(f.key) ? "" : "aside"}>
               <td>
-                <a onClick={() =>
-                  setOpenField(openField === f.key ? null : f.key)}>
-                  {f.label}
-                </a>
-                {f.is_group && <span className="muted small"> (table)</span>}
+                <a onClick={() => setEditField(f.key)}>{f.label}</a>
+                {f.is_group && (
+                  <span className="muted small">
+                    {" "}table of {f.columns.length}
+                  </span>
+                )}
               </td>
               <td className="muted small">
-                {f.found_in.length === 0
-                  ? <span className="warn">no document</span>
-                  : f.found_in.length + (f.found_in.length === 1
-                      ? " document" : " documents")}
+                <a onClick={() =>
+                  setOpenField(openField === f.key ? null : f.key)}>
+                  {f.found_in.length === 0
+                    ? <span className="warn">no document</span>
+                    : f.found_in.length + (f.found_in.length === 1
+                        ? " document" : " documents")}
+                </a>
               </td>
               <td className="muted small">
                 {bound.has(f.key)
-                  ? (draft.sections.filter((s) => s.fields.includes(f.key))
+                  ? ((draft?.sections ?? [])
+                      .filter((s) => s.fields.includes(f.key))
                       .map((s) => s.numeral).join(", "))
                   : <span className="warn">nothing</span>}
               </td>
@@ -297,6 +691,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           ))}
         </tbody>
       </table>
+
+      <a className="small add" onClick={() => setEditField("")}>
+        Add a field
+      </a>
 
       {/* 3 --- where it is found -------------------------------------------- */}
       {openField && draft && (
@@ -347,6 +745,22 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         reads to tell one document from another, so it is worth writing well.
       </p>
 
+      {editType !== null && draft && (
+        <TypeForm
+          initial={draft.document_types.find((x) => x.key === editType)}
+          categories={draft.categories}
+          onCancel={() => setEditType(null)}
+          onSave={(body) => act("Saving", async () => {
+            await api.saveDocumentType(body);
+            setEditType(null);
+          })}
+          onDelete={editType ? () => act("Deleting", async () => {
+            await api.deleteDocumentType(editType);
+            setEditType(null);
+          }) : undefined}
+        />
+      )}
+
       <table className="docs">
         <thead>
           <tr>
@@ -363,7 +777,9 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             return (
               <tr key={t.key} className={sought ? "" : "aside"}>
                 <td>
-                  <strong>{t.label}</strong>
+                  <a onClick={() => setEditType(t.key)}>
+                    <strong>{t.label}</strong>
+                  </a>
                   <div className="muted small">{t.description}</div>
                 </td>
                 <td className="muted small">
@@ -381,6 +797,54 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           })}
         </tbody>
       </table>
+
+      <a className="small add" onClick={() => setEditType("")}>
+        Add a document
+      </a>
+
+      {/* 4b --- how documents group ----------------------------------------- */}
+      <h3>How documents group</h3>
+      <p className="muted small">
+        Grouping is for the eye alone &mdash; it decides how documents are
+        listed when somebody confirms what one is. It has no effect on what is
+        extracted.
+      </p>
+
+      {editCategory !== null && (
+        <CategoryForm
+          initial={draft?.categories.find((x) => x.key === editCategory)}
+          onCancel={() => setEditCategory(null)}
+          onSave={(body) => act("Saving", async () => {
+            await api.saveCategory(body);
+            setEditCategory(null);
+          })}
+          onDelete={editCategory ? () => act("Deleting", async () => {
+            await api.deleteCategory(editCategory);
+            setEditCategory(null);
+          }) : undefined}
+        />
+      )}
+
+      <table className="docs">
+        <tbody>
+          {draft?.categories.map((c) => {
+            const count = draft.document_types.filter(
+              (t) => t.category === c.key).length;
+            return (
+              <tr key={c.key}>
+                <td><a onClick={() => setEditCategory(c.key)}>{c.label}</a></td>
+                <td className="muted small">
+                  {count} {count === 1 ? "document" : "documents"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      <a className="small add" onClick={() => setEditCategory("")}>
+        Add a group
+      </a>
 
       {/* 5 --- publish ------------------------------------------------------ */}
       <h3>Publish</h3>
