@@ -30,8 +30,9 @@ from reportlab.lib.units import inch
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas as pdfcanvas
-from reportlab.platypus import (BaseDocTemplate, Frame, PageTemplate,
-                                Paragraph, Spacer, Table, TableStyle)
+from reportlab.platypus import (BaseDocTemplate, Frame, KeepTogether,
+                                PageTemplate, Paragraph, Spacer, Table,
+                                TableStyle)
 
 import style
 
@@ -431,6 +432,31 @@ def _unwrap_tables(markdown):
     return "\n".join(out)
 
 
+def _take_trailing_heading(flow):
+    """Remove and return a heading sitting at the end of the flow.
+
+    A heading and the thing it introduces belong on the same page. Only a
+    heading is taken - a paragraph of prose above a table is not orphaned by a
+    break, and binding it would push whole paragraphs onto the next page for
+    no gain."""
+    if not flow:
+        return None
+
+    # A spacer between the heading and the table is layout, not content.
+    trailing = []
+    while flow and isinstance(flow[-1], Spacer):
+        trailing.insert(0, flow.pop())
+
+    if flow and isinstance(flow[-1], Paragraph) and \
+            getattr(flow[-1].style, "name", "") in ("section", "subsection"):
+        heading = flow.pop()
+        flow.extend(trailing)
+        return heading
+
+    flow.extend(trailing)
+    return None
+
+
 def to_flowables(markdown, styles, palette):
     """Markdown to flowables. Handles the shapes the consolidation produces:
     headings, paragraphs, tables, blockquote gaps, bullets."""
@@ -469,7 +495,15 @@ def to_flowables(markdown, styles, palette):
                 [] if not any(header) else header, rows)
             table = _table(header, rows, styles, palette)
             if table is not None:
-                flow.append(table)
+                # A heading immediately above a table moves with it. Left
+                # alone, "Corporate Identity and Constitution" sat at the foot
+                # of one page with its table on the next, which reads as a
+                # fault rather than a break.
+                lead = _take_trailing_heading(flow)
+                if lead is not None:
+                    flow.append(KeepTogether([lead, table]))
+                else:
+                    flow.append(table)
                 if citations:
                     # Numbered, like every other citation. A list of filenames
                     # under a table is the thing this change removes.
@@ -488,7 +522,12 @@ def to_flowables(markdown, styles, palette):
                 i += 1
             text = " ".join(b for b in body if b)
             if text:
-                flow.append(_callout(text, styles, palette))
+                callout = _callout(text, styles, palette)
+                lead = _take_trailing_heading(flow)
+                if lead is not None:
+                    flow.append(KeepTogether([lead, callout]))
+                else:
+                    flow.append(callout)
                 flow.append(Spacer(1, 9))
             continue
 
