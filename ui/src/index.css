@@ -318,3 +318,7 @@ p.warn { color: #b45309; }
   width: 100%; height: 72vh; margin-top: 14px;
   border: 1px solid var(--line); border-radius: 4px; background: var(--paper);
 }
+
+.memo-head .pdf[aria-disabled="true"] {
+  background: var(--line); color: var(--muted); cursor: default;
+}

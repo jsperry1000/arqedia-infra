@@ -134,6 +134,56 @@ _LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 
 _CITE_COLOUR = "#278ACA"
 
+# Citations numbered in the order they appear, collected at the end.
+#
+# A reader of a finished memorandum is not checking references - that is what
+# they engaged the person who signed it to do. A filename in every second
+# sentence is noise to them. A superscript is not, and the full citation is
+# there at the end for the reader who does want it.
+#
+# The same document cited twice takes the same number, or a memo citing one
+# file thirty times ends with thirty identical entries.
+#
+# Module-level for the same reason as the colour: _inline is called from a
+# dozen places and threading a register through all of them would obscure
+# what it does. Reset at the start of every render.
+_CITATIONS = []
+_CITATION_INDEX = {}
+
+
+def _reference_section(styles):
+    """Every citation, numbered, at the end.
+
+    Built after the body, because the numbers are assigned as the body is
+    rendered. Empty when a memo carries no citations, which would itself be
+    worth noticing."""
+    if not _CITATIONS:
+        return []
+
+    out = [Spacer(1, 18),
+           Paragraph("References", styles["section"])]
+
+    for number, text in enumerate(_CITATIONS, start=1):
+        out.append(Paragraph(
+            '<super><font size="6.5">%d</font></super>  [%s]' % (number, text),
+            styles["citation"]))
+
+    return out
+
+
+def _reset_citations():
+    del _CITATIONS[:]
+    _CITATION_INDEX.clear()
+
+
+def _cite_number(text):
+    """The number for one citation, assigning a new one if unseen."""
+    key = " ".join(text.split())
+    if key not in _CITATION_INDEX:
+        _CITATIONS.append(key)
+        _CITATION_INDEX[key] = len(_CITATIONS)
+    return _CITATION_INDEX[key]
+
 
 def _set_cite_colour(palette):
     """Inline citations take the tenant's mid colour. Module-level because
@@ -153,21 +203,24 @@ def _inline(text):
                 .replace("<", "&lt;")
                 .replace(">", "&gt;"))
     text = _BOLD.sub(r"<b>\1</b>", text)
-    # Italic in a memo is a citation, not emphasis. Rendered one size smaller
-    # and in the brand mid blue, so a paragraph carrying three of them stays
-    # readable as prose rather than reading as one continuous run.
+    # Italic in a memo is a citation, not emphasis. In the PDF it becomes a
+    # superscript number and the full reference is collected at the end. The
+    # browser keeps the bracketed form, where a reader IS checking sources
+    # while reviewing and editing - different readers, different surfaces.
     #
-    # And bracketed, because colour and size alone were not carrying the
-    # boundary: "page 1 Its registered office" read as continuous prose, and
-    # two consecutive citations read as one long reference. A bracket makes
-    # both edges unambiguous at a glance. The text inside is untouched -
-    # fidelity is deterministic by design and this is presentation.
-    cite = (' <font size="8" color="%s">[<i>\\1</i>]</font> ' % _CITE_COLOUR)
-    text = _ITALIC.sub(cite, text)
-    text = _ITALIC_U.sub(cite, text)
+    # A "Sources:" line is dropped entirely: every citation it lists is
+    # already numbered inline and collected at the end.
+    def numbered(m):
+        body = m.group(1).strip()
+        if re.match(r"^sources?\s*:", body, re.I):
+            return ""
+        return '<super><font size="6.5" color="%s">%d</font></super>' % (
+            _CITE_COLOUR, _cite_number(body))
 
-    # The added spaces are for the eye, not the layout: collapse any run of
-    # them, and take back the one before a full stop or comma.
+    text = _ITALIC.sub(numbered, text)
+    text = _ITALIC_U.sub(numbered, text)
+
+    # Take back the space left where a citation stood before a stop.
     text = re.sub(r"[ ]{2,}", " ", text)
     text = re.sub(r"\s+([.,;:)])", r"\1", text)
     text = text.strip()
@@ -376,10 +429,13 @@ def to_flowables(markdown, styles, palette):
             if table is not None:
                 flow.append(table)
                 if citations:
+                    # Numbered, like every other citation. A list of filenames
+                    # under a table is the thing this change removes.
+                    marks = ", ".join(
+                        str(_cite_number(c)) for c in citations)
                     flow.append(Spacer(1, 3))
-                    flow.append(Paragraph(
-                        "Sources: " + "; ".join(citations) + ".",
-                        styles["citation"]))
+                    flow.append(Paragraph("Sources " + marks,
+                                          styles["citation"]))
                 flow.append(Spacer(1, 9))
             continue
 
@@ -719,7 +775,11 @@ def lambda_handler(event, context):
         kwargs["footer_fn"] = doc.footer
         return NumberedCanvas(*args, **kwargs)
 
-    doc.build(to_flowables(markdown, styles, palette), canvasmaker=make_canvas)
+    _reset_citations()
+    flow = to_flowables(markdown, styles, palette)
+    flow.extend(_reference_section(styles))
+
+    doc.build(flow, canvasmaker=make_canvas)
 
     pdf = buffer.getvalue()
     pdf_key = memo["key"].rsplit(".", 1)[0] + ".pdf"

@@ -513,15 +513,10 @@ def get_memo(tenant_id, memo_id):
         [_p("t", tenant_id), _p("m", int(memo_id))],
     )
 
-    pdf_url = None
-    pdf_key = _col(r, 4)
-    if pdf_key:
-        # A signed link, so the browser fetches the PDF straight from storage.
-        # Short-lived, and shareable for as long as it lives.
-        pdf_url = _s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": CURATED_BUCKET, "Key": pdf_key},
-            ExpiresIn=3600)
+    # No PDF link here. The PDF is a view of the memo, rendered on demand from
+    # the markdown, so it is always current with whatever the renderer does
+    # today. Serving a file rendered weeks ago meant a presentation
+    # improvement never reached a memo already written.
 
     return {
         "memo_id": int(memo_id),
@@ -533,7 +528,6 @@ def get_memo(tenant_id, memo_id):
         "modified_by": _col(r, 7),
         "modified_at": _col(r, 8),
         "markdown": markdown,
-        "pdf_url": pdf_url,
         "sources": [{"document_id": _col(s, 0), "filename": _col(s, 1)}
                     for s in sources.get("records", [])],
     }
@@ -765,6 +759,32 @@ def update_settings(tenant_id, role, body):
     return get_settings(tenant_id)
 
 
+def render_memo(tenant_id, memo_id):
+    """Render the PDF now and return a link to it.
+
+    The PDF is a presentation of the memo, not a second record of it. What was
+    issued is the memo - its words, its number, its author - and a revision
+    already produces a new memo when the content changes. So rendering on
+    demand costs nothing that matters and means an improvement to the
+    rendering reaches every memo rather than only the next one.
+
+    Synchronous: a couple of seconds, and the person is waiting for a file."""
+    response = _lambda.invoke(
+        FunctionName=RENDER_FUNCTION,
+        InvocationType="RequestResponse",
+        Payload=json.dumps({"tenant_id": tenant_id, "memo_id": int(memo_id)}))
+
+    result = json.loads(response["Payload"].read())
+    if result.get("status") != "ok":
+        raise ValueError("the memorandum could not be rendered")
+
+    url = _s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": CURATED_BUCKET, "Key": result["pdf_key"]},
+        ExpiresIn=3600)
+    return {"url": url, "bytes": result.get("bytes")}
+
+
 def preview_branding(tenant_id):
     """Render a sample memo against the tenant's current branding.
 
@@ -949,6 +969,9 @@ def lambda_handler(event, context):
         if route == "POST /settings":
             body = json.loads(event.get("body") or "{}")
             return _reply(200, update_settings(tenant_id, role, body))
+
+        if route == "GET /memos/{memo_id}/pdf":
+            return _reply(200, render_memo(tenant_id, params.get("memo_id")))
 
         if route == "GET /settings/preview":
             return _reply(200, preview_branding(tenant_id))

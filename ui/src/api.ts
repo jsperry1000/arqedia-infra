@@ -90,7 +90,6 @@ export type Memo = {
   modified_by: string | null;
   modified_at: string | null;
   markdown: string;
-  pdf_url: string | null;
   sources: { document_id: number; filename: string }[];
 };
 
@@ -209,6 +208,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ markdown }),
     }),
+
+  // The PDF is rendered when asked for, not stored. A rendering improvement
+  // therefore reaches every memo rather than only the next one written.
+  memoPdf: (memoId: number): Promise<{ url: string; bytes: number }> =>
+    call(`/memos/${memoId}/pdf`),
 
   passage: (documentId: number, unit: number | null): Promise<Passage> =>
     call(`/documents/${documentId}/passage`
