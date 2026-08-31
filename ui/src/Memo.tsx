@@ -102,12 +102,16 @@ export function MemoView({ memoId, onBack, onOpen }: {
     const text = String(children ?? "");
     const parts = parseRefs(text);
 
+    // Bracketed, because colour and size alone were not carrying the
+    // boundary: "page 1 Its registered office" read as continuous prose, and
+    // two consecutive citations read as one long reference.
     if (parts.every((p) => typeof p === "string")) {
-      return <em className="ref">{children}</em>;
+      return <em className="ref">[{children}]</em>;
     }
 
     return (
       <em className="ref">
+        [
         {parts.map((p, i) =>
           typeof p === "string" ? (
             <span key={i}>{p}</span>
@@ -117,6 +121,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
               {p.text}
             </span>
           ))}
+        ]
       </em>
     );
   }
