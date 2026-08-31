@@ -24,6 +24,39 @@ type Ref = {
   text: string;
 };
 
+/**
+ * The text inside a node, however deeply nested.
+ *
+ * String() on React children gives "[object Object]" the moment they are
+ * anything but a plain string - which happens whenever a filename contains
+ * characters CommonMark reads as markup.
+ */
+function textOf(node: React.ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  const element = node as { props?: { children?: React.ReactNode } };
+  return element.props ? textOf(element.props.children) : "";
+}
+
+/**
+ * Escape the underscores inside a filename before the markdown is parsed.
+ *
+ * "CE-_-Corporate-Legal-Deck.pdf" contains -_-, which CommonMark reads as
+ * emphasis: the citation came apart into nested elements, the underscores
+ * were consumed as markup, and the filename rendered as
+ * "CE-,[object Object],-Corporate-Legal-Deck.pdf".
+ *
+ * Only filenames are touched, so ordinary emphasis elsewhere is unaffected -
+ * including in memos written before citations moved to asterisks.
+ */
+function protectFilenames(markdown: string): string {
+  return markdown.replace(
+    /[A-Za-z0-9._()\-]+\.(?:pdf|docx|xlsx|txt|json|xml)/gi,
+    (name) => name.replace(/_/g, "\\_"));
+}
+
+
 export function MemoView({ memoId, onBack, onOpen }: {
   memoId: number;
   onBack: () => void;
@@ -64,7 +97,10 @@ export function MemoView({ memoId, onBack, onOpen }: {
    * b.docx, section 2." is EIGHT citations on some sections, not one - and
    * matching only the first meant every click opened the same document.
    */
-  function parseRefs(text: string): (string | Ref)[] {
+  function parseRefs(raw: string): (string | Ref)[] {
+    // The backslashes added to protect a filename from the parser are not
+    // part of its name.
+    const text = raw.replace(/\\_/g, "_");
     const pattern =
       /([A-Za-z0-9._()\-]+\.(?:pdf|docx|xlsx|txt|json|xml))(\s*,\s*(?:page|section|sheet)\s*(\d+))?/gi;
 
@@ -100,7 +136,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
   /** A citation renders in the brand mid blue, small and italic. Each
    *  filename that is one of this memo's sources is separately clickable. */
   function Citation({ children }: { children?: React.ReactNode }) {
-    const text = String(children ?? "");
+    const text = textOf(children);
     const parts = parseRefs(text);
 
     // Bracketed, because colour and size alone were not carrying the
@@ -193,7 +229,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
   const rendered = (
     <ReactMarkdown components={{ em: Citation }}>
-      {editing ? draft : memo.markdown}
+      {protectFilenames(editing ? draft : memo.markdown)}
     </ReactMarkdown>
   );
 

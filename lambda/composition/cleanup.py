@@ -135,14 +135,19 @@ def presentation_for(section_key):
 # ---------------------------------------------------------------------------
 
 def front_matter(subject, engagement, generated_at, document_count, source_count):
-    """The title block. Structured data, so it is built rather than written."""
+    """The title block. Structured data, so it is built rather than written.
+
+    Where no source states a legal name, the engagement name stands in. A
+    memorandum titled "Not stated in the sources" is accurate and useless; the
+    engagement name is what the person called this piece of work, and the
+    absence of a registered name is reported in the body where it belongs."""
     try:
         lines = [
             "# Due Diligence Memorandum",
             "",
             "| | |",
             "|---|---|",
-            "| **Subject** | %s |" % (subject or "Not stated in the sources"),
+            "| **Subject** | %s |" % (subject or engagement),
             "| **Engagement** | %s |" % engagement,
             "| **Generated** | %s |" % generated_at,
             "| **Documents reviewed** | %d |" % document_count,
@@ -209,6 +214,9 @@ CITATION_TOKENS = (
     "statement.\n"
     "- Do not invent a token. A token you were not given has no source behind "
     "it and will be discarded.\n"
+    "- Do not write the word 'Source' or 'Sources' beside a token, and do not "
+    "wrap one in brackets or parentheses. The token IS the citation and is "
+    "presented as one; anything added beside it is duplicated in the output.\n"
     "- Do not drop a token. A statement that loses its token becomes an "
     "assertion nobody can check.\n"
 )
