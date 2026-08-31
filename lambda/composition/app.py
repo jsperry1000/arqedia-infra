@@ -525,16 +525,9 @@ def lambda_handler(event, context):
                       block["markdown"], block["values"])
         claims += 1
 
-    # Render the PDF now, so it exists by the time anyone looks for it.
-    # Asynchronous: a slow render must not fail a memo already written.
-    try:
-        _lambda.invoke(
-            FunctionName=RENDER_FUNCTION,
-            InvocationType="Event",
-            Payload=json.dumps({"tenant_id": tenant_id, "memo_id": memo_id}),
-        )
-    except Exception as exc:  # noqa: BLE001
-        print("[render-start-failed] memo=%s %r" % (memo_id, exc))
+    # Composition no longer renders. The PDF is a view of the memo, produced
+    # on demand when somebody asks for it, so there is no window in which a
+    # memo exists without one and no stored file to go stale.
 
     print("[composed] memo={} docs={} values={} claims={} empty={} "
           "tokens_in={} tokens_out={}".format(

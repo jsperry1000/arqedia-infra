@@ -36,6 +36,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  const [rendering, setRendering] = useState(false);
   const [saveError, setSaveError] = useState("");
 
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
@@ -144,6 +145,21 @@ export function MemoView({ memoId, onBack, onOpen }: {
     b.scrollTop = ratio * (b.scrollHeight - b.clientHeight);
   }, []);
 
+  async function downloadPdf() {
+    // Rendered on demand, so it takes a couple of seconds on a long memo.
+    // Saying so beats a button that appears to do nothing.
+    setRendering(true);
+    setSaveError("");
+    try {
+      const { url } = await api.memoPdf(memoId);
+      window.open(url, "_blank", "noopener");
+    } catch (err) {
+      setSaveError(String((err as Error)?.message ?? err));
+    } finally {
+      setRendering(false);
+    }
+  }
+
   function startEditing() {
     if (!memo) return;
     setDraft(memo.markdown);
@@ -207,10 +223,10 @@ export function MemoView({ memoId, onBack, onOpen }: {
         ) : (
           <>
             <a className="secondary" onClick={startEditing}>Edit</a>
-            {memo.pdf_url && (
-              <a className="pdf" href={memo.pdf_url} target="_blank"
-                 rel="noreferrer">Download PDF</a>
-            )}
+            <a className="pdf" onClick={rendering ? undefined : downloadPdf}
+               aria-disabled={rendering}>
+              {rendering ? "Rendering\u2026" : "Download PDF"}
+            </a>
           </>
         )}
       </div>
