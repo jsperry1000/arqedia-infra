@@ -20,6 +20,7 @@ The derivation also keeps extraction sensible: one model call per schema per
 document, so fields that come from the same documents are asked for together.
 """
 
+import hashlib
 import os
 import re
 import time
@@ -134,22 +135,35 @@ def draft(tenant_id):
         WHERE f.tenant_id = :t AND f.revision = :r"""):
         found_in.setdefault(_col(r, 0), []).append(_col(r, 1))
 
-    fields = []
-    for r in _rows(tenant_id, """
+    # A group's columns are part of the group rather than fields in their own
+    # right, so they are carried INSIDE it. A person creating a Shippers table
+    # names its columns; they do not add four loose fields and hope.
+    rows = list(_rows(tenant_id, """
         SELECT field_key, label, field_type, cardinality, description,
                group_key, sort_order
         FROM config_field WHERE tenant_id = :t AND revision = :r
-        ORDER BY sort_order"""):
+        ORDER BY sort_order"""))
+
+    columns = {}
+    for r in rows:
+        key, group = _col(r, 0), _col(r, 5)
+        if group and group != key:
+            columns.setdefault(group, []).append({
+                "key": key, "label": _col(r, 1), "type": _col(r, 2),
+                "description": _col(r, 4),
+            })
+
+    fields = []
+    for r in rows:
         key = _col(r, 0)
         group = _col(r, 5)
-        # A group's columns are part of the group, not fields in their own
-        # right. Only the group appears.
         if group and group != key:
             continue
         fields.append({
             "key": key, "label": _col(r, 1), "type": _col(r, 2),
             "cardinality": _col(r, 3), "description": _col(r, 4),
-            "is_group": bool(group), "found_in": sorted(found_in.get(key, [])),
+            "is_group": bool(group), "columns": columns.get(key, []),
+            "found_in": sorted(found_in.get(key, [])),
         })
 
     types = []
@@ -287,14 +301,25 @@ def set_field_documents(tenant_id, field_key, type_keys):
                    if sorted(types) == wanted), None)
 
     if target is None:
-        target = _slug("-".join(wanted[:3]) or "unrouted", "set-")
+        # A stable key from the SET of types, not from their names: two
+        # fields found in the same documents must land in the same schema
+        # whatever order they were listed in.
+        target = "set-" + hashlib.sha1(
+            "|".join(wanted).encode("utf-8")).hexdigest()[:16]
+
+        # The label is never shown - the schema is invisible by design - so it
+        # says how many documents rather than listing them. Listing them
+        # overflowed the column the moment a field was found in eight.
+        label = "Fields found in %d document%s" % (
+            len(wanted), "" if len(wanted) == 1 else "s")
+
         _sql("""
             INSERT INTO config_schema
               (tenant_id, revision, schema_key, label, sort_order)
             VALUES (:t, :r, :k, :label, 0)
             ON DUPLICATE KEY UPDATE label = :label
             """, [_p("t", tenant_id), _p("r", DRAFT), _p("k", target),
-                  _p("label", "Fields found in " + (", ".join(wanted) or "no document"))])
+                  _p("label", label)])
 
         for type_key in wanted:
             _sql("""
@@ -381,7 +406,44 @@ def save_field(tenant_id, body):
         _p("grp", key if body.get("cardinality") == "group" else None),
         _p("sort", int(body.get("sort_order") or 0)),
     ])
+
+    if body.get("cardinality") == "group":
+        _save_columns(tenant_id, schema_key, key, body.get("columns") or [])
+
     return {"key": key}
+
+
+def _save_columns(tenant_id, schema_key, group_key, columns):
+    """A table's columns.
+
+    Rewritten whole rather than merged: a column removed from the form has
+    been removed, and reconciling additions against deletions is how a column
+    nobody asked for survives three edits."""
+    _sql("DELETE FROM config_field WHERE tenant_id = :t AND revision = :r "
+         "AND group_key = :g AND field_key <> :g",
+         [_p("t", tenant_id), _p("r", DRAFT), _p("g", group_key)])
+
+    for i, col in enumerate(columns):
+        label = (col.get("label") or "").strip()
+        if not label:
+            continue
+        key = col.get("key") or (
+            group_key + "." + _slug(label).replace("-", "_"))
+        _sql("""
+            INSERT INTO config_field
+              (tenant_id, revision, schema_key, field_key, label, field_type,
+               cardinality, description, group_key, sort_order)
+            VALUES (:t, :r, :s, :k, :label, :type, 'group', :desc, :g, :sort)
+            ON DUPLICATE KEY UPDATE
+              label = :label, field_type = :type, description = :desc,
+              sort_order = :sort
+            """, [
+            _p("t", tenant_id), _p("r", DRAFT), _p("s", schema_key),
+            _p("k", key), _p("label", label),
+            _p("type", col.get("type") or "text"),
+            _p("desc", col.get("description")),
+            _p("g", group_key), _p("sort", i),
+        ])
 
 
 def delete_field(tenant_id, field_key):
