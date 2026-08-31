@@ -37,6 +37,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 import config
+import editor
 import registry
 import textract
 
@@ -1085,6 +1086,62 @@ def lambda_handler(event, context):
             body = json.loads(event.get("body") or "{}")
             return _reply(201, registry.fork(
                 tenant_id, email, int(body.get("revision", 1))))
+
+        # --- editing the draft -----------------------------------------
+        if route == "GET /config/draft":
+            return _reply(200, editor.draft(tenant_id))
+
+        if route == "POST /config/draft/sections":
+            _require_admin(role)
+            return _reply(200, editor.save_section(
+                tenant_id, json.loads(event.get("body") or "{}")))
+
+        if route == "DELETE /config/draft/sections/{key}":
+            _require_admin(role)
+            return _reply(200, editor.delete_section(tenant_id,
+                                                     params.get("key")))
+
+        if route == "PUT /config/draft/sections/{key}/fields":
+            _require_admin(role)
+            body = json.loads(event.get("body") or "{}")
+            return _reply(200, editor.set_section_fields(
+                tenant_id, params.get("key"), body.get("fields") or []))
+
+        if route == "POST /config/draft/fields":
+            _require_admin(role)
+            return _reply(200, editor.save_field(
+                tenant_id, json.loads(event.get("body") or "{}")))
+
+        if route == "DELETE /config/draft/fields/{key}":
+            _require_admin(role)
+            return _reply(200, editor.delete_field(tenant_id,
+                                                   params.get("key")))
+
+        if route == "PUT /config/draft/fields/{key}/documents":
+            _require_admin(role)
+            body = json.loads(event.get("body") or "{}")
+            return _reply(200, editor.set_field_documents(
+                tenant_id, params.get("key"), body.get("documents") or []))
+
+        if route == "POST /config/draft/types":
+            _require_admin(role)
+            return _reply(200, editor.save_document_type(
+                tenant_id, json.loads(event.get("body") or "{}")))
+
+        if route == "DELETE /config/draft/types/{key}":
+            _require_admin(role)
+            return _reply(200, editor.delete_document_type(
+                tenant_id, params.get("key")))
+
+        if route == "POST /config/draft/categories":
+            _require_admin(role)
+            return _reply(200, editor.save_category(
+                tenant_id, json.loads(event.get("body") or "{}")))
+
+        if route == "DELETE /config/draft/categories/{key}":
+            _require_admin(role)
+            return _reply(200, editor.delete_category(
+                tenant_id, params.get("key")))
 
         if route == "GET /document-types":
             return _reply(200, {"types": document_types(tenant_id)})
