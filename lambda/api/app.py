@@ -37,6 +37,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 import config
+import registry
 import textract
 
 _s3 = boto3.client("s3")
@@ -890,6 +891,63 @@ def document_types(tenant_id):
     return config.for_tenant(tenant_id).document_type_list()
 
 
+# --- configuration ---------------------------------------------------------
+#
+# Authoring is an admin act. It changes what every future memo says, which is
+# a heavier thing than uploading a document.
+
+def _require_admin(role):
+    if role != "admin":
+        raise PermissionError("only an administrator may change the "
+                              "configuration")
+
+
+def config_state(tenant_id):
+    """Where this tenant stands: what is published, whether a draft is open,
+    and what publishing it would flag."""
+    revisions = registry.revisions(tenant_id)
+    draft = next((r for r in revisions if r["is_draft"]), None)
+
+    state = {
+        "active_revision": config.active_revision(tenant_id),
+        "revisions": [r for r in revisions if not r["is_draft"]],
+        "draft": draft,
+    }
+    if draft:
+        state["validation"] = registry.validate(tenant_id, registry.DRAFT)
+    return state
+
+
+def config_read(tenant_id, revision):
+    """A whole revision, for an editor to work on or a reader to inspect.
+
+    Loaded through the same path the pipeline uses, so what an editor sees is
+    what extraction will do."""
+    reg = config.load(tenant_id, int(revision))
+    return {
+        "revision": int(revision),
+        "categories": [{"key": k, "label": v}
+                       for k, v in reg.CATEGORIES.items()],
+        "document_types": [
+            {"key": k, "label": v["label"], "category": v["category"],
+             "description": v["description"], "read_mode": v["read_mode"],
+             "always_ocr": v["always_ocr"], "schemas": v["schemas"]}
+            for k, v in reg.DOCUMENT_TYPES.items()],
+        "schemas": [
+            {"key": k, "label": v["label"], "instruction": v["handler"],
+             "fields": [
+                 {"key": f[0], "label": f[1], "type": f[2],
+                  "cardinality": f[3], "description": f[4],
+                  "columns": [{"key": c[0], "label": c[1], "type": c[2],
+                               "description": c[3]}
+                              for c in (f[5] if len(f) > 5 else [])]}
+                 for f in v["fields"]]}
+            for k, v in reg.SCHEMAS.items()],
+        "template_key": reg.TEMPLATE_KEY,
+        "sections": reg.MEMO_SECTIONS,
+    }
+
+
 # --- dispatch --------------------------------------------------------------
 
 def lambda_handler(event, context):
@@ -990,6 +1048,43 @@ def lambda_handler(event, context):
             body = json.loads(event.get("body") or "{}")
             return _reply(200, confirm_logo(tenant_id, role,
                                             body.get("key", "")))
+
+        if route == "GET /config":
+            return _reply(200, config_state(tenant_id))
+
+        if route == "GET /config/{revision}":
+            return _reply(200, config_read(tenant_id,
+                                           params.get("revision")))
+
+        if route == "POST /config/draft":
+            _require_admin(role)
+            body = json.loads(event.get("body") or "{}")
+            return _reply(201, registry.open_draft(
+                tenant_id, email, body.get("from_revision")))
+
+        if route == "DELETE /config/draft":
+            _require_admin(role)
+            return _reply(200, registry.discard_draft(tenant_id))
+
+        if route == "GET /config/draft/validate":
+            return _reply(200, registry.validate(tenant_id, registry.DRAFT))
+
+        if route == "POST /config/publish":
+            _require_admin(role)
+            body = json.loads(event.get("body") or "{}")
+            result = registry.publish(tenant_id, email, body.get("note"))
+            # A refused publish is not an error: the person is told what to
+            # fix and the draft is untouched.
+            return _reply(200 if result["published"] else 409, result)
+
+        if route == "GET /config/packs":
+            return _reply(200, {"packs": registry.packs()})
+
+        if route == "POST /config/fork":
+            _require_admin(role)
+            body = json.loads(event.get("body") or "{}")
+            return _reply(201, registry.fork(
+                tenant_id, email, int(body.get("revision", 1))))
 
         if route == "GET /document-types":
             return _reply(200, {"types": document_types(tenant_id)})

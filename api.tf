@@ -171,6 +171,14 @@ locals {
     "POST /settings/logo",
     "POST /settings/logo/confirm",
     "GET /document-types",
+    "GET /config",
+    "GET /config/{revision}",
+    "POST /config/draft",
+    "DELETE /config/draft",
+    "GET /config/draft/validate",
+    "POST /config/publish",
+    "GET /config/packs",
+    "POST /config/fork",
     "POST /documents/{document_id}/active",
     "GET /documents/{document_id}/values",
     "GET /documents/{document_id}/passage",
@@ -211,6 +219,7 @@ resource "aws_lambda_permission" "api_gateway" {
 output "api_url" {
   value = aws_apigatewayv2_stage.default.invoke_url
 }
+
 
 
 
