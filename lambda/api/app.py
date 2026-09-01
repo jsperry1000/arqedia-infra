@@ -16,6 +16,7 @@ Routes:
   POST /engagements/{id}/file            confirm types and file
   GET  /engagements/{id}/documents       filed documents
   POST /documents/{document_id}/active   include or exclude from future memos
+  DELETE /documents/{document_id}         discard one not yet filed
   GET  /documents/{document_id}/values   what was extracted, and what was not
   GET  /documents/{document_id}/passage  the text of one page, for a citation
   GET  /engagements/{id}/memos           memos generated for it
@@ -284,6 +285,43 @@ def file_documents(tenant_id, decisions):
 
 
 # --- documents -------------------------------------------------------------
+
+def remove_document(tenant_id, document_id):
+    """Discard a document that has not been filed.
+
+    The only destructive action outside account deletion, and deliberately so.
+    A file chosen by mistake may belong to another client or to nobody's
+    business but the uploader's, and marking it rejected would leave it in this
+    tenant's storage indefinitely. Both objects go - the upload and the
+    analysed envelope holding its text - and then the row.
+
+    Refused once filing has started. A document in `reading` has a Textract job
+    in flight that would write back to a row no longer there, and a filed one
+    has been extracted and paid for. Neither is a misclick.
+    """
+    row = _sql("SELECT s3_key, state FROM document "
+               "WHERE tenant_id = :t AND document_id = :d",
+               [_p("t", tenant_id), _p("d", document_id)])
+    records = row.get("records", [])
+    if not records:
+        return None
+
+    s3_key = _col(records[0], 0)
+    state = _col(records[0], 1)
+    if state != "analysed":
+        return {"refused": state}
+
+    # Storage first. A failure here leaves the row intact and the card on
+    # screen, which is retryable. The reverse orphans an object nobody can see.
+    # Deleting a key that is not there is not an error in S3, so the second
+    # call is safe whether or not the normalizer got that far.
+    _s3.delete_object(Bucket=DOCS_BUCKET, Key=s3_key)
+    _s3.delete_object(Bucket=REVIEW_BUCKET, Key=s3_key + ".analysed.json")
+
+    _sql("DELETE FROM document WHERE tenant_id = :t AND document_id = :d",
+         [_p("t", tenant_id), _p("d", document_id)])
+    return {"removed": document_id}
+
 
 def list_documents(tenant_id, engagement):
     """Filed documents. `reading` documents are included so the screen can see
@@ -966,6 +1004,16 @@ def lambda_handler(event, context):
     try:
         if route == "GET /engagements":
             return _reply(200, {"engagements": list_engagements(tenant_id)})
+
+        if route == "DELETE /documents/{document_id}":
+            removing = int((event.get("pathParameters") or {})
+                           .get("document_id"))
+            outcome = remove_document(tenant_id, removing)
+            if outcome is None:
+                return _reply(404, {"error": "no such document"})
+            if "refused" in outcome:
+                return _reply(409, {"error": outcome["refused"]})
+            return _reply(200, outcome)
 
         if route == "GET /engagements/{id}/pending":
             return _reply(200, {"pending": list_pending(tenant_id, engagement)})

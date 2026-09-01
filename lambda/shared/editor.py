@@ -36,7 +36,11 @@ DATABASE = os.environ["DATABASE"]
 
 DRAFT = 0
 
-_KEY = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+# 128 characters, matching extracted_value.field_id and config_field.field_key.
+# It was 64, which no column enforced and which a group's columns exceeded
+# anyway - a column key is the group's key plus a suffix.
+_KEY = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+_MAX_KEY = 128
 
 
 def _sql(statement, params=None):
@@ -83,7 +87,7 @@ def _slug(label, prefix=""):
     renaming the label afterwards is free precisely because the key does not
     follow it."""
     body = re.sub(r"[^a-z0-9]+", "-", (label or "").lower()).strip("-")
-    return (prefix + (body or "item"))[:64]
+    return (prefix + (body or "item"))[:_MAX_KEY]
 
 
 def _require_draft(tenant_id):
@@ -417,8 +421,20 @@ def save_field(tenant_id, body):
 
     key = body.get("key") or _slug(body.get("label"), "f_").replace("-", "_")
     if not _KEY.match(key):
-        raise ValueError("a field key must be lower case letters, digits, "
-                         "dots, dashes or underscores")
+        raise ValueError(
+            "a field identity must be lower case letters, digits, dots, "
+            "dashes or underscores, and under %d characters" % _MAX_KEY)
+
+    # A table's columns take this key as their prefix, so the group itself
+    # must leave room for the longest of them.
+    if body.get("cardinality") == "group":
+        for col in (body.get("columns") or []):
+            suffix = "." + _slug(col.get("label") or "", "").replace("-", "_")
+            if len(key) + len(suffix) > _MAX_KEY:
+                raise ValueError(
+                    "the name '%s' leaves no room for its column '%s'. "
+                    "Shorten the table's name." % (body.get("label"),
+                                                   col.get("label")))
 
     rows = _rows(tenant_id, "SELECT schema_key FROM config_field "
                             "WHERE tenant_id = :t AND revision = :r "
@@ -472,6 +488,15 @@ def _save_columns(tenant_id, schema_key, group_key, columns):
             continue
         key = col.get("key") or (
             group_key + "." + _slug(label).replace("-", "_"))
+
+        # A column's identity is the group's key plus a suffix, so it can
+        # exceed what the group alone would. Refused here rather than
+        # accepted, published, and failed hours later during extraction on
+        # somebody's document.
+        if len(key) > _MAX_KEY:
+            raise ValueError(
+                "'%s' makes an identity too long for a column named '%s'. "
+                "Shorten one of them." % (label, group_key))
         _sql("""
             INSERT INTO config_field
               (tenant_id, revision, schema_key, field_key, label, field_type,

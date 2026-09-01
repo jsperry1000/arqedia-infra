@@ -105,11 +105,32 @@ export function EngagementView({ id, onBack, onMemo }: {
     refresh();
   }
 
+  // Picking a file uploads it, so there is no cancelling before it exists.
+  // Removing is the cancel, and it is final: nothing has been extracted and
+  // nothing has been charged, so there is nothing worth keeping.
+  async function remove(p: Pending) {
+    if (busy || p.state === "reading") return;
+    setError("");
+    setBusy(`Removing ${p.filename}`);
+    try {
+      await api.removeDocument(p.document_id);
+    } catch (err) {
+      setError(String((err as Error)?.message ?? err));
+    }
+    setChoices((prev) => {
+      const next = { ...prev };
+      delete next[p.document_id];
+      return next;
+    });
+    setBusy("");
+    refresh();
+  }
+
   async function fileAll() {
     const decisions: Decision[] = pending.map((p) => ({
       document_id: p.document_id,
       document_type: choices[p.document_id]?.type ?? p.proposed_type,
-      include: choices[p.document_id]?.include ?? true,
+      include: true,
     }));
     setBusy("Filing");
     await api.file(id, decisions);
@@ -164,9 +185,6 @@ export function EngagementView({ id, onBack, onMemo }: {
     return acc;
   }, {});
 
-  const includedCount = pending.filter(
-    (p) => choices[p.document_id]?.include ?? true).length;
-
   function arrow(key: SortKey) {
     if (key !== sortKey) return "";
     return sortDown ? " \u2193" : " \u2191";
@@ -191,18 +209,18 @@ export function EngagementView({ id, onBack, onMemo }: {
             return (
               <div className="review" key={p.document_id}>
                 <div className="review-head">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={choice.include}
-                      onChange={(e) => setChoices({
-                        ...choices,
-                        [p.document_id]: { ...choice, include: e.target.checked },
-                      })}
-                    />
-                    <strong>{p.filename}</strong>
-                  </label>
+                  <strong>{p.filename}</strong>
                   <span className="muted">{p.pages ?? "?"} pages</span>
+                  <button
+                    className="secondary"
+                    disabled={!!busy || p.state === "reading"}
+                    onClick={() => remove(p)}
+                    title={p.state === "reading"
+                      ? "Being read. It can no longer be removed here."
+                      : "Remove. The file and what was read from it both go."}
+                  >
+                    Remove
+                  </button>
                 </div>
 
                 <div className="review-body">
@@ -245,8 +263,9 @@ export function EngagementView({ id, onBack, onMemo }: {
             );
           })}
 
-          <button onClick={fileAll} disabled={!!busy || includedCount === 0}>
-            File {includedCount} {includedCount === 1 ? "document" : "documents"}
+          <button onClick={fileAll} disabled={!!busy || pending.length === 0}>
+            File {pending.length}{" "}
+            {pending.length === 1 ? "document" : "documents"}
           </button>
         </>
       )}

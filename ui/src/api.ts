@@ -347,6 +347,12 @@ export const api = {
       body: JSON.stringify({ active }),
     }),
 
+  // Discard something picked by mistake, before it is filed. The upload
+  // and what was read from it both go, and so does the row. Refused once
+  // filing has started.
+  removeDocument: (documentId: number) =>
+    call(`/documents/${documentId}`, { method: "DELETE" }),
+
   documentValues: (documentId: number): Promise<DocumentDetail> =>
     call(`/documents/${documentId}/values`),
 
