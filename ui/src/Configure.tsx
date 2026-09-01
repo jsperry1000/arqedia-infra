@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   api,
   type ConfigCategory,
@@ -428,6 +428,45 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [draft, fieldFilter]);
 
+  // Documents as they are grouped for the person who has to say what one is,
+  // and alphabetical within each group. Categories keep the order the
+  // configuration gives them, because a tenant who has ordered their groups
+  // deliberately meant it; only the documents are sorted.
+  //
+  // The count of fields sought is computed here rather than in the table, so
+  // the rendering does not have to reach back into the draft.
+  const documentGroups = useMemo(() => {
+    if (!draft) return [];
+
+    const sought = (key: string) =>
+      draft.fields.filter((f) => f.found_in.includes(key)).length;
+
+    const withCounts = (list: ConfigDocumentType[]) =>
+      list.map((t) => ({ ...t, sought: sought(t.key) }))
+          .sort((a, b) => a.label.localeCompare(b.label));
+
+    const groups = draft.categories
+      .map((c) => ({
+        key: c.key,
+        label: c.label,
+        types: withCounts(
+          draft.document_types.filter((t) => t.category === c.key)),
+      }))
+      .filter((g) => g.types.length > 0);
+
+    // A document whose group has been deleted still exists and is still
+    // extracted against. Dropping it because its heading is gone would hide a
+    // live document behind a configuration mistake.
+    const known = new Set(draft.categories.map((c) => c.key));
+    const orphans = withCounts(
+      draft.document_types.filter((t) => !known.has(t.category)));
+    if (orphans.length > 0) {
+      groups.push({ key: "ungrouped", label: "Ungrouped", types: orphans });
+    }
+
+    return groups;
+  }, [draft]);
+
   const bound = useMemo(() => {
     const set = new Set<string>();
     for (const s of draft?.sections ?? []) s.fields.forEach((f) => set.add(f));
@@ -769,43 +808,46 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         <thead>
           <tr>
             <th>Document</th>
-            <th>Group</th>
             <th>Read as</th>
             <th>Fields sought</th>
           </tr>
         </thead>
         <tbody>
-          {draft?.document_types.map((t) => {
-            const sought = draft.fields.filter(
-              (f) => f.found_in.includes(t.key)).length;
-            return (
-              <tr key={t.key} className={sought ? "" : "aside"}>
-                <td>
-                  <a onClick={() => setEditType(t.key)}>
-                    <strong>{t.label}</strong>
-                  </a>
-                  <div className="muted small">{t.description}</div>
-                </td>
-                <td className="muted small">
-                  {draft.categories.find((c) => c.key === t.category)?.label
-                    ?? t.category}
-                </td>
-                <td className="muted small">
-                  {t.read_mode}{t.always_ocr ? " \u00b7 always OCR" : ""}
-                </td>
-                <td className="muted small">
-                  <a onClick={() => {
-                    setOpenType(t.key);
-                    setTypeFields(draft.fields
-                      .filter((f) => f.found_in.includes(t.key))
-                      .map((f) => f.key));
-                  }}>
-                    {sought || <span className="warn">none</span>}
-                  </a>
+          {documentGroups.map((group) => (
+            <Fragment key={group.key}>
+              <tr className="group-head">
+                <td colSpan={4}>
+                  {group.label}
+                  <span className="muted small">
+                    {" \u00b7 "}{group.types.length}
+                  </span>
                 </td>
               </tr>
-            );
-          })}
+              {group.types.map((t) => (
+                <tr key={t.key} className={t.sought ? "" : "aside"}>
+                  <td>
+                    <a onClick={() => setEditType(t.key)}>
+                      <strong>{t.label}</strong>
+                    </a>
+                    <div className="muted small">{t.description}</div>
+                  </td>
+                  <td className="muted small">
+                    {t.read_mode}{t.always_ocr ? " \u00b7 always OCR" : ""}
+                  </td>
+                  <td className="muted small">
+                    <a onClick={() => {
+                      setOpenType(t.key);
+                      setTypeFields((draft?.fields ?? [])
+                        .filter((f) => f.found_in.includes(t.key))
+                        .map((f) => f.key));
+                    }}>
+                      {t.sought || <span className="warn">none</span>}
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </Fragment>
+          ))}
         </tbody>
       </table>
 

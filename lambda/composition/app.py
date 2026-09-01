@@ -469,10 +469,7 @@ def lambda_handler(event, context):
         parts.append(body)
         parts.append("")
 
-        sources = sorted({_citation(v) for v in block["values"]})
-        if sources:
-            parts.append("*Sources: " + "; ".join(sources) + ".*")
-            parts.append("")
+       
 
     memo_body = "\n".join(parts)
     encoded = memo_body.encode("utf-8")

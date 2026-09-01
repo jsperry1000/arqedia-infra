@@ -446,3 +446,19 @@ a.add:hover { background: var(--paper); text-decoration: none; }
   max-height: 60vh;
   overflow-y: auto;
 }
+
+/* A group heading inside the documents table. Reads as a divider rather than
+   a row, so the eye runs down the document names and not across it. */
+.docs tr.group-head td {
+  padding-top: 1.1rem;
+  padding-bottom: 0.35rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  border-bottom: 1px solid #dde3ec;
+}
+
+.docs tr.group-head:first-child td {
+  padding-top: 0.35rem;
+}

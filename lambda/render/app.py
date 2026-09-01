@@ -172,6 +172,12 @@ def _reference_section(styles):
     return out
 
 
+# What composition calls a citation. It masks citations before consolidation
+# using a regex requiring one of these extensions, so an italic run without one
+# was never a citation on the way in and must not become one here.
+_CITATION_FILE = re.compile(r"\.(?:pdf|docx|xlsx|txt|json|xml)\b", re.I)
+
+
 def _reset_citations():
     del _CITATIONS[:]
     _CITATION_INDEX.clear()
@@ -215,6 +221,13 @@ def _inline(text):
         body = m.group(1).strip()
         if re.match(r"^sources?\s*:", body, re.I):
             return ""
+        # Emphasis, not a citation. An extracted value carrying its own
+        # italics - a French term from a trade register, a document title -
+        # arrives here looking exactly like a citation, and numbering it takes
+        # the word out of the sentence and adds a reference to something that
+        # is not a document.
+        if not _CITATION_FILE.search(body):
+            return "<i>" + body + "</i>"
         return '<super><font size="6.5" color="%s">%d</font></super>' % (
             _CITE_COLOUR, _cite_number(body))
 
