@@ -29,9 +29,9 @@ import urllib.parse
 import boto3
 from botocore.exceptions import ClientError
 
-import classify
 import config
 import extractors
+import segment
 
 _s3 = boto3.client("s3")
 _rds = boto3.client("rds-data")
@@ -58,6 +58,53 @@ def _is_thin(text, pages, byte_size):
     thin = (len(text) / pages) < _THIN_CHARS_PER_PAGE
     heavy = (byte_size / pages) > _IMAGE_BYTES_PER_PAGE
     return thin and heavy
+
+
+def _has_thin_page(text, units, byte_size):
+    """True when any single page is a scan.
+
+    Distinct from _is_thin, which averages across the file and decides whether
+    the DOCUMENT goes to OCR. This asks a narrower question: does the file
+    contain a page that cannot be read? A file averaging well can still hold
+    three scanned pages in the middle, and those pages are why the file must
+    not be split - see the guard in lambda_handler."""
+    if not units:
+        return False
+    heavy = (byte_size / len(units)) > _IMAGE_BYTES_PER_PAGE
+    if not heavy:
+        return False
+    for u in units:
+        chars = min(u["char_end"], len(text)) - min(u["char_start"], len(text))
+        if chars < _THIN_CHARS_PER_PAGE:
+            return True
+    return False
+
+
+def _slice(raw_text, units, part):
+    """The part's own text and units.
+
+    Page numbers stay the FILE's own. A value read from the first page of a
+    part covering pages 21 to 30 cites page 21, because that is where a reader
+    opening the file will find it. Character offsets are re-based to the sliced
+    text, because that is what the extractor will be reading."""
+    if part["page_from"] is None:
+        return units, raw_text
+
+    kept = [u for u in units
+            if part["page_from"] <= u["index"] <= part["page_to"]]
+    if not kept:
+        return units, raw_text
+
+    origin = kept[0]["char_start"]
+    text = raw_text[origin:kept[-1]["char_end"]]
+
+    rebased = []
+    for u in kept:
+        v = dict(u)
+        v["char_start"] = u["char_start"] - origin
+        v["char_end"] = u["char_end"] - origin
+        rebased.append(v)
+    return rebased, text
 
 
 def _now():
@@ -106,11 +153,23 @@ def _parse_key(key):
     return int(m.group("tenant")), m.group("engagement"), m.group("file")
 
 
+def envelope_suffix(page_from, part_index):
+    """Where a document's envelope lives, relative to the file's own key.
+
+    Parts of one file share an s3_key, so the part number is what tells their
+    envelopes apart. A file holding one document keeps the unsuffixed name it
+    has always had, so nothing already filed moves."""
+    if page_from is None:
+        return ".analysed.json"
+    return ".p" + str(part_index) + ".analysed.json"
+
+
 def _write_envelope(key, envelope):
     """.analysed.json, not .normalized.json. Extraction listens for the latter,
     so writing this does not start extraction - filing does, by renaming the
     envelope once a person has confirmed what the document is."""
-    review_key = key + ".analysed.json"
+    review_key = key + envelope_suffix(envelope.get("page_from"),
+                                       envelope.get("part_index"))
     _s3.put_object(
         Bucket=REVIEW_BUCKET,
         Key=review_key,
@@ -125,14 +184,20 @@ def _record_document(envelope):
         """
         INSERT INTO document
           (tenant_id, engagement_id, s3_bucket, s3_key, s3_version_id,
-           sha256, filename, page_count, extraction_method, document_type,
+           sha256, filename, page_count, part_index, page_from, page_to,
+           extraction_method, document_type,
            state, thin_text, char_count, byte_size,
-           type_confidence, type_reason, uploaded_by, config_revision)
+           type_confidence, type_reason,
+           classify_tokens_in, classify_tokens_out,
+           uploaded_by, config_revision)
         VALUES
           (:tenant_id, :engagement_id, :s3_bucket, :s3_key, :s3_version_id,
-           :sha256, :filename, :page_count, :extraction_method, :document_type,
+           :sha256, :filename, :page_count, :part_index, :page_from, :page_to,
+           :extraction_method, :document_type,
            :state, :thin_text, :char_count, :byte_size,
-           :type_confidence, :type_reason, :uploaded_by, :config_revision)
+           :type_confidence, :type_reason,
+           :classify_tokens_in, :classify_tokens_out,
+           :uploaded_by, :config_revision)
         """,
         [
             _p("tenant_id", envelope["tenant_id"]),
@@ -143,6 +208,9 @@ def _record_document(envelope):
             _p("sha256", envelope["sha256_source"]),
             _p("filename", envelope["filename"]),
             _p("page_count", len(envelope["units"])),
+            _p("part_index", envelope.get("part_index")),
+            _p("page_from", envelope.get("page_from")),
+            _p("page_to", envelope.get("page_to")),
             _p("extraction_method", envelope["extraction_method"]),
             _p("document_type", envelope.get("document_type")),
             _p("state", "analysed"),
@@ -151,6 +219,8 @@ def _record_document(envelope):
             _p("byte_size", envelope.get("byte_size")),
             _p("type_confidence", envelope.get("document_type_confidence")),
             _p("type_reason", envelope.get("document_type_reason")),
+            _p("classify_tokens_in", envelope.get("classify_tokens_in")),
+            _p("classify_tokens_out", envelope.get("classify_tokens_out")),
             _p("uploaded_by", envelope.get("uploaded_by")),
             _p("config_revision", envelope.get("config_revision") or 1),
         ],
@@ -201,48 +271,86 @@ def lambda_handler(event, context):
     revision = config.active_revision(tenant_id)
     registry = config.load(tenant_id, revision)
 
-    document_type, confidence, why = classify.classify(raw_text, registry)
+    parts, usage = segment.segment(raw_text, units, registry)
 
-    envelope = {
-        "tenant_id": tenant_id,
-        "document_type": document_type,
-        "document_type_proposed": document_type,
-        "document_type_confidence": confidence,
-        "document_type_reason": why,
-        "document_type_confirmed": False,
-        "byte_size": len(body),
-        "thin_text": _is_thin(raw_text, len(units), len(body)),
-        "state": "analysed",
-        "uploaded_by": uploaded_by,
-        "engagement": engagement,
-        "filename": filename,
-        "source_bucket": src_bucket,
-        "source_key": src_key,
-        "source_version_id": obj.get("VersionId"),
-        "sha256_source": sha,
-        "extraction_method": method,
-        "extracted_at": _now(),
-        "config_revision": revision,
-        "raw_text": raw_text,
-        "units": units,
-        "extracted_values": [],
-        "extraction_complete": False,
-    }
+    # A scanned page cannot be sent to OCR on its own: Textract's asynchronous
+    # API takes an object, not a page range. Splitting a file that holds one
+    # would produce a part nothing can ever read. So a file with any thin page
+    # is filed whole and follows today's OCR path untouched, keeping whatever
+    # type segmentation proposed for its first part.
+    if len(parts) > 1 and _has_thin_page(raw_text, units, len(body)):
+        head = parts[0]
+        parts = [{"part_index": 1, "page_from": None, "page_to": None,
+                  "document_type": head["document_type"],
+                  "confidence": head["confidence"],
+                  "why": head["why"]}]
+        print("[not-split] key=%s reason=thin-page pages=%d" % (
+            src_key, len(units)))
 
-    document_id = _record_document(envelope)
-    envelope["document_id"] = document_id
+    thin = _is_thin(raw_text, len(units), len(body))
+    written = []
 
-    review_key = _write_envelope(src_key, envelope)
+    for part in parts:
+        part_units, part_text = _slice(raw_text, units, part)
 
-    print("[analysed] doc=%s method=%s units=%d type=%s by=%s key=%s" % (
-        document_id, method, len(units), document_type, uploaded_by, src_key))
+        envelope = {
+            "tenant_id": tenant_id,
+            "document_type": part["document_type"],
+            "document_type_proposed": part["document_type"],
+            "document_type_confidence": part["confidence"],
+            "document_type_reason": part["why"],
+            "document_type_confirmed": False,
+            "part_index": part["part_index"],
+            "page_from": part["page_from"],
+            "page_to": part["page_to"],
+            "byte_size": len(body),
+            "thin_text": thin,
+            "state": "analysed",
+            "uploaded_by": uploaded_by,
+            "engagement": engagement,
+            "filename": filename,
+            "source_bucket": src_bucket,
+            "source_key": src_key,
+            "source_version_id": obj.get("VersionId"),
+            "sha256_source": sha,
+            "extraction_method": method,
+            "extracted_at": _now(),
+            "config_revision": revision,
+            "raw_text": part_text,
+            "units": part_units,
+            "extracted_values": [],
+            "extraction_complete": False,
+        }
+
+        # One segmentation call covers the whole file, so its cost is recorded
+        # once. Summing this column across a file's parts would count the same
+        # call several times, and the point of the column is to price the
+        # classification allowance from what it actually costs.
+        if part["part_index"] == 1:
+            envelope["classify_tokens_in"] = usage.get("input_tokens")
+            envelope["classify_tokens_out"] = usage.get("output_tokens")
+
+        document_id = _record_document(envelope)
+        envelope["document_id"] = document_id
+        review_key = _write_envelope(src_key, envelope)
+        written.append({"document_id": document_id,
+                        "review_key": review_key,
+                        "document_type": part["document_type"],
+                        "page_from": part["page_from"],
+                        "page_to": part["page_to"],
+                        "units": len(part_units)})
+
+        print("[analysed] doc=%s part=%s of %s pages=%s-%s method=%s "
+              "type=%s by=%s key=%s boundary=%s" % (
+                  document_id, part["part_index"], len(parts),
+                  part["page_from"] or 1, part["page_to"] or len(units),
+                  method, part["document_type"], uploaded_by, src_key,
+                  (part.get("boundary") or "-")[:120]))
 
     return {
         "status": "ok",
-        "document_id": document_id,
         "tenant_id": tenant_id,
-        "review_key": review_key,
         "extraction_method": method,
-        "document_type": document_type,
-        "units": len(units),
+        "pages": len(units),
+        "documents": written,
     }

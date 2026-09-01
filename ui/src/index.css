@@ -430,3 +430,19 @@ a.add {
   padding: 7px 14px; border: 1px dashed var(--medium); border-radius: 3px;
 }
 a.add:hover { background: var(--paper); text-decoration: none; }
+
+/* A page of source text. Preformatted because the layout of a statement or a
+   table is part of what it says, and reflowing it would misrepresent what was
+   read. */
+.passage {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  background: #f7f9fc;
+  border: 1px solid #dde3ec;
+  border-radius: 4px;
+  padding: 0.75rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}

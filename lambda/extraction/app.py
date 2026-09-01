@@ -82,6 +82,13 @@ def _build_prompt(schema, envelope):
     word = _unit_word(units)
     count = len(units)
 
+    # A part of a larger file keeps that file's own page numbers, so what the
+    # model is told must come from the units rather than from how many there
+    # are. Telling it "1 to 10" while the markers below read PAGE 21 is how a
+    # citation ends up pointing at a page the value was never on.
+    first_index = units[0]["index"] if units else 1
+    last_index = units[-1]["index"] if units else 1
+
     lines = []
     for field in schema["fields"]:
         field_id, label, ftype, card, desc = field[0], field[1], field[2], field[3], field[4]
@@ -105,8 +112,9 @@ def _build_prompt(schema, envelope):
         'For each field, "value" is what the document states, or null if it '
         "is not present. Do not infer, do not use outside knowledge.\n\n"
         '"unit" is the ' + word + " number the value was read from. "
-        "The document has " + str(count) + " " + word + "s, numbered 1 to "
-        + str(count) + ", marked in the text below.\n"
+        "The document has " + str(count) + " " + word + "s, numbered "
+        + str(first_index) + " to " + str(last_index)
+        + ", marked in the text below.\n"
         "If you cannot tell which " + word + " a value came from, return null "
         'for "unit". A wrong ' + word + " number is worse than none.\n\n"
         "Return only the JSON object."
