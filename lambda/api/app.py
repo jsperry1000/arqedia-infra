@@ -17,6 +17,10 @@ Routes:
   GET  /engagements/{id}/documents       filed documents
   POST /documents/{document_id}/active   include or exclude from future memos
   DELETE /documents/{document_id}         discard one not yet filed
+
+One uploaded file may hold several documents. Each is a row of its own
+sharing the file's s3_key and carrying its page range, so a citation still
+names the file a reader was given. See db/migrations/011_document_parts.sql.
   GET  /documents/{document_id}/values   what was extracted, and what was not
   GET  /documents/{document_id}/passage  the text of one page, for a citation
   GET  /engagements/{id}/memos           memos generated for it
@@ -178,7 +182,7 @@ def list_pending(tenant_id, engagement):
         """
         SELECT document_id, filename, document_type, page_count,
                thin_text, char_count, type_confidence, type_reason, state,
-               uploaded_by
+               uploaded_by, part_index, page_from, page_to
         FROM document
         WHERE tenant_id = :tenant_id
           AND state IN ('analysed', 'reading')
@@ -198,9 +202,24 @@ def list_pending(tenant_id, engagement):
          "confidence": _col(r, 6),
          "why": _col(r, 7),
          "state": _col(r, 8),
-         "uploaded_by": _col(r, 9)}
+         "uploaded_by": _col(r, 9),
+         "part_index": _col(r, 10),
+         "page_from": _col(r, 11),
+         "page_to": _col(r, 12)}
         for r in result.get("records", [])
     ]
+
+
+def _envelope_suffix(page_from, part_index):
+    """Where a document's envelope lives, relative to the file's own key.
+
+    Parts of one file share an s3_key, so the part number is what tells their
+    envelopes apart. A file holding one document keeps the unsuffixed name it
+    has always had. Mirrors envelope_suffix in the normalizer, which writes
+    them - the two must not drift."""
+    if page_from is None:
+        return ".analysed.json"
+    return ".p" + str(part_index) + ".analysed.json"
 
 
 def _start_ocr(registry, tenant_id, document_id, s3_key, document_type):
@@ -248,7 +267,8 @@ def file_documents(tenant_id, decisions):
 
         document_type = d.get("document_type") or None
 
-        row = _sql("SELECT s3_key, thin_text FROM document "
+        row = _sql("SELECT s3_key, thin_text, page_from, part_index "
+                   "FROM document "
                    "WHERE tenant_id = :t AND document_id = :d",
                    [_p("t", tenant_id), _p("d", document_id)])
         records = row.get("records", [])
@@ -256,6 +276,7 @@ def file_documents(tenant_id, decisions):
             continue
         s3_key = _col(records[0], 0)
         thin = bool(_col(records[0], 1))
+        suffix = _envelope_suffix(_col(records[0], 2), _col(records[0], 3))
 
         if thin or registry.always_ocr(document_type):
             _start_ocr(registry, tenant_id, document_id, s3_key,
@@ -271,12 +292,13 @@ def file_documents(tenant_id, decisions):
         # Extraction listens for .normalized.json. Renaming the envelope is
         # what starts it - filing, not uploading.
         body = _s3.get_object(Bucket=REVIEW_BUCKET,
-                              Key=s3_key + ".analysed.json")["Body"].read()
+                              Key=s3_key + suffix)["Body"].read()
         envelope = json.loads(body.decode("utf-8"))
         envelope["document_type"] = document_type
         envelope["document_type_confirmed"] = True
         _s3.put_object(
-            Bucket=REVIEW_BUCKET, Key=s3_key + ".normalized.json",
+            Bucket=REVIEW_BUCKET,
+            Key=s3_key + suffix.replace(".analysed.", ".normalized."),
             Body=json.dumps(envelope, ensure_ascii=False).encode("utf-8"),
             ContentType="application/json")
         filed += 1
@@ -299,7 +321,7 @@ def remove_document(tenant_id, document_id):
     in flight that would write back to a row no longer there, and a filed one
     has been extracted and paid for. Neither is a misclick.
     """
-    row = _sql("SELECT s3_key, state FROM document "
+    row = _sql("SELECT s3_key, state, page_from, part_index FROM document "
                "WHERE tenant_id = :t AND document_id = :d",
                [_p("t", tenant_id), _p("d", document_id)])
     records = row.get("records", [])
@@ -308,15 +330,27 @@ def remove_document(tenant_id, document_id):
 
     s3_key = _col(records[0], 0)
     state = _col(records[0], 1)
+    page_from = _col(records[0], 2)
+    suffix = _envelope_suffix(page_from, _col(records[0], 3))
     if state != "analysed":
         return {"refused": state}
+
+    # One uploaded file can hold several documents, all reading from the same
+    # object. Removing one part must not take the file its siblings are read
+    # from, so the upload goes only when the last of them does.
+    siblings = _sql(
+        "SELECT COUNT(*) FROM document "
+        "WHERE tenant_id = :t AND s3_key = :k AND document_id <> :d",
+        [_p("t", tenant_id), _p("k", s3_key), _p("d", document_id)])
+    remaining = _col(siblings.get("records", [[{}]])[0], 0) or 0
 
     # Storage first. A failure here leaves the row intact and the card on
     # screen, which is retryable. The reverse orphans an object nobody can see.
     # Deleting a key that is not there is not an error in S3, so the second
     # call is safe whether or not the normalizer got that far.
-    _s3.delete_object(Bucket=DOCS_BUCKET, Key=s3_key)
-    _s3.delete_object(Bucket=REVIEW_BUCKET, Key=s3_key + ".analysed.json")
+    _s3.delete_object(Bucket=REVIEW_BUCKET, Key=s3_key + suffix)
+    if not remaining:
+        _s3.delete_object(Bucket=DOCS_BUCKET, Key=s3_key)
 
     _sql("DELETE FROM document WHERE tenant_id = :t AND document_id = :d",
          [_p("t", tenant_id), _p("d", document_id)])
@@ -455,8 +489,8 @@ def document_passage(tenant_id, document_id, unit):
     useful thing when checking an extraction, since a wrong value is usually a
     misreading rather than a misprint."""
     row = _sql(
-        "SELECT s3_key, filename, page_count FROM document "
-        "WHERE tenant_id = :t AND document_id = :d",
+        "SELECT s3_key, filename, page_count, state, page_from, part_index "
+        "FROM document WHERE tenant_id = :t AND document_id = :d",
         [_p("t", tenant_id), _p("d", int(document_id))],
     )
     records = row.get("records", [])
@@ -464,9 +498,20 @@ def document_passage(tenant_id, document_id, unit):
         return None
 
     s3_key = _col(records[0], 0)
+    state = _col(records[0], 3)
+    suffix = _envelope_suffix(_col(records[0], 4), _col(records[0], 5))
+
+    # A document waiting to be filed has only the analysed envelope. Reading
+    # before filing is the point: it is how a person decides what the thing is
+    # without paying to find out.
+    if state != "filed":
+        suffix = suffix.replace(".analysed.", ".analysed.")
+    else:
+        suffix = suffix.replace(".analysed.", ".normalized.")
+
     envelope = json.loads(
         _s3.get_object(Bucket=REVIEW_BUCKET,
-                       Key=s3_key + ".normalized.json")["Body"].read()
+                       Key=s3_key + suffix)["Body"].read()
         .decode("utf-8"))
 
     raw = envelope.get("raw_text") or ""

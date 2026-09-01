@@ -34,6 +34,10 @@ export type Pending = {
   why: string | null;
   state: string;
   uploaded_by: string | null;
+  // A file may hold several documents. page_from is null when it holds one.
+  part_index: number | null;
+  page_from: number | null;
+  page_to: number | null;
 };
 
 export type Doc = {

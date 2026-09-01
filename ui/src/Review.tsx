@@ -7,6 +7,7 @@ import {
   type Doc,
   type MemoRef,
   type DocumentDetail,
+  type Passage,
 } from "./api";
 
 /**
@@ -42,6 +43,8 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [nameFilter, setNameFilter] = useState("");
   const [showInactive, setShowInactive] = useState(true);
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
+  const [passage, setPassage] = useState<Passage | null>(null);
+  const [bounds, setBounds] = useState<[number, number]>([1, 1]);
 
   async function refresh() {
     const [p, d, m] = await Promise.all([
@@ -103,6 +106,19 @@ export function EngagementView({ id, onBack, onMemo }: {
 
     setBusy("");
     refresh();
+  }
+
+  // What the system actually read, page by page. The filename is not an
+  // answer when four cards carry the same one, and a description written by a
+  // model is a summary rather than the thing itself.
+  async function view(p: Pending, unit: number) {
+    setError("");
+    setBounds([p.page_from ?? 1, p.page_to ?? p.pages ?? 1]);
+    try {
+      setPassage(await api.passage(p.document_id, unit));
+    } catch (err) {
+      setError(String((err as Error)?.message ?? err));
+    }
   }
 
   // Picking a file uploads it, so there is no cancelling before it exists.
@@ -210,7 +226,19 @@ export function EngagementView({ id, onBack, onMemo }: {
               <div className="review" key={p.document_id}>
                 <div className="review-head">
                   <strong>{p.filename}</strong>
-                  <span className="muted">{p.pages ?? "?"} pages</span>
+                  <span className="muted">
+                    {p.page_from
+                      ? `pages ${p.page_from}\u2013${p.page_to}`
+                      : `${p.pages ?? "?"} pages`}
+                  </span>
+                  <button
+                    className="secondary"
+                    disabled={p.state === "reading"}
+                    onClick={() => view(p, p.page_from ?? 1)}
+                    title="Read what the system read, before naming it."
+                  >
+                    View
+                  </button>
                   <button
                     className="secondary"
                     disabled={!!busy || p.state === "reading"}
@@ -373,6 +401,16 @@ export function EngagementView({ id, onBack, onMemo }: {
       </table>
 
       {detail && <ValuePanel detail={detail} onClose={() => setDetail(null)} />}
+
+      {passage && (
+        <PassagePanel
+          passage={passage}
+          bounds={bounds}
+          onGo={(unit) => api.passage(passage.document_id, unit)
+            .then(setPassage)}
+          onClose={() => setPassage(null)}
+        />
+      )}
     </div>
   );
 }
@@ -420,6 +458,58 @@ function ValuePanel({ detail, onClose }: {
             </p>
           </>
         )}
+      </aside>
+    </div>
+  );
+}
+
+/** One page of a document, as it was read.
+
+    Paging is held inside the part's own range. A part covering pages 21 to 30
+    is a document in its own right to the person reading it, and letting the
+    arrows wander into a neighbouring part would show them somebody else's
+    document under this one's heading. */
+function PassagePanel({ passage, bounds, onGo, onClose }: {
+  passage: Passage;
+  bounds: [number, number];
+  onGo: (unit: number) => void;
+  onClose: () => void;
+}) {
+  const [first, last] = bounds;
+  const here = passage.unit ?? first;
+
+  return (
+    <div className="panel-backdrop" onClick={onClose}>
+      <aside className="panel" onClick={(e) => e.stopPropagation()}>
+        <a onClick={onClose} className="panel-close">Close</a>
+        <h3>{passage.filename}</h3>
+        <p className="muted">
+          {passage.unit_kind} {here}
+          {passage.unit_label ? ` \u2014 ${passage.unit_label}` : ""}
+          {first !== last ? ` of ${first}\u2013${last}` : ""}
+        </p>
+
+        <div className="filters">
+          <button
+            className="secondary"
+            disabled={here <= first}
+            onClick={() => onGo(here - 1)}
+          >
+            Previous
+          </button>
+          <button
+            className="secondary"
+            disabled={here >= last}
+            onClick={() => onGo(here + 1)}
+          >
+            Next
+          </button>
+          <a href={passage.source_url} target="_blank" rel="noreferrer">
+            Open the file
+          </a>
+        </div>
+
+        <pre className="passage">{passage.text}</pre>
       </aside>
     </div>
   );
