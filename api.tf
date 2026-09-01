@@ -33,7 +33,7 @@ resource "aws_iam_role_policy_attachment" "api_logs" {
 data "aws_iam_policy_document" "api" {
   statement {
     effect    = "Allow"
-    actions   = ["s3:PutObject"]
+    actions   = ["s3:PutObject", "s3:DeleteObject"]
     resources = ["${aws_s3_bucket.data["docs"].arn}/*"]
   }
 
@@ -47,7 +47,7 @@ data "aws_iam_policy_document" "api" {
   # which is what starts extraction.
   statement {
     effect    = "Allow"
-    actions   = ["s3:GetObject", "s3:PutObject"]
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
     resources = ["${aws_s3_bucket.data["review"].arn}/*"]
   }
 
@@ -171,6 +171,7 @@ locals {
     "POST /settings/logo",
     "POST /settings/logo/confirm",
     "GET /document-types",
+    "DELETE /documents/{document_id}",
     "GET /config",
     "GET /config/{revision}",
     "POST /config/draft",
