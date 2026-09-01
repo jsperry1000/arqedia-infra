@@ -185,6 +185,7 @@ locals {
     "POST /config/draft/fields",
     "DELETE /config/draft/fields/{key}",
     "PUT /config/draft/fields/{key}/documents",
+    "PUT /config/draft/types/{key}/fields",
     "POST /config/draft/types",
     "DELETE /config/draft/types/{key}",
     "POST /config/draft/categories",
@@ -230,6 +231,7 @@ resource "aws_lambda_permission" "api_gateway" {
 output "api_url" {
   value = aws_apigatewayv2_stage.default.invoke_url
 }
+
 
 
 

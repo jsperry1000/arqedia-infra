@@ -376,6 +376,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   const [editType, setEditType] = useState<string | null>(null);
   const [editCategory, setEditCategory] = useState<string | null>(null);
   const [editSection, setEditSection] = useState<string | null>(null);
+  const [openType, setOpenType] = useState<string | null>(null);
+  // Held while a document's fields are being ticked, so a dozen changes are
+  // one save rather than a dozen.
+  const [typeFields, setTypeFields] = useState<string[]>([]);
 
   function message(err: unknown) {
     let text = String((err as Error)?.message ?? err);
@@ -790,7 +794,14 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                   {t.read_mode}{t.always_ocr ? " \u00b7 always OCR" : ""}
                 </td>
                 <td className="muted small">
-                  {sought || <span className="warn">none</span>}
+                  <a onClick={() => {
+                    setOpenType(t.key);
+                    setTypeFields(draft.fields
+                      .filter((f) => f.found_in.includes(t.key))
+                      .map((f) => f.key));
+                  }}>
+                    {sought || <span className="warn">none</span>}
+                  </a>
                 </td>
               </tr>
             );
@@ -801,6 +812,55 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       <a className="small add" onClick={() => setEditType("")}>
         Add a document
       </a>
+
+
+      {openType && draft && (
+        <div className="panel-backdrop" onClick={() => setOpenType(null)}>
+          <aside className="panel" onClick={(e) => e.stopPropagation()}>
+            <a onClick={() => setOpenType(null)} className="panel-close">
+              Close
+            </a>
+            <h3>
+              {draft.document_types.find((t) => t.key === openType)?.label}
+            </h3>
+            <p className="muted small">
+              What is looked for in this document. The same relationship as
+              &ldquo;where is this field found&rdquo;, read from the other end
+              &mdash; changing it here changes it there.
+            </p>
+
+            <div className="binder">
+              {sortedFields.map((f) => {
+                const on = typeFields.includes(f.key);
+                return (
+                  <label className="bind" key={f.key}>
+                    <input type="checkbox" checked={on}
+                      onChange={() => setTypeFields(on
+                        ? typeFields.filter((x) => x !== f.key)
+                        : [...typeFields, f.key])} />
+                    {f.label}
+                    {f.is_group && <span className="muted small"> (table)</span>}
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="form-actions">
+              <button disabled={!!busy} onClick={() =>
+                act("Saving", async () => {
+                  await api.setDocumentFields(openType, typeFields);
+                  setOpenType(null);
+                })}>
+                Save {typeFields.length}{" "}
+                {typeFields.length === 1 ? "field" : "fields"}
+              </button>
+              <a className="secondary" onClick={() => setOpenType(null)}>
+                Cancel
+              </a>
+            </div>
+          </aside>
+        </div>
+      )}
 
       {/* 4b --- how documents group ----------------------------------------- */}
       <h3>How documents group</h3>

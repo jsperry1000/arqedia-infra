@@ -1123,6 +1123,12 @@ def lambda_handler(event, context):
             return _reply(200, editor.set_field_documents(
                 tenant_id, params.get("key"), body.get("documents") or []))
 
+        if route == "PUT /config/draft/types/{key}/fields":
+            _require_admin(role)
+            body = json.loads(event.get("body") or "{}")
+            return _reply(200, editor.set_document_fields(
+                tenant_id, params.get("key"), body.get("fields") or []))
+
         if route == "POST /config/draft/types":
             _require_admin(role)
             return _reply(200, editor.save_document_type(
