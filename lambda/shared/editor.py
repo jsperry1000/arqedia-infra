@@ -341,6 +341,49 @@ def set_field_documents(tenant_id, field_key, type_keys):
     return {"field": field_key, "found_in": wanted}
 
 
+def set_document_fields(tenant_id, type_key, field_keys):
+    """Which fields are sought in one document.
+
+    The same relationship as set_field_documents, read from the other end: a
+    field naming a document and a document naming a field are one fact, stored
+    once. Editing from either side writes the same rows, so the two screens
+    cannot disagree - there is no second copy to drift.
+
+    Done in ONE operation rather than a call per field. Twelve separate calls
+    would each rebuild the grouping, and a half-finished sweep would leave an
+    intermediate state that is nobody's intent."""
+    _require_draft(tenant_id)
+
+    wanted = set(field_keys or [])
+
+    # Every field, and the documents it is currently found in.
+    current = {}
+    for r in _rows(tenant_id, """
+        SELECT f.field_key, m.type_key
+        FROM config_field f
+        LEFT JOIN config_type_schema m
+          ON m.tenant_id = f.tenant_id AND m.revision = f.revision
+         AND m.schema_key = f.schema_key
+        WHERE f.tenant_id = :t AND f.revision = :r
+          AND (f.group_key IS NULL OR f.group_key = f.field_key)"""):
+        current.setdefault(_col(r, 0), set())
+        if _col(r, 1):
+            current[_col(r, 0)].add(_col(r, 1))
+
+    changed = 0
+    for field_key, documents in current.items():
+        has = type_key in documents
+        should = field_key in wanted
+        if has == should:
+            continue
+        documents = set(documents)
+        documents.add(type_key) if should else documents.discard(type_key)
+        set_field_documents(tenant_id, field_key, sorted(documents))
+        changed += 1
+
+    return {"document": type_key, "fields": sorted(wanted), "changed": changed}
+
+
 def _prune_schemas(tenant_id):
     """Remove a schema no field sits in.
 

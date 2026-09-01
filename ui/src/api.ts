@@ -266,6 +266,14 @@ export const api = {
       body: JSON.stringify({ documents }),
     }),
 
+  // The same relationship as setFieldDocuments, from the other end. Sent as
+  // one list rather than a call per field, so the grouping is rebuilt once.
+  setDocumentFields: (key: string, fields: string[]) =>
+    call(`/config/draft/types/${encodeURIComponent(key)}/fields`, {
+      method: "PUT",
+      body: JSON.stringify({ fields }),
+    }),
+
   saveDocumentType: (body: Partial<ConfigDocumentType>) =>
     call("/config/draft/types", {
       method: "POST",
