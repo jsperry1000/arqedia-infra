@@ -170,6 +170,7 @@ locals {
     "GET /settings/preview",
     "POST /settings/logo",
     "POST /settings/logo/confirm",
+    "GET /templates",
     "GET /document-types",
     "DELETE /documents/{document_id}",
     "GET /config",

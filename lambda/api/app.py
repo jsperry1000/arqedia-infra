@@ -25,6 +25,7 @@ names the file a reader was given. See db/migrations/011_document_parts.sql.
   GET  /documents/{document_id}/passage  the text of one page, for a citation
   GET  /engagements/{id}/memos           memos generated for it
   POST /engagements/{id}/generate        compose a memo (deliberate act)
+  GET  /templates                        the memoranda this tenant can write
   GET  /memos/{memo_id}                  a memo, its PDF link and its sources
   POST /uploads                          a signed link to upload one file
   GET  /document-types                   the type list, for the dropdown
@@ -955,15 +956,38 @@ def upload_url(tenant_id, email, engagement, filename):
     return {"url": url, "key": key, "uploaded_by": email}
 
 
-def generate(tenant_id, email, engagement):
+def templates(tenant_id):
+    """The memoranda this tenant can write, at its active revision.
+
+    A tenant may hold a credit, a KYC and a lender template over the same
+    documents. The documents are extracted once; which memo is written from
+    them is a choice made at generation."""
+    return config.for_tenant(tenant_id).template_list()
+
+
+def generate(tenant_id, email, engagement, template_key=None):
     """Composition takes over a minute, so this starts it and returns. The
-    caller polls the memo list."""
+    caller polls the memo list.
+
+    The template is validated HERE rather than left to composition. The
+    invocation is asynchronous, so a bad key would otherwise fail four minutes
+    later in a log nobody is watching, having returned 202 to a caller that
+    thinks a memo is being written."""
+    registry_now = config.for_tenant(tenant_id)
+    template_key = template_key or registry_now.TEMPLATE_KEY
+
+    if not registry_now.has_template(template_key):
+        raise ValueError("no such template: %s" % template_key)
+
     _lambda.invoke(
         FunctionName=COMPOSITION_FUNCTION,
         InvocationType="Event",
         Payload=json.dumps({"tenant_id": tenant_id, "engagement": engagement,
+                            "template_key": template_key,
                             "generated_by": email}))
-    return {"status": "started", "engagement": engagement}
+    return {"status": "started", "engagement": engagement,
+            "template_key": template_key,
+            "template": registry_now.label_for_template(template_key)}
 
 
 def document_types(tenant_id):
@@ -996,6 +1020,9 @@ def config_state(tenant_id):
         "active_revision": config.active_revision(tenant_id),
         "revisions": [r for r in revisions if not r["is_draft"]],
         "draft": draft,
+        # Which memoranda exist, so a screen can name the one being edited
+        # rather than leaving a person to infer it.
+        "templates": config.for_tenant(tenant_id).template_list(),
     }
     if draft:
         state["validation"] = registry.validate(tenant_id, registry.DRAFT)
@@ -1095,7 +1122,9 @@ def lambda_handler(event, context):
             return _reply(200, {"memos": list_memos(tenant_id, engagement)})
 
         if route == "POST /engagements/{id}/generate":
-            return _reply(202, generate(tenant_id, email, engagement))
+            body = json.loads(event.get("body") or "{}")
+            return _reply(202, generate(tenant_id, email, engagement,
+                                        body.get("template_key")))
 
         if route == "POST /memos/{memo_id}/revise":
             body = json.loads(event.get("body") or "{}")
@@ -1142,6 +1171,9 @@ def lambda_handler(event, context):
             body = json.loads(event.get("body") or "{}")
             return _reply(200, confirm_logo(tenant_id, role,
                                             body.get("key", "")))
+
+        if route == "GET /templates":
+            return _reply(200, {"templates": templates(tenant_id)})
 
         if route == "GET /config":
             return _reply(200, config_state(tenant_id))
