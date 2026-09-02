@@ -203,6 +203,15 @@ export type Validation = {
   warnings: { kind: string; detail: string }[];
 };
 
+// A memorandum this tenant can write. Several templates share one field
+// vocabulary and one set of document types: a document is extracted once and
+// read whichever way the reader asks for.
+export type Template = {
+  key: string;
+  label: string;
+  sections: number;
+};
+
 export type Pack = {
   revision: number;
   note: string | null;
@@ -363,8 +372,15 @@ export const api = {
   memos: (id: string): Promise<{ memos: MemoRef[] }> =>
     call(`/engagements/${encodeURIComponent(id)}/memos`),
 
-  generate: (id: string) =>
-    call(`/engagements/${encodeURIComponent(id)}/generate`, { method: "POST" }),
+  templates: (): Promise<{ templates: Template[] }> => call("/templates"),
+
+  // Which memorandum to write. Omitted where a tenant holds only one, which
+  // the API resolves to that one.
+  generate: (id: string, templateKey?: string) =>
+    call(`/engagements/${encodeURIComponent(id)}/generate`, {
+      method: "POST",
+      body: JSON.stringify(templateKey ? { template_key: templateKey } : {}),
+    }),
 
   memo: (memoId: number): Promise<Memo> => call(`/memos/${memoId}`),
 

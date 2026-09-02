@@ -8,6 +8,7 @@ import {
   type MemoRef,
   type DocumentDetail,
   type Passage,
+  type Template,
 } from "./api";
 
 /**
@@ -34,6 +35,8 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [memos, setMemos] = useState<MemoRef[]>([]);
   const [types, setTypes] = useState<DocType[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [template, setTemplate] = useState("");
   const [choices, setChoices] = useState<Record<number, Choice>>({});
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -67,6 +70,15 @@ export function EngagementView({ id, onBack, onMemo }: {
   }
 
   useEffect(() => { api.documentTypes().then((r) => setTypes(r.types)); }, []);
+
+  // Which memoranda this tenant can write. One is the ordinary case and needs
+  // no choosing; the selector appears only when there is a choice to make.
+  useEffect(() => {
+    api.templates().then((r) => {
+      setTemplates(r.templates);
+      if (r.templates.length > 0) setTemplate(r.templates[0].key);
+    }).catch(() => setTemplates([]));
+  }, []);
   useEffect(() => { refresh(); }, [id]);
 
   // A document being read by OCR is still in flight. Generating now would
@@ -165,7 +177,14 @@ export function EngagementView({ id, onBack, onMemo }: {
 
   async function generate() {
     setBusy("Generating - this takes a minute or two");
-    await api.generate(id);
+    setError("");
+    try {
+      await api.generate(id, template || undefined);
+    } catch (err) {
+      setError(String((err as Error)?.message ?? err));
+      setBusy("");
+      return;
+    }
     setTimeout(() => { setBusy(""); refresh(); }, 150000);
   }
 
@@ -374,6 +393,24 @@ export function EngagementView({ id, onBack, onMemo }: {
 
       <h3>Memos</h3>
 
+      {templates.length > 1 && (
+        <div className="filters">
+          <label className="inline-check">
+            Write
+            <select value={template}
+                    onChange={(e) => setTemplate(e.target.value)}>
+              {templates.map((t) => (
+                <option key={t.key} value={t.key}>{t.label}</option>
+              ))}
+            </select>
+          </label>
+          <span className="muted small">
+            The same documents, read a different way. Each memorandum is
+            charged separately.
+          </span>
+        </div>
+      )}
+
       <button onClick={generate} disabled={settling || activeCount === 0}>
         {reading > 0
           ? `Wait \u2014 reading ${reading} ${reading === 1 ? "document" : "documents"}`
@@ -389,6 +426,7 @@ export function EngagementView({ id, onBack, onMemo }: {
           {memos.map((m) => (
             <tr key={m.memo_id} onClick={() => onMemo(m.memo_id)}>
               <td><a>Memo {m.label}</a></td>
+              <td className="muted small">{m.template}</td>
               <td className="muted">{(m.generated_at ?? "").slice(0, 16)}</td>
               <td className="muted">
                 {m.modified_by
