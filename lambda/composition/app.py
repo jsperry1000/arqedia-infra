@@ -333,10 +333,17 @@ def _restore_citations(text, tokens):
     # will do it.
     text = _ADDED_SOURCE.sub("", text)
 
+    # Measured BEFORE restoring. Asking whether a token survives AFTER every
+    # token has been replaced always answers no, so this reported a total loss
+    # on every section of every memo while the citations were in fact intact -
+    # the one line that would warn of real evidence loss, crying wolf on every
+    # run and therefore telling nobody anything.
+    dropped = [original for token, original in tokens.items()
+               if token not in text]
+
     for token, original in tokens.items():
         text = text.replace(token, original)
 
-    dropped = [tokens[t] for t in tokens if t not in text and t in tokens]
     # A token the model invented has no source and must not survive as text.
     text = re.sub(r"\[\[C\d+\]\]", "", text)
     return text, dropped
