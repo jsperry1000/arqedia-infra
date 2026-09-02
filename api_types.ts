@@ -180,8 +180,6 @@ export type ConfigDocumentType = {
 export type ConfigCategory = { key: string; label: string };
 
 export type Draft = {
-  // Every memorandum in this draft. Sections belong to one of them.
-  templates: { key: string; label: string }[];
   sections: ConfigSection[];
   fields: ConfigField[];
   document_types: ConfigDocumentType[];
@@ -255,30 +253,15 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  // The memorandum is part of the address. Two memoranda may each carry a
-  // section called "summary"; named by section alone, deleting one removed it
-  // from both.
-  deleteSection: (templateKey: string, key: string) =>
-    call(`/config/draft/templates/${encodeURIComponent(templateKey)}`
-         + `/sections/${encodeURIComponent(key)}`,
+  deleteSection: (key: string) =>
+    call(`/config/draft/sections/${encodeURIComponent(key)}`,
          { method: "DELETE" }),
 
-  setSectionFields: (templateKey: string, key: string, fields: string[]) =>
-    call(`/config/draft/templates/${encodeURIComponent(templateKey)}`
-         + `/sections/${encodeURIComponent(key)}/fields`, {
+  setSectionFields: (key: string, fields: string[]) =>
+    call(`/config/draft/sections/${encodeURIComponent(key)}/fields`, {
       method: "PUT",
       body: JSON.stringify({ fields }),
     }),
-
-  saveTemplate: (body: { key?: string; label: string }) =>
-    call("/config/draft/templates", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-
-  deleteTemplate: (templateKey: string) =>
-    call(`/config/draft/templates/${encodeURIComponent(templateKey)}`,
-         { method: "DELETE" }),
 
   saveField: (body: Partial<ConfigField>) =>
     call("/config/draft/fields", {

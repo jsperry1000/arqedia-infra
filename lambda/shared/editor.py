@@ -107,25 +107,40 @@ def draft(tenant_id):
     extraction, derived on save."""
     _require_draft(tenant_id)
 
+    templates = []
+    for r in _rows(tenant_id, """
+        SELECT template_key, label
+        FROM config_template WHERE tenant_id = :t AND revision = :r
+        ORDER BY template_key"""):
+        templates.append({"key": _col(r, 0), "label": _col(r, 1)})
+
     sections = []
     for r in _rows(tenant_id, """
         SELECT section_key, numeral, title, kind, prompt, template_key,
-               sort_order
+               sort_order, context_sections
         FROM config_section WHERE tenant_id = :t AND revision = :r
-        ORDER BY sort_order"""):
+        ORDER BY template_key, sort_order"""):
+        context = _col(r, 7)
         sections.append({
             "key": _col(r, 0), "numeral": _col(r, 1), "title": _col(r, 2),
             "kind": _col(r, 3), "prompt": _col(r, 4),
-            "template_key": _col(r, 5), "fields": [],
+            "template_key": _col(r, 5),
+            "context_sections": context.split(",") if context else [],
+            "fields": [],
         })
-    by_key = {s["key"]: s for s in sections}
+
+    # Keyed on (template, section). Two memoranda may each carry a section
+    # called "summary"; keyed on the section alone they collapse into one row
+    # and a credit memorandum's fields appear on a KYC section.
+    by_key = {(s["template_key"], s["key"]): s for s in sections}
 
     for r in _rows(tenant_id, """
-        SELECT section_key, field_key, sort_order
+        SELECT template_key, section_key, field_key, sort_order
         FROM config_section_field WHERE tenant_id = :t AND revision = :r
         ORDER BY sort_order"""):
-        if _col(r, 0) in by_key:
-            by_key[_col(r, 0)]["fields"].append(_col(r, 1))
+        section = by_key.get((_col(r, 0), _col(r, 1)))
+        if section:
+            section["fields"].append(_col(r, 2))
 
     # Where each field is found, from the schema it sits in. The schema itself
     # is not reported.
@@ -202,11 +217,19 @@ def save_section(tenant_id, body):
         raise ValueError("a section key must be lower case letters, digits, "
                          "dots, dashes or underscores")
 
+    # Which memorandum this section belongs to. Falling back to "the first
+    # template found" was safe while there was one; with several it would put
+    # a section into whichever memorandum the database happened to return
+    # first, which is not a fault anyone would see until a memo said something
+    # nobody configured.
     template_key = body.get("template_key")
     if not template_key:
         rows = _rows(tenant_id, "SELECT template_key FROM config_template "
-                                "WHERE tenant_id = :t AND revision = :r")
-        template_key = _col(rows[0], 0) if rows else "memo"
+                                "WHERE tenant_id = :t AND revision = :r "
+                                "ORDER BY template_key")
+        if len(rows) != 1:
+            raise ValueError("say which memorandum this section belongs to")
+        template_key = _col(rows[0], 0)
 
     _sql("""
         INSERT INTO config_section
@@ -230,18 +253,22 @@ def save_section(tenant_id, body):
     return {"key": key}
 
 
-def delete_section(tenant_id, section_key):
-    """Remove a section. Its field bindings go with it - the fields
-    themselves remain, and will show as unbound at publish."""
+def delete_section(tenant_id, template_key, section_key):
+    """Remove a section from ONE memorandum. Its field bindings go with it -
+    the fields themselves remain, and will show as unbound at publish.
+
+    Scoped to the template. Deleting by section name alone removed it from
+    every memorandum that happened to use that name."""
     _require_draft(tenant_id)
     for table in ("config_section_field", "config_section"):
         _sql("DELETE FROM %s WHERE tenant_id = :t AND revision = :r "
-             "AND section_key = :k" % table,
-             [_p("t", tenant_id), _p("r", DRAFT), _p("k", section_key)])
-    return {"deleted": section_key}
+             "AND template_key = :tpl AND section_key = :k" % table,
+             [_p("t", tenant_id), _p("r", DRAFT), _p("tpl", template_key),
+              _p("k", section_key)])
+    return {"deleted": section_key, "template_key": template_key}
 
 
-def set_section_fields(tenant_id, section_key, field_keys):
+def set_section_fields(tenant_id, template_key, section_key, field_keys):
     """Which fields this section renders, in order.
 
     THE STAGE 1 FAULT LIVES HERE. A section naming a field that does not exist
@@ -259,15 +286,16 @@ def set_section_fields(tenant_id, section_key, field_keys):
 
     rows = _rows(tenant_id, "SELECT template_key FROM config_section "
                             "WHERE tenant_id = :t AND revision = :r "
-                            "AND section_key = :k",
-                 [_p("k", section_key)])
+                            "AND template_key = :tpl AND section_key = :k",
+                 [_p("tpl", template_key), _p("k", section_key)])
     if not rows:
-        raise ValueError("no such section: " + section_key)
-    template_key = _col(rows[0], 0)
+        raise ValueError("no such section: %s in %s"
+                         % (section_key, template_key))
 
     _sql("DELETE FROM config_section_field WHERE tenant_id = :t "
-         "AND revision = :r AND section_key = :k",
-         [_p("t", tenant_id), _p("r", DRAFT), _p("k", section_key)])
+         "AND revision = :r AND template_key = :tpl AND section_key = :k",
+         [_p("t", tenant_id), _p("r", DRAFT), _p("tpl", template_key),
+          _p("k", section_key)])
 
     for i, field_key in enumerate(field_keys):
         _sql("""
@@ -278,7 +306,54 @@ def set_section_fields(tenant_id, section_key, field_keys):
             """, [_p("t", tenant_id), _p("r", DRAFT), _p("tpl", template_key),
                   _p("sec", section_key), _p("f", field_key), _p("sort", i)])
 
-    return {"section": section_key, "fields": field_keys}
+    return {"template_key": template_key, "section": section_key,
+            "fields": field_keys}
+
+
+# --- templates -------------------------------------------------------------
+
+def save_template(tenant_id, body):
+    """Add or rename a memorandum.
+
+    Several memoranda share one field vocabulary and one set of document
+    types: a document is extracted once and read whichever way the reader
+    asks for. What differs is the sections, what each renders, and how each is
+    written."""
+    _require_draft(tenant_id)
+
+    key = body.get("key") or _slug(body.get("label"))
+    if not _KEY.match(key):
+        raise ValueError("a memorandum key must be lower case letters, "
+                         "digits, dots, dashes or underscores")
+
+    _sql("""
+        INSERT INTO config_template (tenant_id, revision, template_key, label)
+        VALUES (:t, :r, :k, :label)
+        ON DUPLICATE KEY UPDATE label = :label
+        """, [_p("t", tenant_id), _p("r", DRAFT), _p("k", key),
+              _p("label", body.get("label") or key)])
+    return {"key": key}
+
+
+def delete_template(tenant_id, template_key):
+    """Remove a memorandum and its sections.
+
+    The fields it rendered remain - they belong to the tenant, not to one
+    memorandum, and other memoranda may bind them. The last one cannot go:
+    a configuration with no memorandum can extract but never report, which
+    publishes cleanly and produces nothing."""
+    _require_draft(tenant_id)
+
+    rows = _rows(tenant_id, "SELECT template_key FROM config_template "
+                            "WHERE tenant_id = :t AND revision = :r")
+    if len(rows) <= 1:
+        raise ValueError("a configuration needs at least one memorandum")
+
+    for table in ("config_section_field", "config_section", "config_template"):
+        _sql("DELETE FROM %s WHERE tenant_id = :t AND revision = :r "
+             "AND template_key = :tpl" % table,
+             [_p("t", tenant_id), _p("r", DRAFT), _p("tpl", template_key)])
+    return {"deleted": template_key}
 
 
 # --- fields ----------------------------------------------------------------

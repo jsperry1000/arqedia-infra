@@ -26,6 +26,9 @@ names the file a reader was given. See db/migrations/011_document_parts.sql.
   GET  /engagements/{id}/memos           memos generated for it
   POST /engagements/{id}/generate        compose a memo (deliberate act)
   GET  /templates                        the memoranda this tenant can write
+
+Editing a section names the memorandum it belongs to, in the path. Two
+memoranda may each carry a section called "summary".
   GET  /memos/{memo_id}                  a memo, its PDF link and its sources
   POST /uploads                          a signed link to upload one file
   GET  /document-types                   the type list, for the dropdown
@@ -1221,16 +1224,33 @@ def lambda_handler(event, context):
             return _reply(200, editor.save_section(
                 tenant_id, json.loads(event.get("body") or "{}")))
 
-        if route == "DELETE /config/draft/sections/{key}":
+        # The memorandum is part of the address. Two memoranda may each carry
+        # a section called "summary"; identified by section alone, deleting
+        # one removed it from both and binding fields wrote to whichever the
+        # database returned first.
+        if route == ("DELETE /config/draft/templates/{template}"
+                     "/sections/{key}"):
             _require_admin(role)
-            return _reply(200, editor.delete_section(tenant_id,
-                                                     params.get("key")))
+            return _reply(200, editor.delete_section(
+                tenant_id, params.get("template"), params.get("key")))
 
-        if route == "PUT /config/draft/sections/{key}/fields":
+        if route == ("PUT /config/draft/templates/{template}"
+                     "/sections/{key}/fields"):
             _require_admin(role)
             body = json.loads(event.get("body") or "{}")
             return _reply(200, editor.set_section_fields(
-                tenant_id, params.get("key"), body.get("fields") or []))
+                tenant_id, params.get("template"), params.get("key"),
+                body.get("fields") or []))
+
+        if route == "POST /config/draft/templates":
+            _require_admin(role)
+            return _reply(200, editor.save_template(
+                tenant_id, json.loads(event.get("body") or "{}")))
+
+        if route == "DELETE /config/draft/templates/{template}":
+            _require_admin(role)
+            return _reply(200, editor.delete_template(
+                tenant_id, params.get("template")))
 
         if route == "POST /config/draft/fields":
             _require_admin(role)
