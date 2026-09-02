@@ -367,10 +367,6 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [openSection, setOpenSection] = useState<string | null>(null);
-  // Which memorandum is being edited. A tenant may hold a credit, a KYC and a
-  // lender memorandum over the same documents.
-  const [template, setTemplate] = useState("");
-  const [newTemplate, setNewTemplate] = useState("");
   const [openField, setOpenField] = useState<string | null>(null);
   const [fieldFilter, setFieldFilter] = useState("");
 
@@ -471,20 +467,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     return groups;
   }, [draft]);
 
-  // The memorandum on screen, and its sections. Nothing is inferred from the
-  // order rows came back: an unset choice takes the first by key, and a
-  // template deleted under the selection falls back to that.
-  const templates = draft?.templates ?? [];
-  const current = templates.find((t) => t.key === template)
-    ?? templates[0];
-  const sections = (draft?.sections ?? [])
-    .filter((s) => s.template_key === current?.key);
-
   const bound = useMemo(() => {
     const set = new Set<string>();
-    // Across EVERY memorandum. A field bound in the credit memo is used, even
-    // while the KYC memo is on screen; showing it as unused would invite
-    // deleting a field another memorandum renders.
     for (const s of draft?.sections ?? []) s.fields.forEach((f) => set.add(f));
     return set;
   }, [draft]);
@@ -616,57 +600,22 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         bound to it and nothing else.
       </p>
 
-      <div className="filters">
-        <label className="inline-check">
-          Memorandum
-          <select value={current?.key ?? ""}
-                  onChange={(e) => {
-                    setTemplate(e.target.value);
-                    setOpenSection(null);
-                    setEditSection(null);
-                  }}>
-            {templates.map((t) => (
-              <option key={t.key} value={t.key}>{t.label || t.key}</option>
-            ))}
-          </select>
-        </label>
-        <span className="muted">
-          {sections.length} {sections.length === 1 ? "section" : "sections"}
-        </span>
-        {templates.length > 1 && current && (
-          <a className="danger small" onClick={() =>
-            act("Deleting", async () => {
-              await api.deleteTemplate(current.key);
-              setTemplate("");
-            })}>
-            Delete this memorandum
-          </a>
-        )}
-      </div>
-
-      <p className="muted small">
-        Every memorandum draws on the same facts and the same documents. What
-        differs is which sections it has, what each renders, and how each is
-        written. A document is read once whichever memoranda you write from it.
-      </p>
-
       {editSection !== null && (
         <SectionForm
-          initial={sections.find((x) => x.key === editSection)}
+          initial={draft?.sections.find((x) => x.key === editSection)}
           onCancel={() => setEditSection(null)}
           onSave={(body) => act("Saving", async () => {
-            await api.saveSection({ ...body,
-                                    template_key: current?.key });
+            await api.saveSection(body);
             setEditSection(null);
           })}
           onDelete={editSection ? () => act("Deleting", async () => {
-            await api.deleteSection(current?.key ?? "", editSection);
+            await api.deleteSection(editSection);
             setEditSection(null);
           }) : undefined}
         />
       )}
 
-      {sections.map((s) => (
+      {draft?.sections.map((s) => (
         <div className="review" key={s.key}>
           <div className="review-head">
             <label>
@@ -700,8 +649,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                           ? s.fields.filter((x) => x !== f.key)
                           : [...s.fields, f.key];
                         act("Saving",
-                            () => api.setSectionFields(
-                              s.template_key, s.key, next));
+                            () => api.setSectionFields(s.key, next));
                       }} />
                     {f.label}
                     {f.is_group && <span className="muted small"> (table)</span>}
@@ -716,20 +664,6 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       <a className="small add" onClick={() => setEditSection("")}>
         Add a section
       </a>
-
-      <div className="inline">
-        <input placeholder="Add a memorandum" value={newTemplate}
-               onChange={(e) => setNewTemplate(e.target.value)} />
-        <button disabled={!!busy || !newTemplate.trim()}
-                onClick={() => act("Adding", async () => {
-                  const made = await api.saveTemplate(
-                    { label: newTemplate.trim() });
-                  setNewTemplate("");
-                  setTemplate(made.key);
-                })}>
-          Add
-        </button>
-      </div>
 
       {/* 2 --- what it needs ----------------------------------------------- */}
       <h3>What it needs</h3>
@@ -793,10 +727,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 {bound.has(f.key)
                   ? ((draft?.sections ?? [])
                       .filter((s) => s.fields.includes(f.key))
-                      .map((s) => s.template_key === current?.key
-                        ? s.numeral
-                        : `${s.template_key} ${s.numeral}`)
-                      .join(", "))
+                      .map((s) => s.numeral).join(", "))
                   : <span className="warn">nothing</span>}
               </td>
             </tr>
