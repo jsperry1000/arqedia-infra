@@ -176,10 +176,24 @@ export function MemoView({ memoId, onBack, onOpen }: {
     }
   }
 
+  // What composition calls a citation. It masks citations before consolidation
+  // with a regex requiring one of these extensions, so an italic run without
+  // one was never a citation on the way in and must not become one here.
+  const CITATION_FILE = /\.(?:pdf|docx|xlsx|txt|json|xml)\b/i;
+
   /** A citation renders in the brand mid blue, small and italic. Each
    *  filename that is one of this memo's sources is separately clickable. */
   function Citation({ children }: { children?: React.ReactNode }) {
     const text = textOf(children);
+
+    // Emphasis, not a citation. An extracted value carrying its own italics -
+    // a French term from a trade register, a document title - arrives here
+    // looking exactly like a citation, and bracketing it takes the word out of
+    // the sentence: "The entity is Manty SA, a [Société anonyme]."
+    if (!CITATION_FILE.test(text)) {
+      return <em>{children}</em>;
+    }
+
     const parts = parseRefs(text);
 
     // Bracketed, because colour and size alone were not carrying the
