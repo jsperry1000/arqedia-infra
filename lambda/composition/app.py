@@ -426,6 +426,7 @@ def lambda_handler(event, context):
     tenant_id = int(event["tenant_id"])
     engagement = event["engagement"]
     generated_by = event.get("generated_by")
+    requested_template = event.get("template_key")
 
     # The tenant's ACTIVE revision, not the revision each document was filed
     # under. Extraction pins the filing revision because a value belongs to the
@@ -435,6 +436,16 @@ def lambda_handler(event, context):
     # revision 7 binds fine as long as the field IDs still exist.
     revision = config.active_revision(tenant_id)
     registry = config.load(tenant_id, revision)
+
+    # Which memorandum is being written. A tenant may hold a credit, a KYC and
+    # a lender template over the same documents; the caller says which, and an
+    # absent one means the tenant has only ever had the one - which is every
+    # caller that predates this.
+    template_key = requested_template or registry.TEMPLATE_KEY
+    if not registry.has_template(template_key):
+        return {"status": "no-such-template",
+                "template_key": template_key,
+                "available": [t["key"] for t in registry.template_list()]}
 
     values = _load_values(tenant_id, engagement)
     if not values:
@@ -446,7 +457,7 @@ def lambda_handler(event, context):
 
     # 1. Assemble the deterministic sections. They are the context for the rest.
     assembled = {}
-    for section in registry.sections_of_kind("extract"):
+    for section in registry.sections_of_kind("extract", template_key):
         markdown, used = _assemble_extract(registry, section, values)
         assembled[section["key"]] = {
             "title": section["title"],
@@ -456,7 +467,7 @@ def lambda_handler(event, context):
         }
 
     # 2. Draft the composed sections from that context.
-    for section in registry.sections_of_kind("composed"):
+    for section in registry.sections_of_kind("composed", template_key):
         markdown, used, usage = _compose(section, assembled)
         tokens_in += usage.get("input_tokens", 0)
         tokens_out += usage.get("output_tokens", 0)
@@ -468,8 +479,10 @@ def lambda_handler(event, context):
         }
 
     # 3. Consolidate each section into what a reader receives.
+    sections = registry.sections_for(template_key)
+
     empty_sections = []
-    for section in registry.MEMO_SECTIONS:
+    for section in sections:
         block = assembled[section["key"]]
         if not block["markdown"].strip():
             empty_sections.append(section["title"])
@@ -490,7 +503,7 @@ def lambda_handler(event, context):
         cleanup.coverage_callout(empty_sections),
     ]
 
-    for section in registry.MEMO_SECTIONS:
+    for section in sections:
         block = assembled[section["key"]]
         body = block["markdown"].strip()
 
@@ -514,7 +527,7 @@ def lambda_handler(event, context):
     sha = hashlib.sha256(encoded).hexdigest()
 
     memo_key = "tenants/{}/memos/{}/{}-{}.md".format(
-        tenant_id, engagement, registry.TEMPLATE_KEY,
+        tenant_id, engagement, template_key,
         generated_at.strftime("%Y%m%dT%H%M%SZ"))
 
     put = _s3.put_object(
@@ -536,7 +549,7 @@ def lambda_handler(event, context):
         """,
         [
             _p("tenant_id", tenant_id),
-            _p("template_key", registry.TEMPLATE_KEY),
+            _p("template_key", template_key),
             _p("config_revision", revision),
             _p("s3_bucket", CURATED_BUCKET),
             _p("s3_key", memo_key),
@@ -561,7 +574,7 @@ def lambda_handler(event, context):
         )
 
     claims = 0
-    for ordinal, section in enumerate(registry.MEMO_SECTIONS, start=1):
+    for ordinal, section in enumerate(sections, start=1):
         block = assembled[section["key"]]
         if not block["values"]:
             continue
@@ -573,16 +586,17 @@ def lambda_handler(event, context):
     # on demand when somebody asks for it, so there is no window in which a
     # memo exists without one and no stored file to go stale.
 
-    print("[composed] memo={} revision={} docs={} values={} claims={} empty={} "
-          "tokens_in={} tokens_out={}".format(
-              memo_id, revision, len(document_ids), len(values), claims,
-              len(empty_sections), tokens_in, tokens_out))
+    print("[composed] memo={} template={} revision={} docs={} values={} "
+          "claims={} empty={} tokens_in={} tokens_out={}".format(
+              memo_id, template_key, revision, len(document_ids), len(values),
+              claims, len(empty_sections), tokens_in, tokens_out))
 
     return {
         "status": "ok",
         "memo_id": memo_id,
         "memo_key": memo_key,
         "subject": subject,
+        "template_key": template_key,
         "config_revision": revision,
         "documents": len(document_ids),
         "values": len(values),
