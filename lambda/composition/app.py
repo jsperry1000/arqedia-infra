@@ -247,7 +247,14 @@ def _invoke(prompt, system=None):
 # --- stage 2: draft --------------------------------------------------------
 
 def _compose(section, assembled):
-    """Model-drafted section. Evidence is every value fed into its context."""
+    """Model-drafted section. Evidence is every value fed into its context.
+
+    Citations are masked here as well as at consolidation. Drafting was the one
+    place a real citation reached a model unprotected, and it did exactly what
+    the masking exists to prevent: told to write for a reader, it dropped the
+    filenames and left the Summary carrying no evidence at all - the section a
+    credit officer reads first. Consolidation then masked text that was already
+    gone, which is why the loss was invisible in its log."""
     context_parts, used = [], []
 
     for key in section.get("context_sections", []):
@@ -260,14 +267,24 @@ def _compose(section, assembled):
     if not context_parts:
         return "", [], {}
 
+    masked, tokens = _mask_citations(
+        "\n\n".join(context_parts)[:_SECTION_INPUT_CHARS])
+
     prompt = (
         section["prompt"]
+        + cleanup.CITATION_TOKENS
         + "\n\n--- CONTEXT START ---\n"
-        + "\n\n".join(context_parts)[:_SECTION_INPUT_CHARS]
+        + masked
         + "\n--- CONTEXT END ---"
     )
 
     text, usage = _invoke(prompt)
+    text, dropped = _restore_citations(text, tokens)
+
+    if dropped:
+        print("[citations-dropped] stage=draft section=%s count=%d of %d" % (
+            section["key"], len(dropped), len(tokens)))
+
     return text + "\n", used, usage
 
 
