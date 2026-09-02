@@ -19,6 +19,17 @@ WHICH REVISION:
 A document filed under revision 11 keeps resolving against revision 11 for
 ever. That is the whole point of a snapshot, and it is why a memo written in
 March still reproduces in September.
+
+SEVERAL TEMPLATES, ONE REVISION. A tenant may hold a credit memorandum, a KYC
+memorandum and a lender memorandum side by side. They share the field
+vocabulary and the document types - a document is extracted once and read three
+ways, and extracting it three times would be paid for three times - and each
+has its own sections, bindings and prompts.
+
+One revision covers all of them. Versioning a template separately would mean a
+memo pinning a template revision AND a field revision, with cross-object
+references to resolve at each; extracted_value carries one config_revision, and
+a snapshot is one integer.
 """
 
 import os
@@ -85,8 +96,9 @@ class Registry(object):
         self.CATEGORIES = {}
         self.DOCUMENT_TYPES = {}
         self.SCHEMAS = {}
-        self.MEMO_SECTIONS = []
-        self.TEMPLATE_KEY = None
+
+        # template_key -> {"key", "label", "sections": [...]}
+        self.TEMPLATES = {}
 
         self._labels = {}       # field_key -> label
         self._groups = {}       # group_key -> [(col_key, label, type, desc)]
@@ -186,33 +198,55 @@ class Registry(object):
                 "fields": fields,
             }
 
-        # --- the template --------------------------------------------------
+        # --- the templates -------------------------------------------------
+        #
+        # Keyed on (template_key, section_key), not section_key alone. Two
+        # templates may both carry a section called "summary", and merging
+        # their bindings would put a credit memorandum's fields into a KYC one
+        # silently - which shows up as a memo saying something nobody
+        # configured it to say.
         bindings = {}
         for r in self._rows("config_section_field",
-                            ["section_key", "field_key"],
+                            ["template_key", "section_key", "field_key"],
                             "ORDER BY sort_order"):
-            bindings.setdefault(_col(r, 0), []).append(_col(r, 1))
+            bindings.setdefault((_col(r, 0), _col(r, 1)), []).append(_col(r, 2))
 
-        for r in self._rows("config_template", ["template_key"]):
-            self.TEMPLATE_KEY = _col(r, 0)
+        for r in self._rows("config_template", ["template_key", "label"],
+                            "ORDER BY template_key"):
+            key = _col(r, 0)
+            self.TEMPLATES[key] = {
+                "key": key,
+                "label": _col(r, 1),
+                "sections": [],
+            }
 
         for r in self._rows(
             "config_section",
-            ["section_key", "numeral", "title", "kind", "shape_key", "prompt",
-             "context_sections"],
-            "ORDER BY sort_order",
+            ["template_key", "section_key", "numeral", "title", "kind",
+             "shape_key", "prompt", "context_sections"],
+            "ORDER BY template_key, sort_order",
         ):
-            key = _col(r, 0)
-            context = _col(r, 6)
-            self.MEMO_SECTIONS.append({
+            template_key = _col(r, 0)
+            key = _col(r, 1)
+            context = _col(r, 7)
+
+            # A section whose template row is missing would otherwise vanish
+            # without trace. Broken either way, but a template that appears
+            # with its sections is diagnosable and one that silently does not
+            # is a memo missing a section nobody can explain.
+            template = self.TEMPLATES.setdefault(
+                template_key,
+                {"key": template_key, "label": template_key, "sections": []})
+
+            template["sections"].append({
                 "key": key,
-                "num": _col(r, 1),
-                "title": _col(r, 2),
-                "kind": _col(r, 3),
-                "shape": _col(r, 4),
-                "prompt": _col(r, 5),
+                "num": _col(r, 2),
+                "title": _col(r, 3),
+                "kind": _col(r, 4),
+                "shape": _col(r, 5),
+                "prompt": _col(r, 6),
                 "context_sections": context.split(",") if context else [],
-                "fields": bindings.get(key, []),
+                "fields": bindings.get((template_key, key), []),
             })
 
     # --- the pack's interface ---------------------------------------------
@@ -252,8 +286,48 @@ class Registry(object):
 
     # --- the template's interface ------------------------------------------
 
-    def sections_of_kind(self, kind):
-        return [s for s in self.MEMO_SECTIONS if s["kind"] == kind]
+    @property
+    def TEMPLATE_KEY(self):
+        """The default template.
+
+        A tenant with one template has always had one, and every caller that
+        predates this asks without naming it. Ordered by key, so the answer
+        does not depend on the order rows came back."""
+        keys = sorted(self.TEMPLATES)
+        return keys[0] if keys else None
+
+    @property
+    def MEMO_SECTIONS(self):
+        """The default template's sections."""
+        return self.sections_for(self.TEMPLATE_KEY)
+
+    def template_list(self):
+        """Every template, for a person choosing which memo to write."""
+        return [{"key": t["key"],
+                 "label": t["label"] or t["key"],
+                 "sections": len(t["sections"])}
+                for t in sorted(self.TEMPLATES.values(),
+                                key=lambda t: t["key"])]
+
+    def has_template(self, template_key):
+        return template_key in self.TEMPLATES
+
+    def sections_for(self, template_key):
+        """One template's sections, in order. An unknown template yields none -
+        the caller validates; this does not invent one."""
+        template = self.TEMPLATES.get(template_key)
+        return template["sections"] if template else []
+
+    def label_for_template(self, template_key):
+        template = self.TEMPLATES.get(template_key)
+        return (template["label"] or template_key) if template else template_key
+
+    def sections_of_kind(self, kind, template_key=None):
+        """Sections of one kind, from one template. Defaults to the tenant's
+        only template, which is what every caller meant before there could be
+        more than one."""
+        sections = self.sections_for(template_key or self.TEMPLATE_KEY)
+        return [s for s in sections if s["kind"] == kind]
 
 
 def load(tenant_id, revision):
