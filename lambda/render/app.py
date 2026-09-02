@@ -132,6 +132,23 @@ _ITALIC = re.compile(r"(?<!\*)\*([^*\n]+?)\*(?!\*)")
 _ITALIC_U = re.compile(r"(?:(?<=\s)|(?<=^))_([^_\n]+?)_(?=\s|$|[.,;:)])")
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 
+# Three citations written back to back with the delimiter missing:
+#
+#     *A.pdf, page 7**B.pdf, page 7**C.pdf, page 1*
+#
+# The doubled asterisk between two of them is not bold. _BOLD claims it, pairs
+# across the italic runs, and emits a </b> with no opening - which ReportLab
+# refuses, and which cost an entire memorandum before the paragraph guard
+# existed. Separated here, before any pairing happens, so the malformation
+# never reaches the markup at all.
+#
+# Fires only where a file extension precedes the doubled asterisk, so ordinary
+# bold is untouched, and only on exactly two, so a citation abutting a genuine
+# **Note.** is left alone.
+_RUN_ON_CITATION = re.compile(
+    r"(\.(?:pdf|docx|xlsx|txt|json|xml)[^*\n]{0,40}?)(?<!\*)\*\*(?!\*)",
+    re.I)
+
 
 _CITE_COLOUR = "#278ACA"
 
@@ -164,10 +181,14 @@ def _reference_section(styles):
     out = [Spacer(1, 18),
            Paragraph("References", styles["section"])]
 
+    # Guarded like every other paragraph. This one is built here rather than
+    # from model text, which is why it was left unguarded - but it interpolates
+    # a citation, and a malformed citation registered as one entry breaks it
+    # exactly as it breaks the body.
     for number, text in enumerate(_CITATIONS, start=1):
-        out.append(Paragraph(
+        out.append(_safe(
             '<super><font size="6.5">%d</font></super>  [%s]' % (number, text),
-            styles["citation"]))
+            text, styles["citation"]))
 
     return out
 
@@ -206,6 +227,7 @@ def _set_cite_colour(palette):
 def _inline(text):
     """Markdown emphasis to the small markup Paragraph understands. Escaped
     first, so a stray ampersand in a company name cannot break the layout."""
+    text = _RUN_ON_CITATION.sub(r"\1* *", text)
     text = (text.replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;"))
@@ -242,6 +264,44 @@ def _inline(text):
     return text
 
 
+def _safe(markup, text, style, *args, **kw):
+    """A Paragraph that cannot fail the render.
+
+    ReportLab parses the small markup _inline emits, and refuses the whole
+    paragraph on a mismatched tag. An odd number of asterisks in the source -
+    three citations written back to back with a delimiter missing - made _BOLD
+    pair across an italic run, emitted a </b> with no opening, and lost the
+    entire memorandum. One malformed sentence must not cost the document.
+
+    The fallback strips the markup and renders the words with a marker, so the
+    passage is still readable and the fault is visible to whoever reads it
+    rather than silent."""
+    try:
+        return Paragraph(markup, style, *args, **kw)
+    except Exception as exc:  # noqa: BLE001
+        print("[markup-unparseable] %r :: %s" % (str(exc)[:200], text[:300]))
+        plain = re.sub(r"[*_`]+", "", text)
+        plain = (plain.replace("&", "&amp;")
+                      .replace("<", "&lt;")
+                      .replace(">", "&gt;"))
+        marker = ('  <font color="%s">[markup in this passage could not be '
+                  'parsed]</font>' % _CITE_COLOUR)
+        try:
+            return Paragraph(plain + marker, style, *args, **kw)
+        except Exception:  # noqa: BLE001
+            return Paragraph(plain, style, *args, **kw)
+
+
+def _para(text, style, *args, **kw):
+    """_inline, then Paragraph, guarded."""
+    return _safe(_inline(text), text, style, *args, **kw)
+
+
+def _para_upper(text, style, *args, **kw):
+    """As _para, for a heading rendered in capitals."""
+    return _safe(_inline(text).upper(), text, style, *args, **kw)
+
+
 def _split_row(line):
     return [c.strip().replace("\\|", "|")
             for c in line.strip().strip("|").split("|")]
@@ -260,8 +320,8 @@ def _status_bar(rows, styles, palette):
 
     # Four across reads well on Letter; more than that and the values wrap.
     pairs = pairs[:4]
-    labels = [Paragraph(_inline(a).upper(), styles["label"]) for a, _ in pairs]
-    values = [Paragraph(_inline(b), styles["value"]) for _, b in pairs]
+    labels = [_para_upper(a, styles["label"]) for a, _ in pairs]
+    values = [_para(b, styles["value"]) for _, b in pairs]
 
     width = style.CONTENT_WIDTH / len(pairs)
     table = Table([labels, values], colWidths=[width] * len(pairs))
@@ -367,10 +427,10 @@ def _table(header, rows, styles, palette):
 
     data = []
     if header:
-        data.append([Paragraph(_inline(c).upper(), styles["cellhead"])
+        data.append([_para_upper(c, styles["cellhead"])
                      for c in header])
     for r in rows:
-        data.append([Paragraph(_inline(c), styles["cell"]) for c in r])
+        data.append([_para(c, styles["cell"]) for c in r])
 
     table = Table(data, colWidths=widths, repeatRows=1 if header else 0)
     commands = [
@@ -390,7 +450,7 @@ def _table(header, rows, styles, palette):
 def _callout(text, styles, palette):
     """A gap note. Highlight edge, pale fill, so absence is visible at a
     glance rather than read for."""
-    table = Table([[Paragraph(_inline(text), styles["callout"])]],
+    table = Table([[_para(text, styles["callout"])]],
                   colWidths=[style.CONTENT_WIDTH])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), style.GAP_FILL),
@@ -547,11 +607,11 @@ def to_flowables(markdown, styles, palette):
         # The title is drawn in the masthead, so h1 is dropped rather than
         # repeated in the body.
         if stripped.startswith("### "):
-            flow.append(Paragraph(_inline(stripped[4:]), styles["subsection"]))
+            flow.append(_para(stripped[4:], styles["subsection"]))
             i += 1
             continue
         if stripped.startswith("## "):
-            flow.append(Paragraph(_inline(stripped[3:]), styles["section"]))
+            flow.append(_para(stripped[3:], styles["section"]))
             i += 1
             continue
         if stripped.startswith("# ") or stripped.startswith("---"):
@@ -559,7 +619,7 @@ def to_flowables(markdown, styles, palette):
             continue
 
         if stripped.startswith("- ") or stripped.startswith("* "):
-            flow.append(Paragraph(_inline(stripped[2:]), styles["bullet"],
+            flow.append(_para(stripped[2:], styles["bullet"],
                                   bulletText="\u2022"))
             i += 1
             continue
@@ -582,9 +642,9 @@ def to_flowables(markdown, styles, palette):
 
         if paragraph.startswith("_") and paragraph.endswith("_") \
                 and len(paragraph) > 2:
-            flow.append(Paragraph(_inline(paragraph), styles["citation"]))
+            flow.append(_para(paragraph, styles["citation"]))
         else:
-            flow.append(Paragraph(_inline(paragraph), styles["body"]))
+            flow.append(_para(paragraph, styles["body"]))
 
     return flow
 
