@@ -499,6 +499,7 @@ def lambda_handler(event, context):
             subject, engagement,
             generated_at.strftime("%d %B %Y, %H:%M UTC"),
             len(document_ids), len({v["filename"] for v in values}),
+            registry.label_for_template(template_key),
         ),
         cleanup.coverage_callout(empty_sections),
     ]

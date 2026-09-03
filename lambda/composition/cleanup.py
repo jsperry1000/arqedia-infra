@@ -134,16 +134,23 @@ def presentation_for(section_key):
 # Deterministic - never model work
 # ---------------------------------------------------------------------------
 
-def front_matter(subject, engagement, generated_at, document_count, source_count):
+def front_matter(subject, engagement, generated_at, document_count, source_count,
+                 title=None):
     """The title block. Structured data, so it is built rather than written.
 
     Where no source states a legal name, the engagement name stands in. A
     memorandum titled "Not stated in the sources" is accurate and useless; the
     engagement name is what the person called this piece of work, and the
-    absence of a registered name is reported in the body where it belongs."""
+    absence of a registered name is reported in the body where it belongs.
+
+    The TITLE is the memorandum's own, from the tenant's configuration. It was
+    the string "Due Diligence Memorandum" until a tenant held more than one
+    memorandum, at which point a credit memorandum came out headed as a due
+    diligence one - the same hard-coding as the template module, in the one
+    place a reader looks first."""
     try:
         lines = [
-            "# Due Diligence Memorandum",
+            "# " + (title or "Due Diligence Memorandum"),
             "",
             "| | |",
             "|---|---|",
