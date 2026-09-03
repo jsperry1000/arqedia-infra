@@ -221,6 +221,59 @@ export type Pack = {
   fields: number;
 };
 
+// --- configuring from the client's own memorandum -------------------------
+//
+// A client hands us a report of his own. We read its shape and put a
+// configuration to him; he corrects it and accepts. The file is form, not
+// substance: it is read once and deleted, never filed or charged for.
+
+export type ProposedFact = {
+  label: string;
+  description: string;
+  shape: string;
+  columns: string[] | null;
+  found_in: string[] | null;
+  // A field the tenant already holds that looks like the same fact. Offered,
+  // never applied - a wrong match renders a number that is not the one he
+  // meant and looks entirely correct.
+  matches_existing: string | null;
+  why_match: string | null;
+};
+
+export type ProposedSection = {
+  heading: string;
+  title: string;
+  numeral: string;
+  purpose: string | null;
+  // False where the heading could not be found again in the text, so the
+  // section was read against the whole document. Its facts deserve a harder
+  // look.
+  located: boolean;
+  facts: ProposedFact[];
+};
+
+export type ProposedType = {
+  label: string;
+  description: string;
+  group: string | null;
+  existing_key: string | null;
+};
+
+// Rewritten after every section, so this is the progress as well as the
+// result. status runs: starting, reading, outlining, working, ready - or
+// unreadable, or nothing-found.
+export type Proposal = {
+  status: string;
+  key: string;
+  reason?: string;
+  read_method?: string;
+  sections_done: number;
+  sections_total: number | null;
+  memorandum_label: string | null;
+  document_types: ProposedType[];
+  sections: ProposedSection[];
+};
+
 export const api = {
   // --- configuration -------------------------------------------------
 
@@ -233,6 +286,43 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ revision }),
     }),
+
+  // Two steps, as documents and logos use: ask for a signed link, then send
+  // the file straight to storage. It goes to the review bucket under
+  // proposals/, which nothing watches - the docs bucket is watched, and a
+  // sample landing there would be classified, filed and charged for.
+  //
+  // Every header the link was signed with must be sent back or S3 refuses it.
+  proposeFromFile: async (file: File): Promise<{ key: string }> => {
+    const { url, key, uploaded_by } = await call("/config/draft/sample", {
+      method: "POST",
+      body: JSON.stringify({ filename: file.name }),
+    });
+
+    const put = await fetch(url, {
+      method: "PUT",
+      body: file,
+      headers: {
+        "x-amz-server-side-encryption": "aws:kms",
+        "x-amz-meta-uploaded-by": uploaded_by,
+      },
+    });
+    if (!put.ok) {
+      throw new Error(
+        `${file.name} was refused by storage (${put.status}).`);
+    }
+
+    await call("/config/draft/propose", {
+      method: "POST",
+      body: JSON.stringify({ key }),
+    });
+    return { key };
+  },
+
+  // Polled while the reader works. One model call per section, so this is a
+  // minute or two on a long memorandum.
+  proposal: (key: string): Promise<Proposal> =>
+    call(`/config/draft/proposal?key=${encodeURIComponent(key)}`),
 
   openDraft: () =>
     call("/config/draft", { method: "POST", body: "{}" }),

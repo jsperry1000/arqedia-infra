@@ -10,6 +10,7 @@ import {
   type Pack,
   type Validation,
 } from "./api";
+import { ProposeView } from "./Propose";
 
 /**
  * Configure a Report.
@@ -362,7 +363,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [validation, setValidation] = useState<Validation | null>(null);
 
-  const [chosen, setChosen] = useState<number | null>(null);
+  // How the person is starting. One of our memoranda, an empty one of their
+  // own, or one read from a report they already write.
+  const [start, setStart] = useState("");
+  const [proposing, setProposing] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
@@ -491,47 +495,90 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
 
   if (!state) return <p className="muted">Loading&hellip;</p>;
 
+  // Reading a report of the client's own. Held above every other screen: it
+  // is a conversation with its own shape, and nothing it proposes reaches the
+  // draft until it is accepted.
+  if (proposing) {
+    return (
+      <ProposeView
+        onCancel={() => setProposing(false)}
+        onDone={(templateKey) => {
+          setProposing(false);
+          setTemplate(templateKey);
+          refresh().catch((e) => setError(message(e)));
+        }}
+      />
+    );
+  }
+
   // --- nothing configured yet: choose a starting point --------------------
 
   if (!state.draft && state.revisions.length === 0) {
+    const pack = packs[0];
+
     return (
       <div>
         <a onClick={onBack} className="back">Back</a>
         <h2>Configure a Report</h2>
         <p className="muted">
-          Choose a starting point. It is copied into your own configuration, so
-          later changes we make to it will not reach you.
+          You start with our list of facts and the documents they are found
+          in. What you choose here is the memorandum written from them.
+          Everything is copied into your own configuration, so later changes
+          we make to it will not reach you.
         </p>
         {error && <p className="error">{error}</p>}
 
-        <table className="docs">
-          <tbody>
+        <label className="row">
+          <span>Memorandum</span>
+          <select value={start} onChange={(e) => setStart(e.target.value)}>
+            <option value="">Choose&hellip;</option>
             {packs.map((p) => (
-              <tr key={p.revision}
-                  className={chosen === p.revision ? "" : ""}>
-                <td>
-                  <input type="radio" name="pack" checked={chosen === p.revision}
-                         onChange={() => setChosen(p.revision)} />
-                </td>
-                <td>
-                  <strong>{p.note || "Starter pack"}</strong>
-                  <div className="muted small">
-                    {p.document_types} document types &middot; {p.fields} fields
-                  </div>
-                </td>
-              </tr>
+              <option key={p.revision} value={"pack:" + p.revision}>
+                {p.note || "ARQEDIA memorandum"}
+              </option>
             ))}
-          </tbody>
-        </table>
+            <option value="scratch">Draft your own from scratch</option>
+            <option value="report">
+              Create your own from a report (.pdf, .docx)
+            </option>
+          </select>
+        </label>
+
+        {pack && (
+          <p className="muted small">
+            {pack.document_types} document types &middot; {pack.fields} facts,
+            whichever you choose.
+          </p>
+        )}
+
+        {start === "report" && (
+          <p className="muted small">
+            Give us a report you already write. We read its shape and put a
+            configuration to you to correct &mdash; the file itself is read
+            once and deleted.
+          </p>
+        )}
 
         {packs.length === 0 && (
           <p className="muted">No starting points are available yet.</p>
         )}
 
-        <button disabled={chosen === null || !!busy}
-                onClick={() => act("Setting up",
-                                   () => api.forkPack(chosen as number))}>
-          {busy ? busy + "\u2026" : "Start editing"}
+        {/* Both of the build-your-own routes still need the facts and the
+            documents, so they take the pack too. Our memorandum comes with
+            it and can be deleted; removing it unasked would be the one
+            destructive thing on this screen. */}
+        <button disabled={!start || !!busy || !pack}
+                onClick={() => act("Setting up", async () => {
+                  const revision = start.startsWith("pack:")
+                    ? Number(start.slice(5)) : pack.revision;
+                  await api.forkPack(revision);
+                  if (start === "report") {
+                    const now = await api.configState();
+                    if (!now.draft) await api.openDraft();
+                    setProposing(true);
+                  }
+                })}>
+          {busy ? busy + "\u2026" : "Get to work"}
         </button>
       </div>
     );
@@ -730,6 +777,12 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           Add
         </button>
       </div>
+
+      <p className="muted small">
+        Or <a onClick={() => setProposing(true)}>
+          create one from a report you already write
+        </a>. We read its shape and put a configuration to you to correct.
+      </p>
 
       {/* 2 --- what it needs ----------------------------------------------- */}
       <h3>What it needs</h3>
