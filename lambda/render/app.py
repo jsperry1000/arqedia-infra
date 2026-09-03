@@ -861,6 +861,25 @@ def _front(markdown, field):
     return m.group(1).strip() if m else ""
 
 
+# The memorandum's own title, taken from the H1 composition writes at the top
+# of the markdown. to_flowables drops that line deliberately - the title
+# belongs in the masthead rather than repeated in the body - so the masthead
+# is where it has to be read.
+#
+# It was a literal here until a tenant held more than one memorandum, which is
+# why the PDF banner said "Due Diligence Memorandum" over a credit memorandum
+# while the browser, which renders the H1, said the right thing.
+#
+# The fallback matches composition's own, so a memo written before the title
+# was configurable carries no H1 and still renders as it always did.
+_H1 = re.compile(r"^#\s+(.+?)\s*$", re.M)
+
+
+def _title(markdown):
+    m = _H1.search(markdown)
+    return m.group(1).strip() if m else "Due Diligence Memorandum"
+
+
 def _branding(tenant):
     """Plan decides. Base takes the platform's; Business and Enterprise may
     set their own; only Enterprise may remove the footer."""
@@ -915,13 +934,14 @@ def lambda_handler(event, context):
     subject = _front(markdown, "Subject") or "Subject not stated"
     engagement = _front(markdown, "Engagement")
     generated = _front(markdown, "Generated")
+    memo_title = _title(markdown)
 
     detail = "  \u00b7  ".join(x for x in (engagement, generated) if x)
-    runner = "%s  \u00b7  Due Diligence Memorandum" % subject
+    runner = "%s  \u00b7  %s" % (subject, memo_title)
 
     buffer = io.BytesIO()
     doc = MemoDoc(buffer, palette, subject,
-                  "Due Diligence Memorandum", detail, runner,
+                  memo_title, detail, runner,
                   logo, show_footer,
                   title=subject, author=tenant["name"])
 
