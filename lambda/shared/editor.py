@@ -202,7 +202,7 @@ def draft(tenant_id):
         SELECT category_key, label FROM config_category
         WHERE tenant_id = :t AND revision = :r ORDER BY sort_order""")]
 
-    return {"sections": sections, "fields": fields,
+    return {"templates": templates, "sections": sections, "fields": fields,
             "document_types": types, "categories": categories}
 
 
