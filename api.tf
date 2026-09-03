@@ -76,10 +76,16 @@ data "aws_iam_policy_document" "api" {
     resources = [aws_rds_cluster.main.master_user_secret[0].secret_arn]
   }
 
+  # Composition writes a memo; the proposer reads a sample memorandum and
+  # proposes a configuration. Both take minutes, so both are started here and
+  # polled for rather than waited on.
   statement {
-    effect    = "Allow"
-    actions   = ["lambda:InvokeFunction"]
-    resources = [aws_lambda_function.composition.arn]
+    effect  = "Allow"
+    actions = ["lambda:InvokeFunction"]
+    resources = [
+      aws_lambda_function.composition.arn,
+      aws_lambda_function.proposer.arn,
+    ]
   }
 }
 
@@ -113,6 +119,7 @@ resource "aws_lambda_function" "api" {
       TEXTRACT_TOPIC_ARN   = aws_sns_topic.textract.arn
       TEXTRACT_ROLE_ARN    = aws_iam_role.textract_publish.arn
       RENDER_FUNCTION      = aws_lambda_function.render.function_name
+      PROPOSER_FUNCTION    = aws_lambda_function.proposer.function_name
     }
   }
 
@@ -195,6 +202,13 @@ locals {
     "POST /config/draft/categories",
     "DELETE /config/draft/categories/{key}",
     "POST /config/fork",
+
+    # Configuring from the client's own memorandum. The sample goes to the
+    # review bucket under proposals/, which nothing watches - a sample is
+    # form, not substance, and must never be classified and filed.
+    "POST /config/draft/sample",
+    "POST /config/draft/propose",
+    "GET /config/draft/proposal",
     "POST /documents/{document_id}/active",
     "GET /documents/{document_id}/values",
     "GET /documents/{document_id}/passage",

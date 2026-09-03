@@ -32,6 +32,13 @@ memoranda may each carry a section called "summary".
   GET  /memos/{memo_id}                  a memo, its PDF link and its sources
   POST /uploads                          a signed link to upload one file
   GET  /document-types                   the type list, for the dropdown
+
+A client may configure from a memorandum of his own. The sample is read for
+its shape and deleted; it is never filed, classified, extracted from or
+charged for.
+  POST /config/draft/sample              a signed link to upload one sample
+  POST /config/draft/propose             read it, and propose a configuration
+  GET  /config/draft/proposal            what it has proposed so far
 """
 
 import datetime
@@ -65,6 +72,7 @@ COMPOSITION_FUNCTION = os.environ["COMPOSITION_FUNCTION"]
 TEXTRACT_TOPIC_ARN = os.environ["TEXTRACT_TOPIC_ARN"]
 TEXTRACT_ROLE_ARN = os.environ["TEXTRACT_ROLE_ARN"]
 RENDER_FUNCTION = os.environ["RENDER_FUNCTION"]
+PROPOSER_FUNCTION = os.environ["PROPOSER_FUNCTION"]
 
 
 def _clean(name):
@@ -1062,6 +1070,118 @@ def config_read(tenant_id, revision):
     }
 
 
+# --- configuring from the client's own memorandum ---------------------------
+#
+# A client arrives with a report format of his own. He gives us a copy, we
+# read its shape, and we put a configuration to him for correction.
+#
+# THE FILE IS FORM, NOT SUBSTANCE. It goes to the review bucket under
+# proposals/, which nothing watches. The docs bucket is watched: a file
+# landing there is classified, filed and charged for, which is exactly what
+# must not happen to a blank form somebody is showing us for its layout.
+
+_SAMPLE_TYPES = {".pdf", ".docx"}
+
+
+def _sample_prefix(tenant_id):
+    return "tenants/%d/proposals/" % tenant_id
+
+
+def _require_open_draft(tenant_id):
+    """A proposal is accepted into the draft, so refusing here rather than
+    after two minutes of reading is the difference between a sentence and a
+    wasted wait."""
+    result = _sql("SELECT revision FROM config_revision "
+                  "WHERE tenant_id = :t AND revision = 0",
+                  [_p("t", tenant_id)])
+    if not result.get("records"):
+        raise ValueError("open a draft before reading a memorandum into it")
+
+
+def sample_upload_url(tenant_id, email, role, filename):
+    """A signed link for the sample, as documents and logos use.
+
+    The key is built from the token's tenant, so a caller cannot place a file
+    in another tenant's space - and the prefix is proposals/, so it cannot
+    place one where the normalizer would find it either."""
+    _require_admin(role)
+    _require_open_draft(tenant_id)
+
+    filename = _clean(filename)
+    if not filename:
+        raise ValueError("a file name is required")
+
+    dot = filename.rfind(".")
+    if dot == -1 or filename[dot:].lower() not in _SAMPLE_TYPES:
+        raise ValueError("a sample memorandum must be a PDF or a Word file")
+
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y%m%dT%H%M%SZ")
+    key = _sample_prefix(tenant_id) + stamp + "-" + filename
+
+    url = _s3.generate_presigned_url(
+        "put_object",
+        Params={"Bucket": REVIEW_BUCKET, "Key": key,
+                "ServerSideEncryption": "aws:kms",
+                "Metadata": {"uploaded-by": email}},
+        ExpiresIn=900)
+    return {"url": url, "key": key, "uploaded_by": email}
+
+
+def _own_sample(tenant_id, key):
+    """The one place a key from a request is trusted, so it is checked here.
+
+    The tenant still comes from the token; this only refuses a key that does
+    not sit under that tenant's own proposals prefix."""
+    if not key or not key.startswith(_sample_prefix(tenant_id)):
+        raise ValueError("that file does not belong to this tenant")
+    return key
+
+
+def propose(tenant_id, email, role, key):
+    """Start the read and return. One model call per section, so this takes
+    minutes and the caller polls - the same shape as generating a memo."""
+    _require_admin(role)
+    _require_open_draft(tenant_id)
+    key = _own_sample(tenant_id, key)
+
+    # The object must be there. An invocation against a key the browser never
+    # finished uploading fails two minutes later in a log nobody is watching.
+    try:
+        _s3.head_object(Bucket=REVIEW_BUCKET, Key=key)
+    except ClientError:
+        raise ValueError("that file has not finished uploading")
+
+    _lambda.invoke(
+        FunctionName=PROPOSER_FUNCTION,
+        InvocationType="Event",
+        Payload=json.dumps({"tenant_id": tenant_id, "key": key,
+                            "requested_by": email}))
+
+    print("[proposal-started] tenant=%s key=%s by=%s" % (
+        tenant_id, key, email))
+    return {"status": "started", "key": key}
+
+
+def proposal(tenant_id, key):
+    """What the reader has produced so far.
+
+    Rewritten after every section, so this is also the progress: the screen
+    shows sections arriving rather than a spinner, and a function that has
+    died stops being indistinguishable from one that is working."""
+    key = _own_sample(tenant_id, key)
+
+    try:
+        body = _s3.get_object(Bucket=REVIEW_BUCKET,
+                              Key=key + ".proposal.json")["Body"].read()
+    except ClientError:
+        # The invocation has not landed yet. Not an error, and not a 404 the
+        # screen would have to treat as a special case.
+        return {"status": "starting", "key": key}
+
+    return json.loads(body.decode("utf-8"))
+
+
 # --- dispatch --------------------------------------------------------------
 
 def lambda_handler(event, context):
@@ -1214,6 +1334,20 @@ def lambda_handler(event, context):
             body = json.loads(event.get("body") or "{}")
             return _reply(201, registry.fork(
                 tenant_id, email, int(body.get("revision", 1))))
+
+        # --- configuring from the client's own memorandum ---------------
+        if route == "POST /config/draft/sample":
+            body = json.loads(event.get("body") or "{}")
+            return _reply(200, sample_upload_url(
+                tenant_id, email, role, body.get("filename", "")))
+
+        if route == "POST /config/draft/propose":
+            body = json.loads(event.get("body") or "{}")
+            return _reply(202, propose(tenant_id, email, role,
+                                       body.get("key", "")))
+
+        if route == "GET /config/draft/proposal":
+            return _reply(200, proposal(tenant_id, query.get("key", "")))
 
         # --- editing the draft -----------------------------------------
         if route == "GET /config/draft":
