@@ -65,7 +65,13 @@ type FactChoice = {
   // For a matched fact, the document type KEYS the tenant already looks in.
   // Kept so accepting can add to that set without ever taking from it.
   held: string[];
+  // Which of the report's sections name this fact. Empty for one the person
+  // added themselves, until they say where it belongs.
   sections: number[];
+  // Added from a document card rather than found in the report. It has no
+  // section of its own until one is chosen, so it cannot be placed by the
+  // ordinary rule.
+  added: boolean;
   acknowledged: boolean;
 };
 
@@ -101,6 +107,9 @@ export function ProposeView({ onDone, onCancel }: {
   // Groups start closed. A hundred cards open at once is not a list a person
   // reads; a closed group that says how many facts want them is.
   const [opened, setOpened] = useState<Set<string>>(new Set());
+  // Document cards carry a form each. Closed by default, or the page is
+  // metres long before the person has read the first one.
+  const [openedDocs, setOpenedDocs] = useState<Set<string>>(new Set());
   // Accepting is a sequence of writes, not one. Whatever it managed before
   // it stopped is IN the draft, so the person is told what landed rather than
   // left to find out by reading their configuration.
@@ -108,6 +117,9 @@ export function ProposeView({ onDone, onCancel }: {
   // of the documents on offer is where this fact actually lives.
   const [addingDoc, setAddingDoc] = useState<string | null>(null);
   const [newDocName, setNewDocName] = useState("");
+  // And the reverse: naming a fact from a document card.
+  const [addingFact, setAddingFact] = useState<string | null>(null);
+  const [newFactName, setNewFactName] = useState("");
   const [written, setWritten] = useState<string[]>([]);
   const [result, setResult] = useState<
     { ok: boolean; error?: string; templateKey?: string } | null>(null);
@@ -282,6 +294,7 @@ export function ProposeView({ onDone, onCancel }: {
           held: existing ? (inherited ?? []) : [],
           group: place(inherited ?? [], foundIn),
           sections: [index],
+          added: false,
           acknowledged: false,
         };
       });
@@ -340,7 +353,8 @@ export function ProposeView({ onDone, onCancel }: {
    *  bound to nothing - clutter he did not ask for, and one more thing to
    *  acknowledge before he can get on. */
   const live = (f: FactChoice) =>
-    f.use !== "skip" && f.sections.some((i) => !skipped.has(i));
+    f.use !== "skip"
+    && (f.added || f.sections.some((i) => !skipped.has(i)));
 
   /** One key per section, unique within the memorandum. Two sections titled
    *  the same slug to the same key, and the second would silently overwrite
@@ -546,6 +560,136 @@ export function ProposeView({ onDone, onCancel }: {
     );
   }
 
+  /**
+   * What is read from one document.
+   *
+   * The same relationship as "where to look for it" on a fact card, from the
+   * other end - one list of facts underneath, so ticking here and ticking
+   * there are the same act and the two cannot disagree.
+   *
+   * Written once and used for both kinds of document, the ones the tenant
+   * holds and the ones this report would add. Two copies of a form this
+   * particular would drift within a week.
+   */
+  const readFrom = (label: string, group: string, cardId: string) => (
+    <>
+                {/* The same relationship as "where to look for it", from
+                    the other end. One list of facts underneath, so ticking
+                    here and ticking there are the same act - a document
+                    that reads nothing is a document filed for no reason. */}
+                <div className="columns">
+                  <h4>What to read from it</h4>
+                  <p className="muted small">
+                    The facts you already hold. Ticking one adds this
+                    document to where it is looked for; unticking leaves
+                    what you had alone. Anything this document holds that
+                    you do not have a fact for yet, name it below.
+                  </p>
+
+                  <div className="binder">
+                    {/* Facts the tenant already holds, and nothing else.
+                        Offering every fact the report proposed made a list
+                        of a hundred boxes on each document, most of them
+                        repeats of what the fact cards above already ask.
+                        Anything genuinely missing is named below. */}
+                    {factList
+                      .filter(([, f]) => live(f) && f.use === "existing")
+                      .sort((a, b) => a[1].label.localeCompare(b[1].label))
+                      .map(([fid, f]) => (
+                        <label className="bind" key={fid}>
+                          <input type="checkbox"
+                            checked={f.documents.some(
+                              (x) => x.trim().toLowerCase()
+                                === label.trim().toLowerCase())}
+                            onChange={(e) => {
+                              const kept = f.documents.filter(
+                                (x) => x.trim().toLowerCase()
+                                  !== label.trim().toLowerCase());
+                              setFacts({
+                                ...facts,
+                                [fid]: { ...f,
+                                  documents: e.target.checked
+                                    ? [...kept, label] : kept,
+                                  acknowledged: f.use === "new"
+                                    ? false : f.acknowledged } });
+                            }} />
+                          {f.label}
+                        </label>
+                      ))}
+                  </div>
+
+                  {factList.filter(([, f]) => live(f)
+                    && f.documents.some((x) => x.trim().toLowerCase()
+                      === label.trim().toLowerCase())).length === 0 && (
+                    <p className="warn small">
+                      Nothing is read from this document, so filing one
+                      would extract nothing. Tick a fact above, or name a
+                      new one below.
+                    </p>
+                  )}
+
+                  {/* The other direction. A document may hold a fact the
+                      report never mentioned, and naming it here beats
+                      remembering to add it afterwards. */}
+                  {addingFact !== cardId ? (
+                    <a className="small"
+                       onClick={() => {
+                         setAddingFact(cardId); setNewFactName("");
+                       }}>
+                      None of these? Add a fact
+                    </a>
+                  ) : (
+                    <div className="filters">
+                      <input placeholder="What the fact is called"
+                             value={newFactName} autoFocus
+                             onChange={(e) =>
+                               setNewFactName(e.target.value)} />
+                      <button disabled={!newFactName.trim()}
+                        onClick={() => {
+                          const label = newFactName.trim();
+                          const fid = label.toLowerCase();
+                          const already = facts[fid];
+
+                          // Known already. Tick this document onto it
+                          // rather than make a second fact meaning the
+                          // same thing.
+                          if (already) {
+                            const kept = already.documents.filter(
+                              (x) => x.trim().toLowerCase()
+                                !== label.trim().toLowerCase());
+                            setFacts({
+                              ...facts,
+                              [fid]: { ...already,
+                                documents: [...kept, label],
+                                acknowledged: false } });
+                          } else {
+                            setFacts({
+                              ...facts,
+                              [fid]: {
+                                use: "new", label, description: "",
+                                shape: "one", existing: null, why: null,
+                                columns: [], documents: [label],
+                                held: [], group: group, sections: [],
+                                added: true, acknowledged: false,
+                              } });
+                          }
+                          setAddingFact(null);
+                          setNewFactName("");
+                        }}>
+                        Add
+                      </button>
+                      <a className="small"
+                         onClick={() => setAddingFact(null)}>Cancel</a>
+                      <span className="muted small">
+                        It appears among the facts above, where it needs a
+                        description and a section before you can accept.
+                      </span>
+                    </div>
+                  )}
+                </div>
+    </>
+  );
+
   // Accepting has run. Said plainly, either way: it wrote to the draft, and a
   // screen that goes quiet afterwards leaves a person unsure whether it did.
   if (result) {
@@ -706,6 +850,16 @@ export function ProposeView({ onDone, onCancel }: {
   const typeList = Object.entries(types).filter(([, t]) => t.use !== "existing"
     || t.existing === null);
 
+  // Documents the tenant already holds, less any this report would add under
+  // the same name - one document should not appear in both lists.
+  const proposedLabels = new Set(
+    Object.values(types).filter((t) => t.use === "new")
+      .map((t) => t.label.trim().toLowerCase()));
+  const heldTypes = (draft?.document_types ?? [])
+    .filter((t) => !proposedLabels.has(t.label.trim().toLowerCase()))
+    .slice()
+    .sort((a, b) => a.label.localeCompare(b.label));
+
   // Every document a fact could be looked for in once this is accepted: the
   // ones the tenant holds, and the ones this proposal would add. Named by
   // label, because a proposed type has no key until it is created.
@@ -743,7 +897,7 @@ export function ProposeView({ onDone, onCancel }: {
       </label>
 
       {/* 2 --- its sections --------------------------------------------- */}
-      <h3>Its sections</h3>
+      <h3>Memo sections</h3>
       <p className="muted small">
         In the order they appear in your report. Untick anything you do not
         want.
@@ -780,7 +934,7 @@ export function ProposeView({ onDone, onCancel }: {
       </table>
 
       {/* 3 --- the facts ------------------------------------------------- */}
-      <h3>The facts it reports</h3>
+      <h3>The facts in each section</h3>
       <p className="muted small">
         {factList.length} in all, counted once however many sections name them.
         Where one looks like a fact you already hold, we say so &mdash; you
@@ -1059,10 +1213,37 @@ export function ProposeView({ onDone, onCancel }: {
                   )}
                 </div>
 
+                {/* A fact the person added has no section of its own. Chosen
+                    here rather than left unbound: a field bound to nothing is
+                    extracted on every filing and reaches no reader. */}
+                {f.added && (
+                  <label className="row">
+                    <span>Which section reports it</span>
+                    <select
+                      value={f.sections.length ? String(f.sections[0]) : ""}
+                      onChange={(e) => setFacts({
+                        ...facts,
+                        [id]: { ...f,
+                          sections: e.target.value === ""
+                            ? [] : [Number(e.target.value)],
+                          acknowledged: false } })}>
+                      <option value="">Choose&hellip;</option>
+                      {proposal.sections.map((s, i) => (
+                        skipped.has(i) ? null : (
+                          <option key={i} value={String(i)}>
+                            {s.numeral} {s.title}
+                          </option>
+                        )
+                      ))}
+                    </select>
+                  </label>
+                )}
+
                 <label className="inline-check">
                   <input type="checkbox" checked={f.acknowledged}
                     disabled={!f.label.trim() || !f.description.trim()
                       || f.documents.length === 0
+                      || (f.added && f.sections.length === 0)
                       || (f.shape === "group"
                           && f.columns.filter((c) => c.trim()).length === 0)}
                     onChange={(e) => setFacts({
@@ -1091,22 +1272,34 @@ export function ProposeView({ onDone, onCancel }: {
       {/* 4 --- the documents --------------------------------------------- */}
       {typeList.length > 0 && (
         <>
-          <h3>Documents it draws on</h3>
+          <h3>Documents you do not hold yet</h3>
           <p className="muted small">
-            Kinds of document your report appears to rest on, that you do not
-            hold yet.
+            Kinds of document your report appears to rest on, that are not in
+            your configuration.
           </p>
 
           {typeList.map(([id, t]) => (
             <div className="review" key={id}>
               <div className="review-head">
-                <label><strong>{t.label}</strong></label>
+                <a onClick={() => {
+                  const next = new Set(openedDocs);
+                  if (next.has(id)) next.delete(id); else next.add(id);
+                  setOpenedDocs(next);
+                }}>
+                  <strong>
+                    {openedDocs.has(id) ? "\u25be" : "\u25b8"} {t.label}
+                  </strong>
+                </a>
                 <span className="muted small">
                   {t.use === "skip" ? "not wanted" : "new"}
                 </span>
+                {!openedDocs.has(id) && t.use === "new"
+                  && !t.acknowledged && (
+                  <span className="warn small">needs you</span>
+                )}
               </div>
 
-              {t.use === "new" && (
+              {openedDocs.has(id) && t.use === "new" && (
                 <div className="form">
                   <label className="row">
                     <span>Name</span>
@@ -1156,54 +1349,7 @@ export function ProposeView({ onDone, onCancel }: {
                     time without disturbing anything.
                   </p>
 
-                  {/* The same relationship as "where to look for it", from
-                      the other end. One list of facts underneath, so ticking
-                      here and ticking there are the same act - a document
-                      that reads nothing is a document filed for no reason. */}
-                  <div className="columns">
-                    <h4>What to read from it</h4>
-                    <p className="muted small">
-                      Suggested from your report. A fact you already hold is
-                      shown ticked where you already look for it there;
-                      adding this document adds to that, and unticking here
-                      leaves what you had alone.
-                    </p>
-
-                    <div className="binder">
-                      {factList.filter(([, f]) => live(f))
-                        .sort((a, b) => a[1].label.localeCompare(b[1].label))
-                        .map(([fid, f]) => (
-                          <label className="bind" key={fid}>
-                            <input type="checkbox"
-                              checked={f.documents.some(
-                                (x) => x.trim().toLowerCase()
-                                  === t.label.trim().toLowerCase())}
-                              onChange={(e) => {
-                                const kept = f.documents.filter(
-                                  (x) => x.trim().toLowerCase()
-                                    !== t.label.trim().toLowerCase());
-                                setFacts({
-                                  ...facts,
-                                  [fid]: { ...f,
-                                    documents: e.target.checked
-                                      ? [...kept, t.label] : kept,
-                                    acknowledged: f.use === "new"
-                                      ? false : f.acknowledged } });
-                              }} />
-                            {f.label}
-                          </label>
-                        ))}
-                    </div>
-
-                    {factList.filter(([, f]) => live(f)
-                      && f.documents.some((x) => x.trim().toLowerCase()
-                        === t.label.trim().toLowerCase())).length === 0 && (
-                      <p className="warn small">
-                        Nothing is read from this document, so filing one
-                        would extract nothing.
-                      </p>
-                    )}
-                  </div>
+                  {readFrom(t.label, t.group, id)}
 
                   <label className="inline-check">
                     <input type="checkbox" checked={t.acknowledged}
@@ -1229,6 +1375,50 @@ export function ProposeView({ onDone, onCancel }: {
               </div>
             </div>
           ))}
+        </>
+      )}
+
+      {/* 4b --- documents the tenant already holds ----------------------- */}
+      {heldTypes.length > 0 && (
+        <>
+          <h3>Documents you already hold</h3>
+          <p className="muted small">
+            Say what each of these is read for, and the whole configuration is
+            done here rather than half here and half in the editor afterwards.
+            Their names and descriptions are settled and are not changed on
+            this screen.
+          </p>
+
+          {heldTypes.map((t) => {
+            const id = "held:" + t.key;
+            const reads = factList.filter(([, f]) => live(f)
+              && f.documents.some((x) => x.trim().toLowerCase()
+                === t.label.trim().toLowerCase())).length;
+            return (
+              <div className="review" key={id}>
+                <div className="review-head">
+                  <a onClick={() => {
+                    const next = new Set(openedDocs);
+                    if (next.has(id)) next.delete(id); else next.add(id);
+                    setOpenedDocs(next);
+                  }}>
+                    <strong>
+                      {openedDocs.has(id) ? "\u25be" : "\u25b8"} {t.label}
+                    </strong>
+                  </a>
+                  <span className="muted small">
+                    {reads} {reads === 1 ? "fact" : "facts"}
+                  </span>
+                </div>
+
+                {openedDocs.has(id) && (
+                  <div className="form">
+                    {readFrom(t.label, t.category, id)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </>
       )}
 
