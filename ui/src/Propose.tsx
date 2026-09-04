@@ -81,6 +81,9 @@ export function ProposeView({ onDone, onCancel }: {
   const [busy, setBusy] = useState("");
 
   const [memoLabel, setMemoLabel] = useState("");
+  // A hundred cards, most of them already answered. Without this the few
+  // that need a person are found by scrolling for them.
+  const [onlyOutstanding, setOnlyOutstanding] = useState(false);
   const [skipped, setSkipped] = useState<Set<number>>(new Set());
   const [facts, setFacts] = useState<Record<string, FactChoice>>({});
   const [types, setTypes] = useState<Record<string, TypeChoice>>({});
@@ -494,6 +497,12 @@ export function ProposeView({ onDone, onCancel }: {
   }
 
   const factList = Object.entries(facts);
+  const factsOutstanding = factList
+    .filter(([, f]) => f.use === "new" && live(f) && !f.acknowledged).length;
+  const shown = onlyOutstanding
+    ? factList.filter(([, f]) => f.use === "new" && live(f)
+        && !f.acknowledged)
+    : factList;
   const typeList = Object.entries(types).filter(([, t]) => t.use !== "existing"
     || t.existing === null);
 
@@ -560,7 +569,24 @@ export function ProposeView({ onDone, onCancel }: {
         decide whether it is the same thing.
       </p>
 
-      {factList.map(([id, f]) => {
+      <div className="filters">
+        <label className="inline-check">
+          <input type="checkbox" checked={onlyOutstanding}
+            onChange={(e) => setOnlyOutstanding(e.target.checked)} />
+          Show only the ones still needing me
+        </label>
+        <span className="muted small">
+          {shown.length} of {factList.length}
+          {factsOutstanding > 0
+            ? ` \u00b7 ${factsOutstanding} to acknowledge` : ""}
+        </span>
+      </div>
+
+      {shown.length === 0 && (
+        <p className="muted small">Nothing left here.</p>
+      )}
+
+      {shown.map(([id, f]) => {
         const match = f.existing ? fieldsByKey[f.existing] : null;
         return (
           <div className="review" key={id}>
@@ -573,20 +599,26 @@ export function ProposeView({ onDone, onCancel }: {
               </span>
             </div>
 
+            {/* Deliberately not the binder/bind pair the field list uses:
+                that is a multi-column grid, and it flowed the reason for the
+                match into the column beside the choice it explains. A
+                decision and its grounds have to read in that order. */}
             {match && (
-              <div className="binder">
-                <label className="bind">
-                  <input type="radio" checked={f.use === "existing"}
+              <div className="form">
+                <label className="inline-check">
+                  <input type="radio" name={"m-" + id}
+                    checked={f.use === "existing"}
                     onChange={() => setFacts({
                       ...facts, [id]: { ...f, use: "existing" } })} />
                   Use <strong>{match.label}</strong>, which you already hold
                 </label>
-                <div className="muted small">
+                <p className="muted small">
                   {match.description}
                   {f.why ? " \u2014 " + f.why : ""}
-                </div>
-                <label className="bind">
-                  <input type="radio" checked={f.use === "new"}
+                </p>
+                <label className="inline-check">
+                  <input type="radio" name={"m-" + id}
+                    checked={f.use === "new"}
                     onChange={() => setFacts({
                       ...facts, [id]: { ...f, use: "new" } })} />
                   No, this is a different fact &mdash; add it
