@@ -42,6 +42,14 @@ DRAFT = 0
 _KEY = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 _MAX_KEY = 128
 
+# config_section is narrower than a field key: section_key is varchar(64) and
+# shape_key varchar(32). A heading long enough to overflow either was accepted
+# by the key check above and then refused by the database as "Data too long
+# for column 'shape_key'" - naming a column the caller never sent, for a
+# section whose key had just been called valid.
+_MAX_SECTION_KEY = 64
+_MAX_SHAPE_KEY = 32
+
 
 def _sql(statement, params=None):
     for _ in range(12):
@@ -216,6 +224,11 @@ def save_section(tenant_id, body):
     if not _KEY.match(key):
         raise ValueError("a section key must be lower case letters, digits, "
                          "dots, dashes or underscores")
+    if len(key) > _MAX_SECTION_KEY:
+        raise ValueError(
+            "'%s' makes a section identity longer than %d characters. "
+            "Shorten the heading." % (body.get("title") or key,
+                                      _MAX_SECTION_KEY))
 
     # Which memorandum this section belongs to. Falling back to "the first
     # template found" was safe while there was one; with several it would put
@@ -245,7 +258,10 @@ def save_section(tenant_id, body):
         _p("k", key), _p("num", body.get("numeral") or ""),
         _p("title", body.get("title") or key),
         _p("kind", body.get("kind") or "extract"),
-        _p("shape", body.get("shape") or key),
+        # Truncated rather than refused: shape_key is not an identity anybody
+        # chose, only a default taken from the section key, and a narrow
+        # legacy column is no reason to refuse a heading a person wrote.
+        _p("shape", (body.get("shape") or key)[:_MAX_SHAPE_KEY]),
         _p("prompt", body.get("prompt")),
         _p("context", ",".join(body.get("context_sections") or []) or None),
         _p("sort", int(body.get("sort_order") or 0)),

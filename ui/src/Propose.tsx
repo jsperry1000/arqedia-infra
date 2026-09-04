@@ -101,6 +101,12 @@ export function ProposeView({ onDone, onCancel }: {
   // Groups start closed. A hundred cards open at once is not a list a person
   // reads; a closed group that says how many facts want them is.
   const [opened, setOpened] = useState<Set<string>>(new Set());
+  // Accepting is a sequence of writes, not one. Whatever it managed before
+  // it stopped is IN the draft, so the person is told what landed rather than
+  // left to find out by reading their configuration.
+  const [written, setWritten] = useState<string[]>([]);
+  const [result, setResult] = useState<
+    { ok: boolean; error?: string; templateKey?: string } | null>(null);
   const [skipped, setSkipped] = useState<Set<number>>(new Set());
   const [facts, setFacts] = useState<Record<string, FactChoice>>({});
   const [types, setTypes] = useState<Record<string, TypeChoice>>({});
@@ -370,12 +376,17 @@ export function ProposeView({ onDone, onCancel }: {
     if (!proposal) return;
     setError("");
 
+    const done: string[] = [];
+    let made_key = "";
+    setWritten(done);
+
     try {
       const groups = new Set((draft?.categories ?? []).map((c) => c.key));
       for (const t of Object.values(types)) {
         if (t.use !== "new" || !t.groupLabel || groups.has(t.group)) continue;
         setBusy("Adding a group");
         await api.saveCategory({ key: t.group, label: t.groupLabel });
+        done.push("group " + t.groupLabel);
         groups.add(t.group);
       }
 
@@ -390,6 +401,7 @@ export function ProposeView({ onDone, onCancel }: {
           read_mode: "text",
           always_ocr: false,
         });
+        done.push("document " + t.label);
       }
 
       for (const f of Object.values(facts)) {
@@ -408,6 +420,7 @@ export function ProposeView({ onDone, onCancel }: {
               }))
             : [],
         } as never);
+        done.push("fact " + f.label);
       }
 
       for (const f of Object.values(facts)) {
@@ -436,7 +449,10 @@ export function ProposeView({ onDone, onCancel }: {
 
       setBusy("Adding the memorandum");
       const made = await api.saveTemplate({ label: memoLabel.trim() });
+      done.push("memorandum " + memoLabel.trim());
       const templateKey = made.key as string;
+      // Held so the result screen can hand it back, whatever happens after.
+      made_key = templateKey;
 
       const included = proposal.sections
         .map((s, i) => ({ s, i }))
@@ -451,6 +467,7 @@ export function ProposeView({ onDone, onCancel }: {
           kind: "extract",
           template_key: templateKey,
         });
+        done.push("section " + s.title);
       }
 
       for (const { s, i } of included) {
@@ -464,10 +481,12 @@ export function ProposeView({ onDone, onCancel }: {
       }
 
       setBusy("");
-      onDone(templateKey);
+      setWritten(done);
+      setResult({ ok: true, templateKey: made_key });
     } catch (e) {
-      setError(message(e));
       setBusy("");
+      setWritten(done);
+      setResult({ ok: false, error: message(e), templateKey: made_key });
     }
   }
 
@@ -518,6 +537,45 @@ export function ProposeView({ onDone, onCancel }: {
           {draft ? "PDF or Word." : "Loading your configuration\u2026"}
         </p>
         {busy && <p className="busy">{busy}&hellip;</p>}
+      </div>
+    );
+  }
+
+  // Accepting has run. Said plainly, either way: it wrote to the draft, and a
+  // screen that goes quiet afterwards leaves a person unsure whether it did.
+  if (result) {
+    return (
+      <div>
+        <h2>{result.ok ? "Added to your draft" : "It stopped part way"}</h2>
+
+        {result.ok ? (
+          <p className="muted">
+            Your draft now holds this memorandum and everything below.
+            Nothing reaches a report until you publish.
+          </p>
+        ) : (
+          <>
+            <p className="error">{result.error}</p>
+            <p className="muted">
+              What is listed below was written before it stopped and is in
+              your draft. The rest was not. Nothing has been published.
+            </p>
+          </>
+        )}
+
+        {written.length === 0 && (
+          <p className="muted small">Nothing was written.</p>
+        )}
+
+        <ul className="muted small">
+          {written.map((w, i) => <li key={i}>{w}</li>)}
+        </ul>
+
+        <div className="form-actions">
+          <button onClick={() => onDone(result.templateKey || "")}>
+            Back to the configuration
+          </button>
+        </div>
       </div>
     );
   }
