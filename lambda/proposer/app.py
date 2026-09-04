@@ -108,6 +108,18 @@ def _now():
         "%Y-%m-%dT%H:%M:%SZ")
 
 
+class ModelUnavailable(Exception):
+    """Bedrock would not take the call. Nothing to do with the file."""
+
+
+# Bedrock refuses under load, and boto's own retries are spent in seconds -
+# four attempts inside a blip is four ways of asking at the same moment. These
+# wait, so a minute of unavailability costs a minute rather than the read.
+_BUSY = ("ServiceUnavailableException", "ThrottlingException",
+         "ModelTimeoutException", "InternalServerException")
+_WAITS = (5, 15, 30, 60)
+
+
 def _invoke(prompt, system=None):
     """Bedrock, as composition calls it. Temperature zero: the same
     memorandum read twice should propose the same configuration."""
@@ -120,13 +132,27 @@ def _invoke(prompt, system=None):
     if system:
         body["system"] = system
 
-    response = _bedrock.invoke_model(modelId=MODEL_ID, body=json.dumps(body))
-    payload = json.loads(response["body"].read())
-    text = "".join(
-        b.get("text", "") for b in payload.get("content", [])
-        if b.get("type") == "text"
-    )
-    return text.strip(), payload.get("usage", {})
+    last = None
+    for attempt, wait in enumerate((0,) + _WAITS):
+        if wait:
+            time.sleep(wait)
+        try:
+            response = _bedrock.invoke_model(
+                modelId=MODEL_ID, body=json.dumps(body))
+            payload = json.loads(response["body"].read())
+            text = "".join(
+                b.get("text", "") for b in payload.get("content", [])
+                if b.get("type") == "text"
+            )
+            return text.strip(), payload.get("usage", {})
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code not in _BUSY:
+                raise
+            last = code
+            print("[model-busy] attempt=%d code=%s" % (attempt + 1, code))
+
+    raise ModelUnavailable(last or "the model would not take the call")
 
 
 _FENCE = re.compile(r"^```(?:json)?|```$", re.M)
@@ -360,7 +386,7 @@ suppliers, policies - is one fact with shape "table", not one fact per row.
 
 # --- the handler -----------------------------------------------------------
 
-def lambda_handler(event, context):
+def _read(event):
     tenant_id = int(event["tenant_id"])
     key = event["key"]
     requested_by = event.get("requested_by")
@@ -472,3 +498,51 @@ def lambda_handler(event, context):
               proposal["tokens_out"], requested_by))
 
     return {"status": "ready", "sections": len(proposal["sections"])}
+
+
+def lambda_handler(event, context):
+    """The read, with its failures written down.
+
+    An exception escaping here leaves the proposal object saying "outlining"
+    for ever, and the screen learns nothing except by giving up. So whatever
+    goes wrong is recorded in the object the screen is already polling.
+
+    AND IT IS NOT RE-RAISED. An asynchronous invocation retries twice, so an
+    exception here asks a model that is already refusing two more times, five
+    minutes apart, long after the person has been told it failed."""
+    key = event.get("key")
+    try:
+        return _read(event)
+    except ModelUnavailable as exc:
+        _failed(key, "model-unavailable",
+                "The model would not take the request. Nothing to do with "
+                "your report - try again in a few minutes.", exc)
+        return {"status": "failed", "reason": "model-unavailable"}
+    except Exception as exc:  # noqa: BLE001 - the screen must be told
+        _failed(key, "failed", "Something went wrong while reading it. "
+                               "Nothing was saved.", exc)
+        return {"status": "failed"}
+
+
+def _failed(key, status, reason, exc):
+    """Amend whatever was last published rather than writing a fresh object,
+    so the sections already read are still there to look at."""
+    print("[proposal-failed] key=%s status=%s %r" % (key, status, exc))
+    if not key:
+        return
+    try:
+        body = _s3.get_object(Bucket=REVIEW_BUCKET,
+                              Key=_proposal_key(key))["Body"].read()
+        proposal = json.loads(body.decode("utf-8"))
+    except Exception:  # noqa: BLE001 - nothing was published yet
+        proposal = {"source_key": key, "sections_done": 0,
+                    "sections_total": None, "memorandum_label": None,
+                    "document_types": [], "sections": []}
+
+    proposal["status"] = status
+    proposal["reason"] = reason
+    proposal["finished_at"] = _now()
+    try:
+        _publish(key, proposal)
+    except Exception as write:  # noqa: BLE001 - the log is the last resort
+        print("[proposal-failed-unwritable] key=%s %r" % (key, write))
