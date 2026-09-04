@@ -104,6 +104,10 @@ export function ProposeView({ onDone, onCancel }: {
   // Accepting is a sequence of writes, not one. Whatever it managed before
   // it stopped is IN the draft, so the person is told what landed rather than
   // left to find out by reading their configuration.
+  // Naming a document from a fact card, where the person has found that none
+  // of the documents on offer is where this fact actually lives.
+  const [addingDoc, setAddingDoc] = useState<string | null>(null);
+  const [newDocName, setNewDocName] = useState("");
   const [written, setWritten] = useState<string[]>([]);
   const [result, setResult] = useState<
     { ok: boolean; error?: string; templateKey?: string } | null>(null);
@@ -160,7 +164,8 @@ export function ProposeView({ onDone, onCancel }: {
           setProposal(p);
 
           if (p.status === "ready" || p.status === "unreadable"
-              || p.status === "nothing-found") {
+              || p.status === "nothing-found" || p.status === "failed"
+              || p.status === "model-unavailable") {
             stop();
             if (p.status === "ready") prepare(p);
             return;
@@ -177,8 +182,8 @@ export function ProposeView({ onDone, onCancel }: {
           // nothing left to wait for.
           if (stalled.current >= 45 || polls.current >= 240) {
             stop();
-            setError("Reading stopped before it finished. Nothing was saved."
-                     + " Try a shorter report.");
+            setError("Reading stopped before it finished. Nothing was"
+                     + " saved.");
           }
         } catch (e) {
           setError(message(e));
@@ -580,29 +585,48 @@ export function ProposeView({ onDone, onCancel }: {
     );
   }
 
-  if (proposal.status === "unreadable") {
-    return (
-      <div>
-        <a onClick={onCancel} className="back">Back</a>
-        <h2>That file could not be read</h2>
-        <p className="muted">
-          It carries no text we can read &mdash; a scan, most likely. Send the
-          Word original, or a PDF exported rather than scanned.
-        </p>
-        <p className="muted small">Reason recorded: {proposal.reason}</p>
-      </div>
-    );
-  }
+  // Every ending that is not a proposal. One shape, so none of them can be
+  // the one that forgets to offer a way out - the first version told a person
+  // to try a shorter report and gave them nothing to click.
+  const stopped: Record<string, { title: string; body: string }> = {
+    "unreadable": {
+      title: "That file could not be read",
+      body: "It carries no text we can read \u2014 a scan, most likely."
+        + " Send the Word original, or a PDF exported rather than scanned.",
+    },
+    "nothing-found": {
+      title: "No sections found",
+      body: "We read the file but could not make out headings in it. A report"
+        + " with numbered or titled sections is what this works from.",
+    },
+    "model-unavailable": {
+      title: "It could not be read just now",
+      body: "The service that reads reports would not take the request. This"
+        + " is nothing to do with your file \u2014 try again in a few"
+        + " minutes.",
+    },
+    "failed": {
+      title: "It stopped before finishing",
+      body: "Something went wrong while reading it. Nothing was saved.",
+    },
+  };
 
-  if (proposal.status === "nothing-found") {
+  const ending = stopped[proposal.status];
+  if (ending) {
     return (
       <div>
         <a onClick={onCancel} className="back">Back</a>
-        <h2>No sections found</h2>
-        <p className="muted">
-          We read the file but could not make out headings in it. A report with
-          numbered or titled sections is what this works from.
-        </p>
+        <h2>{ending.title}</h2>
+        <p className="muted">{ending.body}</p>
+        {proposal.reason && (
+          <p className="muted small">Recorded: {proposal.reason}</p>
+        )}
+        <div className="form-actions">
+          <button onClick={() => { setProposal(null); setError(""); }}>
+            Try another report
+          </button>
+          <a className="secondary" onClick={onCancel}>Back</a>
+        </div>
       </div>
     );
   }
@@ -632,7 +656,17 @@ export function ProposeView({ onDone, onCancel }: {
             </li>
           ))}
         </ul>
-        {error && <p className="error">{error}</p>}
+        {error && (
+          <>
+            <p className="error">{error}</p>
+            <div className="form-actions">
+              <button onClick={() => { setProposal(null); setError(""); }}>
+                Try another report
+              </button>
+              <a className="secondary" onClick={onCancel}>Back</a>
+            </div>
+          </>
+        )}
       </div>
     );
   }
@@ -964,6 +998,64 @@ export function ProposeView({ onDone, onCancel }: {
                       Nothing is ticked, so this fact would never be looked
                       for.
                     </p>
+                  )}
+
+                  {/* A fact whose document is not on the list. Named here
+                      and described below, rather than authored twice: the
+                      description is what the classifier reads, and it earns
+                      its own acknowledgement wherever it is written. */}
+                  {addingDoc !== id ? (
+                    <a className="small"
+                       onClick={() => { setAddingDoc(id); setNewDocName(""); }}>
+                      None of these? Add a document
+                    </a>
+                  ) : (
+                    <div className="filters">
+                      <input placeholder="What the document is called"
+                             value={newDocName} autoFocus
+                             onChange={(e) => setNewDocName(e.target.value)} />
+                      <button disabled={!newDocName.trim()}
+                        onClick={() => {
+                          const label = newDocName.trim();
+                          const tid = label.toLowerCase();
+                          const held = (draft?.document_types ?? []).find(
+                            (t) => t.label.trim().toLowerCase() === tid);
+
+                          // Already known, under either name. Tick it rather
+                          // than make a second document meaning the same.
+                          if (!held && !types[tid]) {
+                            setTypes({
+                              ...types,
+                              [tid]: {
+                                use: "new", label, description: "",
+                                group: draft?.categories[0]?.key ?? "",
+                                groupLabel: "", existing: null,
+                                acknowledged: false,
+                              },
+                            });
+                          }
+                          const name = held ? held.label : label;
+                          if (!f.documents.some(
+                            (x) => x.trim().toLowerCase()
+                              === name.toLowerCase())) {
+                            setFacts({
+                              ...facts,
+                              [id]: { ...f,
+                                documents: [...f.documents, name],
+                                acknowledged: false } });
+                          }
+                          setAddingDoc(null);
+                          setNewDocName("");
+                        }}>
+                        Add
+                      </button>
+                      <a className="small"
+                         onClick={() => setAddingDoc(null)}>Cancel</a>
+                      <span className="muted small">
+                        It appears under Documents below, where it needs a
+                        description before you can accept.
+                      </span>
+                    </div>
                   )}
                 </div>
 
