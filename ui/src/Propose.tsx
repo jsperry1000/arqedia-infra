@@ -29,10 +29,6 @@ import {
  * looks right.
  */
 
-/** Facts whose documents place them in no group. Kept and shown last: a fact
- *  found in nothing is the one most worth a second look, not the one to
- *  hide. */
-const UNPLACED = "\u0000unplaced";
 
 /** Mirrors slugKey in Configure and _slug in the editor. A key is permanent
  *  identity; it is derived from the label once and never follows it. */
@@ -58,10 +54,6 @@ type FactChoice = {
   // Document type LABELS, as the reader names them. Resolved to keys only
   // when the proposal is accepted, because a type may not exist yet.
   documents: string[];
-  // Fixed when the proposal is read, not derived as the person works. A card
-  // that jumps into another group the moment a document is ticked is a card
-  // they lose.
-  group: string;
   // For a matched fact, the document type KEYS the tenant already looks in.
   // Kept so accepting can add to that set without ever taking from it.
   held: string[];
@@ -72,6 +64,10 @@ type FactChoice = {
   // section of its own until one is chosen, so it cannot be placed by the
   // ordinary rule.
   added: boolean;
+  // Deliberately reported by no section here. The fact is still created and
+  // still extracted - it belongs to the tenant, and another memorandum may
+  // report it. This only records that the person has seen it and decided.
+  unused: boolean;
   acknowledged: boolean;
 };
 
@@ -101,12 +97,6 @@ export function ProposeView({ onDone, onCancel }: {
   const [busy, setBusy] = useState("");
 
   const [memoLabel, setMemoLabel] = useState("");
-  // A hundred cards, most of them already answered. Without this the few
-  // that need a person are found by scrolling for them.
-  const [onlyOutstanding, setOnlyOutstanding] = useState(false);
-  // Groups start closed. A hundred cards open at once is not a list a person
-  // reads; a closed group that says how many facts want them is.
-  const [opened, setOpened] = useState<Set<string>>(new Set());
   // Document cards carry a form each. Closed by default, or the page is
   // metres long before the person has read the first one.
   const [openedDocs, setOpenedDocs] = useState<Set<string>>(new Set());
@@ -133,6 +123,8 @@ export function ProposeView({ onDone, onCancel }: {
   const [newInSection, setNewInSection] = useState("");
   // Which section's facts are on show. One at a time, on purpose.
   const [shownSection, setShownSection] = useState<number | null>(null);
+  // Which fact is open over the page.
+  const [openFact, setOpenFact] = useState<string | null>(null);
   const [newFactName, setNewFactName] = useState("");
   const [written, setWritten] = useState<string[]>([]);
   const [result, setResult] = useState<
@@ -234,38 +226,8 @@ export function ProposeView({ onDone, onCancel }: {
     const known = new Set((draft?.fields ?? []).map((f) => f.key));
     const collected: Record<string, FactChoice> = {};
 
-    // A fact has no group of its own. It takes the group of the documents it
-    // is found in, which is how the editor already presents them. Found
-    // across several, it takes the first by the tenant's own order.
-    const order = (draft?.categories ?? []).map((c) => c.key);
-    const groupByKey: Record<string, string> = {};
-    const groupByLabel: Record<string, string> = {};
-    for (const t of draft?.document_types ?? []) {
-      groupByKey[t.key] = t.category;
-      groupByLabel[t.label.trim().toLowerCase()] = t.category;
-    }
-    for (const t of p.document_types ?? []) {
-      const named = (t.group || "").trim();
-      const c = (draft?.categories ?? []).find(
-        (x) => x.key === named
-          || x.label.toLowerCase() === named.toLowerCase());
-      groupByLabel[(t.label || "").trim().toLowerCase()] =
-        c ? c.key : slugKey(named);
-    }
-
     const labelOfKey: Record<string, string> = {};
     for (const t of draft?.document_types ?? []) labelOfKey[t.key] = t.label;
-
-    const place = (keys: string[], labels: string[]) => {
-      let best = -1;
-      const found = keys.map((k) => groupByKey[k])
-        .concat(labels.map((l) => groupByLabel[l.trim().toLowerCase()]));
-      for (const g of found) {
-        const at = g ? order.indexOf(g) : -1;
-        if (at !== -1 && (best === -1 || at < best)) best = at;
-      }
-      return best === -1 ? UNPLACED : order[best];
-    };
 
     p.sections.forEach((section, index) => {
       (section.facts ?? []).forEach((f: ProposedFact) => {
@@ -306,9 +268,9 @@ export function ProposeView({ onDone, onCancel }: {
             ? (inherited ?? []).map((k) => labelOfKey[k]).filter(Boolean)
             : foundIn,
           held: existing ? (inherited ?? []) : [],
-          group: place(inherited ?? [], foundIn),
           sections: [index],
           added: false,
+          unused: false,
           acknowledged: false,
         };
       });
@@ -366,9 +328,10 @@ export function ProposeView({ onDone, onCancel }: {
    *  A fact named only in sections he unticked would otherwise be created and
    *  bound to nothing - clutter he did not ask for, and one more thing to
    *  acknowledge before he can get on. */
-  const live = (f: FactChoice) =>
-    f.use !== "skip"
-    && (f.added || f.sections.some((i) => !skipped.has(i)));
+  // Created and extracted unless it is not wanted at all. Being reported by
+  // no section is a legitimate state - one vocabulary, several memoranda -
+  // and is shown rather than allowed to drop the fact silently.
+  const live = (f: FactChoice) => f.use !== "skip";
 
   /** One key per section, unique within the memorandum. Two sections titled
    *  the same slug to the same key, and the second would silently overwrite
@@ -612,7 +575,7 @@ export function ProposeView({ onDone, onCancel }: {
    * holds and the ones this report would add. Two copies of a form this
    * particular would drift within a week.
    */
-  const readFrom = (label: string, group: string, cardId: string) => (
+  const readFrom = (label: string, cardId: string) => (
     <>
                 {/* The same relationship as "where to look for it", from
                     the other end. One list of facts underneath, so ticking
@@ -710,8 +673,9 @@ export function ProposeView({ onDone, onCancel }: {
                                 use: "new", label, description: "",
                                 shape: "one", existing: null, why: null,
                                 columns: [], documents: [label],
-                                held: [], group: group, sections: [],
-                                added: true, acknowledged: false,
+                                held: [], sections: [],
+                                added: true, unused: false,
+                                acknowledged: false,
                               } });
                           }
                           setAddingFact(null);
@@ -731,432 +695,14 @@ export function ProposeView({ onDone, onCancel }: {
     </>
   );
 
-  // Accepting has run. Said plainly, either way: it wrote to the draft, and a
-  // screen that goes quiet afterwards leaves a person unsure whether it did.
-  if (result) {
-    return (
-      <div>
-        <h2>{result.ok ? "Added to your draft" : "It stopped part way"}</h2>
-
-        {result.ok ? (
-          <p className="muted">
-            Your draft now holds this memorandum and everything below.
-            Nothing reaches a report until you publish.
-          </p>
-        ) : (
-          <>
-            <p className="error">{result.error}</p>
-            <p className="muted">
-              What is listed below was written before it stopped and is in
-              your draft. The rest was not. Nothing has been published.
-            </p>
-          </>
-        )}
-
-        {written.length === 0 && (
-          <p className="muted small">Nothing was written.</p>
-        )}
-
-        <ul className="muted small">
-          {written.map((w, i) => <li key={i}>{w}</li>)}
-        </ul>
-
-        <div className="form-actions">
-          <button onClick={() => onDone(result.templateKey || "")}>
-            Back to the configuration
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Every ending that is not a proposal. One shape, so none of them can be
-  // the one that forgets to offer a way out - the first version told a person
-  // to try a shorter report and gave them nothing to click.
-  const stopped: Record<string, { title: string; body: string }> = {
-    "unreadable": {
-      title: "That file could not be read",
-      body: "It carries no text we can read \u2014 a scan, most likely."
-        + " Send the Word original, or a PDF exported rather than scanned.",
-    },
-    "nothing-found": {
-      title: "No sections found",
-      body: "We read the file but could not make out headings in it. A report"
-        + " with numbered or titled sections is what this works from.",
-    },
-    "model-unavailable": {
-      title: "It could not be read just now",
-      body: "The service that reads reports would not take the request. This"
-        + " is nothing to do with your file \u2014 try again in a few"
-        + " minutes.",
-    },
-    "failed": {
-      title: "It stopped before finishing",
-      body: "Something went wrong while reading it. Nothing was saved.",
-    },
-  };
-
-  const ending = stopped[proposal.status];
-  if (ending) {
-    return (
-      <div>
-        <a onClick={onCancel} className="back">Back</a>
-        <h2>{ending.title}</h2>
-        <p className="muted">{ending.body}</p>
-        {proposal.reason && (
-          <p className="muted small">Recorded: {proposal.reason}</p>
-        )}
-        <div className="form-actions">
-          <button onClick={() => { setProposal(null); setError(""); }}>
-            Try another report
-          </button>
-          <a className="secondary" onClick={onCancel}>Back</a>
-        </div>
-      </div>
-    );
-  }
-
-  if (proposal.status !== "ready") {
-    const done = proposal.sections_done;
-    const total = proposal.sections_total;
-    return (
-      <div>
-        <h2>Reading your report</h2>
-        <p className="muted">
-          {total
-            ? `Section ${done} of ${total}.`
-            : "Finding the sections\u2026"}
-        </p>
-        {proposal.memorandum_label && (
-          <p className="muted small">
-            It reads as a {proposal.memorandum_label}.
-          </p>
-        )}
-        <ul className="muted small">
-          {proposal.sections.map((s, i) => (
-            <li key={i}>
-              {s.numeral} {s.title}
-              {" \u00b7 "}{s.facts.length}{" "}
-              {s.facts.length === 1 ? "fact" : "facts"}
-            </li>
-          ))}
-        </ul>
-        {error && (
-          <>
-            <p className="error">{error}</p>
-            <div className="form-actions">
-              <button onClick={() => { setProposal(null); setError(""); }}>
-                Try another report
-              </button>
-              <a className="secondary" onClick={onCancel}>Back</a>
-            </div>
-          </>
-        )}
-      </div>
-    );
-  }
-
-  // Every group a document could sit in: the tenant's, plus any made here.
-  // Declared before anything that reads it: groupsOf runs during render, and
-  // a const referenced above its own declaration is a blank screen with no
-  // message anywhere on the page.
-  const allGroups = [...(draft?.categories ?? []), ...newGroups];
-
-  const factList = Object.entries(facts);
-  const factsOutstanding = factList
-    .filter(([, f]) => f.use === "new" && live(f) && !f.acknowledged).length;
-  const needs = ([, f]: [string, FactChoice]) =>
-    f.use === "new" && live(f) && !f.acknowledged;
-  const shown = onlyOutstanding ? factList.filter(needs) : factList;
-
-  /** Facts under group headings, the tenant's order, alphabetical inside
-   *  each. Used by the whole fact list and by each section's own box, so a
-   *  fact sits under the same heading wherever it is read. */
-  const groupsOf = (entries: [string, FactChoice][]) => {
-    const buckets: Record<string, [string, FactChoice][]> = {};
-    for (const e of entries) (buckets[e[1].group || UNPLACED] ||= []).push(e);
-    for (const list of Object.values(buckets)) {
-      list.sort((a, b) => a[1].label.localeCompare(b[1].label));
-    }
-    const out: { key: string; label: string;
-                 entries: [string, FactChoice][] }[] = [];
-    for (const c of allGroups) {
-      if (buckets[c.key]?.length) {
-        out.push({ key: c.key, label: c.label, entries: buckets[c.key] });
-      }
-    }
-    if (buckets[UNPLACED]?.length) {
-      out.push({ key: UNPLACED, label: "Not found in any document",
-                 entries: buckets[UNPLACED] });
-    }
-    return out;
-  };
-
-  // By group, in the tenant's own order, then alphabetically inside each.
-  // Anything whose documents place it nowhere goes last rather than being
-  // dropped - a fact with no home is exactly the one worth looking at.
-  const grouped = groupsOf(shown);
-  const typeList = Object.entries(types).filter(([, t]) => t.use !== "existing"
-    || t.existing === null);
-
-  // Documents the tenant already holds, less any this report would add under
-  // the same name - one document should not appear in both lists.
-  const proposedLabels = new Set(
-    Object.values(types).filter((t) => t.use === "new")
-      .map((t) => t.label.trim().toLowerCase()));
-  const heldTypes = (draft?.document_types ?? [])
-    .filter((t) => !proposedLabels.has(t.label.trim().toLowerCase()))
-    .slice()
-    .sort((a, b) => a.label.localeCompare(b.label));
-
-  // Every document a fact could be looked for in once this is accepted: the
-  // ones the tenant holds, and the ones this proposal would add. Named by
-  // label, because a proposed type has no key until it is created.
-  const docOptions: string[] = (() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const t of draft?.document_types ?? []) {
-      const l = t.label.trim();
-      if (l && !seen.has(l.toLowerCase())) { seen.add(l.toLowerCase()); out.push(l); }
-    }
-    for (const t of Object.values(types)) {
-      if (t.use === "skip") continue;
-      const l = t.label.trim();
-      if (l && !seen.has(l.toLowerCase())) { seen.add(l.toLowerCase()); out.push(l); }
-    }
-    return out.sort((a, b) => a.localeCompare(b));
-  })();
-
-  return (
-    <div>
-      <a onClick={onCancel} className="back">Back</a>
-      <h2>What we found in your report</h2>
-      <p className="muted">
-        Correct anything that is wrong. Nothing here has been saved.
-      </p>
-      {error && <p className="error">{error}</p>}
-      {busy && <p className="busy">{busy}&hellip;</p>}
-
-      {/* 1 --- the memorandum ------------------------------------------- */}
-      <h3>The memorandum</h3>
-      <label className="row">
-        <span>Name</span>
-        <input value={memoLabel}
-               onChange={(e) => setMemoLabel(e.target.value)} />
-      </label>
-
-      {/* 2 --- its sections --------------------------------------------- */}
-      <h3>Memo sections</h3>
-      <p className="muted small">
-        In the order they appear in your report. Untick anything you do not
-        want.
-      </p>
-
-      <table className="docs">
-        <tbody>
-          {proposal.sections.map((s, i) => {
-            const carries = factList.filter(
-              ([, f]) => f.use !== "skip" && f.sections.includes(i));
-            return (
-            <tr key={i} className={skipped.has(i) ? "aside" : ""}>
-              <td>
-                <input type="checkbox" checked={!skipped.has(i)}
-                  onChange={() => {
-                    const next = new Set(skipped);
-                    if (next.has(i)) next.delete(i); else next.add(i);
-                    setSkipped(next);
-                  }} />
-              </td>
-              <td>
-                <input value={s.numeral}
-                  style={{ width: "4em", marginRight: "0.5em" }}
-                  onChange={(e) => {
-                    const next = [...proposal.sections];
-                    next[i] = { ...s, numeral: e.target.value };
-                    setProposal({ ...proposal, sections: next });
-                  }} />
-                <input value={s.title}
-                  onChange={(e) => {
-                    const next = [...proposal.sections];
-                    next[i] = { ...s, title: e.target.value };
-                    setProposal({ ...proposal, sections: next });
-                  }} />
-                <div className="muted small">{s.purpose}</div>
-                {!s.located && (
-                  <div className="warn small">
-                    We could not find this heading again in the text, so it was
-                    read against the whole report. Worth checking.
-                  </div>
-                )}
-
-                {/* What this section reports, the third view of the one
-                    relationship. One box open at a time: nine sections open
-                    at once is the wall of text this replaced. */}
-                <a className="small"
-                   onClick={() => setShownSection(
-                     shownSection === i ? null : i)}>
-                  {shownSection === i ? "\u25be" : "\u25b8"} {carries.length}
-                  {carries.length === 1 ? " fact" : " facts"}
-                </a>
-
-                {shownSection === i && (
-                  <div className="columns">
-                    {groupsOf(carries).map((g) => (
-                      <div key={g.key}>
-                        <h4>{g.label}</h4>
-                        <ul className="muted small">
-                          {g.entries.map(([fid, f]) => (
-                            <li key={fid}>
-                              {f.label}{" "}
-                              <a onClick={() => setFacts({
-                                ...facts,
-                                [fid]: { ...f,
-                                  sections: f.sections
-                                    .filter((x) => x !== i) } })}>
-                                &times;
-                              </a>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                    {carries.length === 0 && (
-                      <p className="muted small">Nothing in it yet.</p>
-                    )}
-                  </div>
-                )}
-
-                {addingSection !== i ? (
-                  <a className="small"
-                     onClick={() => { setAddingSection(i); setNewInSection(""); }}>
-                    Add a fact to this section
-                  </a>
-                ) : (
-                  <div className="filters">
-                    <input placeholder="What the fact is called" autoFocus
-                           value={newInSection}
-                           onChange={(e) => setNewInSection(e.target.value)} />
-                    <button disabled={!newInSection.trim()}
-                      onClick={() => {
-                        const label = newInSection.trim();
-                        const fid = label.toLowerCase();
-                        const already = facts[fid];
-                        if (already) {
-                          if (!already.sections.includes(i)) {
-                            setFacts({ ...facts,
-                              [fid]: { ...already,
-                                sections: [...already.sections, i] } });
-                          }
-                        } else {
-                          setFacts({ ...facts,
-                            [fid]: {
-                              use: "new", label, description: "",
-                              shape: "one", existing: null, why: null,
-                              columns: [], documents: [], held: [],
-                              group: UNPLACED, sections: [i],
-                              added: false, acknowledged: false,
-                            } });
-                        }
-                        setAddingSection(null);
-                        setNewInSection("");
-                      }}>
-                      Add
-                    </button>
-                    <a className="small"
-                       onClick={() => setAddingSection(null)}>Cancel</a>
-                  </div>
-                )}
-              </td>
-              <td className="muted small">
-                {carries.length} {carries.length === 1 ? "fact" : "facts"}
-              </td>
-            </tr>
-            );
-          })}
-        </tbody>
-      </table>
-
-      {/* A section the report never had. Its facts are named on it, the same
-          way as any other. */}
-      <div className="filters">
-        <input placeholder="Numeral" value={newSectionNumeral}
-               style={{ width: "5em" }}
-               onChange={(e) => setNewSectionNumeral(e.target.value)} />
-        <input placeholder="Add a section" value={newSectionTitle}
-               onChange={(e) => setNewSectionTitle(e.target.value)} />
-        <button disabled={!newSectionTitle.trim()}
-          onClick={() => {
-            setProposal({
-              ...proposal,
-              sections: [...proposal.sections, {
-                heading: newSectionTitle.trim(),
-                title: newSectionTitle.trim(),
-                numeral: newSectionNumeral.trim(),
-                purpose: "Added by you.",
-                located: true,
-                facts: [],
-              }],
-            });
-            setNewSectionTitle("");
-            setNewSectionNumeral("");
-          }}>
-          Add
-        </button>
-      </div>
-
-      {/* 3 --- the facts ------------------------------------------------- */}
-      <h3>The facts in each section</h3>
-      <p className="muted small">
-        {factList.length} in all, counted once however many sections name them.
-        Where one looks like a fact you already hold, we say so &mdash; you
-        decide whether it is the same thing.
-      </p>
-
-      <div className="filters">
-        <label className="inline-check">
-          <input type="checkbox" checked={onlyOutstanding}
-            onChange={(e) => setOnlyOutstanding(e.target.checked)} />
-          Show only the ones still needing me
-        </label>
-        <span className="muted small">
-          {shown.length} of {factList.length}
-          {factsOutstanding > 0
-            ? ` \u00b7 ${factsOutstanding} to acknowledge` : ""}
-        </span>
-      </div>
-
-      {shown.length === 0 && (
-        <p className="muted small">Nothing left here.</p>
-      )}
-
-      {grouped.map((g) => {
-        // Open when the person opened it, and always when they have asked to
-        // see only what still wants them - a filtered list that is also
-        // closed shows nothing and reads as nothing left to do.
-        const open = onlyOutstanding || opened.has(g.key);
-        const want = g.entries.filter(needs).length;
-        return (
-          <div key={g.key}>
-            <h4>
-              <a onClick={() => {
-                const next = new Set(opened);
-                if (next.has(g.key)) next.delete(g.key);
-                else next.add(g.key);
-                setOpened(next);
-              }}>
-                {open ? "\u25be" : "\u25b8"} {g.label}
-              </a>{" "}
-              <span className="muted small">
-                {g.entries.length}
-              </span>
-              {!open && want > 0 && (
-                <span className="warn small">
-                  {" \u00b7 "}{want} needing you
-                </span>
-              )}
-            </h4>
-
-            {open && g.entries.map(([id, f]) => {
+  /**
+   * One fact, opened over the page from wherever it is named.
+   *
+   * The same card whether it was found in the report, picked from a
+   * section, or created from a document - a fact is a fact, and a
+   * second form for the same thing is a second set of rules.
+   */
+  const factCard = (id: string, f: FactChoice) => {
         const match = f.existing ? fieldsByKey[f.existing] : null;
         return (
           <div className="review" key={id}>
@@ -1454,10 +1000,497 @@ export function ProposeView({ onDone, onCancel }: {
             </div>
           </div>
         );
-            })}
+  };
+
+  // Accepting has run. Said plainly, either way: it wrote to the draft, and a
+  // screen that goes quiet afterwards leaves a person unsure whether it did.
+  if (result) {
+    return (
+      <div>
+        <h2>{result.ok ? "Added to your draft" : "It stopped part way"}</h2>
+
+        {result.ok ? (
+          <p className="muted">
+            Your draft now holds this memorandum and everything below.
+            Nothing reaches a report until you publish.
+          </p>
+        ) : (
+          <>
+            <p className="error">{result.error}</p>
+            <p className="muted">
+              What is listed below was written before it stopped and is in
+              your draft. The rest was not. Nothing has been published.
+            </p>
+          </>
+        )}
+
+        {written.length === 0 && (
+          <p className="muted small">Nothing was written.</p>
+        )}
+
+        <ul className="muted small">
+          {written.map((w, i) => <li key={i}>{w}</li>)}
+        </ul>
+
+        <div className="form-actions">
+          <button onClick={() => onDone(result.templateKey || "")}>
+            Back to the configuration
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Every ending that is not a proposal. One shape, so none of them can be
+  // the one that forgets to offer a way out - the first version told a person
+  // to try a shorter report and gave them nothing to click.
+  const stopped: Record<string, { title: string; body: string }> = {
+    "unreadable": {
+      title: "That file could not be read",
+      body: "It carries no text we can read \u2014 a scan, most likely."
+        + " Send the Word original, or a PDF exported rather than scanned.",
+    },
+    "nothing-found": {
+      title: "No sections found",
+      body: "We read the file but could not make out headings in it. A report"
+        + " with numbered or titled sections is what this works from.",
+    },
+    "model-unavailable": {
+      title: "It could not be read just now",
+      body: "The service that reads reports would not take the request. This"
+        + " is nothing to do with your file \u2014 try again in a few"
+        + " minutes.",
+    },
+    "failed": {
+      title: "It stopped before finishing",
+      body: "Something went wrong while reading it. Nothing was saved.",
+    },
+  };
+
+  const ending = stopped[proposal.status];
+  if (ending) {
+    return (
+      <div>
+        <a onClick={onCancel} className="back">Back</a>
+        <h2>{ending.title}</h2>
+        <p className="muted">{ending.body}</p>
+        {proposal.reason && (
+          <p className="muted small">Recorded: {proposal.reason}</p>
+        )}
+        <div className="form-actions">
+          <button onClick={() => { setProposal(null); setError(""); }}>
+            Try another report
+          </button>
+          <a className="secondary" onClick={onCancel}>Back</a>
+        </div>
+      </div>
+    );
+  }
+
+  if (proposal.status !== "ready") {
+    const done = proposal.sections_done;
+    const total = proposal.sections_total;
+    return (
+      <div>
+        <h2>Reading your report</h2>
+        <p className="muted">
+          {total
+            ? `Section ${done} of ${total}.`
+            : "Finding the sections\u2026"}
+        </p>
+        {proposal.memorandum_label && (
+          <p className="muted small">
+            It reads as a {proposal.memorandum_label}.
+          </p>
+        )}
+        <ul className="muted small">
+          {proposal.sections.map((s, i) => (
+            <li key={i}>
+              {s.numeral} {s.title}
+              {" \u00b7 "}{s.facts.length}{" "}
+              {s.facts.length === 1 ? "fact" : "facts"}
+            </li>
+          ))}
+        </ul>
+        {error && (
+          <>
+            <p className="error">{error}</p>
+            <div className="form-actions">
+              <button onClick={() => { setProposal(null); setError(""); }}>
+                Try another report
+              </button>
+              <a className="secondary" onClick={onCancel}>Back</a>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // Every group a document could sit in: the tenant's, plus any made here.
+  // Declared before anything that reads it: groupsOf runs during render, and
+  // a const referenced above its own declaration is a blank screen with no
+  // message anywhere on the page.
+  const allGroups = [...(draft?.categories ?? []), ...newGroups];
+
+  const factList = Object.entries(facts);
+
+  /** What a section may still be given, in the order that tells the person
+   *  something: what they already hold, what this report proposed, and what
+   *  nothing reports yet - which is where an orphan is most likely to be
+   *  picked up. */
+  const offerFor = (i: number) => {
+    const free = Object.entries(facts).filter(
+      ([, f]) => live(f) && !f.sections.includes(i));
+    const by = (test: (f: FactChoice) => boolean) => free
+      .filter(([, f]) => test(f))
+      .sort((a, b) => a[1].label.localeCompare(b[1].label));
+
+    const nowhere = ([, f]: [string, FactChoice]) =>
+      !f.sections.some((x) => !skipped.has(x));
+
+    const out = [
+      { label: "Not reported anywhere yet",
+        entries: free.filter(nowhere)
+          .sort((a, b) => a[1].label.localeCompare(b[1].label)) },
+      { label: "You already hold these",
+        entries: by((f) => f.use === "existing").filter(
+          (e) => !nowhere(e)) },
+      { label: "New in this report",
+        entries: by((f) => f.use === "new").filter((e) => !nowhere(e)) },
+    ];
+    return out.filter((g) => g.entries.length > 0);
+  };
+
+  // Facts no kept section reports. Marked ones stay in the list, marked.
+  const stranded = factList
+    .filter(([, f]) => live(f)
+      && !f.sections.some((i) => !skipped.has(i)))
+    .sort((a, b) => a[1].label.localeCompare(b[1].label));
+
+  const typeList = Object.entries(types).filter(([, t]) => t.use !== "existing"
+    || t.existing === null);
+
+  // Documents the tenant already holds, less any this report would add under
+  // the same name - one document should not appear in both lists.
+  const proposedLabels = new Set(
+    Object.values(types).filter((t) => t.use === "new")
+      .map((t) => t.label.trim().toLowerCase()));
+  const heldTypes = (draft?.document_types ?? [])
+    .filter((t) => !proposedLabels.has(t.label.trim().toLowerCase()))
+    .slice()
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  // Every document a fact could be looked for in once this is accepted: the
+  // ones the tenant holds, and the ones this proposal would add. Named by
+  // label, because a proposed type has no key until it is created.
+  const docOptions: string[] = (() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const t of draft?.document_types ?? []) {
+      const l = t.label.trim();
+      if (l && !seen.has(l.toLowerCase())) { seen.add(l.toLowerCase()); out.push(l); }
+    }
+    for (const t of Object.values(types)) {
+      if (t.use === "skip") continue;
+      const l = t.label.trim();
+      if (l && !seen.has(l.toLowerCase())) { seen.add(l.toLowerCase()); out.push(l); }
+    }
+    return out.sort((a, b) => a.localeCompare(b));
+  })();
+
+  return (
+    <div>
+      <a onClick={onCancel} className="back">Back</a>
+      <h2>What we found in your report</h2>
+      <p className="muted">
+        Correct anything that is wrong. Nothing here has been saved.
+      </p>
+      {error && <p className="error">{error}</p>}
+      {busy && <p className="busy">{busy}&hellip;</p>}
+
+      {/* 1 --- the memorandum ------------------------------------------- */}
+      <h3>The memorandum</h3>
+      <label className="row">
+        <span>Name</span>
+        <input value={memoLabel}
+               onChange={(e) => setMemoLabel(e.target.value)} />
+      </label>
+
+      {/* 2 --- its sections --------------------------------------------- */}
+      <h3>Memo sections</h3>
+      <p className="muted small">
+        In the order they appear in your report. Untick anything you do not
+        want.
+      </p>
+
+      <table className="docs">
+        <tbody>
+          {proposal.sections.map((s, i) => {
+            const carries = factList.filter(
+              ([, f]) => f.use !== "skip" && f.sections.includes(i));
+            const wants = carries.filter(
+              ([, f]) => f.use === "new" && !f.acknowledged).length;
+            return (
+            <tr key={i} className={skipped.has(i) ? "aside" : ""}>
+              <td>
+                <input type="checkbox" checked={!skipped.has(i)}
+                  onChange={() => {
+                    const next = new Set(skipped);
+                    if (next.has(i)) next.delete(i); else next.add(i);
+                    setSkipped(next);
+                  }} />
+              </td>
+              <td>
+                <input value={s.numeral}
+                  style={{ width: "4em", marginRight: "0.5em" }}
+                  onChange={(e) => {
+                    const next = [...proposal.sections];
+                    next[i] = { ...s, numeral: e.target.value };
+                    setProposal({ ...proposal, sections: next });
+                  }} />
+                <input value={s.title}
+                  onChange={(e) => {
+                    const next = [...proposal.sections];
+                    next[i] = { ...s, title: e.target.value };
+                    setProposal({ ...proposal, sections: next });
+                  }} />
+                <div className="muted small">{s.purpose}</div>
+                {!s.located && (
+                  <div className="warn small">
+                    We could not find this heading again in the text, so it was
+                    read against the whole report. Worth checking.
+                  </div>
+                )}
+
+                {/* This section's facts, opened one section at a time. A
+                    fact is read where it belongs - inside the section that
+                    reports it - rather than in a list of every fact the
+                    report named. */}
+                <a className="small"
+                   onClick={() => setShownSection(
+                     shownSection === i ? null : i)}>
+                  {shownSection === i ? "\u25be" : "\u25b8"} {carries.length}
+                  {carries.length === 1 ? " fact" : " facts"}
+                </a>
+                {wants > 0 && (
+                  <span className="warn small">
+                    {" \u00b7 "}{wants} needing you
+                  </span>
+                )}
+
+                {shownSection === i && (
+                  <ul className="muted small">
+                    {carries
+                      .sort((a, b) => a[1].label.localeCompare(b[1].label))
+                      .map(([fid, f]) => (
+                      <li key={fid}>
+                        <a onClick={() => setOpenFact(fid)}>{f.label}</a>
+                        {f.use === "existing"
+                          ? " \u00b7 you already hold this"
+                          : " \u00b7 new"}
+                        {f.use === "new" && !f.acknowledged && (
+                          <span className="warn"> needs you</span>
+                        )}{" "}
+                        <a onClick={() => setFacts({
+                          ...facts,
+                          [fid]: { ...f,
+                            sections: f.sections
+                              .filter((x) => x !== i) } })}>
+                          &times;
+                        </a>
+                      </li>
+                    ))}
+                    {carries.length === 0 && <li>Nothing in it yet.</li>}
+                  </ul>
+                )}
+
+                {/* Pick from what is already on the table before naming
+                    anything: typing a name that already exists was the
+                    ordinary way to end up with two facts meaning one thing.
+                    Sorted by what the person needs to know about each -
+                    whether they hold it, whether the report proposed it, and
+                    whether anything reports it yet. */}
+                <label className="row">
+                  <span>Add a fact</span>
+                  <select value=""
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === "") return;
+                      if (v === "\u0000new") {
+                        setAddingSection(i);
+                        setNewInSection("");
+                        return;
+                      }
+                      const f2 = facts[v];
+                      if (f2 && !f2.sections.includes(i)) {
+                        setFacts({ ...facts,
+                          [v]: { ...f2, unused: false,
+                            sections: [...f2.sections, i] } });
+                      }
+                    }}>
+                    <option value="">Choose&hellip;</option>
+                    {offerFor(i).map((g) => (
+                      <optgroup key={g.label} label={g.label}>
+                        {g.entries.map(([fid, f]) => (
+                          <option key={fid} value={fid}>{f.label}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                    <option value={"\u0000new"}>
+                      Create a new fact
+                    </option>
+                  </select>
+                </label>
+
+                {addingSection === i && (
+                  <div className="filters">
+                    <input placeholder="What the fact is called" autoFocus
+                           value={newInSection}
+                           onChange={(e) => setNewInSection(e.target.value)} />
+                    <button disabled={!newInSection.trim()}
+                      onClick={() => {
+                        const label = newInSection.trim();
+                        const fid = label.toLowerCase();
+                        const already = facts[fid];
+                        if (already) {
+                          if (!already.sections.includes(i)) {
+                            setFacts({ ...facts,
+                              [fid]: { ...already,
+                                sections: [...already.sections, i] } });
+                          }
+                        } else {
+                          setFacts({ ...facts,
+                            [fid]: {
+                              use: "new", label, description: "",
+                              shape: "one", existing: null, why: null,
+                              columns: [], documents: [], held: [],
+                              sections: [i],
+                              added: false, unused: false,
+                              acknowledged: false,
+                            } });
+                        }
+                        setAddingSection(null);
+                        setNewInSection("");
+                      }}>
+                      Add
+                    </button>
+                    <a className="small"
+                       onClick={() => setAddingSection(null)}>Cancel</a>
+                  </div>
+                )}
+              </td>
+              <td className="muted small">
+                {carries.length} {carries.length === 1 ? "fact" : "facts"}
+              </td>
+            </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {/* A section the report never had. Its facts are named on it, the same
+          way as any other. */}
+      <div className="filters">
+        <input placeholder="Numeral" value={newSectionNumeral}
+               style={{ width: "5em" }}
+               onChange={(e) => setNewSectionNumeral(e.target.value)} />
+        <input placeholder="Add a section" value={newSectionTitle}
+               onChange={(e) => setNewSectionTitle(e.target.value)} />
+        <button disabled={!newSectionTitle.trim()}
+          onClick={() => {
+            setProposal({
+              ...proposal,
+              sections: [...proposal.sections, {
+                heading: newSectionTitle.trim(),
+                title: newSectionTitle.trim(),
+                numeral: newSectionNumeral.trim(),
+                purpose: "Added by you.",
+                located: true,
+                facts: [],
+              }],
+            });
+            setNewSectionTitle("");
+            setNewSectionNumeral("");
+          }}>
+          Add
+        </button>
+      </div>
+
+      {/* 3 --- the facts ------------------------------------------------- */}
+      {/* The fact card, opened over the page. The stylesheet already has a
+          drawer - panel-backdrop and panel - so this uses it rather than
+          introducing a second thing that means the same. */}
+      {openFact && facts[openFact] && (
+        <div className="panel-backdrop" onClick={() => setOpenFact(null)}>
+          <div className="panel" onClick={(e) => e.stopPropagation()}>
+            <a className="panel-close"
+               onClick={() => setOpenFact(null)}>Close</a>
+            {factCard(openFact, facts[openFact])}
+            <div className="form-actions">
+              <button onClick={() => setOpenFact(null)}>Done</button>
+            </div>
           </div>
-        );
-      })}
+        </div>
+      )}
+
+      {/* 3 --- facts nothing reports ------------------------------------ */}
+      {/* A fact belongs to the tenant, not to one memorandum, so it is
+          expected that a memorandum reports only some of them. What is not
+          expected is losing track of which - so they are listed rather than
+          dropped, and stay listed once marked. */}
+      {stranded.length > 0 && (
+        <>
+          <h3>Not reported by this memorandum</h3>
+          <p className="muted small">
+            These will be read from your documents, but no section here
+            reports them. Put each in a section, or mark it as not used by
+            this memorandum. Another memorandum may still report it.
+          </p>
+
+          <table className="docs">
+            <tbody>
+              {stranded.map(([id, f]) => (
+                <tr key={id} className={f.unused ? "aside" : ""}>
+                  <td>
+                    <a onClick={() => setOpenFact(id)}>{f.label}</a>
+                    {f.use === "new" && !f.acknowledged && (
+                      <span className="warn small"> needs you</span>
+                    )}
+                  </td>
+                  <td>
+                    <select value=""
+                      onChange={(e) => {
+                        if (e.target.value === "") return;
+                        setFacts({ ...facts,
+                          [id]: { ...f, unused: false,
+                            sections: [...f.sections,
+                                       Number(e.target.value)] } });
+                      }}>
+                      <option value="">Add to a section&hellip;</option>
+                      {proposal.sections.map((s, i) => (
+                        skipped.has(i) ? null : (
+                          <option key={i} value={String(i)}>
+                            {s.numeral} {s.title}
+                          </option>
+                        )
+                      ))}
+                    </select>
+                  </td>
+                  <td className="muted small">
+                    <a onClick={() => setFacts({
+                      ...facts, [id]: { ...f, unused: !f.unused } })}>
+                      {f.unused
+                        ? "Marked not used \u2014 undo"
+                        : "Not used in this memorandum"}
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
 
       {/* 4 --- the documents --------------------------------------------- */}
       {typeList.length > 0 && (
@@ -1561,7 +1594,7 @@ export function ProposeView({ onDone, onCancel }: {
                     time without disturbing anything.
                   </p>
 
-                  {readFrom(t.label, t.group, id)}
+                  {readFrom(t.label, id)}
 
                   <label className="inline-check">
                     <input type="checkbox" checked={t.acknowledged}
@@ -1635,7 +1668,7 @@ export function ProposeView({ onDone, onCancel }: {
                         ))}
                       </select>
                     </label>
-                    {readFrom(t.label, heldGroup[t.key] ?? t.category, id)}
+                    {readFrom(t.label, id)}
                   </div>
                 )}
               </div>
