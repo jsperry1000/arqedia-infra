@@ -4,6 +4,7 @@ import {
   type Draft,
   type Proposal,
   type ProposedFact,
+  type ConfigColumn,
 } from "./api";
 
 /**
@@ -125,6 +126,13 @@ export function ProposeView({ onDone, onCancel }: {
   const [shownSection, setShownSection] = useState<number | null>(null);
   // Which fact is open over the page.
   const [openFact, setOpenFact] = useState<string | null>(null);
+  // Amending a field the tenant already holds - its wording, or the columns
+  // of a table. Held here and written at Accept with everything else, so the
+  // screen keeps its promise that nothing is saved until then.
+  const [editField, setEditField] = useState<string | null>(null);
+  const [heldEdits, setHeldEdits] = useState<Record<string, {
+    label: string; description: string | null; columns: ConfigColumn[];
+  }>>({});
   const [newFactName, setNewFactName] = useState("");
   const [written, setWritten] = useState<string[]>([]);
   const [result, setResult] = useState<
@@ -409,6 +417,33 @@ export function ProposeView({ onDone, onCancel }: {
         done.push("document " + t.label);
       }
 
+      // Fields the person amended while deciding a match. Sent whole, with
+      // every existing column's key intact, because save_field rewrites a
+      // table's columns rather than merging them - a column sent without its
+      // key would be created afresh and everything extracted under the old
+      // one would stop resolving.
+      for (const [key, edit] of Object.entries(heldEdits)) {
+        const base = fieldsByKey[key];
+        if (!base) continue;
+        setBusy("Amending " + base.label);
+        await api.saveField({
+          key,
+          label: edit.label,
+          type: base.type,
+          cardinality: base.cardinality,
+          description: edit.description,
+          columns: base.cardinality === "group"
+            ? edit.columns.filter((c) => c.label.trim()).map((c) => ({
+                key: c.key || undefined,
+                label: c.label.trim(),
+                type: c.type || "text",
+                description: c.description ?? "",
+              }))
+            : [],
+        } as never);
+        done.push("amended " + edit.label);
+      }
+
       // A held document moved to another group. Its name, description and
       // reading are sent back exactly as they were - the group is the only
       // thing this screen may change about a document already held.
@@ -518,13 +553,26 @@ export function ProposeView({ onDone, onCancel }: {
   const fieldsByKey = useMemo(() => {
     const map: Record<string, {
       label: string; description: string | null; found_in: string[];
+      type: string; cardinality: string; columns: ConfigColumn[];
     }> = {};
     for (const f of draft?.fields ?? []) {
       map[f.key] = { label: f.label, description: f.description,
-                     found_in: f.found_in ?? [] };
+                     found_in: f.found_in ?? [],
+                     type: f.type, cardinality: f.cardinality,
+                     columns: f.columns ?? [] };
     }
     return map;
   }, [draft]);
+
+  /** A held field as it stands, amendments included. The fact card reads
+   *  this rather than the draft, so a description edited here is the one the
+   *  person then decides the match on. */
+  const heldField = (key: string) => {
+    const base = fieldsByKey[key];
+    if (!base) return null;
+    const edit = heldEdits[key];
+    return edit ? { ...base, ...edit } : base;
+  };
 
 
   if (!proposal) {
@@ -703,7 +751,7 @@ export function ProposeView({ onDone, onCancel }: {
    * second form for the same thing is a second set of rules.
    */
   const factCard = (id: string, f: FactChoice) => {
-        const match = f.existing ? fieldsByKey[f.existing] : null;
+        const match = f.existing ? heldField(f.existing) : null;
         return (
           <div className="review" key={id}>
             <div className="review-head">
@@ -728,6 +776,16 @@ export function ProposeView({ onDone, onCancel }: {
                       ...facts, [id]: { ...f, use: "existing" } })} />
                   Use <strong>{match.label}</strong>, which you already hold
                 </label>
+                {/* The better answer to a fact that nearly fits is often to
+                    amend the one you have - a residency column on Ownership
+                    and Control rather than a Residency field nobody asked
+                    for. */}
+                <p className="muted small">
+                  <a onClick={() => setEditField(f.existing)}>
+                    Open {match.label} and amend it
+                  </a>
+                  {heldEdits[f.existing ?? ""] ? " \u00b7 amended" : ""}
+                </p>
                 <p className="muted small">
                   {match.description}
                   {f.why ? " \u2014 " + f.why : ""}
@@ -829,107 +887,6 @@ export function ProposeView({ onDone, onCancel }: {
                   </div>
                 )}
 
-                {/* Where to look for it. Guessed from the report and shown
-                    rather than applied quietly: a fact looked for in the
-                    wrong document is never found, and a fact looked for in
-                    none is never extracted at all. Neither says so. */}
-                <div className="columns">
-                  <h4>Where to look for it</h4>
-                  <p className="muted small">
-                    Only the documents ticked here are read for this fact.
-                    Tick widely and the wrong answer creeps in; tick nothing
-                    and it is never looked for.
-                  </p>
-
-                  <div className="binder">
-                    {docOptions.map((label) => (
-                      <label className="bind" key={label}>
-                        <input type="checkbox"
-                          checked={f.documents.some(
-                            (x) => x.trim().toLowerCase()
-                              === label.toLowerCase())}
-                          onChange={(e) => {
-                            const kept = f.documents.filter(
-                              (x) => x.trim().toLowerCase()
-                                !== label.toLowerCase());
-                            setFacts({
-                              ...facts,
-                              [id]: { ...f,
-                                documents: e.target.checked
-                                  ? [...kept, label] : kept,
-                                acknowledged: false } });
-                          }} />
-                        {label}
-                      </label>
-                    ))}
-                  </div>
-
-                  {f.documents.length === 0 && (
-                    <p className="warn small">
-                      Nothing is ticked, so this fact would never be looked
-                      for.
-                    </p>
-                  )}
-
-                  {/* A fact whose document is not on the list. Named here
-                      and described below, rather than authored twice: the
-                      description is what the classifier reads, and it earns
-                      its own acknowledgement wherever it is written. */}
-                  {addingDoc !== id ? (
-                    <a className="small"
-                       onClick={() => { setAddingDoc(id); setNewDocName(""); }}>
-                      None of these? Add a document
-                    </a>
-                  ) : (
-                    <div className="filters">
-                      <input placeholder="What the document is called"
-                             value={newDocName} autoFocus
-                             onChange={(e) => setNewDocName(e.target.value)} />
-                      <button disabled={!newDocName.trim()}
-                        onClick={() => {
-                          const label = newDocName.trim();
-                          const tid = label.toLowerCase();
-                          const held = (draft?.document_types ?? []).find(
-                            (t) => t.label.trim().toLowerCase() === tid);
-
-                          // Already known, under either name. Tick it rather
-                          // than make a second document meaning the same.
-                          if (!held && !types[tid]) {
-                            setTypes({
-                              ...types,
-                              [tid]: {
-                                use: "new", label, description: "",
-                                group: draft?.categories[0]?.key ?? "",
-                                groupLabel: "", existing: null,
-                                acknowledged: false,
-                              },
-                            });
-                          }
-                          const name = held ? held.label : label;
-                          if (!f.documents.some(
-                            (x) => x.trim().toLowerCase()
-                              === name.toLowerCase())) {
-                            setFacts({
-                              ...facts,
-                              [id]: { ...f,
-                                documents: [...f.documents, name],
-                                acknowledged: false } });
-                          }
-                          setAddingDoc(null);
-                          setNewDocName("");
-                        }}>
-                        Add
-                      </button>
-                      <a className="small"
-                         onClick={() => setAddingDoc(null)}>Cancel</a>
-                      <span className="muted small">
-                        It appears under Documents below, where it needs a
-                        description before you can accept.
-                      </span>
-                    </div>
-                  )}
-                </div>
-
                 <label className="inline-check">
                   <input type="checkbox" checked={f.acknowledged}
                     disabled={!f.label.trim() || !f.description.trim()
@@ -944,6 +901,118 @@ export function ProposeView({ onDone, onCancel }: {
                 </label>
               </div>
             )}
+
+            {/* Where a fact is read from, shown on every card. It sat inside
+                the new-fact form, so the sources of a fact the tenant already
+                holds could only be seen by declining the match - the one
+                moment nobody is looking for them.
+
+                Guessed from the report and shown rather than applied quietly:
+                a fact looked for in the wrong document is never found, and a
+                fact looked for in none is never extracted at all. Neither
+                says so. */}
+              <div className="columns">
+                <h4>Where to look for it</h4>
+                <p className="muted small">
+                  Only the documents ticked here are read for this fact.
+                  Tick widely and the wrong answer creeps in; tick nothing
+                  and it is never looked for.
+                </p>
+                {f.use === "existing" && (
+                  <p className="muted small">
+                    Where you already look for it. Ticking another document
+                    adds to that; unticking here leaves what you had alone.
+                  </p>
+                )}
+
+                <div className="binder">
+                  {docOptions.map((label) => (
+                    <label className="bind" key={label}>
+                      <input type="checkbox"
+                        checked={f.documents.some(
+                          (x) => x.trim().toLowerCase()
+                            === label.toLowerCase())}
+                        onChange={(e) => {
+                          const kept = f.documents.filter(
+                            (x) => x.trim().toLowerCase()
+                              !== label.toLowerCase());
+                          setFacts({
+                            ...facts,
+                            [id]: { ...f,
+                              documents: e.target.checked
+                                ? [...kept, label] : kept,
+                              acknowledged: false } });
+                        }} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+
+                {f.documents.length === 0 && (
+                  <p className="warn small">
+                    Nothing is ticked, so this fact would never be looked
+                    for.
+                  </p>
+                )}
+
+                {/* A fact whose document is not on the list. Named here
+                    and described below, rather than authored twice: the
+                    description is what the classifier reads, and it earns
+                    its own acknowledgement wherever it is written. */}
+                {addingDoc !== id ? (
+                  <a className="small"
+                     onClick={() => { setAddingDoc(id); setNewDocName(""); }}>
+                    None of these? Add a document
+                  </a>
+                ) : (
+                  <div className="filters">
+                    <input placeholder="What the document is called"
+                           value={newDocName} autoFocus
+                           onChange={(e) => setNewDocName(e.target.value)} />
+                    <button disabled={!newDocName.trim()}
+                      onClick={() => {
+                        const label = newDocName.trim();
+                        const tid = label.toLowerCase();
+                        const held = (draft?.document_types ?? []).find(
+                          (t) => t.label.trim().toLowerCase() === tid);
+
+                        // Already known, under either name. Tick it rather
+                        // than make a second document meaning the same.
+                        if (!held && !types[tid]) {
+                          setTypes({
+                            ...types,
+                            [tid]: {
+                              use: "new", label, description: "",
+                              group: draft?.categories[0]?.key ?? "",
+                              groupLabel: "", existing: null,
+                              acknowledged: false,
+                            },
+                          });
+                        }
+                        const name = held ? held.label : label;
+                        if (!f.documents.some(
+                          (x) => x.trim().toLowerCase()
+                            === name.toLowerCase())) {
+                          setFacts({
+                            ...facts,
+                            [id]: { ...f,
+                              documents: [...f.documents, name],
+                              acknowledged: false } });
+                        }
+                        setAddingDoc(null);
+                        setNewDocName("");
+                      }}>
+                      Add
+                    </button>
+                    <a className="small"
+                       onClick={() => setAddingDoc(null)}>Cancel</a>
+                    <span className="muted small">
+                      It appears under Documents below, where it needs a
+                      description before you can accept.
+                    </span>
+                  </div>
+                )}
+              </div>
 
             {/* Where this fact is reported. A fact in no section is extracted
                 on every filing and reaches no reader, so it is named here
@@ -1000,6 +1069,107 @@ export function ProposeView({ onDone, onCancel }: {
             </div>
           </div>
         );
+  };
+
+  /**
+   * A field the tenant already holds, opened to be amended.
+   *
+   * Nothing is written here. The amendment is held and applied at Accept
+   * with everything else, because the screen tells the person all the way
+   * down that nothing is saved until then.
+   */
+  const fieldEditor = (key: string) => {
+    const base = fieldsByKey[key];
+    if (!base) return null;
+    const cur = heldEdits[key] ?? {
+      label: base.label, description: base.description,
+      columns: base.columns,
+    };
+    const set = (next: Partial<typeof cur>) =>
+      setHeldEdits({ ...heldEdits, [key]: { ...cur, ...next } });
+    const isTable = base.cardinality === "group";
+    const added = cur.columns.filter((c) => !c.key).length;
+
+    return (
+      <div className="form">
+        <h4>{base.label}</h4>
+        <p className="muted small">
+          A fact you already hold. Amending it here changes it for every
+          memorandum that reports it, not only this one.
+        </p>
+
+        <label className="row">
+          <span>Name</span>
+          <input value={cur.label}
+                 onChange={(e) => set({ label: e.target.value })} />
+        </label>
+        <p className="muted small">
+          Renaming is free and reaches memoranda already written: the identity
+          never follows the label.
+        </p>
+
+        <label className="row">
+          <span>What it is</span>
+          <textarea rows={3} value={cur.description ?? ""}
+                    onChange={(e) => set({ description: e.target.value })} />
+        </label>
+        <p className="muted small">
+          This is what the system reads when deciding whether it has found
+          this fact. Changing it applies to documents filed from now on, not
+          to those already filed.
+        </p>
+
+        {isTable && (
+          <div className="columns">
+            <h4>Columns</h4>
+            {cur.columns.map((c, i) => (
+              <div className="column-row" key={c.key ?? "new-" + i}>
+                <input placeholder="Column" value={c.label}
+                  onChange={(e) => {
+                    const next = [...cur.columns];
+                    next[i] = { ...c, label: e.target.value };
+                    set({ columns: next });
+                  }} />
+                <input placeholder="What it holds"
+                       value={c.description ?? ""}
+                  onChange={(e) => {
+                    const next = [...cur.columns];
+                    next[i] = { ...c, description: e.target.value };
+                    set({ columns: next });
+                  }} />
+                <a className="small" onClick={() => set({
+                  columns: cur.columns.filter((_, j) => j !== i) })}>
+                  Remove
+                </a>
+              </div>
+            ))}
+            <a className="small" onClick={() => set({
+              columns: [...cur.columns,
+                { key: "", label: "", type: "text", description: "" }] })}>
+              Add a column
+            </a>
+
+            {added > 0 && (
+              <p className="warn small">
+                A new column is a new fact. It will be empty on every document
+                already filed, and the only way to fill it is to file those
+                documents again.
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="form-actions">
+          <button onClick={() => setEditField(null)}>Done</button>
+          <a className="secondary" onClick={() => {
+            const next = { ...heldEdits };
+            delete next[key];
+            setHeldEdits(next);
+            setEditField(null);
+          }}>Leave it as it was</a>
+        </div>
+      </div>
+    );
   };
 
   // Accepting has run. Said plainly, either way: it wrote to the draft, and a
@@ -1422,14 +1592,33 @@ export function ProposeView({ onDone, onCancel }: {
           drawer - panel-backdrop and panel - so this uses it rather than
           introducing a second thing that means the same. */}
       {openFact && facts[openFact] && (
-        <div className="panel-backdrop" onClick={() => setOpenFact(null)}>
+        <div className="panel-backdrop" onClick={() => {
+          setEditField(null); setOpenFact(null);
+        }}>
           <div className="panel" onClick={(e) => e.stopPropagation()}>
-            <a className="panel-close"
-               onClick={() => setOpenFact(null)}>Close</a>
-            {factCard(openFact, facts[openFact])}
-            <div className="form-actions">
-              <button onClick={() => setOpenFact(null)}>Done</button>
-            </div>
+            <a className="panel-close" onClick={() => {
+              setEditField(null); setOpenFact(null);
+            }}>Close</a>
+
+            {/* One drawer, two things in it. Amending a held field is a step
+                inside deciding a match, not a second window over it. */}
+            {editField ? (
+              <>
+                <p className="muted small">
+                  <a onClick={() => setEditField(null)}>
+                    &lsaquo; Back to {facts[openFact].label}
+                  </a>
+                </p>
+                {fieldEditor(editField)}
+              </>
+            ) : (
+              <>
+                {factCard(openFact, facts[openFact])}
+                <div className="form-actions">
+                  <button onClick={() => setOpenFact(null)}>Done</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1688,6 +1877,14 @@ export function ProposeView({ onDone, onCancel }: {
         empty on everything already filed, and the only remedy is filing those
         documents again.
       </p>
+
+      {Object.keys(heldEdits).length > 0 && (
+        <p className="muted small">
+          {Object.keys(heldEdits).length} fact
+          {Object.keys(heldEdits).length === 1 ? "" : "s"} you already hold
+          will be amended. That reaches every memorandum reporting them.
+        </p>
+      )}
 
       {outstanding > 0 && (
         <p className="warn">
