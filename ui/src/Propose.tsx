@@ -29,6 +29,11 @@ import {
  * looks right.
  */
 
+/** Facts whose documents place them in no group. Kept and shown last: a fact
+ *  found in nothing is the one most worth a second look, not the one to
+ *  hide. */
+const UNPLACED = "\u0000unplaced";
+
 /** Mirrors slugKey in Configure and _slug in the editor. A key is permanent
  *  identity; it is derived from the label once and never follows it. */
 function slugKey(label: string, prefix = ""): string {
@@ -50,7 +55,16 @@ type FactChoice = {
   existing: string | null;
   why: string | null;
   columns: string[];
+  // Document type LABELS, as the reader names them. Resolved to keys only
+  // when the proposal is accepted, because a type may not exist yet.
   documents: string[];
+  // Fixed when the proposal is read, not derived as the person works. A card
+  // that jumps into another group the moment a document is ticked is a card
+  // they lose.
+  group: string;
+  // For a matched fact, the document type KEYS the tenant already looks in.
+  // Kept so accepting can add to that set without ever taking from it.
+  held: string[];
   sections: number[];
   acknowledged: boolean;
 };
@@ -84,6 +98,9 @@ export function ProposeView({ onDone, onCancel }: {
   // A hundred cards, most of them already answered. Without this the few
   // that need a person are found by scrolling for them.
   const [onlyOutstanding, setOnlyOutstanding] = useState(false);
+  // Groups start closed. A hundred cards open at once is not a list a person
+  // reads; a closed group that says how many facts want them is.
+  const [opened, setOpened] = useState<Set<string>>(new Set());
   const [skipped, setSkipped] = useState<Set<number>>(new Set());
   const [facts, setFacts] = useState<Record<string, FactChoice>>({});
   const [types, setTypes] = useState<Record<string, TypeChoice>>({});
@@ -180,6 +197,39 @@ export function ProposeView({ onDone, onCancel }: {
     const known = new Set((draft?.fields ?? []).map((f) => f.key));
     const collected: Record<string, FactChoice> = {};
 
+    // A fact has no group of its own. It takes the group of the documents it
+    // is found in, which is how the editor already presents them. Found
+    // across several, it takes the first by the tenant's own order.
+    const order = (draft?.categories ?? []).map((c) => c.key);
+    const groupByKey: Record<string, string> = {};
+    const groupByLabel: Record<string, string> = {};
+    for (const t of draft?.document_types ?? []) {
+      groupByKey[t.key] = t.category;
+      groupByLabel[t.label.trim().toLowerCase()] = t.category;
+    }
+    for (const t of p.document_types ?? []) {
+      const named = (t.group || "").trim();
+      const c = (draft?.categories ?? []).find(
+        (x) => x.key === named
+          || x.label.toLowerCase() === named.toLowerCase());
+      groupByLabel[(t.label || "").trim().toLowerCase()] =
+        c ? c.key : slugKey(named);
+    }
+
+    const labelOfKey: Record<string, string> = {};
+    for (const t of draft?.document_types ?? []) labelOfKey[t.key] = t.label;
+
+    const place = (keys: string[], labels: string[]) => {
+      let best = -1;
+      const found = keys.map((k) => groupByKey[k])
+        .concat(labels.map((l) => groupByLabel[l.trim().toLowerCase()]));
+      for (const g of found) {
+        const at = g ? order.indexOf(g) : -1;
+        if (at !== -1 && (best === -1 || at < best)) best = at;
+      }
+      return best === -1 ? UNPLACED : order[best];
+    };
+
     p.sections.forEach((section, index) => {
       (section.facts ?? []).forEach((f: ProposedFact) => {
         const id = (f.label || "").trim().toLowerCase();
@@ -192,6 +242,15 @@ export function ProposeView({ onDone, onCancel }: {
           collected[id].sections.push(index);
           return;
         }
+
+        const foundIn = f.found_in ?? [];
+        // A matched fact inherits where the tenant already looks for it, so
+        // it is grouped where they would expect to find it rather than where
+        // this one report happened to mention it.
+        const inherited = existing
+          ? (draft?.fields ?? []).find((x) => x.key === existing)?.found_in
+          : null;
+
         collected[id] = {
           // A suggested match is taken as the starting position because it is
           // the cheaper mistake: declining it costs a click, while missing it
@@ -203,7 +262,14 @@ export function ProposeView({ onDone, onCancel }: {
           existing,
           why: f.why_match ?? null,
           columns: f.columns ?? [],
-          documents: f.found_in ?? [],
+          // A matched fact shows where the tenant ALREADY looks, not where
+          // this report guessed. Otherwise every match would arrive with our
+          // guesses tacked onto routing they settled long ago.
+          documents: existing
+            ? (inherited ?? []).map((k) => labelOfKey[k]).filter(Boolean)
+            : foundIn,
+          held: existing ? (inherited ?? []) : [],
+          group: place(inherited ?? [], foundIn),
           sections: [index],
           acknowledged: false,
         };
@@ -345,13 +411,27 @@ export function ProposeView({ onDone, onCancel }: {
       }
 
       for (const f of Object.values(facts)) {
-        if (f.use !== "new" || !live(f)) continue;
+        if (!live(f)) continue;
         const documents = f.documents
           .map((label) => typeKeyByLabel[label.trim().toLowerCase()])
           .filter((k): k is string => Boolean(k));
-        if (documents.length === 0) continue;
+
+        if (f.use === "new") {
+          if (documents.length === 0) continue;
+          setBusy("Where to find " + f.label);
+          await api.setFieldDocuments(fieldKey(f.label), documents);
+          continue;
+        }
+
+        // A fact the tenant already holds. Only ever ADD a document to where
+        // it is looked for: they settled that routing, and a screen about a
+        // new report is not the place to quietly undo it. Unticking here
+        // therefore does nothing, and the note beside it says so.
+        if (!f.existing) continue;
+        const added = documents.filter((k) => !f.held.includes(k));
+        if (added.length === 0) continue;
         setBusy("Where to find " + f.label);
-        await api.setFieldDocuments(fieldKey(f.label), documents);
+        await api.setFieldDocuments(f.existing, [...f.held, ...added]);
       }
 
       setBusy("Adding the memorandum");
@@ -394,13 +474,16 @@ export function ProposeView({ onDone, onCancel }: {
   // --- the screen ---------------------------------------------------------
 
   const fieldsByKey = useMemo(() => {
-    const map: Record<string, { label: string; description: string | null }> =
-      {};
+    const map: Record<string, {
+      label: string; description: string | null; found_in: string[];
+    }> = {};
     for (const f of draft?.fields ?? []) {
-      map[f.key] = { label: f.label, description: f.description };
+      map[f.key] = { label: f.label, description: f.description,
+                     found_in: f.found_in ?? [] };
     }
     return map;
   }, [draft]);
+
 
   if (!proposal) {
     return (
@@ -499,12 +582,55 @@ export function ProposeView({ onDone, onCancel }: {
   const factList = Object.entries(facts);
   const factsOutstanding = factList
     .filter(([, f]) => f.use === "new" && live(f) && !f.acknowledged).length;
-  const shown = onlyOutstanding
-    ? factList.filter(([, f]) => f.use === "new" && live(f)
-        && !f.acknowledged)
-    : factList;
+  const needs = ([, f]: [string, FactChoice]) =>
+    f.use === "new" && live(f) && !f.acknowledged;
+  const shown = onlyOutstanding ? factList.filter(needs) : factList;
+
+  // By group, in the tenant's own order, then alphabetically inside each.
+  // Anything whose documents place it nowhere goes last rather than being
+  // dropped - a fact with no home is exactly the one worth looking at.
+  const grouped = (() => {
+    const buckets: Record<string, [string, FactChoice][]> = {};
+    for (const entry of shown) {
+      const g = entry[1].group || UNPLACED;
+      (buckets[g] ||= []).push(entry);
+    }
+    for (const list of Object.values(buckets)) {
+      list.sort((a, b) => a[1].label.localeCompare(b[1].label));
+    }
+    const out: { key: string; label: string;
+                 entries: [string, FactChoice][] }[] = [];
+    for (const c of draft?.categories ?? []) {
+      if (buckets[c.key]?.length) {
+        out.push({ key: c.key, label: c.label, entries: buckets[c.key] });
+      }
+    }
+    if (buckets[UNPLACED]?.length) {
+      out.push({ key: UNPLACED, label: "Not found in any document",
+                 entries: buckets[UNPLACED] });
+    }
+    return out;
+  })();
   const typeList = Object.entries(types).filter(([, t]) => t.use !== "existing"
     || t.existing === null);
+
+  // Every document a fact could be looked for in once this is accepted: the
+  // ones the tenant holds, and the ones this proposal would add. Named by
+  // label, because a proposed type has no key until it is created.
+  const docOptions: string[] = (() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const t of draft?.document_types ?? []) {
+      const l = t.label.trim();
+      if (l && !seen.has(l.toLowerCase())) { seen.add(l.toLowerCase()); out.push(l); }
+    }
+    for (const t of Object.values(types)) {
+      if (t.use === "skip") continue;
+      const l = t.label.trim();
+      if (l && !seen.has(l.toLowerCase())) { seen.add(l.toLowerCase()); out.push(l); }
+    }
+    return out.sort((a, b) => a.localeCompare(b));
+  })();
 
   return (
     <div>
@@ -586,7 +712,34 @@ export function ProposeView({ onDone, onCancel }: {
         <p className="muted small">Nothing left here.</p>
       )}
 
-      {shown.map(([id, f]) => {
+      {grouped.map((g) => {
+        // Open when the person opened it, and always when they have asked to
+        // see only what still wants them - a filtered list that is also
+        // closed shows nothing and reads as nothing left to do.
+        const open = onlyOutstanding || opened.has(g.key);
+        const want = g.entries.filter(needs).length;
+        return (
+          <div key={g.key}>
+            <h4>
+              <a onClick={() => {
+                const next = new Set(opened);
+                if (next.has(g.key)) next.delete(g.key);
+                else next.add(g.key);
+                setOpened(next);
+              }}>
+                {open ? "\u25be" : "\u25b8"} {g.label}
+              </a>{" "}
+              <span className="muted small">
+                {g.entries.length}
+              </span>
+              {!open && want > 0 && (
+                <span className="warn small">
+                  {" \u00b7 "}{want} needing you
+                </span>
+              )}
+            </h4>
+
+            {open && g.entries.map(([id, f]) => {
         const match = f.existing ? fieldsByKey[f.existing] : null;
         return (
           <div className="review" key={id}>
@@ -713,9 +866,53 @@ export function ProposeView({ onDone, onCancel }: {
                   </div>
                 )}
 
+                {/* Where to look for it. Guessed from the report and shown
+                    rather than applied quietly: a fact looked for in the
+                    wrong document is never found, and a fact looked for in
+                    none is never extracted at all. Neither says so. */}
+                <div className="columns">
+                  <h4>Where to look for it</h4>
+                  <p className="muted small">
+                    Only the documents ticked here are read for this fact.
+                    Tick widely and the wrong answer creeps in; tick nothing
+                    and it is never looked for.
+                  </p>
+
+                  <div className="binder">
+                    {docOptions.map((label) => (
+                      <label className="bind" key={label}>
+                        <input type="checkbox"
+                          checked={f.documents.some(
+                            (x) => x.trim().toLowerCase()
+                              === label.toLowerCase())}
+                          onChange={(e) => {
+                            const kept = f.documents.filter(
+                              (x) => x.trim().toLowerCase()
+                                !== label.toLowerCase());
+                            setFacts({
+                              ...facts,
+                              [id]: { ...f,
+                                documents: e.target.checked
+                                  ? [...kept, label] : kept,
+                                acknowledged: false } });
+                          }} />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+
+                  {f.documents.length === 0 && (
+                    <p className="warn small">
+                      Nothing is ticked, so this fact would never be looked
+                      for.
+                    </p>
+                  )}
+                </div>
+
                 <label className="inline-check">
                   <input type="checkbox" checked={f.acknowledged}
                     disabled={!f.label.trim() || !f.description.trim()
+                      || f.documents.length === 0
                       || (f.shape === "group"
                           && f.columns.filter((c) => c.trim()).length === 0)}
                     onChange={(e) => setFacts({
@@ -734,6 +931,9 @@ export function ProposeView({ onDone, onCancel }: {
                 {f.use === "skip" ? "Put it back" : "I do not need this fact"}
               </a>
             </div>
+          </div>
+        );
+            })}
           </div>
         );
       })}
@@ -806,9 +1006,61 @@ export function ProposeView({ onDone, onCancel }: {
                     time without disturbing anything.
                   </p>
 
+                  {/* The same relationship as "where to look for it", from
+                      the other end. One list of facts underneath, so ticking
+                      here and ticking there are the same act - a document
+                      that reads nothing is a document filed for no reason. */}
+                  <div className="columns">
+                    <h4>What to read from it</h4>
+                    <p className="muted small">
+                      Suggested from your report. A fact you already hold is
+                      shown ticked where you already look for it there;
+                      adding this document adds to that, and unticking here
+                      leaves what you had alone.
+                    </p>
+
+                    <div className="binder">
+                      {factList.filter(([, f]) => live(f))
+                        .sort((a, b) => a[1].label.localeCompare(b[1].label))
+                        .map(([fid, f]) => (
+                          <label className="bind" key={fid}>
+                            <input type="checkbox"
+                              checked={f.documents.some(
+                                (x) => x.trim().toLowerCase()
+                                  === t.label.trim().toLowerCase())}
+                              onChange={(e) => {
+                                const kept = f.documents.filter(
+                                  (x) => x.trim().toLowerCase()
+                                    !== t.label.trim().toLowerCase());
+                                setFacts({
+                                  ...facts,
+                                  [fid]: { ...f,
+                                    documents: e.target.checked
+                                      ? [...kept, t.label] : kept,
+                                    acknowledged: f.use === "new"
+                                      ? false : f.acknowledged } });
+                              }} />
+                            {f.label}
+                          </label>
+                        ))}
+                    </div>
+
+                    {factList.filter(([, f]) => live(f)
+                      && f.documents.some((x) => x.trim().toLowerCase()
+                        === t.label.trim().toLowerCase())).length === 0 && (
+                      <p className="warn small">
+                        Nothing is read from this document, so filing one
+                        would extract nothing.
+                      </p>
+                    )}
+                  </div>
+
                   <label className="inline-check">
                     <input type="checkbox" checked={t.acknowledged}
-                      disabled={!t.label.trim() || !t.description.trim()}
+                      disabled={!t.label.trim() || !t.description.trim()
+                        || factList.filter(([, f]) => live(f)
+                          && f.documents.some((x) => x.trim().toLowerCase()
+                            === t.label.trim().toLowerCase())).length === 0}
                       onChange={(e) => setTypes({
                         ...types,
                         [id]: { ...t, acknowledged: e.target.checked } })} />
