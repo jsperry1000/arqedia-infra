@@ -856,6 +856,12 @@ export function ProposeView({ onDone, onCancel }: {
     );
   }
 
+  // Every group a document could sit in: the tenant's, plus any made here.
+  // Declared before anything that reads it: groupsOf runs during render, and
+  // a const referenced above its own declaration is a blank screen with no
+  // message anywhere on the page.
+  const allGroups = [...(draft?.categories ?? []), ...newGroups];
+
   const factList = Object.entries(facts);
   const factsOutstanding = factList
     .filter(([, f]) => f.use === "new" && live(f) && !f.acknowledged).length;
@@ -898,9 +904,6 @@ export function ProposeView({ onDone, onCancel }: {
   const proposedLabels = new Set(
     Object.values(types).filter((t) => t.use === "new")
       .map((t) => t.label.trim().toLowerCase()));
-  // Every group a document could sit in: the tenant's, plus any made here.
-  const allGroups = [...(draft?.categories ?? []), ...newGroups];
-
   const heldTypes = (draft?.document_types ?? [])
     .filter((t) => !proposedLabels.has(t.label.trim().toLowerCase()))
     .slice()
