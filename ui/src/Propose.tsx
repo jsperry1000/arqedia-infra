@@ -119,6 +119,18 @@ export function ProposeView({ onDone, onCancel }: {
   const [newDocName, setNewDocName] = useState("");
   // And the reverse: naming a fact from a document card.
   const [addingFact, setAddingFact] = useState<string | null>(null);
+  // Groups the person makes here, and held documents they move between
+  // groups. Grouping is presentation and nothing else reads it, so moving one
+  // disturbs no extraction and no memorandum.
+  const [newGroups, setNewGroups] = useState<{ key: string; label: string }[]>(
+    []);
+  const [heldGroup, setHeldGroup] = useState<Record<string, string>>({});
+  const [newGroupName, setNewGroupName] = useState("");
+  // Sections the report never had, and facts named onto a section.
+  const [newSectionTitle, setNewSectionTitle] = useState("");
+  const [newSectionNumeral, setNewSectionNumeral] = useState("");
+  const [addingSection, setAddingSection] = useState<number | null>(null);
+  const [newInSection, setNewInSection] = useState("");
   const [newFactName, setNewFactName] = useState("");
   const [written, setWritten] = useState<string[]>([]);
   const [result, setResult] = useState<
@@ -401,6 +413,15 @@ export function ProposeView({ onDone, onCancel }: {
 
     try {
       const groups = new Set((draft?.categories ?? []).map((c) => c.key));
+
+      for (const g of newGroups) {
+        if (groups.has(g.key)) continue;
+        setBusy("Adding a group");
+        await api.saveCategory({ key: g.key, label: g.label });
+        groups.add(g.key);
+        done.push("group " + g.label);
+      }
+
       for (const t of Object.values(types)) {
         if (t.use !== "new" || !t.groupLabel || groups.has(t.group)) continue;
         setBusy("Adding a group");
@@ -421,6 +442,24 @@ export function ProposeView({ onDone, onCancel }: {
           always_ocr: false,
         });
         done.push("document " + t.label);
+      }
+
+      // A held document moved to another group. Its name, description and
+      // reading are sent back exactly as they were - the group is the only
+      // thing this screen may change about a document already held.
+      for (const t of (draft?.document_types ?? [])) {
+        const moved = heldGroup[t.key];
+        if (!moved || moved === t.category) continue;
+        setBusy("Moving " + t.label);
+        await api.saveDocumentType({
+          key: t.key,
+          label: t.label,
+          description: t.description,
+          category: moved,
+          read_mode: t.read_mode,
+          always_ocr: t.always_ocr,
+        });
+        done.push("moved " + t.label);
       }
 
       for (const f of Object.values(facts)) {
@@ -855,6 +894,9 @@ export function ProposeView({ onDone, onCancel }: {
   const proposedLabels = new Set(
     Object.values(types).filter((t) => t.use === "new")
       .map((t) => t.label.trim().toLowerCase()));
+  // Every group a document could sit in: the tenant's, plus any made here.
+  const allGroups = [...(draft?.categories ?? []), ...newGroups];
+
   const heldTypes = (draft?.document_types ?? [])
     .filter((t) => !proposedLabels.has(t.label.trim().toLowerCase()))
     .slice()
@@ -905,7 +947,10 @@ export function ProposeView({ onDone, onCancel }: {
 
       <table className="docs">
         <tbody>
-          {proposal.sections.map((s, i) => (
+          {proposal.sections.map((s, i) => {
+            const carries = factList.filter(
+              ([, f]) => f.use !== "skip" && f.sections.includes(i));
+            return (
             <tr key={i} className={skipped.has(i) ? "aside" : ""}>
               <td>
                 <input type="checkbox" checked={!skipped.has(i)}
@@ -916,7 +961,19 @@ export function ProposeView({ onDone, onCancel }: {
                   }} />
               </td>
               <td>
-                <strong>{s.numeral} {s.title}</strong>
+                <input value={s.numeral}
+                  style={{ width: "4em", marginRight: "0.5em" }}
+                  onChange={(e) => {
+                    const next = [...proposal.sections];
+                    next[i] = { ...s, numeral: e.target.value };
+                    setProposal({ ...proposal, sections: next });
+                  }} />
+                <input value={s.title}
+                  onChange={(e) => {
+                    const next = [...proposal.sections];
+                    next[i] = { ...s, title: e.target.value };
+                    setProposal({ ...proposal, sections: next });
+                  }} />
                 <div className="muted small">{s.purpose}</div>
                 {!s.located && (
                   <div className="warn small">
@@ -924,14 +981,101 @@ export function ProposeView({ onDone, onCancel }: {
                     read against the whole report. Worth checking.
                   </div>
                 )}
+
+                {/* What this section reports, the third view of the one
+                    relationship. Short, because it lists what is IN the
+                    section rather than every fact that might be. */}
+                <div className="muted small">
+                  {carries.map(([fid, f]) => (
+                    <span key={fid} style={{ marginRight: "0.75em" }}>
+                      {f.label}{" "}
+                      <a onClick={() => setFacts({
+                        ...facts,
+                        [fid]: { ...f,
+                          sections: f.sections.filter((x) => x !== i) } })}>
+                        &times;
+                      </a>
+                    </span>
+                  ))}
+                </div>
+
+                {addingSection !== i ? (
+                  <a className="small"
+                     onClick={() => { setAddingSection(i); setNewInSection(""); }}>
+                    Add a fact to this section
+                  </a>
+                ) : (
+                  <div className="filters">
+                    <input placeholder="What the fact is called" autoFocus
+                           value={newInSection}
+                           onChange={(e) => setNewInSection(e.target.value)} />
+                    <button disabled={!newInSection.trim()}
+                      onClick={() => {
+                        const label = newInSection.trim();
+                        const fid = label.toLowerCase();
+                        const already = facts[fid];
+                        if (already) {
+                          if (!already.sections.includes(i)) {
+                            setFacts({ ...facts,
+                              [fid]: { ...already,
+                                sections: [...already.sections, i] } });
+                          }
+                        } else {
+                          setFacts({ ...facts,
+                            [fid]: {
+                              use: "new", label, description: "",
+                              shape: "one", existing: null, why: null,
+                              columns: [], documents: [], held: [],
+                              group: UNPLACED, sections: [i],
+                              added: false, acknowledged: false,
+                            } });
+                        }
+                        setAddingSection(null);
+                        setNewInSection("");
+                      }}>
+                      Add
+                    </button>
+                    <a className="small"
+                       onClick={() => setAddingSection(null)}>Cancel</a>
+                  </div>
+                )}
               </td>
               <td className="muted small">
-                {s.facts.length} {s.facts.length === 1 ? "fact" : "facts"}
+                {carries.length} {carries.length === 1 ? "fact" : "facts"}
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
+
+      {/* A section the report never had. Its facts are named on it, the same
+          way as any other. */}
+      <div className="filters">
+        <input placeholder="Numeral" value={newSectionNumeral}
+               style={{ width: "5em" }}
+               onChange={(e) => setNewSectionNumeral(e.target.value)} />
+        <input placeholder="Add a section" value={newSectionTitle}
+               onChange={(e) => setNewSectionTitle(e.target.value)} />
+        <button disabled={!newSectionTitle.trim()}
+          onClick={() => {
+            setProposal({
+              ...proposal,
+              sections: [...proposal.sections, {
+                heading: newSectionTitle.trim(),
+                title: newSectionTitle.trim(),
+                numeral: newSectionNumeral.trim(),
+                purpose: "Added by you.",
+                located: true,
+                facts: [],
+              }],
+            });
+            setNewSectionTitle("");
+            setNewSectionNumeral("");
+          }}>
+          Add
+        </button>
+      </div>
 
       {/* 3 --- the facts ------------------------------------------------- */}
       <h3>The facts in each section</h3>
@@ -1272,6 +1416,29 @@ export function ProposeView({ onDone, onCancel }: {
       {/* 4 --- the documents --------------------------------------------- */}
       {typeList.length > 0 && (
         <>
+          {/* Grouping is for the eye. Nothing reads it, so a group made here
+              and a document moved between groups disturb no extraction and no
+              memorandum - which is why this is the one thing on the screen
+              that may be changed for documents already held. */}
+          <div className="filters">
+            <input placeholder="Add a group" value={newGroupName}
+                   onChange={(e) => setNewGroupName(e.target.value)} />
+            <button disabled={!newGroupName.trim()}
+              onClick={() => {
+                const label = newGroupName.trim();
+                const key = slugKey(label);
+                if (!allGroups.some((c) => c.key === key)) {
+                  setNewGroups([...newGroups, { key, label }]);
+                }
+                setNewGroupName("");
+              }}>
+              Add
+            </button>
+            <span className="muted small">
+              Groups order the documents on screen and nothing else.
+            </span>
+          </div>
+
           <h3>Documents you do not hold yet</h3>
           <p className="muted small">
             Kinds of document your report appears to rest on, that are not in
@@ -1329,12 +1496,11 @@ export function ProposeView({ onDone, onCancel }: {
                     <select value={t.group}
                       onChange={(e) => {
                         const key = e.target.value;
-                        const known = (draft?.categories ?? [])
-                          .some((c) => c.key === key);
+                        const known = allGroups.some((c) => c.key === key);
                         setTypes({ ...types, [id]: { ...t, group: key,
                           groupLabel: known ? "" : t.groupLabel } });
                       }}>
-                      {(draft?.categories ?? []).map((c) => (
+                      {allGroups.map((c) => (
                         <option key={c.key} value={c.key}>{c.label}</option>
                       ))}
                       {t.groupLabel && (
@@ -1413,7 +1579,17 @@ export function ProposeView({ onDone, onCancel }: {
 
                 {openedDocs.has(id) && (
                   <div className="form">
-                    {readFrom(t.label, t.category, id)}
+                    <label className="row">
+                      <span>Group</span>
+                      <select value={heldGroup[t.key] ?? t.category}
+                        onChange={(e) => setHeldGroup({
+                          ...heldGroup, [t.key]: e.target.value })}>
+                        {allGroups.map((c) => (
+                          <option key={c.key} value={c.key}>{c.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    {readFrom(t.label, heldGroup[t.key] ?? t.category, id)}
                   </div>
                 )}
               </div>
