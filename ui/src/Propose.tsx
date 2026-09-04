@@ -59,7 +59,14 @@ type TypeChoice = {
   use: "existing" | "new" | "skip";
   label: string;
   description: string;
+  // The KEY of the group this document sits in. The reader answers with a
+  // label, and a label is not a key: creating the group under a slug while
+  // pointing the document at the label left the group empty and the document
+  // ungrouped. Both are resolved once, here, and never again.
   group: string;
+  // Set only where the group does not exist yet, and then it is what the
+  // group will be called.
+  groupLabel: string;
   existing: string | null;
   acknowledged: boolean;
 };
@@ -79,6 +86,11 @@ export function ProposeView({ onDone, onCancel }: {
   const [types, setTypes] = useState<Record<string, TypeChoice>>({});
 
   const polling = useRef<number | null>(null);
+  // A reader that dies mid-read would otherwise leave "section 4 of 13" on
+  // screen for ever, which reads as working.
+  const polls = useRef(0);
+  const stalled = useRef(0);
+  const seen = useRef(-1);
 
   function message(err: unknown) {
     let text = String((err as Error)?.message ?? err);
@@ -106,16 +118,41 @@ export function ProposeView({ onDone, onCancel }: {
         memorandum_label: null, document_types: [], sections: [],
       });
 
+      polls.current = 0;
+      stalled.current = 0;
+      seen.current = -1;
+
+      const stop = () => {
+        if (polling.current) window.clearInterval(polling.current);
+        polling.current = null;
+        setBusy("");
+      };
+
       polling.current = window.setInterval(async () => {
         try {
           const p = await api.proposal(key);
           setProposal(p);
+
           if (p.status === "ready" || p.status === "unreadable"
               || p.status === "nothing-found") {
-            if (polling.current) window.clearInterval(polling.current);
-            polling.current = null;
-            setBusy("");
+            stop();
             if (p.status === "ready") prepare(p);
+            return;
+          }
+
+          // Progress is a section arriving. Nothing else counts, because the
+          // object is rewritten whether or not anything moved.
+          polls.current += 1;
+          if (p.sections_done === seen.current) stalled.current += 1;
+          else { seen.current = p.sections_done; stalled.current = 0; }
+
+          // Three minutes without a section, or sixteen altogether - the
+          // reader itself is stopped at fifteen, so past that there is
+          // nothing left to wait for.
+          if (stalled.current >= 45 || polls.current >= 240) {
+            stop();
+            setError("Reading stopped before it finished. Nothing was saved."
+                     + " Try a shorter report.");
           }
         } catch (e) {
           setError(message(e));
@@ -178,11 +215,22 @@ export function ProposeView({ onDone, onCancel }: {
       if (!id || gathered[id]) continue;
       const existing = t.existing_key && knownTypes.has(t.existing_key)
         ? t.existing_key : null;
+      // The reader answers with a group by name. Match it to one the tenant
+      // already holds, by key or by label; only where neither matches is a
+      // new group proposed.
+      const named = (t.group || "").trim();
+      const match = (draft?.categories ?? []).find(
+        (c) => c.key === named
+          || c.label.toLowerCase() === named.toLowerCase());
+      const fallback = draft?.categories[0];
+
       gathered[id] = {
         use: existing ? "existing" : "new",
         label: t.label,
         description: t.description || "",
-        group: t.group || (draft?.categories[0]?.key ?? ""),
+        group: match ? match.key
+          : (named ? slugKey(named) : (fallback?.key ?? "")),
+        groupLabel: match || !named ? "" : named,
         existing,
         acknowledged: false,
       };
@@ -207,13 +255,37 @@ export function ProposeView({ onDone, onCancel }: {
     return map;
   }, [draft, types]);
 
+  /** A fact still wanted: not set aside, and named by a section still kept.
+   *  A fact named only in sections he unticked would otherwise be created and
+   *  bound to nothing - clutter he did not ask for, and one more thing to
+   *  acknowledge before he can get on. */
+  const live = (f: FactChoice) =>
+    f.use !== "skip" && f.sections.some((i) => !skipped.has(i));
+
+  /** One key per section, unique within the memorandum. Two sections titled
+   *  the same slug to the same key, and the second would silently overwrite
+   *  the first. Derived from the proposal alone so a key never moves when he
+   *  unticks something. */
+  const sectionKeys = useMemo(() => {
+    const taken = new Set<string>();
+    return (proposal?.sections ?? []).map((s) => {
+      const base = slugKey(s.title);
+      let key = base;
+      let n = 2;
+      while (taken.has(key)) key = `${base}-${n++}`.slice(0, 64);
+      taken.add(key);
+      return key;
+    });
+  }, [proposal]);
+
   const outstanding = useMemo(() => {
     const n = Object.values(facts)
-      .filter((f) => f.use === "new" && !f.acknowledged).length
+      .filter((f) => f.use === "new" && live(f) && !f.acknowledged).length
       + Object.values(types)
         .filter((t) => t.use === "new" && !t.acknowledged).length;
     return n;
-  }, [facts, types]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [facts, types, skipped]);
 
   /**
    * Write the accepted proposal into the draft, through the same calls a
@@ -232,9 +304,9 @@ export function ProposeView({ onDone, onCancel }: {
     try {
       const groups = new Set((draft?.categories ?? []).map((c) => c.key));
       for (const t of Object.values(types)) {
-        if (t.use !== "new" || !t.group || groups.has(t.group)) continue;
+        if (t.use !== "new" || !t.groupLabel || groups.has(t.group)) continue;
         setBusy("Adding a group");
-        await api.saveCategory({ key: slugKey(t.group), label: t.group });
+        await api.saveCategory({ key: t.group, label: t.groupLabel });
         groups.add(t.group);
       }
 
@@ -245,14 +317,14 @@ export function ProposeView({ onDone, onCancel }: {
           key: slugKey(t.label),
           label: t.label,
           description: t.description,
-          category: groups.has(t.group) ? t.group : slugKey(t.group),
+          category: t.group,
           read_mode: "text",
           always_ocr: false,
         });
       }
 
       for (const f of Object.values(facts)) {
-        if (f.use !== "new") continue;
+        if (f.use !== "new" || !live(f)) continue;
         setBusy("Adding " + f.label);
         await api.saveField({
           key: fieldKey(f.label),
@@ -261,15 +333,16 @@ export function ProposeView({ onDone, onCancel }: {
           cardinality: f.shape,
           description: f.description,
           columns: f.shape === "group"
-            ? f.columns.map((c) => ({
-                key: slugKey(c), label: c, type: "text", description: "",
+            ? f.columns.filter((c) => c.trim()).map((c) => ({
+                key: slugKey(c), label: c.trim(), type: "text",
+                description: "",
               }))
             : [],
         } as never);
       }
 
       for (const f of Object.values(facts)) {
-        if (f.use !== "new") continue;
+        if (f.use !== "new" || !live(f)) continue;
         const documents = f.documents
           .map((label) => typeKeyByLabel[label.trim().toLowerCase()])
           .filter((k): k is string => Boolean(k));
@@ -286,10 +359,10 @@ export function ProposeView({ onDone, onCancel }: {
         .map((s, i) => ({ s, i }))
         .filter(({ i }) => !skipped.has(i));
 
-      for (const { s } of included) {
+      for (const { s, i } of included) {
         setBusy("Adding " + s.title);
         await api.saveSection({
-          key: slugKey(s.title),
+          key: sectionKeys[i],
           numeral: s.numeral || "",
           title: s.title,
           kind: "extract",
@@ -299,12 +372,12 @@ export function ProposeView({ onDone, onCancel }: {
 
       for (const { s, i } of included) {
         const keys = Object.values(facts)
-          .filter((f) => f.use !== "skip" && f.sections.includes(i))
+          .filter((f) => live(f) && f.sections.includes(i))
           .map((f) => f.use === "existing" && f.existing
             ? f.existing : fieldKey(f.label));
         if (keys.length === 0) continue;
         setBusy("Binding " + s.title);
-        await api.setSectionFields(templateKey, slugKey(s.title), keys);
+        await api.setSectionFields(templateKey, sectionKeys[i], keys);
       }
 
       setBusy("");
@@ -344,15 +417,20 @@ export function ProposeView({ onDone, onCancel }: {
         </p>
         {error && <p className="error">{error}</p>}
 
+        {/* Held until the draft has loaded. Without it we do not know what
+            fields the tenant holds, and every fact would be offered as new
+            with no match suggested - silently, and wrongly. */}
         <label className="row">
           <span>Your report</span>
-          <input type="file" accept=".pdf,.docx" disabled={!!busy}
+          <input type="file" accept=".pdf,.docx" disabled={!!busy || !draft}
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) send(file);
             }} />
         </label>
-        <p className="muted small">PDF or Word.</p>
+        <p className="muted small">
+          {draft ? "PDF or Word." : "Loading your configuration\u2026"}
+        </p>
         {busy && <p className="busy">{busy}&hellip;</p>}
       </div>
     );
@@ -555,9 +633,59 @@ export function ProposeView({ onDone, onCancel }: {
                   </select>
                 </label>
 
+                {/* A table with no columns holds nothing, and there is no
+                    other screen to add them on. So they are named here, and
+                    a table cannot be acknowledged without at least one. */}
+                {f.shape === "group" && (
+                  <div className="columns">
+                    <h4>Columns</h4>
+                    <p className="muted small">
+                      What each row holds. A name means nothing without the
+                      things beside it &mdash; a buyer without its country, a
+                      figure without its period.
+                    </p>
+
+                    {f.columns.map((c, i) => (
+                      <div className="column-row" key={i}>
+                        <input placeholder="Column" value={c}
+                          onChange={(e) => {
+                            const next = [...f.columns];
+                            next[i] = e.target.value;
+                            setFacts({ ...facts,
+                              [id]: { ...f, columns: next,
+                                      acknowledged: false } });
+                          }} />
+                        <a className="small" onClick={() => setFacts({
+                          ...facts,
+                          [id]: { ...f,
+                            columns: f.columns.filter((_, j) => j !== i),
+                            acknowledged: false } })}>
+                          Remove
+                        </a>
+                      </div>
+                    ))}
+
+                    <a className="small" onClick={() => setFacts({
+                      ...facts,
+                      [id]: { ...f, columns: [...f.columns, ""],
+                              acknowledged: false } })}>
+                      Add a column
+                    </a>
+
+                    {f.columns.filter((c) => c.trim()).length === 0 && (
+                      <p className="warn small">
+                        A table needs at least one column, or it holds
+                        nothing.
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 <label className="inline-check">
                   <input type="checkbox" checked={f.acknowledged}
-                    disabled={!f.label.trim() || !f.description.trim()}
+                    disabled={!f.label.trim() || !f.description.trim()
+                      || (f.shape === "group"
+                          && f.columns.filter((c) => c.trim()).length === 0)}
                     onChange={(e) => setFacts({
                       ...facts,
                       [id]: { ...f, acknowledged: e.target.checked } })} />
@@ -624,14 +752,20 @@ export function ProposeView({ onDone, onCancel }: {
                   <label className="row">
                     <span>Group</span>
                     <select value={t.group}
-                      onChange={(e) => setTypes({
-                        ...types, [id]: { ...t, group: e.target.value } })}>
+                      onChange={(e) => {
+                        const key = e.target.value;
+                        const known = (draft?.categories ?? [])
+                          .some((c) => c.key === key);
+                        setTypes({ ...types, [id]: { ...t, group: key,
+                          groupLabel: known ? "" : t.groupLabel } });
+                      }}>
                       {(draft?.categories ?? []).map((c) => (
                         <option key={c.key} value={c.key}>{c.label}</option>
                       ))}
-                      {!(draft?.categories ?? [])
-                        .some((c) => c.key === t.group) && (
-                        <option value={t.group}>{t.group}</option>
+                      {t.groupLabel && (
+                        <option value={t.group}>
+                          {t.groupLabel} (new group)
+                        </option>
                       )}
                     </select>
                   </label>

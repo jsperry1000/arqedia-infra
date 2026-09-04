@@ -108,8 +108,27 @@ resource "aws_s3_bucket_public_access_block" "data" {
 # The browser uploads straight to S3, so the bucket must accept requests from
 # the application origin - including the encryption header the signed link
 # requires. Without this the browser blocks the upload before it is sent.
-resource "aws_s3_bucket_cors_configuration" "docs" {
-  bucket = aws_s3_bucket.data["docs"].id
+#
+# TWO BUCKETS TAKE BROWSER UPLOADS, FOR OPPOSITE REASONS.
+#
+#   docs    a document. It is watched, so what lands here is classified,
+#           filed and charged for.
+#   review  a sample of a client's own report, under proposals/. Nothing
+#           watches this bucket, which is the whole point: the sample is form
+#           rather than substance, and is read once for its layout and
+#           deleted. Putting it in docs would file somebody's blank template
+#           as evidence about their borrower.
+#
+# CORS grants nothing. It says which pages a browser will permit to call the
+# bucket; the signed link is the control, and it is one key, PUT only, fifteen
+# minutes, inside the calling tenant's own prefix.
+locals {
+  upload_buckets = ["docs", "review"]
+}
+
+resource "aws_s3_bucket_cors_configuration" "uploads" {
+  for_each = toset(local.upload_buckets)
+  bucket   = aws_s3_bucket.data[each.key].id
 
   cors_rule {
     allowed_origins = ["https://${aws_cloudfront_distribution.frontend.domain_name}",
