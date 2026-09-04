@@ -375,6 +375,9 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // lender memorandum over the same documents.
   const [template, setTemplate] = useState("");
   const [newTemplate, setNewTemplate] = useState("");
+  // Renaming a memorandum. Held apart from the label being shown so an
+  // abandoned edit leaves the name alone.
+  const [renaming, setRenaming] = useState<string | null>(null);
   const [openField, setOpenField] = useState<string | null>(null);
   const [fieldFilter, setFieldFilter] = useState("");
 
@@ -680,6 +683,15 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         <span className="muted">
           {sections.length} {sections.length === 1 ? "section" : "sections"}
         </span>
+        {/* Renaming is free and reaches memoranda already written: the key is
+            minted once and never follows the label, so nothing stored has to
+            move. */}
+        {current && renaming === null && (
+          <a className="small"
+             onClick={() => setRenaming(current.label || current.key)}>
+            Rename
+          </a>
+        )}
         {templates.length > 1 && current && (
           <a className="danger small" onClick={() =>
             act("Deleting", async () => {
@@ -690,6 +702,26 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           </a>
         )}
       </div>
+
+      {current && renaming !== null && (
+        <div className="filters">
+          <input value={renaming} autoFocus
+                 onChange={(e) => setRenaming(e.target.value)} />
+          <button disabled={!!busy || !renaming.trim()}
+                  onClick={() => act("Renaming", async () => {
+                    await api.saveTemplate(
+                      { key: current.key, label: renaming.trim() });
+                    setRenaming(null);
+                  })}>
+            Save
+          </button>
+          <a className="small" onClick={() => setRenaming(null)}>Cancel</a>
+          <span className="muted small">
+            The name only. Sections, bindings and memoranda already written
+            are untouched.
+          </span>
+        </div>
+      )}
 
       <p className="muted small">
         Every memorandum draws on the same facts and the same documents. What
