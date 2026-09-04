@@ -575,7 +575,7 @@ export function ProposeView({ onDone, onCancel }: {
    * holds and the ones this report would add. Two copies of a form this
    * particular would drift within a week.
    */
-  const readFrom = (label: string, group: string, cardId: string) => (
+  const readFrom = (label: string, cardId: string) => (
     <>
                 {/* The same relationship as "where to look for it", from
                     the other end. One list of facts underneath, so ticking
@@ -1594,7 +1594,7 @@ export function ProposeView({ onDone, onCancel }: {
                     time without disturbing anything.
                   </p>
 
-                  {readFrom(t.label, t.group, id)}
+                  {readFrom(t.label, id)}
 
                   <label className="inline-check">
                     <input type="checkbox" checked={t.acknowledged}
@@ -1668,7 +1668,7 @@ export function ProposeView({ onDone, onCancel }: {
                         ))}
                       </select>
                     </label>
-                    {readFrom(t.label, heldGroup[t.key] ?? t.category, id)}
+                    {readFrom(t.label, id)}
                   </div>
                 )}
               </div>
