@@ -131,6 +131,8 @@ export function ProposeView({ onDone, onCancel }: {
   const [newSectionNumeral, setNewSectionNumeral] = useState("");
   const [addingSection, setAddingSection] = useState<number | null>(null);
   const [newInSection, setNewInSection] = useState("");
+  // Which section's facts are on show. One at a time, on purpose.
+  const [shownSection, setShownSection] = useState<number | null>(null);
   const [newFactName, setNewFactName] = useState("");
   const [written, setWritten] = useState<string[]>([]);
   const [result, setResult] = useState<
@@ -861,21 +863,18 @@ export function ProposeView({ onDone, onCancel }: {
     f.use === "new" && live(f) && !f.acknowledged;
   const shown = onlyOutstanding ? factList.filter(needs) : factList;
 
-  // By group, in the tenant's own order, then alphabetically inside each.
-  // Anything whose documents place it nowhere goes last rather than being
-  // dropped - a fact with no home is exactly the one worth looking at.
-  const grouped = (() => {
+  /** Facts under group headings, the tenant's order, alphabetical inside
+   *  each. Used by the whole fact list and by each section's own box, so a
+   *  fact sits under the same heading wherever it is read. */
+  const groupsOf = (entries: [string, FactChoice][]) => {
     const buckets: Record<string, [string, FactChoice][]> = {};
-    for (const entry of shown) {
-      const g = entry[1].group || UNPLACED;
-      (buckets[g] ||= []).push(entry);
-    }
+    for (const e of entries) (buckets[e[1].group || UNPLACED] ||= []).push(e);
     for (const list of Object.values(buckets)) {
       list.sort((a, b) => a[1].label.localeCompare(b[1].label));
     }
     const out: { key: string; label: string;
                  entries: [string, FactChoice][] }[] = [];
-    for (const c of draft?.categories ?? []) {
+    for (const c of allGroups) {
       if (buckets[c.key]?.length) {
         out.push({ key: c.key, label: c.label, entries: buckets[c.key] });
       }
@@ -885,7 +884,12 @@ export function ProposeView({ onDone, onCancel }: {
                  entries: buckets[UNPLACED] });
     }
     return out;
-  })();
+  };
+
+  // By group, in the tenant's own order, then alphabetically inside each.
+  // Anything whose documents place it nowhere goes last rather than being
+  // dropped - a fact with no home is exactly the one worth looking at.
+  const grouped = groupsOf(shown);
   const typeList = Object.entries(types).filter(([, t]) => t.use !== "existing"
     || t.existing === null);
 
@@ -983,21 +987,41 @@ export function ProposeView({ onDone, onCancel }: {
                 )}
 
                 {/* What this section reports, the third view of the one
-                    relationship. Short, because it lists what is IN the
-                    section rather than every fact that might be. */}
-                <div className="muted small">
-                  {carries.map(([fid, f]) => (
-                    <span key={fid} style={{ marginRight: "0.75em" }}>
-                      {f.label}{" "}
-                      <a onClick={() => setFacts({
-                        ...facts,
-                        [fid]: { ...f,
-                          sections: f.sections.filter((x) => x !== i) } })}>
-                        &times;
-                      </a>
-                    </span>
-                  ))}
-                </div>
+                    relationship. One box open at a time: nine sections open
+                    at once is the wall of text this replaced. */}
+                <a className="small"
+                   onClick={() => setShownSection(
+                     shownSection === i ? null : i)}>
+                  {shownSection === i ? "\u25be" : "\u25b8"} {carries.length}
+                  {carries.length === 1 ? " fact" : " facts"}
+                </a>
+
+                {shownSection === i && (
+                  <div className="columns">
+                    {groupsOf(carries).map((g) => (
+                      <div key={g.key}>
+                        <h4>{g.label}</h4>
+                        <ul className="muted small">
+                          {g.entries.map(([fid, f]) => (
+                            <li key={fid}>
+                              {f.label}{" "}
+                              <a onClick={() => setFacts({
+                                ...facts,
+                                [fid]: { ...f,
+                                  sections: f.sections
+                                    .filter((x) => x !== i) } })}>
+                                &times;
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                    {carries.length === 0 && (
+                      <p className="muted small">Nothing in it yet.</p>
+                    )}
+                  </div>
+                )}
 
                 {addingSection !== i ? (
                   <a className="small"
@@ -1357,32 +1381,6 @@ export function ProposeView({ onDone, onCancel }: {
                   )}
                 </div>
 
-                {/* A fact the person added has no section of its own. Chosen
-                    here rather than left unbound: a field bound to nothing is
-                    extracted on every filing and reaches no reader. */}
-                {f.added && (
-                  <label className="row">
-                    <span>Which section reports it</span>
-                    <select
-                      value={f.sections.length ? String(f.sections[0]) : ""}
-                      onChange={(e) => setFacts({
-                        ...facts,
-                        [id]: { ...f,
-                          sections: e.target.value === ""
-                            ? [] : [Number(e.target.value)],
-                          acknowledged: false } })}>
-                      <option value="">Choose&hellip;</option>
-                      {proposal.sections.map((s, i) => (
-                        skipped.has(i) ? null : (
-                          <option key={i} value={String(i)}>
-                            {s.numeral} {s.title}
-                          </option>
-                        )
-                      ))}
-                    </select>
-                  </label>
-                )}
-
                 <label className="inline-check">
                   <input type="checkbox" checked={f.acknowledged}
                     disabled={!f.label.trim() || !f.description.trim()
@@ -1397,6 +1395,51 @@ export function ProposeView({ onDone, onCancel }: {
                 </label>
               </div>
             )}
+
+            {/* Where this fact is reported. A fact in no section is extracted
+                on every filing and reaches no reader, so it is named here
+                rather than left to be noticed at publish. */}
+            <div className="muted small">
+              <strong>Reported in:</strong>{" "}
+              {f.sections.length === 0 && "no section yet"}
+              {f.sections.map((i) => {
+                const s = proposal.sections[i];
+                if (!s) return null;
+                return (
+                  <span key={i} style={{ marginRight: "0.75em" }}>
+                    {s.numeral} {s.title}
+                    {skipped.has(i) ? " (not wanted)" : ""}{" "}
+                    <a onClick={() => setFacts({
+                      ...facts,
+                      [id]: { ...f,
+                        sections: f.sections.filter((x) => x !== i),
+                        acknowledged: false } })}>&times;</a>
+                  </span>
+                );
+              })}
+            </div>
+
+            <label className="row">
+              <span>Add to a section</span>
+              <select value=""
+                onChange={(e) => {
+                  if (e.target.value === "") return;
+                  setFacts({
+                    ...facts,
+                    [id]: { ...f,
+                      sections: [...f.sections, Number(e.target.value)],
+                      acknowledged: false } });
+                }}>
+                <option value="">Choose&hellip;</option>
+                {proposal.sections.map((s, i) => (
+                  skipped.has(i) || f.sections.includes(i) ? null : (
+                    <option key={i} value={String(i)}>
+                      {s.numeral} {s.title}
+                    </option>
+                  )
+                ))}
+              </select>
+            </label>
 
             <div className="muted small">
               <a onClick={() => setFacts({
