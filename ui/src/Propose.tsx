@@ -98,9 +98,27 @@ export function ProposeView({ onDone, onCancel }: {
   const [busy, setBusy] = useState("");
 
   const [memoLabel, setMemoLabel] = useState("");
-  // Document cards carry a form each. Closed by default, or the page is
+  // Document cards carry a form each. One open at a time, or the page is
   // metres long before the person has read the first one.
-  const [openedDocs, setOpenedDocs] = useState<Set<string>>(new Set());
+  const [openDoc, setOpenDoc] = useState<string | null>(null);
+  // The four parts of the page. All open to begin with - a person who has
+  // just had a report read wants to see what came back, not four headings.
+  const [shut, setShut] = useState<Set<string>>(new Set());
+  const part = (key: string, label: string, count: string, wants: number) => (
+    <h3>
+      <a onClick={() => {
+        const next = new Set(shut);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        setShut(next);
+      }}>
+        {shut.has(key) ? "\u25b8" : "\u25be"} {label}
+      </a>{" "}
+      <span className="muted small">{count}</span>
+      {shut.has(key) && wants > 0 && (
+        <span className="warn small">{" \u00b7 "}{wants} needing you</span>
+      )}
+    </h3>
+  );
   // Accepting is a sequence of writes, not one. Whatever it managed before
   // it stopped is IN the draft, so the person is told what landed rather than
   // left to find out by reading their configuration.
@@ -358,9 +376,15 @@ export function ProposeView({ onDone, onCancel }: {
     });
   }, [proposal]);
 
+  // A fact the person has set aside is not waiting on them. It is still
+  // created and still extracted; they have said this memorandum does not
+  // report it, and certifying wording for a fact just set aside is the same
+  // trap in a different place.
+  const wanting = (f: FactChoice) =>
+    f.use === "new" && live(f) && !f.unused && !f.acknowledged;
+
   const outstanding = useMemo(() => {
-    const n = Object.values(facts)
-      .filter((f) => f.use === "new" && live(f) && !f.acknowledged).length
+    const n = Object.values(facts).filter(wanting).length
       + Object.values(types)
         .filter((t) => t.use === "new" && !t.acknowledged).length;
     return n;
@@ -530,10 +554,15 @@ export function ProposeView({ onDone, onCancel }: {
       }
 
       for (const { s, i } of included) {
-        const keys = Object.values(facts)
+        // Deduplicated, because two facts can land on one field: two of the
+        // report's names matched to the same field the tenant holds, or two
+        // labels that slug to the same key. A section binding the same field
+        // twice is a duplicate primary key and the whole accept stops on its
+        // last step, after everything else has been written.
+        const keys = Array.from(new Set(Object.values(facts)
           .filter((f) => live(f) && f.sections.includes(i))
           .map((f) => f.use === "existing" && f.existing
-            ? f.existing : fieldKey(f.label));
+            ? f.existing : fieldKey(f.label))));
         if (keys.length === 0) continue;
         setBusy("Binding " + s.title);
         await api.setSectionFields(templateKey, sectionKeys[i], keys);
@@ -638,6 +667,11 @@ export function ProposeView({ onDone, onCancel }: {
                     what you had alone. Anything this document holds that
                     you do not have a fact for yet, name it below.
                   </p>
+                  <p className="muted small">
+                    Documents and facts belong to you, not to one memorandum.
+                    What is read from this document is read for every
+                    memorandum, not only this one.
+                  </p>
 
                   <div className="binder">
                     {/* Facts the tenant already holds, and nothing else.
@@ -727,6 +761,10 @@ export function ProposeView({ onDone, onCancel }: {
                                 acknowledged: false,
                               } });
                           }
+                          // Straight to its card. Left at the foot of the
+                          // page it is one more thing to find later, and it
+                          // has no description yet.
+                          setOpenFact(fid);
                           setAddingFact(null);
                           setNewFactName("");
                         }}>
@@ -892,7 +930,6 @@ export function ProposeView({ onDone, onCancel }: {
                   <input type="checkbox" checked={f.acknowledged}
                     disabled={!f.label.trim() || !f.description.trim()
                       || f.documents.length === 0
-                      || (f.added && f.sections.length === 0)
                       || (f.shape === "group"
                           && f.columns.filter((c) => c.trim()).length === 0)}
                     onChange={(e) => setFacts({
@@ -1433,7 +1470,12 @@ export function ProposeView({ onDone, onCancel }: {
       </label>
 
       {/* 2 --- its sections --------------------------------------------- */}
-      <h3>Memo sections</h3>
+      {part("sections", "Memo sections",
+            `${proposal.sections.length} in the report`,
+            factList.filter(([, f]) => wanting(f)
+              && f.sections.length > 0).length)}
+
+      {!shut.has("sections") && (<>
       <p className="muted small">
         In the order they appear in your report. Untick anything you do not
         want.
@@ -1444,8 +1486,7 @@ export function ProposeView({ onDone, onCancel }: {
           {proposal.sections.map((s, i) => {
             const carries = factList.filter(
               ([, f]) => f.use !== "skip" && f.sections.includes(i));
-            const wants = carries.filter(
-              ([, f]) => f.use === "new" && !f.acknowledged).length;
+            const wants = carries.filter(([, f]) => wanting(f)).length;
             return (
             <tr key={i} className={skipped.has(i) ? "aside" : ""}>
               <td>
@@ -1504,7 +1545,7 @@ export function ProposeView({ onDone, onCancel }: {
                         {f.use === "existing"
                           ? " \u00b7 you already hold this"
                           : " \u00b7 new"}
-                        {f.use === "new" && !f.acknowledged && (
+                        {wanting(f) && (
                           <span className="warn"> needs you</span>
                         )}{" "}
                         <a onClick={() => setFacts({
@@ -1633,6 +1674,7 @@ export function ProposeView({ onDone, onCancel }: {
       </div>
 
       {/* 3 --- the facts ------------------------------------------------- */}
+      </>)}
       {/* The fact card, opened over the page. The stylesheet already has a
           drawer - panel-backdrop and panel - so this uses it rather than
           introducing a second thing that means the same. */}
@@ -1675,7 +1717,11 @@ export function ProposeView({ onDone, onCancel }: {
           dropped, and stay listed once marked. */}
       {stranded.length > 0 && (
         <>
-          <h3>Not reported by this memorandum</h3>
+          {part("stranded", "Not reported by this memorandum",
+                `${stranded.length}`,
+                stranded.filter(([, f]) => wanting(f)).length)}
+
+      {!shut.has("stranded") && (<>
           <p className="muted small">
             These will be read from your documents, but no section here
             reports them. Put each in a section, or mark it as not used by
@@ -1688,7 +1734,7 @@ export function ProposeView({ onDone, onCancel }: {
                 <tr key={id} className={f.unused ? "aside" : ""}>
                   <td>
                     <a onClick={() => setOpenFact(id)}>{f.label}</a>
-                    {f.use === "new" && !f.acknowledged && (
+                    {wanting(f) && (
                       <span className="warn small"> needs you</span>
                     )}
                   </td>
@@ -1696,10 +1742,11 @@ export function ProposeView({ onDone, onCancel }: {
                     <select value=""
                       onChange={(e) => {
                         if (e.target.value === "") return;
+                        const at = Number(e.target.value);
                         setFacts({ ...facts,
                           [id]: { ...f, unused: false,
-                            sections: [...f.sections,
-                                       Number(e.target.value)] } });
+                            sections: f.sections.includes(at)
+                              ? f.sections : [...f.sections, at] } });
                       }}>
                       <option value="">Add to a section&hellip;</option>
                       {proposal.sections.map((s, i) => (
@@ -1723,6 +1770,7 @@ export function ProposeView({ onDone, onCancel }: {
               ))}
             </tbody>
           </table>
+      </>)}
         </>
       )}
 
@@ -1752,7 +1800,12 @@ export function ProposeView({ onDone, onCancel }: {
             </span>
           </div>
 
-          <h3>Documents you do not hold yet</h3>
+          {part("newdocs", "Documents not yet referenced",
+                `${typeList.length}`,
+                typeList.filter(([, t]) => t.use === "new"
+                  && !t.acknowledged).length)}
+
+          {!shut.has("newdocs") && (<>
           <p className="muted small">
             Kinds of document your report appears to rest on, that are not in
             your configuration.
@@ -1761,25 +1814,21 @@ export function ProposeView({ onDone, onCancel }: {
           {typeList.map(([id, t]) => (
             <div className="review" key={id}>
               <div className="review-head">
-                <a onClick={() => {
-                  const next = new Set(openedDocs);
-                  if (next.has(id)) next.delete(id); else next.add(id);
-                  setOpenedDocs(next);
-                }}>
+                <a onClick={() => setOpenDoc(openDoc === id ? null : id)}>
                   <strong>
-                    {openedDocs.has(id) ? "\u25be" : "\u25b8"} {t.label}
+                    {openDoc === id ? "\u25be" : "\u25b8"} {t.label}
                   </strong>
                 </a>
                 <span className="muted small">
                   {t.use === "skip" ? "not wanted" : "new"}
                 </span>
-                {!openedDocs.has(id) && t.use === "new"
+                {openDoc !== id && t.use === "new"
                   && !t.acknowledged && (
                   <span className="warn small">needs you</span>
                 )}
               </div>
 
-              {openedDocs.has(id) && t.use === "new" && (
+              {openDoc === id && t.use === "new" && (
                 <div className="form">
                   <label className="row">
                     <span>Name</span>
@@ -1854,13 +1903,17 @@ export function ProposeView({ onDone, onCancel }: {
               </div>
             </div>
           ))}
+          </>)}
         </>
       )}
 
       {/* 4b --- documents the tenant already holds ----------------------- */}
       {heldTypes.length > 0 && (
         <>
-          <h3>Documents you already hold</h3>
+          {part("helddocs", "Documents you already hold",
+                `${heldTypes.length}`, 0)}
+
+          {!shut.has("helddocs") && (<>
           <p className="muted small">
             Say what each of these is read for, and the whole configuration is
             done here rather than half here and half in the editor afterwards.
@@ -1876,13 +1929,9 @@ export function ProposeView({ onDone, onCancel }: {
             return (
               <div className="review" key={id}>
                 <div className="review-head">
-                  <a onClick={() => {
-                    const next = new Set(openedDocs);
-                    if (next.has(id)) next.delete(id); else next.add(id);
-                    setOpenedDocs(next);
-                  }}>
+                  <a onClick={() => setOpenDoc(openDoc === id ? null : id)}>
                     <strong>
-                      {openedDocs.has(id) ? "\u25be" : "\u25b8"} {t.label}
+                      {openDoc === id ? "\u25be" : "\u25b8"} {t.label}
                     </strong>
                   </a>
                   <span className="muted small">
@@ -1890,7 +1939,7 @@ export function ProposeView({ onDone, onCancel }: {
                   </span>
                 </div>
 
-                {openedDocs.has(id) && (
+                {openDoc === id && (
                   <div className="form">
                     <label className="row">
                       <span>Group</span>
@@ -1908,6 +1957,7 @@ export function ProposeView({ onDone, onCancel }: {
               </div>
             );
           })}
+          </>)}
         </>
       )}
 
@@ -1931,11 +1981,30 @@ export function ProposeView({ onDone, onCancel }: {
         </p>
       )}
 
+      {/* A number is not much use at the foot of a long page. Each of these
+          opens the thing that is waiting. */}
       {outstanding > 0 && (
-        <p className="warn">
-          {outstanding} {outstanding === 1 ? "thing has" : "things have"} still
-          to be acknowledged.
-        </p>
+        <div className="warn">
+          <p>
+            {outstanding} {outstanding === 1 ? "thing has" : "things have"}
+            {" "}still to be acknowledged.
+          </p>
+          <ul className="small">
+            {factList.filter(([, f]) => wanting(f)).map(([fid, f]) => (
+              <li key={fid}>
+                <a onClick={() => setOpenFact(fid)}>{f.label}</a>
+              </li>
+            ))}
+            {Object.entries(types)
+              .filter(([, t]) => t.use === "new" && !t.acknowledged)
+              .map(([tid, t]) => (
+                <li key={tid}>
+                  <a onClick={() => setOpenDoc(tid)}>{t.label}</a>
+                  {" \u00b7 a document"}
+                </li>
+              ))}
+          </ul>
+        </div>
       )}
 
       <div className="form-actions">
