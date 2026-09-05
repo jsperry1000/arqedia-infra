@@ -131,7 +131,8 @@ export function ProposeView({ onDone, onCancel }: {
   // screen keeps its promise that nothing is saved until then.
   const [editField, setEditField] = useState<string | null>(null);
   const [heldEdits, setHeldEdits] = useState<Record<string, {
-    label: string; description: string | null; columns: ConfigColumn[];
+    label: string; description: string | null; cardinality: string;
+    columns: ConfigColumn[];
   }>>({});
   const [newFactName, setNewFactName] = useState("");
   const [written, setWritten] = useState<string[]>([]);
@@ -430,9 +431,9 @@ export function ProposeView({ onDone, onCancel }: {
           key,
           label: edit.label,
           type: base.type,
-          cardinality: base.cardinality,
+          cardinality: edit.cardinality,
           description: edit.description,
-          columns: base.cardinality === "group"
+          columns: edit.cardinality === "group"
             ? edit.columns.filter((c) => c.label.trim()).map((c) => ({
                 key: c.key || undefined,
                 label: c.label.trim(),
@@ -1083,11 +1084,12 @@ export function ProposeView({ onDone, onCancel }: {
     if (!base) return null;
     const cur = heldEdits[key] ?? {
       label: base.label, description: base.description,
-      columns: base.columns,
+      cardinality: base.cardinality, columns: base.columns,
     };
     const set = (next: Partial<typeof cur>) =>
       setHeldEdits({ ...heldEdits, [key]: { ...cur, ...next } });
-    const isTable = base.cardinality === "group";
+    const isTable = cur.cardinality === "group";
+    const becameTable = isTable && base.cardinality !== "group";
     const added = cur.columns.filter((c) => !c.key).length;
 
     return (
@@ -1119,9 +1121,43 @@ export function ProposeView({ onDone, onCancel }: {
           to those already filed.
         </p>
 
+        {/* A single value that turns out to want columns. The alternative was
+            to decline the match and make a second fact meaning the same
+            thing, with the first left behind to be remembered and deleted -
+            which is the duplicate this whole screen exists to prevent.
+
+            Extraction is pinned, so this reaches documents filed from now on
+            and not those already filed: a memorandum written before it still
+            reproduces against the revision it was written under. */}
+        <label className="row">
+          <span>Shape</span>
+          <select value={cur.cardinality}
+            onChange={(e) => set({ cardinality: e.target.value })}>
+            <option value="one">A single fact</option>
+            <option value="many">Several values</option>
+            <option value="group">
+              A table &mdash; several rows with columns
+            </option>
+          </select>
+        </label>
+
+        {cur.cardinality !== base.cardinality && (
+          <p className="warn small">
+            Changing the shape applies to documents filed from now on. What
+            was already read from documents you have filed stays as it was,
+            and memoranda already written still reproduce.
+          </p>
+        )}
+
         {isTable && (
           <div className="columns">
             <h4>Columns</h4>
+            {becameTable && cur.columns.length === 0 && (
+              <p className="muted small">
+                It has none yet. A table with no columns holds nothing, so
+                name what each row should carry.
+              </p>
+            )}
             {cur.columns.map((c, i) => (
               <div className="column-row" key={c.key ?? "new-" + i}>
                 <input placeholder="Column" value={c.label}
@@ -1159,8 +1195,17 @@ export function ProposeView({ onDone, onCancel }: {
           </div>
         )}
 
+        {isTable && cur.columns.filter((c) => c.label.trim()).length === 0 && (
+          <p className="warn small">
+            A table needs at least one column.
+          </p>
+        )}
+
         <div className="form-actions">
-          <button onClick={() => setEditField(null)}>Done</button>
+          <button
+            disabled={isTable
+              && cur.columns.filter((c) => c.label.trim()).length === 0}
+            onClick={() => setEditField(null)}>Done</button>
           <a className="secondary" onClick={() => {
             const next = { ...heldEdits };
             delete next[key];
