@@ -105,10 +105,15 @@ function FieldForm({ initial, onSave, onCancel, onDelete }: {
           onChange={(e) => setF({ ...f, description: e.target.value })} />
       </label>
 
+      {/* The shape was locked on an existing field, with a note saying it
+          could not change once values had been extracted. That is not true:
+          extraction is pinned to the revision a document was filed under, so
+          a shape change reaches documents filed from now on and leaves what
+          is already read alone. Locking it forced a second field meaning the
+          same thing, with the first left behind. */}
       <label className="row">
         <span>Shape</span>
         <select value={f.cardinality}
-                disabled={existing}
                 onChange={(e) => setF({ ...f, cardinality: e.target.value })}>
           <option value="one">A single fact</option>
           <option value="many">Several values</option>
@@ -117,7 +122,9 @@ function FieldForm({ initial, onSave, onCancel, onDelete }: {
       </label>
       {existing && (
         <p className="muted small">
-          The shape cannot change once values have been extracted under it.
+          Changing the shape applies to documents filed from now on. What was
+          already read from documents you have filed stays as it was, and
+          memoranda already written still reproduce.
         </p>
       )}
 
