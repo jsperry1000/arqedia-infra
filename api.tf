@@ -51,6 +51,16 @@ data "aws_iam_policy_document" "api" {
     resources = ["${aws_s3_bucket.data["review"].arn}/*"]
   }
 
+  # Listing proposals a person has read and not yet accepted, so one can be
+  # put down and picked up tomorrow. Scoped to the bucket itself because a
+  # list is an action on the bucket, not on the objects in it; the prefix is
+  # the tenant's own and is enforced in the handler.
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.data["review"].arn]
+  }
+
   # Settings reads a logo to show it back, and writes one on upload.
   statement {
     effect    = "Allow"
@@ -209,6 +219,13 @@ locals {
     "POST /config/draft/sample",
     "POST /config/draft/propose",
     "GET /config/draft/proposal",
+
+    # Deciding what a proposal said is an hour of a person's judgement.
+    # Kept as they make it, beside the proposal, so a closed tab or an
+    # accept that stops part way costs them nothing.
+    "GET /config/draft/proposals",
+    "GET /config/draft/working",
+    "PUT /config/draft/working",
     "POST /documents/{document_id}/active",
     "GET /documents/{document_id}/values",
     "GET /documents/{document_id}/passage",

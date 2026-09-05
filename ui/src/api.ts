@@ -262,6 +262,16 @@ export type ProposedType = {
 // Rewritten after every section, so this is the progress as well as the
 // result. status runs: starting, reading, outlining, working, ready - or
 // unreadable, or nothing-found.
+export type ProposalRef = {
+  key: string;
+  filename: string;
+  status: string;
+  memorandum_label: string | null;
+  sections: number;
+  requested_by: string | null;
+  read_at: string;
+};
+
 export type Proposal = {
   status: string;
   key: string;
@@ -323,6 +333,24 @@ export const api = {
   // minute or two on a long memorandum.
   proposal: (key: string): Promise<Proposal> =>
     call(`/config/draft/proposal?key=${encodeURIComponent(key)}`),
+
+  // What a person has decided about a proposal, kept as they decide it.
+  // Reading a report is minutes of machine time; deciding what it proposed
+  // is an hour of theirs, and held only in the browser that hour is lost to
+  // a closed tab or an accept that stops part way.
+  working: (key: string): Promise<{ key: string; working: unknown }> =>
+    call(`/config/draft/working?key=${encodeURIComponent(key)}`),
+
+  saveWorking: (key: string, working: unknown) =>
+    call("/config/draft/working", {
+      method: "PUT",
+      body: JSON.stringify({ key, working }),
+    }),
+
+  // Proposals read and not yet accepted, so one can be put down and picked
+  // up tomorrow.
+  proposals: (): Promise<{ proposals: ProposalRef[] }> =>
+    call("/config/draft/proposals"),
 
   openDraft: () =>
     call("/config/draft", { method: "POST", body: "{}" }),
