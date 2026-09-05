@@ -143,6 +143,23 @@ export function ProposeView({ onDone, onCancel }: {
   const [newInSection, setNewInSection] = useState("");
   // Which section's facts are on show. One at a time, on purpose.
   const [shownSection, setShownSection] = useState<number | null>(null);
+
+  /** Sections are referred to by position, so swapping two means swapping
+   *  every reference to them. Left alone, moving a section would silently
+   *  take its facts to the section that replaced it. */
+  const swap = (n: number, a: number, b: number) =>
+    n === a ? b : (n === b ? a : n);
+
+  const moved = (set: Set<number>, a: number, b: number) =>
+    new Set([...set].map((n) => swap(n, a, b)));
+
+  const remapped = (all: Record<string, FactChoice>, a: number, b: number) => {
+    const out: Record<string, FactChoice> = {};
+    for (const [id, f] of Object.entries(all)) {
+      out[id] = { ...f, sections: f.sections.map((n) => swap(n, a, b)) };
+    }
+    return out;
+  };
   // Which fact is open over the page.
   const [openFact, setOpenFact] = useState<string | null>(null);
   // Everything the person has decided, kept beside the proposal as they
@@ -650,15 +667,21 @@ export function ProposeView({ onDone, onCancel }: {
         .map((s, i) => ({ s, i }))
         .filter(({ i }) => !skipped.has(i));
 
+      let order = 0;
       for (const { s, i } of included) {
         setBusy("Adding " + s.title);
+        order += 1;
         await api.saveSection({
           key: sectionKeys[i],
           numeral: s.numeral || "",
           title: s.title,
           kind: "extract",
           template_key: templateKey,
-        });
+          // Sent, not left to default. Every section arrived at zero, they
+          // all tied, and the memorandum came out in whatever order the
+          // database happened to return.
+          sort_order: order,
+        } as never);
         done.push("section " + s.title);
       }
 
@@ -1639,6 +1662,27 @@ export function ProposeView({ onDone, onCancel }: {
                     if (next.has(i)) next.delete(i); else next.add(i);
                     setSkipped(next);
                   }} />
+              </td>
+              <td className="muted small">
+                {/* The order the memorandum reads in. A section is where a
+                    reader expects it or the memorandum is unreadable, and
+                    the reader's order is not always the report's. */}
+                <a onClick={() => {
+                  if (i === 0) return;
+                  const next = [...proposal.sections];
+                  [next[i - 1], next[i]] = [next[i], next[i - 1]];
+                  setProposal({ ...proposal, sections: next });
+                  setSkipped(moved(skipped, i, i - 1));
+                  setFacts(remapped(facts, i, i - 1));
+                }}>&uarr;</a>{" "}
+                <a onClick={() => {
+                  if (i === proposal.sections.length - 1) return;
+                  const next = [...proposal.sections];
+                  [next[i], next[i + 1]] = [next[i + 1], next[i]];
+                  setProposal({ ...proposal, sections: next });
+                  setSkipped(moved(skipped, i, i + 1));
+                  setFacts(remapped(facts, i, i + 1));
+                }}>&darr;</a>
               </td>
               <td>
                 <input value={s.numeral}
