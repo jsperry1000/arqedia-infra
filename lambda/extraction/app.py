@@ -72,6 +72,17 @@ def _p(name, value):
     return {"name": name, "value": {"stringValue": str(value)}}
 
 
+def _column_name(column_key):
+    """What a column is called inside its row.
+
+    A column's identity is the group's key and a suffix - f_vessel_carriers.
+    role - and the name is the part after the dot. A key without one was
+    written by a caller that supplied its own, and splitting blindly raised
+    IndexError inside the prompt builder, which stopped extraction on every
+    document carrying a table rather than on the one field at fault."""
+    return column_key.split(".", 1)[1] if "." in column_key else column_key
+
+
 def _unit_word(units):
     """What to call a unit in the prompt: page, sheet or section."""
     return units[0]["kind"] if units else "section"
@@ -93,7 +104,8 @@ def _build_prompt(schema, envelope):
     for field in schema["fields"]:
         field_id, label, ftype, card, desc = field[0], field[1], field[2], field[3], field[4]
         if card == "group":
-            cols = ", ".join('"' + c[0].split(".", 1)[1] + '": string | null' for c in field[5])
+            cols = ", ".join('"' + _column_name(c[0]) + '": string | null'
+                             for c in field[5])
             lines.append('  "' + field_id + '": { "rows": [ { ' + cols +
                          ' } ], "unit": integer | null },  // ' + label + " - " + desc)
             continue
@@ -245,7 +257,7 @@ def _persist(envelope, registry, schema_key, extracted):
                     continue
                 for col in field[5]:
                     col_id = col[0]
-                    cell_value = row.get(col_id.split(".", 1)[1])
+                    cell_value = row.get(_column_name(col_id))
                     if cell_value is None or cell_value == "":
                         continue
                     _write_value(envelope, col_id, cell_value, ordinal,

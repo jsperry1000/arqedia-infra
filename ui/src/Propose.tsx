@@ -168,6 +168,8 @@ export function ProposeView({ onDone, onCancel }: {
   const [types, setTypes] = useState<Record<string, TypeChoice>>({});
 
   const polling = useRef<number | null>(null);
+  // The last snapshot not yet written. Null once it has been.
+  const pending = useRef<{ key: string; snapshot: unknown } | null>(null);
   // A reader that dies mid-read would otherwise leave "section 4 of 13" on
   // screen for ever, which reads as working.
   const polls = useRef(0);
@@ -183,15 +185,25 @@ export function ProposeView({ onDone, onCancel }: {
   // Kept a second or so after the last change, not on every keystroke. The
   // whole of what was decided goes each time - it is a few kilobytes, and a
   // partial write is a worse thing to come back to than a slightly old one.
+  //
+  // The latest of it is also held in a ref, so leaving the screen inside that
+  // second - a click on Engagements, say - flushes rather than drops it.
   useEffect(() => {
-    if (!proposal || proposal.status !== "ready" || !restored) return;
+    if (!proposal || proposal.status !== "ready" || !restored) {
+      pending.current = null;
+      return;
+    }
     const key = proposal.key;
+    const snapshot = {
+      memoLabel, skipped: [...skipped], sections: proposal.sections,
+      facts, types, newGroups, heldGroup, heldEdits,
+    };
+    pending.current = { key, snapshot };
+
     const timer = window.setTimeout(() => {
-      api.saveWorking(key, {
-        memoLabel, skipped: [...skipped], sections: proposal.sections,
-        facts, types, newGroups, heldGroup, heldEdits,
-      })
-        .then(() => setSaved(new Date().toLocaleTimeString()))
+      api.saveWorking(key, snapshot)
+        .then(() => { pending.current = null;
+                      setSaved(new Date().toLocaleTimeString()); })
         .catch(() => setSaved(""));
     }, 1200);
     return () => window.clearTimeout(timer);
@@ -202,8 +214,20 @@ export function ProposeView({ onDone, onCancel }: {
   useEffect(() => {
     api.draft().then(setDraft).catch((e) => setError(message(e)));
     api.proposals().then((r) => setWaiting(r.proposals)).catch(() => {});
+    // A change made in the last second is written when the screen goes away,
+    // whether that is a click on Engagements or the tab being closed.
+    const flush = () => {
+      const p = pending.current;
+      if (!p) return;
+      pending.current = null;
+      api.saveWorking(p.key, p.snapshot).catch(() => {});
+    };
+    window.addEventListener("pagehide", flush);
+
     return () => {
       if (polling.current) window.clearInterval(polling.current);
+      window.removeEventListener("pagehide", flush);
+      flush();
     };
   }, []);
 
@@ -577,10 +601,14 @@ export function ProposeView({ onDone, onCancel }: {
           type: "text",
           cardinality: f.shape,
           description: f.description,
+          // No key. A column's identity is the group's key and a suffix -
+          // f_vessel_carriers.role, not role - and the editor mints it that
+          // way when none is given. Sending a bare slug produced columns
+          // extraction could not read, and it stopped on every document
+          // carrying a table.
           columns: f.shape === "group"
             ? f.columns.filter((c) => c.trim()).map((c) => ({
-                key: slugKey(c), label: c.trim(), type: "text",
-                description: "",
+                label: c.trim(), type: "text", description: "",
               }))
             : [],
         } as never);

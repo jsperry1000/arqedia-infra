@@ -156,6 +156,13 @@ export default function App() {
         <img src="/icon-white.png" alt="" width="22" height="22" />
         <strong>ARQEDIA</strong>
         <span className="muted">{who}</span>
+        {/* Home. Every other screen is reached from here and there was no way
+            back to the list except the Back link on whichever page you were
+            on, which is several clicks from a memo. */}
+        <a className="settings" onClick={() => {
+          setEngagement(null); setMemoId(null);
+          setSettings(false); setConfiguring(false);
+        }}>Engagements</a>
         <a className="settings" onClick={() => { setConfiguring(true); setSettings(false); setMemoId(null); }}>Configure a Report</a>
         <a className="settings" onClick={() => { setSettings(true); setConfiguring(false); setMemoId(null); }}>Settings</a>
         <a onClick={async () => { await signOut(); setSignedIn(false); }}>Sign out</a>

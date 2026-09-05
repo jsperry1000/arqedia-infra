@@ -160,9 +160,11 @@ p.warn { color: #b45309; }
 
 /* --- panel --------------------------------------------------------------- */
 
+/* Above the header, which is sticky at 20. A drawer that opens under the
+   banner has its own close link covered by it. */
 .panel-backdrop {
   position: fixed; inset: 0; background: rgba(13, 27, 42, 0.35);
-  display: flex; justify-content: flex-end; z-index: 10;
+  display: flex; justify-content: flex-end; z-index: 30;
 }
 .panel {
   background: var(--paper); width: min(620px, 92vw); height: 100%;
