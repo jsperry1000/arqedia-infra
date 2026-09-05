@@ -11,14 +11,29 @@ inconsistent: a schema exists before anything routes to it, a field exists
 before a template binds it. Blocking every save would make the editors
 unusable.
 
-One fault is FATAL and refuses the publish:
+Four faults are FATAL and refuse the publish:
 
     a template binding a field that does not exist
+    a table with no group key
+    a table with no columns
+    a column whose key does not begin with its table
 
-That is not a matter of taste. It is the Stage 1 defect: a template naming a
-field the pack did not define produced a memo that confidently reported facts
-as absent when they had been extracted and stored. A memo that is wrong in
-that direction is worse than no memo.
+The first is not a matter of taste. It is the Stage 1 defect: a template
+naming a field the pack did not define produced a memo that confidently
+reported facts as absent when they had been extracted and stored. A memo that
+is wrong in that direction is worse than no memo.
+
+The other three are the same defect wearing a different coat, and they cost a
+session in September. A field carries TWO answers to "is this a table" -
+cardinality and group_key - written by different lines and read by different
+rules. A field saying group with no group_key is read as a single value
+carrying the word "group", and extraction asking it for its columns stopped on
+every document in the tenant. A column key without its table's prefix is
+read by composition as a field in its own right and rendered outside the table
+it belongs to, silently.
+
+None of the three was caught, so a broken revision published and reached
+fifty-six documents. Refused here, none of them can.
 
 Three faults are WARNINGS, shown and not blocking:
 
@@ -258,6 +273,74 @@ def validate(tenant_id, revision=DRAFT):
             "detail": "Section '%s' renders '%s', which no schema defines. "
                       "The memo would report it as absent whether or not it "
                       "was extracted." % (_col(r, 0), _col(r, 1)),
+        })
+
+    # FATAL. A field whose cardinality says table but which carries no group
+    # key. A COLUMN also says group and points at its table, so the test is
+    # group_key IS NULL and nothing wider: "group_key <> field_key" would
+    # match every column in the tenant and refuse every publish. config.py reads a row with no group_key as a single value, so this
+    # arrives downstream as a five-part tuple calling itself a group, and
+    # asking it for its columns raises IndexError on every document that
+    # reaches it. save_field once set group_key on insert and not on update,
+    # so changing a field's shape produced exactly this.
+    for r in rows(
+        """
+        SELECT field_key, label FROM config_field
+        WHERE tenant_id = :t AND revision = :r
+          AND cardinality = 'group' AND group_key IS NULL
+        ORDER BY sort_order
+        """
+    ):
+        fatal.append({
+            "kind": "table-without-group-key",
+            "field": _col(r, 0),
+            "detail": "'%s' is a table but is not recorded as one. Nothing "
+                      "would be read from any document carrying it. Change "
+                      "its shape to a single value and back, or delete and "
+                      "recreate it." % _col(r, 1),
+        })
+
+    # FATAL. A table with no columns holds nothing, and the prompt built from
+    # it asks the model for an empty row.
+    for r in rows(
+        """
+        SELECT g.field_key, g.label FROM config_field g
+        LEFT JOIN config_field c
+          ON c.tenant_id = g.tenant_id AND c.revision = g.revision
+         AND c.group_key = g.field_key AND c.field_key <> g.field_key
+        WHERE g.tenant_id = :t AND g.revision = :r
+          AND g.cardinality = 'group' AND g.group_key = g.field_key
+          AND c.field_key IS NULL
+        ORDER BY g.sort_order
+        """
+    ):
+        fatal.append({
+            "kind": "table-without-columns",
+            "field": _col(r, 0),
+            "detail": "'%s' is a table with no columns, so it holds nothing. "
+                      "Name what each row should carry." % _col(r, 1),
+        })
+
+    # FATAL. A column's identity is its table's key and a suffix. Four places
+    # recover the table by splitting on the dot; a column without one is read
+    # as a field in its own right and rendered outside its table.
+    for r in rows(
+        """
+        SELECT field_key, label, group_key FROM config_field
+        WHERE tenant_id = :t AND revision = :r
+          AND group_key IS NOT NULL AND field_key <> group_key
+          AND field_key NOT LIKE CONCAT(group_key, '.%')
+        ORDER BY sort_order
+        """
+    ):
+        fatal.append({
+            "kind": "column-without-its-table",
+            "field": _col(r, 0),
+            "detail": "Column '%s' is identified as '%s' rather than "
+                      "'%s.%s'. It would be read as a fact of its own and "
+                      "rendered outside its table. Delete the column and add "
+                      "it again." % (_col(r, 1), _col(r, 0),
+                                     _col(r, 2), _col(r, 0)),
         })
 
     # WARNING. A type routing to nothing files documents that extract nothing.

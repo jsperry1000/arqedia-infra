@@ -186,10 +186,15 @@ def draft(tenant_id):
         group = _col(r, 5)
         if group and group != key:
             continue
+        # is_group from cardinality, which is what every other reader uses.
+        # Derived from group_key it disagreed with the cardinality in the
+        # same payload, so the screen drew a column editor for a field the
+        # same response said was not a table.
         fields.append({
             "key": key, "label": _col(r, 1), "type": _col(r, 2),
             "cardinality": _col(r, 3), "description": _col(r, 4),
-            "is_group": bool(group), "columns": columns.get(key, []),
+            "is_group": _col(r, 3) == "group",
+            "columns": columns.get(key, []),
             "found_in": sorted(found_in.get(key, [])),
         })
 
@@ -546,19 +551,32 @@ def save_field(tenant_id, body):
         VALUES (:t, :r, :s, :k, :label, :type, :card, :desc, :grp, :sort)
         ON DUPLICATE KEY UPDATE
           label = :label, field_type = :type, cardinality = :card,
-          description = :desc, sort_order = :sort
+          description = :desc, group_key = :grp, sort_order = :sort
         """, [
         _p("t", tenant_id), _p("r", DRAFT), _p("s", schema_key), _p("k", key),
         _p("label", body.get("label") or key),
         _p("type", body.get("type") or "text"),
         _p("card", body.get("cardinality") or "one"),
         _p("desc", body.get("description")),
+        # UPDATED AS WELL AS INSERTED. A field carries two answers to "is
+        # this a table" - cardinality and group_key - and this clause set
+        # only the first. Changing a field's shape left group_key null, the
+        # registry read it as a single value calling itself a group, and
+        # extraction stopped on every document in the tenant.
         _p("grp", key if body.get("cardinality") == "group" else None),
         _p("sort", int(body.get("sort_order") or 0)),
     ])
 
     if body.get("cardinality") == "group":
         _save_columns(tenant_id, schema_key, key, body.get("columns") or [])
+    else:
+        # No longer a table. Its columns go with it: left behind they point
+        # at a field that is not a group, so the registry drops them from
+        # every schema and the editor hides them - rows nothing can see and
+        # nothing can reach.
+        _sql("DELETE FROM config_field WHERE tenant_id = :t AND revision = :r "
+             "AND group_key = :g AND field_key <> :g",
+             [_p("t", tenant_id), _p("r", DRAFT), _p("g", key)])
 
     return {"key": key}
 
@@ -579,6 +597,18 @@ def _save_columns(tenant_id, schema_key, group_key, columns):
             continue
         key = col.get("key") or (
             group_key + "." + _slug(label).replace("-", "_"))
+
+        # A column's identity is its table's key and a suffix. Composition
+        # recovers the table by splitting on the dot, so a column without one
+        # is read as a fact in its own right and rendered outside the table it
+        # belongs to - silently, which is worse than the crash it caused in
+        # extraction. A caller supplying its own key is refused rather than
+        # trusted.
+        if not key.startswith(group_key + "."):
+            raise ValueError(
+                "a column of '%s' must be identified as '%s.something'; "
+                "'%s' would be read as a fact of its own"
+                % (group_key, group_key, key))
 
         # A column's identity is the group's key plus a suffix, so it can
         # exceed what the group alone would. Refused here rather than
