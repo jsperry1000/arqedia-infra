@@ -225,6 +225,23 @@ export function EngagementView({ id, onBack, onMemo }: {
     return sortDown ? " \u2193" : " \u2191";
   }
 
+  // Filed and Memos start closed. Fifty documents and a list of memoranda
+  // push the thing a person came here to do - upload, and file what came
+  // back - off the bottom of the screen.
+  const [shut, setShut] = useState<Set<string>>(new Set(["filed", "memos"]));
+  const part = (key: string, label: string, count: string) => (
+    <h3>
+      <a onClick={() => {
+        const next = new Set(shut);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        setShut(next);
+      }}>
+        {shut.has(key) ? "\u25b8" : "\u25be"} {label}
+      </a>{" "}
+      <span className="muted small">{count}</span>
+    </h3>
+  );
+
   return (
     <div>
       <a onClick={onBack} className="back">Back</a>
@@ -317,11 +334,14 @@ export function EngagementView({ id, onBack, onMemo }: {
         </>
       )}
 
-      <h3>Filed</h3>
+      {part("filed", "Filed",
+            `${docs.length} ${docs.length === 1 ? "document" : "documents"}`)}
 
-      {docs.length === 0 && <p className="muted">Nothing filed yet.</p>}
+      {!shut.has("filed") && docs.length === 0 && (
+        <p className="muted">Nothing filed yet.</p>
+      )}
 
-      {docs.length > 0 && (
+      {!shut.has("filed") && docs.length > 0 && (
         <>
           <div className="filters">
             <input
@@ -391,7 +411,10 @@ export function EngagementView({ id, onBack, onMemo }: {
         </>
       )}
 
-      <h3>Memos</h3>
+      {part("memos", "Memos",
+            `${memos.length} ${memos.length === 1 ? "memo" : "memos"}`)}
+
+      {!shut.has("memos") && (<>
 
       {templates.length > 1 && (
         <div className="filters">
@@ -437,6 +460,8 @@ export function EngagementView({ id, onBack, onMemo }: {
           ))}
         </tbody>
       </table>
+
+      </>)}
 
       {detail && <ValuePanel detail={detail} onClose={() => setDetail(null)} />}
 
