@@ -4,6 +4,7 @@ import {
   type Draft,
   type Proposal,
   type ProposedFact,
+  type ProposalRef,
   type ConfigColumn,
 } from "./api";
 
@@ -144,6 +145,12 @@ export function ProposeView({ onDone, onCancel }: {
   const [shownSection, setShownSection] = useState<number | null>(null);
   // Which fact is open over the page.
   const [openFact, setOpenFact] = useState<string | null>(null);
+  // Everything the person has decided, kept beside the proposal as they
+  // decide it. Restored on the way back in, so a closed tab, a refresh or an
+  // accept that stops part way costs nothing.
+  const [restored, setRestored] = useState(false);
+  const [saved, setSaved] = useState("");
+  const [waiting, setWaiting] = useState<ProposalRef[]>([]);
   // Amending a field the tenant already holds - its wording, or the columns
   // of a table. Held here and written at Accept with everything else, so the
   // screen keeps its promise that nothing is saved until then.
@@ -173,8 +180,28 @@ export function ProposeView({ onDone, onCancel }: {
     return text;
   }
 
+  // Kept a second or so after the last change, not on every keystroke. The
+  // whole of what was decided goes each time - it is a few kilobytes, and a
+  // partial write is a worse thing to come back to than a slightly old one.
+  useEffect(() => {
+    if (!proposal || proposal.status !== "ready" || !restored) return;
+    const key = proposal.key;
+    const timer = window.setTimeout(() => {
+      api.saveWorking(key, {
+        memoLabel, skipped: [...skipped], sections: proposal.sections,
+        facts, types, newGroups, heldGroup, heldEdits,
+      })
+        .then(() => setSaved(new Date().toLocaleTimeString()))
+        .catch(() => setSaved(""));
+    }, 1200);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proposal, memoLabel, skipped, facts, types, newGroups, heldGroup,
+      heldEdits, restored]);
+
   useEffect(() => {
     api.draft().then(setDraft).catch((e) => setError(message(e)));
+    api.proposals().then((r) => setWaiting(r.proposals)).catch(() => {});
     return () => {
       if (polling.current) window.clearInterval(polling.current);
     };
@@ -212,7 +239,14 @@ export function ProposeView({ onDone, onCancel }: {
               || p.status === "nothing-found" || p.status === "failed"
               || p.status === "model-unavailable") {
             stop();
-            if (p.status === "ready") prepare(p);
+            if (p.status === "ready") {
+              // A proposal read before and left. Its decisions come back
+              // rather than being started again.
+              api.working(key)
+                .then(({ working: w }) =>
+                  w ? restore(p, w as Working) : prepare(p))
+                .catch(() => prepare(p));
+            }
             return;
           }
 
@@ -247,6 +281,52 @@ export function ProposeView({ onDone, onCancel }: {
    * Assets in three sections is naming one fact three times, and creating
    * three fields would leave two of them empty for ever.
    */
+  /** Everything decided about a proposal, in one object. Kept beside the
+   *  proposal rather than inside it: the reader owns that one and the person
+   *  owns this, so neither can overwrite the other. */
+  type Working = {
+    memoLabel: string;
+    skipped: number[];
+    sections: Proposal["sections"];
+    facts: Record<string, FactChoice>;
+    types: Record<string, TypeChoice>;
+    newGroups: { key: string; label: string }[];
+    heldGroup: Record<string, string>;
+    heldEdits: Record<string, {
+      label: string; description: string | null; cardinality: string;
+      columns: ConfigColumn[];
+    }>;
+  };
+
+  /** Put back what was decided last time. */
+  function restore(p: Proposal, w: Working) {
+    setMemoLabel(w.memoLabel);
+    setSkipped(new Set(w.skipped ?? []));
+    setFacts(w.facts ?? {});
+    setTypes(w.types ?? {});
+    setNewGroups(w.newGroups ?? []);
+    setHeldGroup(w.heldGroup ?? {});
+    setHeldEdits(w.heldEdits ?? {});
+    if (w.sections?.length) setProposal({ ...p, sections: w.sections });
+    setRestored(true);
+  }
+
+  /** A proposal already read, opened again. */
+  async function reopen(key: string) {
+    setError("");
+    setBusy("Opening");
+    try {
+      const p = await api.proposal(key);
+      setProposal(p);
+      const { working: w } = await api.working(key);
+      if (w) restore(p, w as Working); else prepare(p);
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setBusy("");
+    }
+  }
+
   function prepare(p: Proposal) {
     setMemoLabel(p.memorandum_label || "My memorandum");
 
@@ -332,6 +412,7 @@ export function ProposeView({ onDone, onCancel }: {
       };
     }
     setTypes(gathered);
+    setRestored(true);
   }
 
   // --- accepting ----------------------------------------------------------
@@ -572,9 +653,12 @@ export function ProposeView({ onDone, onCancel }: {
       setWritten(done);
       setResult({ ok: true, templateKey: made_key });
     } catch (e) {
+      // Stay on the screen. Replacing it with a result threw away every
+      // decision the person had made, which cost an hour of somebody's
+      // judgement for a duplicate key on the very last write.
       setBusy("");
       setWritten(done);
-      setResult({ ok: false, error: message(e), templateKey: made_key });
+      setError(message(e));
     }
   }
 
@@ -638,6 +722,32 @@ export function ProposeView({ onDone, onCancel }: {
           {draft ? "PDF or Word." : "Loading your configuration\u2026"}
         </p>
         {busy && <p className="busy">{busy}&hellip;</p>}
+
+        {/* Reports read before and not yet accepted. A person can put one
+            down and come back to it, decisions and all. */}
+        {waiting.length > 0 && (
+          <>
+            <h3>Or carry on with one you started</h3>
+            <table className="docs">
+              <tbody>
+                {waiting.map((w) => (
+                  <tr key={w.key}>
+                    <td>
+                      <a onClick={() => reopen(w.key)}>
+                        {w.memorandum_label || w.filename}
+                      </a>
+                      <div className="muted small">{w.filename}</div>
+                    </td>
+                    <td className="muted small">
+                      {w.sections} {w.sections === 1 ? "section" : "sections"}
+                    </td>
+                    <td className="muted small">{w.read_at}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
       </div>
     );
   }
@@ -1456,8 +1566,13 @@ export function ProposeView({ onDone, onCancel }: {
       <a onClick={onCancel} className="back">Back</a>
       <h2>What we found in your report</h2>
       <p className="muted">
-        Correct anything that is wrong. Nothing here has been saved.
+        Correct anything that is wrong. Nothing reaches your configuration
+        until you accept it, but what you decide here is kept as you go &mdash;
+        close this and come back to it.
       </p>
+      {saved && (
+        <p className="muted small">Your decisions were kept at {saved}.</p>
+      )}
       {error && <p className="error">{error}</p>}
       {busy && <p className="busy">{busy}&hellip;</p>}
 
@@ -2003,6 +2118,21 @@ export function ProposeView({ onDone, onCancel }: {
                   {" \u00b7 a document"}
                 </li>
               ))}
+          </ul>
+        </div>
+      )}
+
+      {written.length > 0 && (
+        <div className="revision-note">
+          <strong>An earlier attempt stopped part way.</strong>
+          <p className="muted small">
+            What is listed below is already in your draft. Everything is
+            written under a name rather than a number, so accepting again
+            writes the same things and finishes the rest. Nothing is
+            duplicated.
+          </p>
+          <ul className="muted small">
+            {written.map((w, i) => <li key={i}>{w}</li>)}
           </ul>
         </div>
       )}

@@ -39,6 +39,9 @@ charged for.
   POST /config/draft/sample              a signed link to upload one sample
   POST /config/draft/propose             read it, and propose a configuration
   GET  /config/draft/proposal            what it has proposed so far
+  GET  /config/draft/proposals           proposals read and not yet accepted
+  GET  /config/draft/working             what has been decided about one
+  PUT  /config/draft/working             keep what has been decided
 """
 
 import datetime
@@ -1182,6 +1185,86 @@ def proposal(tenant_id, key):
     return json.loads(body.decode("utf-8"))
 
 
+def save_working(tenant_id, key, working):
+    """The decisions a person has made about a proposal, kept as they make
+    them.
+
+    Reading a report is minutes of machine time; deciding what it proposed is
+    an hour of a person's. Held only in the browser, that hour was lost to a
+    closed tab, a stray refresh, or an accept that stopped part way - which is
+    what happened, and is why this exists.
+
+    Beside the proposal, not inside it: the reader owns one object and the
+    person owns the other, so neither can overwrite the other's work."""
+    key = _own_sample(tenant_id, key)
+    _s3.put_object(
+        Bucket=REVIEW_BUCKET,
+        Key=key + ".working.json",
+        Body=json.dumps(working, ensure_ascii=False).encode("utf-8"),
+        ContentType="application/json",
+    )
+    return {"saved": True, "key": key}
+
+
+def working(tenant_id, key):
+    """What was decided, if anything was. Absent is the ordinary case - a
+    proposal just read has nothing decided about it yet."""
+    key = _own_sample(tenant_id, key)
+    try:
+        body = _s3.get_object(Bucket=REVIEW_BUCKET,
+                              Key=key + ".working.json")["Body"].read()
+    except ClientError:
+        return {"key": key, "working": None}
+    return {"key": key, "working": json.loads(body.decode("utf-8"))}
+
+
+def proposals(tenant_id):
+    """Every proposal this tenant has read and not yet accepted.
+
+    Listed so a person can put one down and pick it up tomorrow. The sample
+    itself is long gone - the reader deletes it - so what is listed here is
+    the proposal and whatever was decided about it."""
+    prefix = _sample_prefix(tenant_id)
+    found = {}
+
+    token = None
+    while True:
+        args = {"Bucket": REVIEW_BUCKET, "Prefix": prefix}
+        if token:
+            args["ContinuationToken"] = token
+        page = _s3.list_objects_v2(**args)
+
+        for obj in page.get("Contents", []):
+            name = obj["Key"]
+            if not name.endswith(".proposal.json"):
+                continue
+            sample = name[: -len(".proposal.json")]
+            found[sample] = obj["LastModified"].strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        if not page.get("IsTruncated"):
+            break
+        token = page.get("NextContinuationToken")
+
+    out = []
+    for sample, at in sorted(found.items(), key=lambda kv: kv[1], reverse=True):
+        try:
+            body = _s3.get_object(Bucket=REVIEW_BUCKET,
+                                  Key=sample + ".proposal.json")["Body"].read()
+            p = json.loads(body.decode("utf-8"))
+        except (ClientError, ValueError):
+            continue
+        out.append({
+            "key": sample,
+            "filename": sample.rsplit("/", 1)[-1],
+            "status": p.get("status"),
+            "memorandum_label": p.get("memorandum_label"),
+            "sections": len(p.get("sections") or []),
+            "requested_by": p.get("requested_by"),
+            "read_at": at,
+        })
+    return {"proposals": out}
+
+
 # --- dispatch --------------------------------------------------------------
 
 def lambda_handler(event, context):
@@ -1348,6 +1431,19 @@ def lambda_handler(event, context):
 
         if route == "GET /config/draft/proposal":
             return _reply(200, proposal(tenant_id, query.get("key", "")))
+
+        if route == "GET /config/draft/proposals":
+            _require_admin(role)
+            return _reply(200, proposals(tenant_id))
+
+        if route == "GET /config/draft/working":
+            return _reply(200, working(tenant_id, query.get("key", "")))
+
+        if route == "PUT /config/draft/working":
+            _require_admin(role)
+            body = json.loads(event.get("body") or "{}")
+            return _reply(200, save_working(
+                tenant_id, body.get("key", ""), body.get("working") or {}))
 
         # --- editing the draft -----------------------------------------
         if route == "GET /config/draft":
