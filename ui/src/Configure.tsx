@@ -338,14 +338,20 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
         </select>
       </label>
 
-      {s.kind === "composed" && (
-        <label className="row">
-          <span>Instruction</span>
-          <textarea rows={4} value={s.prompt}
-            placeholder="What this section should say, and what it must not."
-            onChange={(e) => setS({ ...s, prompt: e.target.value })} />
-        </label>
-      )}
+      {/* On both kinds now. An assembled section is written up by a second
+          pass, and that pass had no instruction from the tenant at all - its
+          only shaping came from a table inside the product, keyed on our own
+          section names. A field description asking for three paragraphs
+          shaped what was EXTRACTED and never reached the writer. */}
+      <label className="row">
+        <span>How it should read</span>
+        <textarea rows={4} value={s.prompt}
+          onChange={(e) => setS({ ...s, prompt: e.target.value })}
+          placeholder={s.kind === "composed"
+            ? "What this section should say, and what it must not."
+            : "How this section should read \u2014 its length, whether it is "
+              + "prose or a table, what to leave out."} />
+      </label>
 
       <KeyLine value={key} />
 
