@@ -358,15 +358,30 @@ def _consolidate(section, markdown):
     Citations are masked before the call and restored after, so consolidation
     cannot rewrite them. That is deterministic on the TEXT of a citation. It
     is not deterministic on which statement a citation ends up attached to -
-    the model still moves the tokens - and nothing here can verify that."""
+    the model still moves the tokens - and nothing here can verify that.
+
+    THE SECTION'S OWN PROMPT DECIDES ITS SHAPE, where it has one. Before, the
+    only shaping came from a dictionary in cleanup.py keyed on the pack's own
+    section keys, so a tenant's own section got none at all - and a field
+    description asking for three paragraphs shaped EXTRACTION, per document,
+    and never reached the writer. A tenant wrote an instruction, saw it obeyed
+    nowhere, and had no way to find out why.
+
+    It replaces rather than adds: a tenant who has written what a section
+    should look like meant that, not that on top of ours. The built-in shaping
+    remains the fallback, so the pack's tables keep working untouched."""
     if not markdown.strip():
         return markdown, {}
 
     masked, tokens = _mask_citations(markdown[:_SECTION_INPUT_CHARS])
 
+    shape = (section.get("prompt") or "").strip()
+    shape = "\n" + shape + "\n" if shape else cleanup.presentation_for(
+        section["key"])
+
     prompt = (
         cleanup.CLEANUP_PROMPT
-        + cleanup.presentation_for(section["key"])
+        + shape
         + cleanup.CITATION_TOKENS
         + "\n\n--- SECTION START ---\n"
         + "## {}. {}\n\n".format(section["num"], section["title"])
@@ -380,6 +395,11 @@ def _consolidate(section, markdown):
     if dropped:
         print("[citations-dropped] section=%s count=%d of %d" % (
             section["key"], len(dropped), len(tokens)))
+
+    print("[consolidated] section=%s shaped_by=%s" % (
+        section["key"],
+        "section prompt" if (section.get("prompt") or "").strip()
+        else "built-in"))
 
     return text + "\n", usage
 
