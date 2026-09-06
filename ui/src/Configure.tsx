@@ -399,6 +399,36 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // one save rather than a dozen.
   const [typeFields, setTypeFields] = useState<string[]>([]);
 
+  // The page is five long parts. Closed to begin with, so a person arrives
+  // at a list of what is here rather than the middle of the fields table.
+  const [shut, setShut] = useState<Set<string>>(new Set(
+    ["says", "needs", "documents", "groups"]));
+
+  const part = (key: string, label: string, count: string) => (
+    <h3>
+      <a onClick={() => {
+        const next = new Set(shut);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        setShut(next);
+      }}>
+        {shut.has(key) ? "\u25b8" : "\u25be"} {label}
+      </a>{" "}
+      <span className="muted small">{count}</span>
+    </h3>
+  );
+
+  /** Move a section one place. Two saves, because the order is a number on
+   *  each row rather than a list - the pair swap their places. */
+  const move = (at: number, to: number) => {
+    const a = sections[at];
+    const b = sections[to];
+    if (!a || !b) return;
+    act("Reordering", async () => {
+      await api.saveSection({ ...a, sort_order: to + 1 });
+      await api.saveSection({ ...b, sort_order: at + 1 });
+    });
+  };
+
   function message(err: unknown) {
     let text = String((err as Error)?.message ?? err);
     try { text = JSON.parse(text).error ?? text; } catch { /* as it came */ }
@@ -667,7 +697,9 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       )}
 
       {/* 1 --- what the report says ---------------------------------------- */}
-      <h3>What the report says</h3>
+      {part("says", "What the report says", `${sections.length} ${sections.length === 1 ? "section" : "sections"}`)}
+
+      {!shut.has("says") && (<>
       <p className="muted small">
         Each section of the memorandum, in order. A section renders the fields
         bound to it and nothing else.
@@ -752,9 +784,16 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         />
       )}
 
-      {sections.map((s) => (
+      {sections.map((s, i) => (
         <div className="review" key={s.key}>
           <div className="review-head">
+            {/* The order the memorandum reads in. There was no way to change
+                it, so a memorandum whose sections all sat at zero stayed in
+                whatever order the database returned. */}
+            <span className="muted small">
+              <a onClick={() => move(i, i - 1)}>&uarr;</a>{" "}
+              <a onClick={() => move(i, i + 1)}>&darr;</a>
+            </span>
             <label>
               <strong>{s.numeral}. {s.title}</strong>
             </label>
@@ -824,7 +863,11 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       </p>
 
       {/* 2 --- what it needs ----------------------------------------------- */}
-      <h3>What it needs</h3>
+      </>)}
+
+      {part("needs", "What it needs", `${draft?.fields.length ?? 0} facts`)}
+
+      {!shut.has("needs") && (<>
       <p className="muted small">
         Every fact the report can draw on. A field bound to no section is
         extracted and never read; one found in no document is never extracted.
@@ -943,7 +986,11 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       )}
 
       {/* 4 --- the documents ------------------------------------------------ */}
-      <h3>The documents</h3>
+      </>)}
+
+      {part("documents", "The documents", `${draft?.document_types.length ?? 0} kinds`)}
+
+      {!shut.has("documents") && (<>
       <p className="muted small">
         What a customer might send you. The description is what the system
         reads to tell one document from another, so it is worth writing well.
@@ -1066,7 +1113,11 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       )}
 
       {/* 4b --- how documents group ----------------------------------------- */}
-      <h3>How documents group</h3>
+      </>)}
+
+      {part("groups", "How documents group", `${draft?.categories.length ?? 0} groups`)}
+
+      {!shut.has("groups") && (<>
       <p className="muted small">
         Grouping is for the eye alone &mdash; it decides how documents are
         listed when somebody confirms what one is. It has no effect on what is
@@ -1110,6 +1161,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       </a>
 
       {/* 5 --- publish ------------------------------------------------------ */}
+      </>)}
+
       <h3>Publish</h3>
 
       {validation && validation.warnings.length > 0 && (
