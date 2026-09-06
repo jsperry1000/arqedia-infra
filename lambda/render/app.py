@@ -169,7 +169,7 @@ _CITATIONS = []
 _CITATION_INDEX = {}
 
 
-def _reference_section(styles):
+def _reference_section(styles, palette):
     """Every citation, numbered, at the end.
 
     Built after the body, because the numbers are assigned as the body is
@@ -178,8 +178,11 @@ def _reference_section(styles):
     if not _CITATIONS:
         return []
 
+    # Banded, like every other section heading. Left as a bare paragraph it
+    # would now be white text on a white page.
     out = [Spacer(1, 18),
-           Paragraph("References", styles["section"])]
+           _heading_band("References", styles, palette, "section"),
+           Spacer(1, 8)]
 
     # Guarded like every other paragraph. This one is built here rather than
     # from model text, which is why it was left unguarded - but it interpolates
@@ -442,8 +445,40 @@ def _table(header, rows, styles, palette):
         ("LINEBELOW", (0, 0), (-1, -2), 0.4, style.LINE),
     ]
     if header:
-        commands.append(("BACKGROUND", (0, 0), (-1, 0), palette["deep"]))
+        # A rule, not a band. Filled, the header sat under the mid band of a
+        # sub-heading as a second bar of colour, and a table read as another
+        # division of the memorandum rather than part of one. A rule marks
+        # the header without competing with the heading above it.
+        commands.append(("LINEBELOW", (0, 0), (-1, 0), 2.2,
+                         palette["highlight"]))
     table.setStyle(TableStyle(commands))
+    return table
+
+
+def _heading_band(text, styles, palette, kind):
+    """A heading on a full-width band rather than on the page.
+
+    A section takes the deep colour and a sub-heading the mid, so the two
+    levels are told apart at a glance rather than by reading them - which is
+    what a bold line of black text on white asks a reader to do.
+
+    Returned as a table because reportlab has no background on a paragraph.
+    It carries a marker so _take_trailing_heading still recognises it: that
+    test was on the paragraph style, and a banded heading is no longer a
+    paragraph."""
+    fill = palette["deep"] if kind == "section" else palette["mid"]
+    pad = 7 if kind == "section" else 5
+
+    table = Table([[_para(text, styles[kind])]],
+                  colWidths=[style.CONTENT_WIDTH])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), fill),
+        ("TOPPADDING", (0, 0), (-1, -1), pad),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), pad),
+        ("LEFTPADDING", (0, 0), (-1, -1), 9),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+    ]))
+    table._arqedia_heading = kind
     return table
 
 
@@ -520,8 +555,14 @@ def _take_trailing_heading(flow):
     while flow and isinstance(flow[-1], Spacer):
         trailing.insert(0, flow.pop())
 
-    if flow and isinstance(flow[-1], Paragraph) and \
-            getattr(flow[-1].style, "name", "") in ("section", "subsection"):
+    # Either shape: a heading is a banded table now, and was a paragraph
+    # before. Both are checked so nothing depends on which it happens to be.
+    last = flow[-1] if flow else None
+    banded = getattr(last, "_arqedia_heading", None) is not None
+    plain = isinstance(last, Paragraph) and \
+        getattr(last.style, "name", "") in ("section", "subsection")
+
+    if banded or plain:
         heading = flow.pop()
         flow.extend(trailing)
         return heading
@@ -607,11 +648,17 @@ def to_flowables(markdown, styles, palette):
         # The title is drawn in the masthead, so h1 is dropped rather than
         # repeated in the body.
         if stripped.startswith("### "):
-            flow.append(_para(stripped[4:], styles["subsection"]))
+            flow.append(Spacer(1, 11))
+            flow.append(_heading_band(stripped[4:], styles, palette,
+                                      "subsection"))
+            flow.append(Spacer(1, 5))
             i += 1
             continue
         if stripped.startswith("## "):
-            flow.append(_para(stripped[3:], styles["section"]))
+            flow.append(Spacer(1, 18))
+            flow.append(_heading_band(stripped[3:], styles, palette,
+                                      "section"))
+            flow.append(Spacer(1, 8))
             i += 1
             continue
         if stripped.startswith("# ") or stripped.startswith("---"):
@@ -951,7 +998,7 @@ def lambda_handler(event, context):
 
     _reset_citations()
     flow = to_flowables(markdown, styles, palette)
-    flow.extend(_reference_section(styles))
+    flow.extend(_reference_section(styles, palette))
 
     doc.build(flow, canvasmaker=make_canvas)
 
