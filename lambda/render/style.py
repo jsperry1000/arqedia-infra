@@ -83,23 +83,27 @@ def build_styles(palette):
     return {
         "body": base,
 
+        # Headings sit on a band rather than on the page, so their text is
+        # reversed out. The spacing lives on the band, not here: a paragraph
+        # inside a table cell keeps no space of its own.
         "section": ParagraphStyle(
             "section", parent=base,
             fontName="Helvetica-Bold", fontSize=13, leading=17,
-            textColor=deep, spaceBefore=18, spaceAfter=7),
+            textColor=colors.white, spaceBefore=0, spaceAfter=0),
 
         "subsection": ParagraphStyle(
             "subsection", parent=base,
             fontName="Helvetica-Bold", fontSize=9.5, leading=13,
-            textColor=INK, spaceBefore=11, spaceAfter=4),
+            textColor=colors.white, spaceBefore=0, spaceAfter=0),
 
         "cell": ParagraphStyle(
             "cell", parent=base, fontSize=8.5, leading=11.5, spaceAfter=0),
 
+        # On the page above a highlight rule, not reversed out of a band.
         "cellhead": ParagraphStyle(
             "cellhead", parent=base,
             fontName="Helvetica-Bold", fontSize=7.5, leading=10,
-            textColor=colors.white, spaceAfter=0),
+            textColor=deep, spaceAfter=0),
 
         "label": ParagraphStyle(
             "label", parent=base,
