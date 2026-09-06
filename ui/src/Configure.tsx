@@ -467,14 +467,24 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     return map;
   }, [draft]);
 
+  // Every fact the tenant holds, alphabetical. Used wherever a person is
+  // choosing from the whole vocabulary - a section's facts, a document's.
+  const allFields = useMemo(
+    () => [...(draft?.fields ?? [])]
+      .sort((a, b) => a.label.localeCompare(b.label)),
+    [draft]);
+
+  // The same list narrowed by the filter box, and used ONLY by the table that
+  // box sits above. It was used by the section and document tick lists too,
+  // so typing in a filter halfway down the page silently emptied controls
+  // elsewhere on it - a section reading "3 fields" and offering one, with
+  // nothing on screen to connect the two.
   const sortedFields = useMemo(() => {
     const needle = fieldFilter.trim().toLowerCase();
-    return [...(draft?.fields ?? [])]
-      .filter((f) => !needle ||
-        f.label.toLowerCase().includes(needle) ||
-        (f.description ?? "").toLowerCase().includes(needle))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [draft, fieldFilter]);
+    return allFields.filter((f) => !needle ||
+      f.label.toLowerCase().includes(needle) ||
+      (f.description ?? "").toLowerCase().includes(needle));
+  }, [allFields, fieldFilter]);
 
   // Documents as they are grouped for the person who has to say what one is,
   // and alphabetical within each group. Categories keep the order the
@@ -815,7 +825,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 that no longer exists would report it absent whether or not it
                 was found, so that is refused here rather than at publish.
               </p>
-              {sortedFields.map((f) => {
+              {allFields.map((f) => {
                 const on = s.fields.includes(f.key);
                 return (
                   <label className="bind" key={f.key}>
@@ -1080,7 +1090,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             </p>
 
             <div className="binder">
-              {sortedFields.map((f) => {
+              {allFields.map((f) => {
                 const on = typeFields.includes(f.key);
                 return (
                   <label className="bind" key={f.key}>
