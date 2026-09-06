@@ -148,6 +148,10 @@ export type ConfigSection = {
   prompt: string | null;
   template_key: string;
   fields: string[];
+  // The order the memorandum reads in. Sent on every save: left to default
+  // it goes to zero, and a memorandum whose sections all sit at zero comes
+  // out in whatever order the database happens to return.
+  sort_order: number;
 };
 
 export type ConfigColumn = {
