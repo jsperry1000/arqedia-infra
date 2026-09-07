@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   type ConfigCategory,
@@ -311,6 +311,11 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
   });
   const key = s.key ?? slugKey(s.title);
 
+  const dirty = s.numeral !== (initial?.numeral ?? "")
+    || s.title !== (initial?.title ?? "")
+    || s.kind !== (initial?.kind ?? "extract")
+    || s.prompt !== (initial?.prompt ?? "");
+
   return (
     <div className="form">
       <h4>{existing ? "Edit section" : "New section"}</h4>
@@ -358,7 +363,14 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
       <div className="form-actions">
         <button disabled={!s.title.trim()}
                 onClick={() => onSave({ ...s, key })}>Save</button>
-        <a className="secondary" onClick={onCancel}>Cancel</a>
+        {/* Asked before an edit is thrown away. Clicking Edit on another
+            section closes this one, and without the check a rewritten
+            instruction would go with it silently. */}
+        <a className="secondary" onClick={() => {
+          if (dirty && !window.confirm(
+            "Leave this section? What you changed is not saved.")) return;
+          onCancel();
+        }}>Cancel</a>
         {existing && onDelete && (
           <a className="danger small" onClick={onDelete}>
             Delete this section
@@ -379,11 +391,41 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // How the person is starting. One of our memoranda, an empty one of their
   // own, or one read from a report they already write.
   const [start, setStart] = useState("");
+  // What is being typed into a position box, until it is left. Saving on
+  // every keystroke would move the row out from under the cursor as soon as
+  // the first digit of "10" was typed.
+  const [order, setOrder] = useState<Record<string, string>>({});
+
+  // A click anywhere else closes the open field list. It stayed open until
+  // Close was found, and with ten sections that is a page of tick lists.
+  const openList = useRef<HTMLDivElement | null>(null);
+
+  /** A memorandum by the name a person gave it. */
+  const labelOf = (key: string) =>
+    templates.find((t) => t.key === key)?.label ?? key;
+
   const [proposing, setProposing] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [openSection, setOpenSection] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!openSection) return;
+    const away = (e: MouseEvent) => {
+      const box = openList.current;
+      const at = e.target as Node | null;
+      // Inside the list, or on the row that opened it: leave it be. The row
+      // carries Close and Edit, and closing before those fire would make
+      // them do nothing.
+      if (!box || !at) return;
+      if (box.contains(at)) return;
+      if (box.parentElement && box.parentElement.contains(at)) return;
+      setOpenSection(null);
+    };
+    document.addEventListener("mousedown", away);
+    return () => document.removeEventListener("mousedown", away);
+  }, [openSection]);
   // Which memorandum is being edited. A tenant may hold a credit, a KYC and a
   // lender memorandum over the same documents.
   const [template, setTemplate] = useState("");
@@ -423,15 +465,25 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     </h3>
   );
 
-  /** Move a section one place. Two saves, because the order is a number on
-   *  each row rather than a list - the pair swap their places. */
-  const move = (at: number, to: number) => {
-    const a = sections[at];
-    const b = sections[to];
-    if (!a || !b) return;
+  /** Put a section at a position and renumber the rest.
+   *
+   *  Typing the place is one edit where the arrows were nine clicks to move
+   *  a section from the bottom to the top. Every section is renumbered from
+   *  one afterwards, so two sections cannot share a number and tie - which
+   *  is what left a memorandum reading VI, V, III, VIII. */
+  const placeAt = (key: string, wanted: number) => {
+    const rest = sections.filter((s) => s.key !== key);
+    const moved = sections.find((s) => s.key === key);
+    if (!moved) return;
+
+    const at = Math.max(1, Math.min(wanted, sections.length)) - 1;
+    const ordered = [...rest.slice(0, at), moved, ...rest.slice(at)];
+
     act("Reordering", async () => {
-      await api.saveSection({ ...a, sort_order: to + 1 });
-      await api.saveSection({ ...b, sort_order: at + 1 });
+      for (let i = 0; i < ordered.length; i++) {
+        if (ordered[i].sort_order === i + 1) continue;
+        await api.saveSection({ ...ordered[i], sort_order: i + 1 });
+      }
     });
   };
 
@@ -806,10 +858,17 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             {/* The order the memorandum reads in. There was no way to change
                 it, so a memorandum whose sections all sat at zero stayed in
                 whatever order the database returned. */}
-            <span className="muted small">
-              <a onClick={() => move(i, i - 1)}>&uarr;</a>{" "}
-              <a onClick={() => move(i, i + 1)}>&darr;</a>
-            </span>
+            <input value={order[s.key] ?? String(i + 1)}
+              style={{ width: "2.6em", textAlign: "center" }}
+              title="Position"
+              onChange={(e) => setOrder({ ...order, [s.key]: e.target.value })}
+              onBlur={() => {
+                const typed = parseInt(order[s.key] ?? "", 10);
+                const next = { ...order };
+                delete next[s.key];
+                setOrder(next);
+                if (!isNaN(typed) && typed !== i + 1) placeAt(s.key, typed);
+              }} />
             <label>
               <strong>{s.numeral}. {s.title}</strong>
             </label>
@@ -821,11 +880,17 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
               setOpenSection(openSection === s.key ? null : s.key)}>
               {openSection === s.key ? "Close" : "Fields"}
             </a>
-            <a className="small" onClick={() => setEditSection(s.key)}>Edit</a>
+            <a className="small" onClick={() => {
+              // One thing open at a time. Editing a section with
+              // another section's field list open left both on screen
+              // and it was not obvious which the buttons belonged to.
+              setOpenSection(null);
+              setEditSection(s.key);
+            }}>Edit</a>
           </div>
 
           {openSection === s.key && (
-            <div className="binder">
+            <div className="binder" ref={openList}>
               <p className="muted small">
                 Which facts this section renders. A section binding a field
                 that no longer exists would report it absent whether or not it
@@ -834,7 +899,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
               {allFields.map((f) => {
                 const on = s.fields.includes(f.key);
                 return (
-                  <label className="bind" key={f.key}>
+                  <div className="bind" key={f.key}>
+                    {/* The tick and the name do different things. Wrapping
+                        both in one label meant clicking a name to read what
+                        the fact is silently bound it to the section. */}
                     <input type="checkbox" checked={on}
                       onChange={() => {
                         const next = on
@@ -843,10 +911,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                         act("Saving",
                             () => api.setSectionFields(
                               s.template_key, s.key, next));
-                      }} />
-                    {f.label}
+                      }} />{" "}
+                    <a onClick={() => setEditField(f.key)}>{f.label}</a>
                     {f.is_group && <span className="muted small"> (table)</span>}
-                  </label>
+                  </div>
                 );
               })}
             </div>
@@ -940,14 +1008,17 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                         ? " document" : " documents")}
                 </a>
               </td>
+              {/* The memorandum by its name, not its key. "stage1-kyc V"
+                  told a person nothing about which report that was. */}
               <td className="muted small">
                 {bound.has(f.key)
                   ? ((draft?.sections ?? [])
                       .filter((s) => s.fields.includes(f.key))
                       .map((s) => s.template_key === current?.key
-                        ? s.numeral
-                        : `${s.template_key} ${s.numeral}`)
-                      .join(", "))
+                        ? `${s.numeral} ${s.title}`
+                        : `${labelOf(s.template_key)} \u00b7 `
+                          + `${s.numeral} ${s.title}`)
+                      .join("; "))
                   : <span className="warn">nothing</span>}
               </td>
             </tr>
