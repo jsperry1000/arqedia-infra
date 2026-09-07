@@ -376,6 +376,41 @@ def _lift_sources(header, rows):
     return header, rows, citations
 
 
+def _share_width(mins, shares, total):
+    """Column widths that always sum to the page.
+
+    Floors first, then whatever is left shared by how much text each column
+    carries. Where the floors alone exceed the page they are scaled down
+    together, which breaks a long word but keeps every column visible.
+
+    Written as one function that cannot return anything but a full row,
+    because the version before it adjusted widths in three passes and could
+    leave them summing to more than the page. Reportlab then refused the
+    whole document - one table too wide stopped a twenty-page memorandum
+    rendering at all."""
+    n = len(mins)
+    if n == 0:
+        return []
+
+    floor_total = float(sum(mins))
+    if floor_total >= total:
+        return [total * (m / floor_total) for m in mins]
+
+    spare = total - floor_total
+    # Nothing to share by means share it evenly, rather than giving the
+    # remainder to whichever column happens to be last.
+    if sum(shares) <= 0:
+        shares = [1.0] * n
+    share_total = float(sum(shares))
+    widths = [mins[c] + spare * (shares[c] / share_total) for c in range(n)]
+
+    # Rounding, and nothing more - but a table a hair wider than its frame is
+    # refused just as firmly as one twice the width.
+    drift = total - sum(widths)
+    widths[-1] += drift
+    return widths
+
+
 def _table(header, rows, styles, palette):
     """A markdown table. Column widths reserve the longest word in each column
     before sharing the remainder, so a narrow label column beside long prose
@@ -391,42 +426,88 @@ def _table(header, rows, styles, palette):
     rows = [pad(r) for r in rows]
 
     def visible(text):
-        """Text as it will render. Measuring raw markdown counts the emphasis
-        markers, which starved narrow columns."""
-        return re.sub(r"[*_`]", "", text or "")
+        """Text as it will render.
 
-    def breakable(text):
-        """A slash is a natural break the layout engine does not treat as one,
-        so "Country Director / General Manager" measures as three long words
-        and claims more width than it needs."""
-        return re.sub(r"([/\-])", r"\1 ", text or "")
+        A citation is written in italics and becomes a superscript number two
+        or three characters wide. Measured as written it is a filename -
+        CE_AML_Policy_v1_signed_with_annex.pdf, one unbreakable word two
+        hundred points across - so every column carrying one demanded two
+        hundred points of floor. Seven such columns asked for 1333 points of
+        a 504 point page, everything scaled down together, and the one column
+        whose citation happened to be short was crushed to twenty-five points
+        and rendered one letter per line.
 
-    # Two measures per column: the longest single word, which is the width
-    # below which that word must break mid-way, and the total text, which is
-    # how much room the column deserves. Reserve the first, share the rest
-    # proportionally to the second. Without the reservation a column of short
-    # labels beside a column of long prose gets so little room that a word
-    # like "Secretary" splits across two lines.
-    PADDING = 14.0
+        So citations are removed before measuring and a couple of characters
+        put back for the number that replaces them. The emphasis markers go
+        too: counting them starved narrow columns."""
+        text = text or ""
+        text = _ITALIC.sub("00 ", text)
+        text = _ITALIC_U.sub("00 ", text)
+        return re.sub(r"[*_`]", "", text)
+
+    # Two measures per column, and both are needed.
+    #
+    # The FLOOR is the longest single word, plus padding: below it that word
+    # breaks mid-way, and "Secretary" split across two lines is unreadable.
+    #
+    # The SHARE is the longest CELL, not the total text. Total text let one
+    # long note in a column of otherwise short entries claim the page, while a
+    # column of names - short in total, long per name - was starved. What
+    # decides how many lines a column needs is its longest cell.
+    #
+    # Measured at the size the cell is actually drawn at. It was measured at
+    # 8.5 bold regardless, so every width was wrong by the ratio between the
+    # two, and the error compounded across seven columns.
+    # The cell's own padding, and a hair. Below this the floor promises a
+    # word room it does not have: "NATIONALITY" measured 41pt, was given a
+    # floor of 53, and rendered in 39 once the 7pt each side was taken - so
+    # it broke as "NATIONALI TY" in a column that was supposedly wide enough.
+    PADDING = 15.0
+    MIN_COLUMN = stringWidth("MMMMMMMM", "Helvetica", style.CELL_SIZE)
     mins, shares = [], []
     for c in range(width):
-        cells = ([visible(header[c])] if header else []) \
-            + [visible(r[c]) for r in rows]
-        longest_word = 0.0
-        for cell in cells:
-            for word in breakable(cell or " ").split():
-                longest_word = max(
-                    longest_word, stringWidth(word, "Helvetica-Bold", 8.5))
-        mins.append(longest_word + PADDING)
-        shares.append(max(sum(len(x) for x in cells), 1))
+        # Upper case, because that is how a header is drawn. Measured in the
+        # case it was written in, "Nationality" fitted and "NATIONALITY" did
+        # not - so the column was sized for a word narrower than the one that
+        # went into it, and the header broke.
+        head = visible(header[c]).upper() if header else ""
+        body = [visible(r[c]) for r in rows]
 
-    spare = style.CONTENT_WIDTH - sum(mins)
-    if spare <= 0:
-        total = float(sum(mins)) or 1.0
-        widths = [style.CONTENT_WIDTH * (m / total) for m in mins]
-    else:
-        total = float(sum(shares)) or 1.0
-        widths = [mins[c] + spare * (shares[c] / total) for c in range(width)]
+        # Whitespace-separated words, because that is what the layout engine
+        # wraps on. A previous version inserted a break after every slash on
+        # the grounds that a slash reads as one - but the engine does not
+        # agree, so "04/03/1981" was measured as "1981" and then broken
+        # across three lines in the column that measurement produced.
+        longest_word = 0.0
+        for word in (head or " ").split():
+            longest_word = max(longest_word, stringWidth(
+                word, "Helvetica-Bold", style.CELLHEAD_SIZE))
+        for cell in body:
+            for word in (cell or " ").split():
+                longest_word = max(longest_word, stringWidth(
+                    word, "Helvetica-Bold", style.CELL_SIZE))
+
+        longest_cell = 0.0
+        for cell in body or [head]:
+            longest_cell = max(longest_cell, stringWidth(
+                cell or " ", "Helvetica", style.CELL_SIZE))
+        longest_cell = max(longest_cell, stringWidth(
+            head or " ", "Helvetica-Bold", style.CELLHEAD_SIZE))
+
+        # No column narrower than a few characters, whatever the measurement
+        # said. A column measured at nothing was given fifteen points and
+        # rendered one letter per line down the page - and a measurement can
+        # come out at nothing for reasons the table itself does not show.
+        # Below this width a column cannot be read at all, so there is no
+        # case in which the measurement should win.
+        floor = max(longest_word, MIN_COLUMN)
+        mins.append(floor + PADDING)
+        shares.append(max(longest_cell, MIN_COLUMN))
+
+    widths = _share_width(mins, shares, style.CONTENT_WIDTH)
+
+    print("[table] cols=%d widths=%s floors=%s" % (
+        width, [round(w) for w in widths], [round(m) for m in mins]))
 
     data = []
     if header:
@@ -479,6 +560,37 @@ def _heading_band(text, styles, palette, kind):
         ("RIGHTPADDING", (0, 0), (-1, -1), 9),
     ]))
     table._arqedia_heading = kind
+    return table
+
+
+def _pill(text, styles, palette):
+    """A fourth-level heading, as wide as its words rather than the page.
+
+    The renderer knew two levels and printed the hashes of anything deeper as
+    text, so the browser showed a heading and the PDF showed "#### Holding
+    Companies". Three levels now, each lighter than the one above it: a band
+    across the page, a narrower band, and this.
+
+    Takes the mid colour. It wants the palest member of the palette, and a
+    tenant holds only three - see BR-01."""
+    para = _para(text, styles["pill"])
+    wanted = min(style.CONTENT_WIDTH,
+                 stringWidth(re.sub(r"[*_`]", "", text or ""),
+                             "Helvetica-Bold", style.PILL_SIZE) + 22)
+
+    # Rounded, which is what makes it read as a pill rather than a short
+    # band. cornerRadii is a table property in reportlab, not a style
+    # command, so it is set on the table itself.
+    table = Table([[para]], colWidths=[wanted], cornerRadii=[5, 5, 5, 5])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), palette["mid"]),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 9),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+    ]))
+    table.hAlign = "LEFT"
+    table._arqedia_heading = "pill"
     return table
 
 
@@ -647,6 +759,12 @@ def to_flowables(markdown, styles, palette):
 
         # The title is drawn in the masthead, so h1 is dropped rather than
         # repeated in the body.
+        if stripped.startswith("#### "):
+            flow.append(Spacer(1, 9))
+            flow.append(_pill(stripped[5:], styles, palette))
+            flow.append(Spacer(1, 4))
+            i += 1
+            continue
         if stripped.startswith("### "):
             flow.append(Spacer(1, 11))
             flow.append(_heading_band(stripped[4:], styles, palette,
