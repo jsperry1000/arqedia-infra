@@ -33,6 +33,16 @@ FOOTER_Y = 0.52 * inch
 
 LOGO_H = 0.30 * inch
 
+# Table type sizes. Named because the column widths are measured against
+# them: measuring at one size and rendering at another gives every column
+# the wrong width, and the error grows with the number of columns.
+CELL_SIZE = 7.5
+CELLHEAD_SIZE = 7
+
+# The pill. Measured here as well as drawn, because a pill is only as wide
+# as its own words.
+PILL_SIZE = 8.5
+
 CONFIDENTIAL = "CONFIDENTIAL  \u00b7  PREPARED FOR THE ADDRESSEE"
 
 # Platform default. A tenant without branding, or on Base, renders in these.
@@ -91,18 +101,27 @@ def build_styles(palette):
             fontName="Helvetica-Bold", fontSize=13, leading=17,
             textColor=colors.white, spaceBefore=0, spaceAfter=0),
 
+        # A fourth level, lighter than the sub-heading above it.
+        "pill": ParagraphStyle(
+            "pill", parent=base,
+            fontName="Helvetica-Bold", fontSize=PILL_SIZE, leading=11,
+            textColor=colors.white, spaceBefore=0, spaceAfter=0),
+
         "subsection": ParagraphStyle(
             "subsection", parent=base,
             fontName="Helvetica-Bold", fontSize=9.5, leading=13,
             textColor=colors.white, spaceBefore=0, spaceAfter=0),
 
+        # Smaller than the body. A table of seven columns is a different
+        # reading task from a paragraph, and the size that suits prose leaves
+        # a name breaking across four lines.
         "cell": ParagraphStyle(
-            "cell", parent=base, fontSize=8.5, leading=11.5, spaceAfter=0),
+            "cell", parent=base, fontSize=CELL_SIZE, leading=10, spaceAfter=0),
 
         # On the page above a highlight rule, not reversed out of a band.
         "cellhead": ParagraphStyle(
             "cellhead", parent=base,
-            fontName="Helvetica-Bold", fontSize=7.5, leading=10,
+            fontName="Helvetica-Bold", fontSize=CELLHEAD_SIZE, leading=9,
             textColor=deep, spaceAfter=0),
 
         "label": ParagraphStyle(
