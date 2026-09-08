@@ -60,7 +60,7 @@ def _is_thin(text, pages, byte_size):
     return thin and heavy
 
 
-def _has_thin_page(text, units, byte_size):
+def _has_thin_page(text, units, byte_size=None):  # noqa: ARG001
     """True when any single page is a scan.
 
     Distinct from _is_thin, which averages across the file and decides whether
@@ -70,9 +70,18 @@ def _has_thin_page(text, units, byte_size):
     not be split - see the guard in lambda_handler."""
     if not units:
         return False
-    heavy = (byte_size / len(units)) > _IMAGE_BYTES_PER_PAGE
-    if not heavy:
-        return False
+
+    # NO FILE-LEVEL WEIGHT TEST. This asked whether the whole file averaged
+    # over 100 KB a page before it would look at any page, so a five-page PDF
+    # with four text pages and one scan was never examined - the loop below
+    # did not run, the file was split, and the scanned part became a document
+    # nothing could read and nobody could clear.
+    #
+    # Characters alone are a blunt test, and _is_thin needs the weight check
+    # because sending a readable document to OCR wastes money. Here the costs
+    # are the other way round: refusing to split a file that could have been
+    # split costs a little tidiness, and splitting one that holds an
+    # unreadable page strands a document.
     for u in units:
         chars = min(u["char_end"], len(text)) - min(u["char_start"], len(text))
         if chars < _THIN_CHARS_PER_PAGE:

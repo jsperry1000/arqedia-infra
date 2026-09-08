@@ -66,10 +66,26 @@ def _col(record, i):
     return None
 
 
+def envelope_suffix(page_from, part_index):
+    """Where a document's envelope lives, relative to the file's own key.
+
+    THE THIRD COPY OF THIS RULE. The normalizer writes envelopes and the API
+    renames them at filing; both carry it. This function did not, and asked
+    for the unsuffixed name - so a part's OCR result was read from an object
+    that does not exist and the document never left `reading`.
+
+    The three must not drift. Parts of one file share an s3_key, so the part
+    number is what tells their envelopes apart."""
+    if page_from is None:
+        return ".analysed.json"
+    return ".p" + str(part_index) + ".analysed.json"
+
+
 def _document_for_job(job_id):
     result = _sql(
         """
-        SELECT document_id, tenant_id, s3_key, document_type, textract_api
+        SELECT document_id, tenant_id, s3_key, document_type, textract_api,
+               page_from, part_index
         FROM document
         WHERE textract_job_id = :job_id
         """,
@@ -85,6 +101,8 @@ def _document_for_job(job_id):
         "s3_key": _col(r, 2),
         "document_type": _col(r, 3),
         "mode": _col(r, 4),
+        "page_from": _col(r, 5),
+        "part_index": _col(r, 6),
     }
 
 
@@ -118,7 +136,9 @@ def lambda_handler(event, context):
 
         # Rewrite the envelope with what OCR read, then write it under the name
         # extraction listens for. Same as filing a readable document.
-        analysed_key = document["s3_key"] + ".analysed.json"
+        suffix = envelope_suffix(document["page_from"],
+                                 document["part_index"])
+        analysed_key = document["s3_key"] + suffix
         envelope = json.loads(
             _s3.get_object(Bucket=REVIEW_BUCKET,
                            Key=analysed_key)["Body"].read().decode("utf-8"))
@@ -133,7 +153,8 @@ def lambda_handler(event, context):
 
         _s3.put_object(
             Bucket=REVIEW_BUCKET,
-            Key=document["s3_key"] + ".normalized.json",
+            Key=document["s3_key"]
+                + suffix.replace(".analysed.", ".normalized."),
             Body=json.dumps(envelope, ensure_ascii=False).encode("utf-8"),
             ContentType="application/json",
         )
@@ -144,13 +165,19 @@ def lambda_handler(event, context):
             SET state = 'filed',
                 thin_text = 0,
                 char_count = :chars,
-                page_count = :pages,
+                page_count = COALESCE(:pages, page_count),
                 extraction_method = :method
             WHERE document_id = :d
             """,
             [
                 _p("chars", len(text)),
-                _p("pages", len(units)),
+                # A part's page count stays its own. Textract reads the whole
+                # file - its API takes an object, not a page range - so the
+                # count it returns is the file's, and writing it here would
+                # tell a reader that page 5 of a five-page file is five pages
+                # long.
+                _p("pages", len(units) if document["page_from"] is None
+                   else None),
                 _p("method", envelope["extraction_method"]),
                 _p("d", document_id),
             ],
