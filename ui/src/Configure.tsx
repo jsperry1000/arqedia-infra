@@ -764,6 +764,32 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
+      {/* A fact, opened over the page. It used to sit inside "What it
+          needs", so clicking a fact name from a section did nothing at all
+          while that part was closed - which it is on arrival - and clicking
+          one in the fields table opened a form above the filter box, out of
+          sight of the row that was clicked. */}
+      {editField !== null && (
+        <div className="panel-backdrop" onClick={() => setEditField(null)}>
+          <div className="panel" onClick={(e) => e.stopPropagation()}>
+            <a className="panel-close"
+               onClick={() => setEditField(null)}>Close</a>
+            <FieldForm
+              initial={draft?.fields.find((x) => x.key === editField)}
+              onCancel={() => setEditField(null)}
+              onSave={(body) => act("Saving", async () => {
+                await api.saveField(body as never);
+                setEditField(null);
+              })}
+              onDelete={editField ? () => act("Deleting", async () => {
+                await api.deleteField(editField);
+                setEditField(null);
+              }) : undefined}
+            />
+          </div>
+        </div>
+      )}
+
       {/* 1 --- what the report says ---------------------------------------- */}
       {part("says", "What the report says", `${sections.length} ${sections.length === 1 ? "section" : "sections"}`)}
 
@@ -956,21 +982,6 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         Every fact the report can draw on. A field bound to no section is
         extracted and never read; one found in no document is never extracted.
       </p>
-
-      {editField !== null && (
-        <FieldForm
-          initial={draft?.fields.find((x) => x.key === editField)}
-          onCancel={() => setEditField(null)}
-          onSave={(body) => act("Saving", async () => {
-            await api.saveField(body as never);
-            setEditField(null);
-          })}
-          onDelete={editField ? () => act("Deleting", async () => {
-            await api.deleteField(editField);
-            setEditField(null);
-          }) : undefined}
-        />
-      )}
 
       <div className="filters">
         <input placeholder="Filter fields" value={fieldFilter}
