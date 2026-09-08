@@ -104,10 +104,19 @@ def _build_prompt(schema, envelope):
     for field in schema["fields"]:
         field_id, label, ftype, card, desc = field[0], field[1], field[2], field[3], field[4]
         if card == "group":
+            # A UNIT ON EVERY ROW, not one for the whole table. A table's
+            # rows are rarely all on one page - a list of related entities is
+            # gathered from wherever each is mentioned - so asking for one
+            # number for the table asks a question with no honest answer, and
+            # the model correctly returned null. That null was then stamped on
+            # every cell: of 483 values with no citation in one tenant, 474
+            # were table columns and 9 were single values.
             cols = ", ".join('"' + _column_name(c[0]) + '": string | null'
                              for c in field[5])
-            lines.append('  "' + field_id + '": { "rows": [ { ' + cols +
-                         ' } ], "unit": integer | null },  // ' + label + " - " + desc)
+            lines.append(
+                '  "' + field_id + '": { "rows": [ { ' + cols
+                + ', "unit": integer | null } ], "unit": integer | null },'
+                + "  // " + label + " - " + desc)
             continue
         hint = "[string] | null" if card == "many" else "string | null"
         lines.append(
@@ -124,6 +133,9 @@ def _build_prompt(schema, envelope):
         'For each field, "value" is what the document states, or null if it '
         "is not present. Do not infer, do not use outside knowledge.\n\n"
         '"unit" is the ' + word + " number the value was read from. "
+        "For a table, give a unit on EACH ROW - the " + word + " that row "
+        "was read from - and give the table's own unit only if every row "
+        "came from the same one.\n"
         "The document has " + str(count) + " " + word + "s, numbered "
         + str(first_index) + " to " + str(last_index)
         + ", marked in the text below.\n"
@@ -255,13 +267,23 @@ def _persist(envelope, registry, schema_key, extracted):
             for ordinal, row in enumerate(rows):
                 if not isinstance(row, dict):
                     continue
+
+                # The row's own unit, falling back to the table's. A row
+                # knows where it was read from even when the table does not,
+                # and stamping the table's null on every cell was how a
+                # citation was lost from a value that had one.
+                r_kind, r_index, r_start, r_end, r_cell = kind, index, start, end, cell
+                if row.get("unit") is not None:
+                    r_kind, r_index, r_start, r_end, r_cell = _resolve_locator(
+                        row.get("unit"), units)
+
                 for col in field[5]:
                     col_id = col[0]
                     cell_value = row.get(_column_name(col_id))
                     if cell_value is None or cell_value == "":
                         continue
                     _write_value(envelope, col_id, cell_value, ordinal,
-                                 kind, index, start, end, cell)
+                                 r_kind, r_index, r_start, r_end, r_cell)
                     written += 1
             continue
 
