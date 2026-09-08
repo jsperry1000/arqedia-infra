@@ -202,6 +202,7 @@ locals {
     "DELETE /config/draft/templates/{template}/sections/{key}",
     "PUT /config/draft/templates/{template}/sections/{key}/fields",
     "POST /config/draft/templates",
+    "POST /config/draft/templates/{template}/duplicate",
     "DELETE /config/draft/templates/{template}",
     "POST /config/draft/fields",
     "DELETE /config/draft/fields/{key}",

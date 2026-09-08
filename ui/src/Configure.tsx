@@ -765,6 +765,17 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             Rename
           </a>
         )}
+        {/* A memorandum built from another rather than from nothing. A
+            credit pack and a KYC pack share most of their sections, and
+            rebuilding the second by hand is where they drift apart. */}
+        {current && (
+          <a className="small" onClick={() => act("Duplicating", async () => {
+            const made = await api.duplicateTemplate(current.key);
+            setTemplate(made.key);
+          })}>
+            Duplicate
+          </a>
+        )}
         {templates.length > 1 && current && (
           <a className="danger small" onClick={() =>
             act("Deleting", async () => {

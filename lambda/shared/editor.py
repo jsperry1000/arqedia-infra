@@ -360,6 +360,97 @@ def save_template(tenant_id, body):
     return {"key": key}
 
 
+def duplicate_template(tenant_id, template_key):
+    """Copy a memorandum: its sections, and which facts each renders.
+
+    The vocabulary is NOT copied. Facts and documents belong to the tenant,
+    not to one memorandum, so the copy binds the same facts - two memoranda
+    reporting the same fact is the point of the design, and duplicating the
+    fact would give the tenant two things meaning one.
+
+    A composed section names the sections it reads, by key. The copies have
+    new keys, so those references are remapped: left alone, a copied section
+    would read the ORIGINAL memorandum's sections and produce a memo nobody
+    configured.
+
+    The key is minted from the new label and never follows a later rename,
+    so a copy renamed afterwards keeps the key it was born with. Nothing but
+    the system reads a template key."""
+    _require_draft(tenant_id)
+
+    rows = _rows(tenant_id,
+                 "SELECT label FROM config_template "
+                 "WHERE tenant_id = :t AND revision = :r AND template_key = :k",
+                 [_p("k", template_key)])
+    if not rows:
+        raise ValueError("no such memorandum")
+    label = (_col(rows[0], 0) or template_key) + " DUPLICATE"
+
+    # A key nothing else is using. Duplicating twice should give two copies
+    # rather than overwrite the first.
+    taken = {_col(r, 0) for r in _rows(
+        tenant_id, "SELECT template_key FROM config_template "
+                   "WHERE tenant_id = :t AND revision = :r")}
+    base = _slug(label)
+    new_key, n = base, 2
+    while new_key in taken:
+        new_key = (base + "-" + str(n))[:64]
+        n += 1
+
+    _sql("INSERT INTO config_template (tenant_id, revision, template_key, "
+         "label) VALUES (:t, :r, :k, :label)",
+         [_p("t", tenant_id), _p("r", DRAFT), _p("k", new_key),
+          _p("label", label)])
+
+    sections = _rows(tenant_id, """
+        SELECT section_key, numeral, title, kind, shape_key, prompt,
+               context_sections, sort_order
+        FROM config_section
+        WHERE tenant_id = :t AND revision = :r AND template_key = :tpl
+        ORDER BY sort_order
+        """, [_p("tpl", template_key)])
+
+    # The section keys are the same in the copy - a section key is unique
+    # within a memorandum, not across them - so a context reference needs no
+    # remapping of its own. It is carried across unchanged, and points at the
+    # copy because the copy is where it now lives.
+    for r in sections:
+        _sql("""
+            INSERT INTO config_section
+              (tenant_id, revision, template_key, section_key, numeral, title,
+               kind, shape_key, prompt, context_sections, sort_order)
+            VALUES (:t, :r, :tpl, :k, :num, :title, :kind, :shape, :prompt,
+                    :context, :sort)
+            """, [
+            _p("t", tenant_id), _p("r", DRAFT), _p("tpl", new_key),
+            _p("k", _col(r, 0)), _p("num", _col(r, 1)),
+            _p("title", _col(r, 2)), _p("kind", _col(r, 3)),
+            _p("shape", _col(r, 4)), _p("prompt", _col(r, 5)),
+            _p("context", _col(r, 6)), _p("sort", _col(r, 7) or 0),
+        ])
+
+    bindings = _rows(tenant_id, """
+        SELECT section_key, field_key, sort_order FROM config_section_field
+        WHERE tenant_id = :t AND revision = :r AND template_key = :tpl
+        ORDER BY section_key, sort_order
+        """, [_p("tpl", template_key)])
+
+    for r in bindings:
+        _sql("""
+            INSERT INTO config_section_field
+              (tenant_id, revision, template_key, section_key, field_key,
+               sort_order)
+            VALUES (:t, :r, :tpl, :sec, :f, :sort)
+            """, [
+            _p("t", tenant_id), _p("r", DRAFT), _p("tpl", new_key),
+            _p("sec", _col(r, 0)), _p("f", _col(r, 1)),
+            _p("sort", _col(r, 2) or 0),
+        ])
+
+    return {"key": new_key, "label": label,
+            "sections": len(sections), "bindings": len(bindings)}
+
+
 def delete_template(tenant_id, template_key):
     """Remove a memorandum and its sections.
 
