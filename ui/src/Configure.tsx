@@ -12,7 +12,7 @@ import {
 } from "./api";
 import { ProposeView } from "./Propose";
 import {
-  slugKey, KeyLine, ColumnEditor, columnsReady,
+  slugKey, KeyLine, ColumnEditor, columnsReady, ReadModeControls,
 } from "./config-parts";
 
 /**
@@ -183,25 +183,8 @@ function TypeForm({ initial, categories, onSave, onCancel, onDelete }: {
         </select>
       </label>
 
-      <label className="row">
-        <span>Read as</span>
-        <select value={t.read_mode}
-                onChange={(e) => setT({ ...t, read_mode: e.target.value })}>
-          <option value="text">Prose</option>
-          <option value="forms">Forms and tables</option>
-          <option value="expense">Invoices</option>
-        </select>
-      </label>
-
-      <label className="inline-check">
-        <input type="checkbox" checked={t.always_ocr}
-               onChange={(e) => setT({ ...t, always_ocr: e.target.checked })} />
-        Always read by OCR, even where the file carries text
-      </label>
-      <p className="muted small">
-        Worth setting where a garbled text layer would corrupt figures &mdash;
-        statements and ledgers, chiefly.
-      </p>
+      <ReadModeControls readMode={t.read_mode} alwaysOcr={t.always_ocr}
+                        onChange={(next) => setT({ ...t, ...next })} />
 
       <KeyLine value={key} />
 
