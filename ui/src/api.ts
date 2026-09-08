@@ -398,6 +398,15 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  // Copy a memorandum: its sections, and which facts each renders. The
+  // vocabulary is not copied - the copy binds the same facts, because a
+  // fact belongs to the tenant rather than to one memorandum.
+  duplicateTemplate: (templateKey: string): Promise<{
+    key: string; label: string; sections: number; bindings: number;
+  }> =>
+    call(`/config/draft/templates/${encodeURIComponent(templateKey)}`
+         + "/duplicate", { method: "POST" }),
+
   deleteTemplate: (templateKey: string) =>
     call(`/config/draft/templates/${encodeURIComponent(templateKey)}`,
          { method: "DELETE" }),

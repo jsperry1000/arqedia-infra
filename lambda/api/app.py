@@ -1477,6 +1477,11 @@ def lambda_handler(event, context):
             return _reply(200, editor.save_template(
                 tenant_id, json.loads(event.get("body") or "{}")))
 
+        if route == "POST /config/draft/templates/{template}/duplicate":
+            _require_admin(role)
+            return _reply(200, editor.duplicate_template(
+                tenant_id, params.get("template")))
+
         if route == "DELETE /config/draft/templates/{template}":
             _require_admin(role)
             return _reply(200, editor.delete_template(
