@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ConfigColumn } from "./api";
 
 /**
@@ -60,6 +61,24 @@ export function ColumnEditor({ columns, onChange, note }: {
   const named = columns.filter((c) => (c.label ?? "").trim()).length;
   const added = columns.filter((c) => !c.key).length;
 
+  // What is being typed into a position box, until it is left. Saving on
+  // every keystroke would move the row out from under the cursor as soon as
+  // the first digit of "10" was typed.
+  const [order, setOrder] = useState<Record<number, string>>({});
+
+  /** Put a column at a position. The order columns are sent in IS their
+   *  order - the editor writes sort_order from the array position - so
+   *  moving one is a reorder and nothing else. No key changes, nothing is
+   *  recreated, and nothing already extracted is disturbed. */
+  const placeAt = (from: number, wanted: number) => {
+    const to = Math.max(1, Math.min(wanted, columns.length)) - 1;
+    if (to === from) return;
+    const next = [...columns];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    onChange(next);
+  };
+
   return (
     <div className="columns">
       <h4>Columns</h4>
@@ -71,6 +90,18 @@ export function ColumnEditor({ columns, onChange, note }: {
 
       {columns.map((c, i) => (
         <div className="column-row" key={c.key ?? "new-" + i}>
+          {/* Where the column sits. A table read left to right needs its
+              columns in a sensible order, and a column added later would
+              otherwise always land at the end. */}
+          <input value={order[i] ?? String(i + 1)}
+            style={{ width: "2.6em", textAlign: "center" }}
+            title="Position"
+            onChange={(e) => setOrder({ ...order, [i]: e.target.value })}
+            onBlur={() => {
+              const typed = parseInt(order[i] ?? "", 10);
+              setOrder({});
+              if (!isNaN(typed)) placeAt(i, typed);
+            }} />
           <input placeholder="Column" value={c.label ?? ""}
             onChange={(e) => {
               const next = [...columns];
