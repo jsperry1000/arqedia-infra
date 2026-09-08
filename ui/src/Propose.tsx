@@ -7,6 +7,9 @@ import {
   type ProposalRef,
   type ConfigColumn,
 } from "./api";
+import {
+  slugKey, fieldKey, ColumnEditor, columnsReady, columnsForSave,
+} from "./config-parts";
 
 /**
  * Create your own memorandum from a report you already write.
@@ -34,16 +37,6 @@ import {
 
 /** Mirrors slugKey in Configure and _slug in the editor. A key is permanent
  *  identity; it is derived from the label once and never follows it. */
-function slugKey(label: string, prefix = ""): string {
-  const body = label.toLowerCase().replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-  return (prefix + (body || "item")).slice(0, 64);
-}
-
-function fieldKey(label: string): string {
-  return slugKey(label, "f_").replace(/-/g, "_");
-}
-
 /** What the person has decided about one fact. */
 type FactChoice = {
   use: "existing" | "new" | "skip";
@@ -580,12 +573,7 @@ export function ProposeView({ onDone, onCancel }: {
           cardinality: edit.cardinality,
           description: edit.description,
           columns: edit.cardinality === "group"
-            ? edit.columns.filter((c) => c.label.trim()).map((c) => ({
-                key: c.key || undefined,
-                label: c.label.trim(),
-                type: c.type || "text",
-                description: c.description ?? "",
-              }))
+            ? columnsForSave(edit.columns)
             : [],
         } as never);
         done.push("amended " + edit.label);
@@ -1287,8 +1275,6 @@ export function ProposeView({ onDone, onCancel }: {
     const set = (next: Partial<typeof cur>) =>
       setHeldEdits({ ...heldEdits, [key]: { ...cur, ...next } });
     const isTable = cur.cardinality === "group";
-    const becameTable = isTable && base.cardinality !== "group";
-    const added = cur.columns.filter((c) => !c.key).length;
 
     return (
       <div className="form">
@@ -1348,62 +1334,13 @@ export function ProposeView({ onDone, onCancel }: {
         )}
 
         {isTable && (
-          <div className="columns">
-            <h4>Columns</h4>
-            {becameTable && cur.columns.length === 0 && (
-              <p className="muted small">
-                It has none yet. A table with no columns holds nothing, so
-                name what each row should carry.
-              </p>
-            )}
-            {cur.columns.map((c, i) => (
-              <div className="column-row" key={c.key ?? "new-" + i}>
-                <input placeholder="Column" value={c.label}
-                  onChange={(e) => {
-                    const next = [...cur.columns];
-                    next[i] = { ...c, label: e.target.value };
-                    set({ columns: next });
-                  }} />
-                <input placeholder="What it holds"
-                       value={c.description ?? ""}
-                  onChange={(e) => {
-                    const next = [...cur.columns];
-                    next[i] = { ...c, description: e.target.value };
-                    set({ columns: next });
-                  }} />
-                <a className="small" onClick={() => set({
-                  columns: cur.columns.filter((_, j) => j !== i) })}>
-                  Remove
-                </a>
-              </div>
-            ))}
-            <a className="small" onClick={() => set({
-              columns: [...cur.columns,
-                { key: "", label: "", type: "text", description: "" }] })}>
-              Add a column
-            </a>
-
-            {added > 0 && (
-              <p className="warn small">
-                A new column is a new fact. It will be empty on every document
-                already filed, and the only way to fill it is to file those
-                documents again.
-              </p>
-            )}
-          </div>
-        )}
-
-        {isTable && cur.columns.filter((c) => c.label.trim()).length === 0 && (
-          <p className="warn small">
-            A table needs at least one column.
-          </p>
+          <ColumnEditor columns={cur.columns}
+                        onChange={(next) => set({ columns: next })} />
         )}
 
         <div className="form-actions">
-          <button
-            disabled={isTable
-              && cur.columns.filter((c) => c.label.trim()).length === 0}
-            onClick={() => setEditField(null)}>Done</button>
+          <button disabled={isTable && !columnsReady(cur.columns)}
+                  onClick={() => setEditField(null)}>Done</button>
           <a className="secondary" onClick={() => {
             const next = { ...heldEdits };
             delete next[key];
