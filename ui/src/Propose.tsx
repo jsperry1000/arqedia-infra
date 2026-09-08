@@ -9,6 +9,7 @@ import {
 } from "./api";
 import {
   slugKey, fieldKey, ColumnEditor, columnsReady, columnsForSave,
+  ReadModeControls, RECOGNISE_NOTE,
 } from "./config-parts";
 
 /**
@@ -79,6 +80,12 @@ type TypeChoice = {
   // group will be called.
   groupLabel: string;
   existing: string | null;
+  // How the document is read. The editor has always offered these and this
+  // screen never did, so a scanned ledger proposed from a client's own
+  // memorandum was set to be read as prose with no way to say otherwise.
+  // Optional, because a proposal saved before they existed carries neither.
+  read_mode?: string;
+  always_ocr?: boolean;
   acknowledged: boolean;
 };
 
@@ -551,8 +558,8 @@ export function ProposeView({ onDone, onCancel }: {
           label: t.label,
           description: t.description,
           category: t.group,
-          read_mode: "text",
-          always_ocr: false,
+          read_mode: t.read_mode ?? "text",
+          always_ocr: t.always_ocr ?? false,
         });
         done.push("document " + t.label);
       }
@@ -1971,11 +1978,7 @@ export function ProposeView({ onDone, onCancel }: {
                         [id]: { ...t, description: e.target.value,
                                 acknowledged: false } })} />
                   </label>
-                  <p className="muted small">
-                    This is what the system reads to tell this document from
-                    every other kind. Getting it wrong sends future uploads to
-                    the wrong place quietly.
-                  </p>
+                  <p className="muted small">{RECOGNISE_NOTE}</p>
 
                   <label className="row">
                     <span>Group</span>
@@ -2000,6 +2003,13 @@ export function ProposeView({ onDone, onCancel }: {
                     Grouping is for the eye alone and can be changed at any
                     time without disturbing anything.
                   </p>
+
+                  <ReadModeControls
+                    readMode={t.read_mode ?? "text"}
+                    alwaysOcr={t.always_ocr ?? false}
+                    onChange={(next) => setTypes({
+                      ...types,
+                      [id]: { ...t, ...next, acknowledged: false } })} />
 
                   {readFrom(t.label, id)}
 

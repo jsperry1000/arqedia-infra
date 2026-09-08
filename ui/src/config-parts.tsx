@@ -129,3 +129,49 @@ export function columnsForSave(columns: ConfigColumn[]) {
       description: c.description ?? "",
     }));
 }
+
+/**
+ * How a document is read: the mode, and whether OCR is forced.
+ *
+ * Only the editor offered these. A document created from a report took the
+ * defaults with no way to say otherwise, so a scanned ledger proposed from a
+ * client's own memorandum was set to be read as prose and its figures were
+ * whatever the text layer happened to hold.
+ */
+export function ReadModeControls({ readMode, alwaysOcr, onChange }: {
+  readMode: string;
+  alwaysOcr: boolean;
+  onChange: (next: { read_mode: string; always_ocr: boolean }) => void;
+}) {
+  return (
+    <>
+      <label className="row">
+        <span>Read as</span>
+        <select value={readMode}
+                onChange={(e) => onChange({
+                  read_mode: e.target.value, always_ocr: alwaysOcr })}>
+          <option value="text">Prose</option>
+          <option value="forms">Forms and tables</option>
+          <option value="expense">Invoices</option>
+        </select>
+      </label>
+
+      <label className="inline-check">
+        <input type="checkbox" checked={alwaysOcr}
+               onChange={(e) => onChange({
+                 read_mode: readMode, always_ocr: e.target.checked })} />
+        Always read by OCR, even where the file carries text
+      </label>
+      <p className="muted small">
+        Worth setting where a garbled text layer would corrupt figures
+        &mdash; statements and ledgers, chiefly.
+      </p>
+    </>
+  );
+}
+
+/** What the system reads to tell one document from another. Said the same
+ *  way on both screens, because it is the same warning. */
+export const RECOGNISE_NOTE =
+  "This is what the system reads to tell this document from every other "
+  + "kind. Getting it wrong sends future uploads to the wrong place quietly.";
