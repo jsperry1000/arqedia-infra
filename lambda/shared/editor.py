@@ -258,10 +258,11 @@ def save_section(tenant_id, body):
           (tenant_id, revision, template_key, section_key, numeral, title,
            kind, shape_key, prompt, context_sections, sort_order)
         VALUES (:t, :r, :tpl, :k, :num, :title, :kind, :shape, :prompt,
-                :context, :sort)
+                :context, COALESCE(:sort, 0))
         ON DUPLICATE KEY UPDATE
           numeral = :num, title = :title, kind = :kind, prompt = :prompt,
-          context_sections = :context, sort_order = :sort
+          context_sections = :context,
+          sort_order = COALESCE(:sort, sort_order)
         """, [
         _p("t", tenant_id), _p("r", DRAFT), _p("tpl", template_key),
         _p("k", key), _p("num", body.get("numeral") or ""),
@@ -273,7 +274,15 @@ def save_section(tenant_id, body):
         _p("shape", (body.get("shape") or key)[:_MAX_SHAPE_KEY]),
         _p("prompt", body.get("prompt")),
         _p("context", ",".join(body.get("context_sections") or []) or None),
-        _p("sort", int(body.get("sort_order") or 0)),
+        # NULL where the caller did not say, and the row keeps the order it
+        # had. A form carrying a section's title and prompt but not its
+        # position sent no sort_order, this defaulted it to zero, and editing
+        # a section moved it to the top of the memorandum. A value a form does
+        # not hold must not be overwritten by saving that form.
+        #
+        # A new section still lands at zero: the insert takes COALESCE.
+        _p("sort", None if body.get("sort_order") is None
+           else int(body.get("sort_order") or 0)),
     ])
     return {"key": key}
 

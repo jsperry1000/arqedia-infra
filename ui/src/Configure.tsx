@@ -248,6 +248,11 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
     title: initial?.title ?? "",
     kind: initial?.kind ?? "extract",
     prompt: initial?.prompt ?? "",
+    // Carried, not edited. This form does not show the position - the list
+    // does - but a value a form holds and does not send is a value the save
+    // discards. The editor also leaves it alone now, so this is belt and
+    // braces rather than the fix.
+    sort_order: initial?.sort_order,
   });
   const key = s.key ?? slugKey(s.title);
 
