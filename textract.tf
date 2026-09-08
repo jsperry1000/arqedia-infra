@@ -81,6 +81,16 @@ data "aws_iam_policy_document" "collector" {
     resources = ["${aws_s3_bucket.data["review"].arn}/*"]
   }
 
+  # Listing grants no access the statement above does not already give. It is
+  # here so that a MISSING object reports as missing: without it S3 answers a
+  # get for a key that does not exist with 403 rather than 404, and an hour
+  # went into a permissions question that was really a wrong key.
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.data["review"].arn]
+  }
+
   statement {
     effect    = "Allow"
     actions   = ["kms:Decrypt", "kms:GenerateDataKey"]

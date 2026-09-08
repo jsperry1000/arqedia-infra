@@ -378,7 +378,6 @@ export function EngagementView({ id, onBack, onMemo }: {
                     <input
                       type="checkbox"
                       checked={d.active}
-                      disabled={d.state === "reading"}
                       onChange={() => toggleActive(d)}
                       title={d.active
                         ? "In use. Uncheck to leave it out of the next memo."
@@ -394,7 +393,24 @@ export function EngagementView({ id, onBack, onMemo }: {
                   </td>
                   <td className="muted">
                     {d.state === "reading"
-                      ? <span className="warn">reading&hellip;</span>
+                      ? (
+                        <>
+                          <span className="warn">reading&hellip;</span>
+                          {/* A way out. A read can stall - a scan whose OCR
+                              never came back - and until this the only remedy
+                              was a SQL statement, which a client cannot
+                              write. Setting aside keeps the row and its file;
+                              it says only that this one is not to be used. */}
+                          {d.active && (
+                            <div>
+                              <a className="small"
+                                 onClick={() => toggleActive(d)}>
+                                Taking too long? Set it aside
+                              </a>
+                            </div>
+                          )}
+                        </>
+                      )
                       : (d.document_type ?? "unclassified")}
                   </td>
                   <td className="muted">
