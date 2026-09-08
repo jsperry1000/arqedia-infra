@@ -11,6 +11,9 @@ import {
   type Validation,
 } from "./api";
 import { ProposeView } from "./Propose";
+import {
+  slugKey, KeyLine, ColumnEditor, columnsReady,
+} from "./config-parts";
 
 /**
  * Configure a Report.
@@ -38,24 +41,6 @@ import { ProposeView } from "./Propose";
  * derived from the label so nobody has to invent an identifier, editable
  * until first saved, and fixed thereafter.
  */
-function slugKey(label: string, prefix = ""): string {
-  const body = label.toLowerCase().replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-  return (prefix + (body || "item")).slice(0, 64);
-}
-
-function KeyLine({ value }: { value: string }) {
-  return (
-    <div className="keyline">
-      <span className="muted small">Identity</span> <code>{value}</code>
-      <div className="muted small">
-        Fixed once saved. Renaming the label afterwards changes nothing that
-        was already extracted.
-      </div>
-    </div>
-  );
-}
-
 type FieldDraft = {
   key?: string;
   label: string;
@@ -129,47 +114,19 @@ function FieldForm({ initial, onSave, onCancel, onDelete }: {
       )}
 
       {isTable && (
-        <div className="columns">
-          <h4>Columns</h4>
-          <p className="muted small">
-            What each row holds. A name means nothing without the things
-            beside it &mdash; a bank without its role, a shipper without its
-            route.
-          </p>
-
-          {f.columns.map((c, i) => (
-            <div className="column-row" key={i}>
-              <input placeholder="Column" value={c.label}
-                onChange={(e) => {
-                  const next = [...f.columns];
-                  next[i] = { ...c, label: e.target.value };
-                  setF({ ...f, columns: next });
-                }} />
-              <input placeholder="What it holds" value={c.description}
-                onChange={(e) => {
-                  const next = [...f.columns];
-                  next[i] = { ...c, description: e.target.value };
-                  setF({ ...f, columns: next });
-                }} />
-              <a className="small" onClick={() =>
-                setF({ ...f,
-                       columns: f.columns.filter((_, j) => j !== i) })}>
-                Remove
-              </a>
-            </div>
-          ))}
-
-          <a className="small" onClick={() => setF({ ...f, columns: [
-            ...f.columns, { label: "", type: "text", description: "" }] })}>
-            Add a column
-          </a>
-        </div>
+        <ColumnEditor
+          columns={f.columns as never}
+          onChange={(next) => setF({ ...f, columns: next as never })}
+          note={"What each row holds. A name means nothing without the things"
+            + " beside it \u2014 a bank without its role, a shipper without"
+            + " its route."} />
       )}
 
       <KeyLine value={key} />
 
       <div className="form-actions">
-        <button disabled={!f.label.trim()}
+        <button disabled={!f.label.trim()
+                  || (isTable && !columnsReady(f.columns as never))}
                 onClick={() => onSave({ ...f, key })}>Save</button>
         <a className="secondary" onClick={onCancel}>Cancel</a>
         {existing && onDelete && (
