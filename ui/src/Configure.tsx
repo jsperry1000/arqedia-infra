@@ -390,6 +390,14 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       if (!box || !at) return;
       if (box.contains(at)) return;
       if (box.parentElement && box.parentElement.contains(at)) return;
+
+      // A drawer opened FROM this list is not "elsewhere on the page".
+      // Without this, clicking a fact to read it closed the section behind
+      // the drawer, so closing the drawer landed the person at the top of
+      // the section list and they had to find their section again for every
+      // fact they looked at.
+      if (at instanceof Element && at.closest(".panel-backdrop")) return;
+
       setOpenSection(null);
     };
     document.addEventListener("mousedown", away);
