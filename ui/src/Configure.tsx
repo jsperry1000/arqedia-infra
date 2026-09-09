@@ -1159,47 +1159,6 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       </a>
 
       {/* 3 --- where it is found -------------------------------------------- */}
-      {openField && draft && (
-        <div className="panel-backdrop" onClick={() => setOpenField(null)}>
-          <aside className="panel" onClick={(e) => e.stopPropagation()}>
-            <a onClick={() => setOpenField(null)} className="panel-close">
-              Close
-            </a>
-            <h3>{fieldsByKey[openField]}</h3>
-            <p className="muted small">
-              Which documents this fact is expected to be found in. It is
-              looked for in these and nowhere else.
-            </p>
-
-            {draft.categories.map((c) => (
-              <div key={c.key}>
-                <h4>{c.label}</h4>
-                {draft.document_types
-                  .filter((t) => t.category === c.key)
-                  .map((t) => {
-                    const field = draft.fields.find((f) => f.key === openField);
-                    const on = field?.found_in.includes(t.key) ?? false;
-                    return (
-                      <label className="bind" key={t.key}>
-                        <input type="checkbox" checked={on}
-                          onChange={() => {
-                            const current = field?.found_in ?? [];
-                            const next = on
-                              ? current.filter((x) => x !== t.key)
-                              : [...current, t.key];
-                            act("Saving",
-                                () => api.setFieldDocuments(openField, next));
-                          }} />
-                        {t.label}
-                      </label>
-                    );
-                  })}
-              </div>
-            ))}
-          </aside>
-        </div>
-      )}
-
       {/* 4 --- the documents ------------------------------------------------ */}
       </>)}
 
@@ -1468,6 +1427,52 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
               }) : undefined}
             />
           </div>
+        </div>
+      )}
+
+      {/* LAST, therefore above the field card. Drawer stacking here follows
+          document order, so the drill-in has to render after the thing it is
+          opened from. It also lived inside "Facts included in sections",
+          which is collapsed on arrival - so opened from a section's field
+          list it rendered nothing at all. */}
+      {openField && draft && (
+        <div className="panel-backdrop" onClick={() => setOpenField(null)}>
+          <aside className="panel" onClick={(e) => e.stopPropagation()}>
+            <a onClick={() => setOpenField(null)} className="panel-close">
+              Close
+            </a>
+            <h3>{fieldsByKey[openField]}</h3>
+            <p className="muted small">
+              Which documents this fact is expected to be found in. It is
+              looked for in these and nowhere else.
+            </p>
+
+            {draft.categories.map((c) => (
+              <div key={c.key}>
+                <h4>{c.label}</h4>
+                {draft.document_types
+                  .filter((t) => t.category === c.key)
+                  .map((t) => {
+                    const field = draft.fields.find((f) => f.key === openField);
+                    const on = field?.found_in.includes(t.key) ?? false;
+                    return (
+                      <label className="bind" key={t.key}>
+                        <input type="checkbox" checked={on}
+                          onChange={() => {
+                            const current = field?.found_in ?? [];
+                            const next = on
+                              ? current.filter((x) => x !== t.key)
+                              : [...current, t.key];
+                            act("Saving",
+                                () => api.setFieldDocuments(openField, next));
+                          }} />
+                        {t.label}
+                      </label>
+                    );
+                  })}
+              </div>
+            ))}
+          </aside>
         </div>
       )}
     </div>
