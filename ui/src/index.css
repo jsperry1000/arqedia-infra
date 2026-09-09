@@ -379,33 +379,70 @@ p.warn { color: #b45309; }
    A fact found in documents from two groups appears in both, which is the
    truth about it - the version that picked one group and hid the rest put
    financial figures under Corporate. */
-/* A column per group, headings along the top, each list running its own
-   length. FLEX, NOT GRID, and not a column flow.
+/* A column per group, each as wide as its own longest label, and the row
+   scrolls sideways when they do not all fit.
 
-   Two earlier attempts failed because both kept a layout that can wrap. A
-   grid with auto-fit wraps into a second row, so a tall group pushed the
-   rest down and left a hole; a column flow splits a group across columns,
-   so half a list appeared under no heading at all. break-inside does not
-   help - it is a multi-column property and does nothing in a grid.
+   Three earlier attempts each traded one failure for another: a wrapping
+   grid left a hole beside a tall group, a column flow split a group across
+   columns under no heading, and flex without a floor squeezed five groups
+   into 130 points each so every label broke over three lines.
 
-   Flex without wrap cannot do either: every group is one column, always,
-   and a long one simply makes its own column long. Rendered and looked at
-   before being written, rather than reasoned about a third time. */
+   The fault in all three was letting the column decide the label. Here the
+   label decides the column - max-content, nowrap - and the container gives
+   way instead by scrolling. Nothing wraps, nothing splits, nothing is
+   squeezed. */
 .binder-groups {
-  display: flex;
-  align-items: flex-start;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
   gap: 24px;
-  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
+
+  margin-top: 12px;
+  padding-top: 12px;
+  padding-bottom: 8px;
+
+  border-top: 1px solid var(--line);
+
+  overflow-x: auto;
+  overflow-y: visible;
+  align-items: start;
 }
+
 .binder-groups > div {
-  flex: 1 1 0;
-  min-width: 0;
+  min-width: 220px;
+  width: max-content;
 }
+
 .binder-groups h5 {
-  margin: 0 0 6px; font-size: 11px; letter-spacing: 0.08em;
-  text-transform: uppercase; color: var(--muted);
-  border-bottom: 1px solid var(--line); padding-bottom: 4px;
+  margin: 0 0 8px;
+  padding-bottom: 4px;
+
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+
+  border-bottom: 1px solid var(--line);
+
+  white-space: nowrap;
 }
+
+.binder-groups .bind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  font-size: 13px;
+  padding: 3px 0;
+
+  white-space: nowrap;
+}
+
+.binder-groups .bind input {
+  width: auto;
+  flex: 0 0 auto;
+}
+
 .binder .bind { break-inside: avoid; }
 
 .bind {
