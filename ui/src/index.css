@@ -368,54 +368,64 @@ p.warn { color: #b45309; }
    read A B C along the first row and D E F along the second - which is
    unscannable when you are hunting for one name among eighty. Columns let the
    eye go straight down. */
+/* The list of facts, grouped. THE SCROLL BELONGS TO THE OUTER BOX, and the
+   inner grid is as wide as its content.
+
+   Put on the grid itself, the scroll was confined to whatever width the
+   grid had been given - a third of the page - so five columns scrolled
+   inside a third and the rest of the page sat empty. .binder takes the full
+   width and does the scrolling; .binder-groups is max-content and simply
+   runs as long as it needs to. */
 .binder {
-  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
-  columns: 3 240px;
-  column-gap: 24px;
-}
-.binder p { column-span: all; margin: 0 0 8px; }
-
-/* Grouped by the group a document sits in: a column each, side by side.
-   A fact found in documents from two groups appears in both, which is the
-   truth about it - the version that picked one group and hid the rest put
-   financial figures under Corporate. */
-/* A column per group, each as wide as its own longest label, and the row
-   scrolls sideways when they do not all fit.
-
-   Three earlier attempts each traded one failure for another: a wrapping
-   grid left a hole beside a tall group, a column flow split a group across
-   columns under no heading, and flex without a floor squeezed five groups
-   into 130 points each so every label broke over three lines.
-
-   The fault in all three was letting the column decide the label. Here the
-   label decides the column - max-content, nowrap - and the container gives
-   way instead by scrolling. Nothing wraps, nothing splits, nothing is
-   squeezed. */
-.binder-groups {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: max-content;
-  gap: 24px;
+  width: 100%;
+  max-width: none;
 
   margin-top: 12px;
   padding-top: 12px;
-  padding-bottom: 8px;
 
   border-top: 1px solid var(--line);
 
   overflow-x: auto;
   overflow-y: visible;
+
+  columns: unset;
+  column-gap: 0;
+}
+
+.binder p {
+  margin: 0 0 8px;
+}
+
+.binder-groups {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+
+  width: max-content;
+  min-width: 100%;
+
+  gap: 32px;
+
   align-items: start;
+
+  margin: 0;
+  padding: 0 0 10px;
+
+  border-top: 0;
+
+  overflow: visible;
 }
 
 .binder-groups > div {
-  min-width: 220px;
   width: max-content;
+  min-width: 220px;
 }
 
 .binder-groups h5 {
   margin: 0 0 8px;
-  padding-bottom: 4px;
+  padding-bottom: 5px;
+
+  white-space: nowrap;
 
   font-size: 11px;
   letter-spacing: 0.08em;
@@ -423,8 +433,6 @@ p.warn { color: #b45309; }
   color: var(--muted);
 
   border-bottom: 1px solid var(--line);
-
-  white-space: nowrap;
 }
 
 .binder-groups .bind {
@@ -432,18 +440,18 @@ p.warn { color: #b45309; }
   align-items: center;
   gap: 8px;
 
-  font-size: 13px;
+  width: max-content;
+
   padding: 3px 0;
+  font-size: 13px;
 
   white-space: nowrap;
 }
 
 .binder-groups .bind input {
-  width: auto;
   flex: 0 0 auto;
+  width: auto;
 }
-
-.binder .bind { break-inside: avoid; }
 
 .bind {
   display: flex; align-items: center; gap: 8px;
