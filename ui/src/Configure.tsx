@@ -1413,8 +1413,16 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           <div className="panel narrow" onClick={(e) => e.stopPropagation()}>
             <a className="panel-close"
                onClick={() => setEditField(null)}>Close</a>
+            {/* The card closes as the documents open. Both are drawers, and
+                the field card is rendered last so it stacks above everything
+                - leaving it open put the documents behind it and the click
+                looked like it had done nothing. */}
             <FieldForm
-              onShowDocuments={() => setOpenField(editField)}
+              onShowDocuments={() => {
+                if (!editField) return;
+                setOpenField(editField);
+                setEditField(null);
+              }}
               initial={draft?.fields.find((x) => x.key === editField)}
               onCancel={() => setEditField(null)}
               onSave={(body) => act("Saving", async () => {
