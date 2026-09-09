@@ -78,10 +78,13 @@ function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments }: {
     <div className="form">
       <h4>{existing ? "Edit field" : "New field"}</h4>
 
-      <label className="row">
+      {/* OUTSIDE THE LABEL. A label hands every click to its input, so the
+          link inside one only focused the Name box - it flickered and did
+          nothing. Where this fact is looked for still reads beside the name;
+          it is simply no longer part of the label. */}
+      <div className="row">
         <span>
-          Name
-          {/* Where this fact is looked for, beside the name it belongs to. */}
+          <label htmlFor={"name-" + key}>Name</label>
           {existing && onShowDocuments && (
             <span className="muted small">
               {" \u00b7 "}found in{" "}
@@ -95,9 +98,9 @@ function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments }: {
             </span>
           )}
         </span>
-        <input value={f.label} autoFocus
+        <input id={"name-" + key} value={f.label} autoFocus
                onChange={(e) => setF({ ...f, label: e.target.value })} />
-      </label>
+      </div>
 
       <label className="row">
         <span>What it is</span>
