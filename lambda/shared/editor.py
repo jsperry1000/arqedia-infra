@@ -652,10 +652,11 @@ def save_field(tenant_id, body):
         INSERT INTO config_field
           (tenant_id, revision, schema_key, field_key, label, field_type,
            cardinality, description, group_key, sort_order)
-        VALUES (:t, :r, :s, :k, :label, :type, :card, :desc, :grp, :sort)
+        VALUES (:t, :r, :s, :k, :label, :type, :card, :desc, :grp,
+                COALESCE(:sort, 0))
         ON DUPLICATE KEY UPDATE
           label = :label, field_type = :type, cardinality = :card,
-          description = :desc, group_key = :grp, sort_order = :sort
+          description = :desc, group_key = :grp, sort_order = COALESCE(:sort, sort_order)
         """, [
         _p("t", tenant_id), _p("r", DRAFT), _p("s", schema_key), _p("k", key),
         _p("label", body.get("label") or key),
@@ -668,7 +669,12 @@ def save_field(tenant_id, body):
         # registry read it as a single value calling itself a group, and
         # extraction stopped on every document in the tenant.
         _p("grp", key if body.get("cardinality") == "group" else None),
-        _p("sort", int(body.get("sort_order") or 0)),
+        # NULL where the caller did not say, and the row keeps the order it
+        # had. A form that carries a name and a description but not a
+        # position sends no sort_order, and defaulting it to zero moves the
+        # thing to the top of its list. Editing a section did exactly that.
+        _p("sort", None if body.get("sort_order") is None
+           else int(body.get("sort_order") or 0)),
     ])
 
     if body.get("cardinality") == "group":
@@ -778,10 +784,11 @@ def save_document_type(tenant_id, body):
         INSERT INTO config_document_type
           (tenant_id, revision, type_key, label, category_key, description,
            read_mode, always_ocr, sort_order)
-        VALUES (:t, :r, :k, :label, :cat, :desc, :mode, :ocr, :sort)
+        VALUES (:t, :r, :k, :label, :cat, :desc, :mode, :ocr,
+                COALESCE(:sort, 0))
         ON DUPLICATE KEY UPDATE
           label = :label, category_key = :cat, description = :desc,
-          read_mode = :mode, always_ocr = :ocr, sort_order = :sort
+          read_mode = :mode, always_ocr = :ocr, sort_order = COALESCE(:sort, sort_order)
         """, [
         _p("t", tenant_id), _p("r", DRAFT), _p("k", key),
         _p("label", body.get("label") or key),
@@ -789,7 +796,12 @@ def save_document_type(tenant_id, body):
         _p("desc", body.get("description") or ""),
         _p("mode", body.get("read_mode") or "text"),
         _p("ocr", bool(body.get("always_ocr"))),
-        _p("sort", int(body.get("sort_order") or 0)),
+        # NULL where the caller did not say, and the row keeps the order it
+        # had. A form that carries a name and a description but not a
+        # position sends no sort_order, and defaulting it to zero moves the
+        # thing to the top of its list. Editing a section did exactly that.
+        _p("sort", None if body.get("sort_order") is None
+           else int(body.get("sort_order") or 0)),
     ])
     return {"key": key}
 
@@ -817,11 +829,14 @@ def save_category(tenant_id, body):
     _sql("""
         INSERT INTO config_category
           (tenant_id, revision, category_key, label, sort_order)
-        VALUES (:t, :r, :k, :label, :sort)
-        ON DUPLICATE KEY UPDATE label = :label, sort_order = :sort
+        VALUES (:t, :r, :k, :label, COALESCE(:sort, 0))
+        ON DUPLICATE KEY UPDATE label = :label, sort_order = COALESCE(:sort, sort_order)
         """, [_p("t", tenant_id), _p("r", DRAFT), _p("k", key),
               _p("label", body.get("label") or key),
-              _p("sort", int(body.get("sort_order") or 0))])
+              # NULL where the caller did not say: the row keeps the order
+              # it had.
+              _p("sort", None if body.get("sort_order") is None
+                 else int(body.get("sort_order") or 0))])
     return {"key": key}
 
 
