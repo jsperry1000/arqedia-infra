@@ -79,7 +79,22 @@ function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments }: {
       <h4>{existing ? "Edit field" : "New field"}</h4>
 
       <label className="row">
-        <span>Name</span>
+        <span>
+          Name
+          {/* Where this fact is looked for, beside the name it belongs to. */}
+          {existing && onShowDocuments && (
+            <span className="muted small">
+              {" \u00b7 "}found in{" "}
+              <a onClick={onShowDocuments}>
+                {(initial?.found_in ?? []).length === 0
+                  ? <span className="warn">no document</span>
+                  : (initial?.found_in ?? []).length
+                    + ((initial?.found_in ?? []).length === 1
+                       ? " document" : " documents")}
+              </a>
+            </span>
+          )}
+        </span>
         <input value={f.label} autoFocus
                onChange={(e) => setF({ ...f, label: e.target.value })} />
       </label>
@@ -121,24 +136,6 @@ function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments }: {
           note={"What each row holds. A name means nothing without the things"
             + " beside it \u2014 a bank without its role, a shipper without"
             + " its route."} />
-      )}
-
-      {/* Where this fact is looked for. A fact is read from the documents
-          ticked here and nowhere else, so the count belongs on the card
-          rather than a screen away. */}
-      {existing && onShowDocuments && (
-        <p className="muted small">
-          Found in{" "}
-          <a onClick={onShowDocuments}>
-            {(initial?.found_in ?? []).length === 0
-              ? <span className="warn">no document</span>
-              : (initial?.found_in ?? []).length
-                + ((initial?.found_in ?? []).length === 1
-                   ? " document" : " documents")}
-          </a>
-          . Ticking there is saved at once; what you have typed here is not
-          lost by looking.
-        </p>
       )}
 
       <KeyLine value={key} />
@@ -408,6 +405,17 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [openSection, setOpenSection] = useState<string | null>(null);
+
+  // Searching a section's field list. Its own box, cleared when the section
+  // closes: a filter shared with the fact table once emptied controls
+  // elsewhere on the page, which nobody could connect to what they typed.
+  const [sectionSearch, setSectionSearch] = useState("");
+
+  // Which group is open in a list. One at a time, because ninety facts under
+  // five headings is not a list a person reads.
+  const [openFactGroup, setOpenFactGroup] = useState<string | null>(null);
+  const [openDocGroup, setOpenDocGroup] = useState<string | null>(null);
+  const [typeSearch, setTypeSearch] = useState("");
 
   useEffect(() => {
     if (!openSection) return;
@@ -812,30 +820,6 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       {/* A fact, opened over the page. It used to sit inside "What it
           needs", so clicking a fact name from a section did nothing at all
           while that part was closed - which it is on arrival - and clicking
-          one in the fields table opened a form above the filter box, out of
-          sight of the row that was clicked. */}
-      {editField !== null && (
-        <div className="panel-backdrop" onClick={() => setEditField(null)}>
-          <div className="panel narrow" onClick={(e) => e.stopPropagation()}>
-            <a className="panel-close"
-               onClick={() => setEditField(null)}>Close</a>
-            <FieldForm
-              onShowDocuments={() => setOpenField(editField)}
-              initial={draft?.fields.find((x) => x.key === editField)}
-              onCancel={() => setEditField(null)}
-              onSave={(body) => act("Saving", async () => {
-                await api.saveField(body as never);
-                setEditField(null);
-              })}
-              onDelete={editField ? () => act("Deleting", async () => {
-                await api.deleteField(editField);
-                setEditField(null);
-              }) : undefined}
-            />
-          </div>
-        </div>
-      )}
-
       {/* 1 --- what the report says ---------------------------------------- */}
       {part("says", "Report sections", `${sections.length} ${sections.length === 1 ? "section" : "sections"}`)}
 
@@ -959,8 +943,13 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
               {s.kind === "composed" ? "written by the model" : "assembled"}
               {" \u00b7 "}{s.fields.length} fields
             </span>
-            <a className="small" onClick={() =>
-              setOpenSection(openSection === s.key ? null : s.key)}>
+            <a className="small" onClick={() => {
+              // The search and the open group belong to whichever section is
+              // open, so both are cleared as it changes.
+              setSectionSearch("");
+              setOpenFactGroup(null);
+              setOpenSection(openSection === s.key ? null : s.key);
+            }}>
               {openSection === s.key ? "Close" : "Fields"}
             </a>
             <a className="small" onClick={() => {
@@ -979,11 +968,44 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 that no longer exists would report it absent whether or not it
                 was found, so that is refused here rather than at publish.
               </p>
+
+              <div className="filters">
+                <input placeholder="Search facts" value={sectionSearch}
+                       onChange={(e) => setSectionSearch(e.target.value)} />
+                {sectionSearch && (
+                  <a className="small"
+                     onClick={() => setSectionSearch("")}>Clear</a>
+                )}
+              </div>
+
               <div className="binder-groups">
-                {byGroup.map((g) => (
+                {byGroup.map((g) => {
+                  // Searching narrows what is shown and never what is bound.
+                  const needle = sectionSearch.trim().toLowerCase();
+                  const fields = needle
+                    ? g.fields.filter((f) =>
+                        f.label.toLowerCase().includes(needle))
+                    : g.fields;
+                  if (fields.length === 0) return null;
+
+                  // A search opens every group it matched; otherwise one at
+                  // a time, and the count says what is inside a shut one.
+                  const open = needle !== "" || openFactGroup === g.key;
+                  const chosen = fields.filter(
+                    (f) => s.fields.includes(f.key)).length;
+
+                  return (
                   <div key={g.key}>
-                    <h5>{g.label}</h5>
-                    {g.fields.map((f) => {
+                    <h5>
+                      <a onClick={() => setOpenFactGroup(
+                        openFactGroup === g.key ? null : g.key)}>
+                        {open ? "\u25be" : "\u25b8"} {g.label}
+                      </a>{" "}
+                      <span className="muted">
+                        {chosen > 0 ? chosen + " of " : ""}{fields.length}
+                      </span>
+                    </h5>
+                    {open && fields.map((f) => {
                       const on = s.fields.includes(f.key);
                       return (
                         <div className="bind" key={f.key}>
@@ -1007,7 +1029,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                       );
                     })}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1175,6 +1198,14 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         writing well.
       </p>
 
+      <div className="filters">
+        <input placeholder="Search document types" value={typeSearch}
+               onChange={(e) => setTypeSearch(e.target.value)} />
+        {typeSearch && (
+          <a className="small" onClick={() => setTypeSearch("")}>Clear</a>
+        )}
+      </div>
+
       {editType !== null && draft && (
         <TypeForm
           initial={draft.document_types.find((x) => x.key === editType)}
@@ -1200,17 +1231,33 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           </tr>
         </thead>
         <tbody>
-          {documentGroups.map((group) => (
+          {documentGroups.map((group) => {
+            const needle = typeSearch.trim().toLowerCase();
+            const types = needle
+              ? group.types.filter((t) =>
+                  t.label.toLowerCase().includes(needle)
+                  || (t.description ?? "").toLowerCase().includes(needle))
+              : group.types;
+            if (types.length === 0) return null;
+
+            // A search opens whatever it matched; otherwise one group at a
+            // time, and a shut one says how much is inside it.
+            const open = needle !== "" || openDocGroup === group.key;
+
+            return (
             <Fragment key={group.key}>
               <tr className="group-head">
                 <td colSpan={4}>
-                  {group.label}
+                  <a onClick={() => setOpenDocGroup(
+                    openDocGroup === group.key ? null : group.key)}>
+                    {open ? "\u25be" : "\u25b8"} {group.label}
+                  </a>
                   <span className="muted small">
-                    {" \u00b7 "}{group.types.length}
+                    {" \u00b7 "}{types.length}
                   </span>
                 </td>
               </tr>
-              {group.types.map((t) => (
+              {open && types.map((t) => (
                 <tr key={t.key} className={t.sought ? "" : "aside"}>
                   <td>
                     <a onClick={() => setEditType(t.key)}>
@@ -1234,7 +1281,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 </tr>
               ))}
             </Fragment>
-          ))}
+            );
+          })}
         </tbody>
       </table>
 
@@ -1265,16 +1313,19 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                   {g.fields.map((f) => {
                     const on = typeFields.includes(f.key);
                     return (
-                      <label className="bind" key={f.key}>
+                      <div className="bind" key={f.key}>
+                        {/* The tick and the name do different things, as on a
+                            section's list. The fact opens over this drawer;
+                            closing it comes back here. */}
                         <input type="checkbox" checked={on}
                           onChange={() => setTypeFields(on
                             ? typeFields.filter((x) => x !== f.key)
-                            : [...typeFields, f.key])} />
-                        {f.label}
+                            : [...typeFields, f.key])} />{" "}
+                        <a onClick={() => setEditField(f.key)}>{f.label}</a>
                         {f.is_group && (
                           <span className="muted small"> (table)</span>
                         )}
-                      </label>
+                      </div>
                     );
                   })}
                 </div>
@@ -1380,6 +1431,31 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           {busy ? busy + "\u2026" : "Publish"}
         </button>
       </div>
+
+      {/* LAST, so it sits above every other drawer. A fact opened from a
+          document's list must be on top of that list, and stacking follows
+          document order where nothing sets a z-index. */}
+      {editField !== null && (
+        <div className="panel-backdrop" onClick={() => setEditField(null)}>
+          <div className="panel narrow" onClick={(e) => e.stopPropagation()}>
+            <a className="panel-close"
+               onClick={() => setEditField(null)}>Close</a>
+            <FieldForm
+              onShowDocuments={() => setOpenField(editField)}
+              initial={draft?.fields.find((x) => x.key === editField)}
+              onCancel={() => setEditField(null)}
+              onSave={(body) => act("Saving", async () => {
+                await api.saveField(body as never);
+                setEditField(null);
+              })}
+              onDelete={editField ? () => act("Deleting", async () => {
+                await api.deleteField(editField);
+                setEditField(null);
+              }) : undefined}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
