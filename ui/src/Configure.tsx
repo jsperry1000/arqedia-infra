@@ -51,11 +51,12 @@ type FieldDraft = {
              description: string }[];
 };
 
-function FieldForm({ initial, onSave, onCancel, onDelete }: {
+function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments }: {
   initial?: ConfigField;
   onSave: (f: FieldDraft) => void;
   onCancel: () => void;
   onDelete?: () => void;
+  onShowDocuments?: () => void;
 }) {
   const existing = Boolean(initial);
   const [f, setF] = useState<FieldDraft>({
@@ -120,6 +121,24 @@ function FieldForm({ initial, onSave, onCancel, onDelete }: {
           note={"What each row holds. A name means nothing without the things"
             + " beside it \u2014 a bank without its role, a shipper without"
             + " its route."} />
+      )}
+
+      {/* Where this fact is looked for. A fact is read from the documents
+          ticked here and nowhere else, so the count belongs on the card
+          rather than a screen away. */}
+      {existing && onShowDocuments && (
+        <p className="muted small">
+          Found in{" "}
+          <a onClick={onShowDocuments}>
+            {(initial?.found_in ?? []).length === 0
+              ? <span className="warn">no document</span>
+              : (initial?.found_in ?? []).length
+                + ((initial?.found_in ?? []).length === 1
+                   ? " document" : " documents")}
+          </a>
+          . Ticking there is saved at once; what you have typed here is not
+          lost by looking.
+        </p>
       )}
 
       <KeyLine value={key} />
@@ -285,8 +304,21 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
     || s.kind !== (initial?.kind ?? "extract")
     || s.prompt !== (initial?.prompt ?? "");
 
+  const leave = () => {
+    if (dirty && !window.confirm(
+      "Leave this section? What you changed is not saved.")) return;
+    onCancel();
+  };
+
+  // A drawer, and it renders its own backdrop so a click outside asks the
+  // same question Cancel does. Inline it sat wherever the sections part was
+  // scrolled to, and there was no way to dismiss it but Cancel.
   return (
-    <div className="form">
+    <div className="panel-backdrop" onClick={leave}>
+      <div className="panel narrow" onClick={(e) => e.stopPropagation()}
+           onKeyDown={(e) => { if (e.key === "Escape") leave(); }}>
+        <a className="panel-close" onClick={leave}>Close</a>
+        <div className="form">
       <h4>{existing ? "Edit section" : "New section"}</h4>
 
       <label className="row">
@@ -335,16 +367,14 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
         {/* Asked before an edit is thrown away. Clicking Edit on another
             section closes this one, and without the check a rewritten
             instruction would go with it silently. */}
-        <a className="secondary" onClick={() => {
-          if (dirty && !window.confirm(
-            "Leave this section? What you changed is not saved.")) return;
-          onCancel();
-        }}>Cancel</a>
+        <a className="secondary" onClick={leave}>Cancel</a>
         {existing && onDelete && (
           <a className="danger small" onClick={onDelete}>
             Delete this section
           </a>
         )}
+      </div>
+        </div>
       </div>
     </div>
   );
@@ -790,6 +820,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             <a className="panel-close"
                onClick={() => setEditField(null)}>Close</a>
             <FieldForm
+              onShowDocuments={() => setOpenField(editField)}
               initial={draft?.fields.find((x) => x.key === editField)}
               onCancel={() => setEditField(null)}
               onSave={(body) => act("Saving", async () => {
@@ -806,7 +837,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       )}
 
       {/* 1 --- what the report says ---------------------------------------- */}
-      {part("says", "What the report says", `${sections.length} ${sections.length === 1 ? "section" : "sections"}`)}
+      {part("says", "Report sections", `${sections.length} ${sections.length === 1 ? "section" : "sections"}`)}
 
       {!shut.has("says") && (<>
       <p className="muted small">
@@ -1010,7 +1041,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       {/* 2 --- what it needs ----------------------------------------------- */}
       </>)}
 
-      {part("needs", "What it needs", `${draft?.fields.length ?? 0} facts`)}
+      {part("needs", "Facts included in sections", `${draft?.fields.length ?? 0} facts`)}
 
       {!shut.has("needs") && (<>
       <p className="muted small">
@@ -1135,12 +1166,13 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       {/* 4 --- the documents ------------------------------------------------ */}
       </>)}
 
-      {part("documents", "The documents", `${draft?.document_types.length ?? 0} kinds`)}
+      {part("documents", "The document types", `${draft?.document_types.length ?? 0} kinds`)}
 
       {!shut.has("documents") && (<>
       <p className="muted small">
-        What a customer might send you. The description is what the system
-        reads to tell one document from another, so it is worth writing well.
+        Types of documents a client may provide. The description is what the
+        system reads to tell one document from another, so it is worth
+        writing well.
       </p>
 
       {editType !== null && draft && (

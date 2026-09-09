@@ -379,18 +379,27 @@ p.warn { color: #b45309; }
    A fact found in documents from two groups appears in both, which is the
    truth about it - the version that picked one group and hid the rest put
    financial figures under Corporate. */
-/* A column per group, headings across the top, each list running its own
-   length down. align-items: start is the whole of it - stretched, every
-   group in a row took the height of the tallest, so a long Corporate list
-   left Financial and Business starting two thirds down with a block of
-   nothing above them. */
+/* A column per group, headings along the top, each list running its own
+   length. FLEX, NOT GRID, and not a column flow.
+
+   Two earlier attempts failed because both kept a layout that can wrap. A
+   grid with auto-fit wraps into a second row, so a tall group pushed the
+   rest down and left a hole; a column flow splits a group across columns,
+   so half a list appeared under no heading at all. break-inside does not
+   help - it is a multi-column property and does nothing in a grid.
+
+   Flex without wrap cannot do either: every group is one column, always,
+   and a long one simply makes its own column long. Rendered and looked at
+   before being written, rather than reasoned about a third time. */
 .binder-groups {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  align-items: start;
-  column-gap: 24px;
-  row-gap: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
   margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
+}
+.binder-groups > div {
+  flex: 1 1 0;
+  min-width: 0;
 }
 .binder-groups h5 {
   margin: 0 0 6px; font-size: 11px; letter-spacing: 0.08em;
