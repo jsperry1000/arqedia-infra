@@ -156,8 +156,30 @@ function TypeForm({ initial, categories, onSave, onCancel, onDelete }: {
 
   const key = t.key ?? slugKey(t.label);
 
+  // A document card saves on Save, so a half-typed description is a real
+  // unsaved change. Asked about rather than discarded.
+  const dirty = t.label !== (initial?.label ?? "")
+    || t.category !== (initial?.category ?? (categories[0]?.key ?? ""))
+    || t.description !== (initial?.description ?? "")
+    || t.read_mode !== (initial?.read_mode ?? "text")
+    || t.always_ocr !== (initial?.always_ocr ?? false);
+
+  const leave = () => {
+    if (dirty && !window.confirm(
+      "Leave this document? What you changed is not saved.")) return;
+    onCancel();
+  };
+
+  // A drawer, and it renders its own backdrop so that a click outside asks
+  // the same question Cancel does. Rendered inline before, it sat wherever
+  // the documents part happened to be scrolled to, and opening another
+  // document silently replaced whatever was half-typed in it.
   return (
-    <div className="form">
+    <div className="panel-backdrop" onClick={leave}>
+      <div className="panel narrow" onClick={(e) => e.stopPropagation()}
+           onKeyDown={(e) => { if (e.key === "Escape") leave(); }}>
+        <a className="panel-close" onClick={leave}>Close</a>
+        <div className="form">
       <h4>{existing ? "Edit document" : "New document"}</h4>
 
       <label className="row">
@@ -191,12 +213,14 @@ function TypeForm({ initial, categories, onSave, onCancel, onDelete }: {
       <div className="form-actions">
         <button disabled={!t.label.trim() || !t.description.trim()}
                 onClick={() => onSave({ ...t, key })}>Save</button>
-        <a className="secondary" onClick={onCancel}>Cancel</a>
+        <a className="secondary" onClick={leave}>Cancel</a>
         {existing && onDelete && (
           <a className="danger small" onClick={onDelete}>
             Delete this document
           </a>
         )}
+      </div>
+        </div>
       </div>
     </div>
   );
@@ -717,7 +741,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // --- editing --------------------------------------------------------------
 
   return (
-    <div>
+    // Asks the page for room: this screen carries lists grouped into a column
+    // per document group, and four groups do not fit the width that suits
+    // prose. See main:has(.wide-page).
+    <div className="wide-page">
       <a onClick={onBack} className="back">Back</a>
 
       <div className="memo-head">
@@ -751,7 +778,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           sight of the row that was clicked. */}
       {editField !== null && (
         <div className="panel-backdrop" onClick={() => setEditField(null)}>
-          <div className="panel" onClick={(e) => e.stopPropagation()}>
+          <div className="panel narrow" onClick={(e) => e.stopPropagation()}>
             <a className="panel-close"
                onClick={() => setEditField(null)}>Close</a>
             <FieldForm
