@@ -477,6 +477,33 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       .sort((a, b) => a.label.localeCompare(b.label)),
     [draft]);
 
+  /** Facts under the groups whose documents hold them, a column each.
+   *
+   *  A fact found in documents from two groups appears in BOTH columns. That
+   *  is the truth about it, and the version that picked one group and hid
+   *  the rest put financial figures under Corporate because Corporate sorted
+   *  first. A fact in no document gets a column of its own rather than being
+   *  dropped - one found nowhere is the one worth looking at. */
+  const byGroup = useMemo(() => {
+    const groupOf: Record<string, string> = {};
+    for (const t of draft?.document_types ?? []) groupOf[t.key] = t.category;
+
+    const out: { key: string; label: string; fields: ConfigField[] }[] = [];
+    for (const c of draft?.categories ?? []) {
+      const fields = allFields.filter(
+        (f) => f.found_in.some((t) => groupOf[t] === c.key));
+      if (fields.length) out.push({ key: c.key, label: c.label, fields });
+    }
+
+    const homeless = allFields.filter(
+      (f) => !f.found_in.some((t) => groupOf[t]));
+    if (homeless.length) {
+      out.push({ key: "\u0000none", label: "In no document",
+                 fields: homeless });
+    }
+    return out;
+  }, [draft, allFields]);
+
   // The same list narrowed by the filter box, and used ONLY by the table that
   // box sits above. It was used by the section and document tick lists too,
   // so typing in a filter halfway down the page silently emptied controls
@@ -488,6 +515,14 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       f.label.toLowerCase().includes(needle) ||
       (f.description ?? "").toLowerCase().includes(needle));
   }, [allFields, fieldFilter]);
+
+  /** The keys the filter box leaves visible. Kept apart from the grouping so
+   *  that narrowing the list never changes where a fact sits. */
+  const visible = useMemo(
+    () => new Set(sortedFields.map((f) => f.key)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sortedFields]);
+
 
   // Documents as they are grouped for the person who has to say what one is,
   // and alphabetical within each group. Categories keep the order the
@@ -878,27 +913,36 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 that no longer exists would report it absent whether or not it
                 was found, so that is refused here rather than at publish.
               </p>
-              {allFields.map((f) => {
-                const on = s.fields.includes(f.key);
-                return (
-                  <div className="bind" key={f.key}>
-                    {/* The tick and the name do different things. Wrapping
-                        both in one label meant clicking a name to read what
-                        the fact is silently bound it to the section. */}
-                    <input type="checkbox" checked={on}
-                      onChange={() => {
-                        const next = on
-                          ? s.fields.filter((x) => x !== f.key)
-                          : [...s.fields, f.key];
-                        act("Saving",
-                            () => api.setSectionFields(
-                              s.template_key, s.key, next));
-                      }} />{" "}
-                    <a onClick={() => setEditField(f.key)}>{f.label}</a>
-                    {f.is_group && <span className="muted small"> (table)</span>}
+              <div className="binder-groups">
+                {byGroup.map((g) => (
+                  <div key={g.key}>
+                    <h5>{g.label}</h5>
+                    {g.fields.map((f) => {
+                      const on = s.fields.includes(f.key);
+                      return (
+                        <div className="bind" key={f.key}>
+                          {/* The tick and the name do different things.
+                              Wrapping both in one label meant clicking a name
+                              to read what the fact is silently bound it. */}
+                          <input type="checkbox" checked={on}
+                            onChange={() => {
+                              const next = on
+                                ? s.fields.filter((x) => x !== f.key)
+                                : [...s.fields, f.key];
+                              act("Saving",
+                                  () => api.setSectionFields(
+                                    s.template_key, s.key, next));
+                            }} />{" "}
+                          <a onClick={() => setEditField(f.key)}>{f.label}</a>
+                          {f.is_group && (
+                            <span className="muted small"> (table)</span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -956,7 +1000,18 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           </tr>
         </thead>
         <tbody>
-          {sortedFields.map((f) => (
+          {/* Under the group whose documents hold each fact, and a fact held
+              by two groups appears under both. The filter still applies; it
+              narrows what is shown rather than changing the grouping. */}
+          {byGroup.map((g) => {
+            const shown = g.fields.filter((x) => visible.has(x.key));
+            if (shown.length === 0) return null;
+            return (
+              <Fragment key={g.key}>
+                <tr className="group-head">
+                  <td colSpan={3}>{g.label}</td>
+                </tr>
+                {shown.map((f) => (
             <tr key={f.key} className={bound.has(f.key) ? "" : "aside"}>
               <td>
                 <a onClick={() => setEditField(f.key)}>{f.label}</a>
@@ -989,7 +1044,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                   : <span className="warn">nothing</span>}
               </td>
             </tr>
-          ))}
+                ))}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
 
@@ -1133,20 +1191,27 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
               &mdash; changing it here changes it there.
             </p>
 
-            <div className="binder">
-              {allFields.map((f) => {
-                const on = typeFields.includes(f.key);
-                return (
-                  <label className="bind" key={f.key}>
-                    <input type="checkbox" checked={on}
-                      onChange={() => setTypeFields(on
-                        ? typeFields.filter((x) => x !== f.key)
-                        : [...typeFields, f.key])} />
-                    {f.label}
-                    {f.is_group && <span className="muted small"> (table)</span>}
-                  </label>
-                );
-              })}
+            <div className="binder-groups">
+              {byGroup.map((g) => (
+                <div key={g.key}>
+                  <h5>{g.label}</h5>
+                  {g.fields.map((f) => {
+                    const on = typeFields.includes(f.key);
+                    return (
+                      <label className="bind" key={f.key}>
+                        <input type="checkbox" checked={on}
+                          onChange={() => setTypeFields(on
+                            ? typeFields.filter((x) => x !== f.key)
+                            : [...typeFields, f.key])} />
+                        {f.label}
+                        {f.is_group && (
+                          <span className="muted small"> (table)</span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
 
             <div className="form-actions">
