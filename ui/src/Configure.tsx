@@ -988,24 +988,22 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                     : g.fields;
                   if (fields.length === 0) return null;
 
-                  // A search opens every group it matched; otherwise one at
-                  // a time, and the count says what is inside a shut one.
-                  const open = needle !== "" || openFactGroup === g.key;
+                  // EVERYTHING OPEN. This is where facts are bound to a
+                  // section, and a person doing that needs to see the whole
+                  // vocabulary at once. Collapsing it here was a mistake -
+                  // the browsing lists collapse, the working list does not.
                   const chosen = fields.filter(
                     (f) => s.fields.includes(f.key)).length;
 
                   return (
                   <div key={g.key}>
                     <h5>
-                      <a onClick={() => setOpenFactGroup(
-                        openFactGroup === g.key ? null : g.key)}>
-                        {open ? "\u25be" : "\u25b8"} {g.label}
-                      </a>{" "}
+                      {g.label}{" "}
                       <span className="muted">
                         {chosen > 0 ? chosen + " of " : ""}{fields.length}
                       </span>
                     </h5>
-                    {open && fields.map((f) => {
+                    {fields.map((f) => {
                       const on = s.fields.includes(f.key);
                       return (
                         <div className="bind" key={f.key}>
@@ -1095,12 +1093,25 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           {byGroup.map((g) => {
             const shown = g.fields.filter((x) => visible.has(x.key));
             if (shown.length === 0) return null;
+
+            // Collapsible, like the document types below: a browsing list,
+            // one group at a time, and a filter opens whatever it matched.
+            const open = fieldFilter.trim() !== "" || openFactGroup === g.key;
+
             return (
               <Fragment key={g.key}>
                 <tr className="group-head">
-                  <td colSpan={3}>{g.label}</td>
+                  <td colSpan={3}>
+                    <a onClick={() => setOpenFactGroup(
+                      openFactGroup === g.key ? null : g.key)}>
+                      {open ? "\u25be" : "\u25b8"} {g.label}
+                    </a>
+                    <span className="muted small">
+                      {" \u00b7 "}{shown.length}
+                    </span>
+                  </td>
                 </tr>
-                {shown.map((f) => (
+                {open && shown.map((f) => (
             <tr key={f.key} className={bound.has(f.key) ? "" : "aside"}>
               <td>
                 <a onClick={() => setEditField(f.key)}>{f.label}</a>
