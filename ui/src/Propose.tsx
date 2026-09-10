@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   type Draft,
@@ -33,6 +33,11 @@ import {
  * holds, both are shown and he picks. Deciding for him binds a section to a
  * field that means something else, which renders a number that is wrong and
  * looks right.
+ *
+ * NOTHING IS TAKEN UNLESS TICKED. A report names far more facts than anyone
+ * wants configured, and near-synonyms across its sections. Every fact starts
+ * unticked; the person picks the ones worth having, and nothing unticked is
+ * written - no field, no binding, no document brought in for it.
  */
 
 
@@ -60,10 +65,16 @@ type FactChoice = {
   // section of its own until one is chosen, so it cannot be placed by the
   // ordinary rule.
   added: boolean;
-  // Deliberately reported by no section here. The fact is still created and
-  // still extracted - it belongs to the tenant, and another memorandum may
-  // report it. This only records that the person has seen it and decided.
+  // No longer read. It marked a fact reported by no section, and let one be
+  // created without its wording ever being acknowledged. Kept only so a
+  // proposal decided before the list existed still restores.
   unused: boolean;
+  // Taken into the configuration. Every proposed fact starts unticked.
+  // Optional, because a proposal saved before this existed carries none.
+  chosen?: boolean;
+  // Folded into another fact of this report, by its id. Its sections and
+  // documents joined that fact's; it leaves the list and is never written.
+  mergedInto?: string;
   acknowledged: boolean;
 };
 
@@ -102,9 +113,10 @@ export function ProposeView({ onDone, onCancel }: {
   // Document cards carry a form each. One open at a time, or the page is
   // metres long before the person has read the first one.
   const [openDoc, setOpenDoc] = useState<string | null>(null);
-  // The four parts of the page. All open to begin with - a person who has
-  // just had a report read wants to see what came back, not four headings.
-  const [shut, setShut] = useState<Set<string>>(new Set());
+  // The parts of the page. The facts are open, since choosing them is the
+  // work; sections and documents are shut until wanted.
+  const [shut, setShut] = useState<Set<string>>(
+    new Set(["sections", "newdocs", "helddocs"]));
   const part = (key: string, label: string, count: string, wants: number) => (
     <h3>
       <a onClick={() => {
@@ -144,22 +156,6 @@ export function ProposeView({ onDone, onCancel }: {
   // Which section's facts are on show. One at a time, on purpose.
   const [shownSection, setShownSection] = useState<number | null>(null);
 
-  /** Sections are referred to by position, so swapping two means swapping
-   *  every reference to them. Left alone, moving a section would silently
-   *  take its facts to the section that replaced it. */
-  const swap = (n: number, a: number, b: number) =>
-    n === a ? b : (n === b ? a : n);
-
-  const moved = (set: Set<number>, a: number, b: number) =>
-    new Set([...set].map((n) => swap(n, a, b)));
-
-  const remapped = (all: Record<string, FactChoice>, a: number, b: number) => {
-    const out: Record<string, FactChoice> = {};
-    for (const [id, f] of Object.entries(all)) {
-      out[id] = { ...f, sections: f.sections.map((n) => swap(n, a, b)) };
-    }
-    return out;
-  };
   // Which fact is open over the page.
   const [openFact, setOpenFact] = useState<string | null>(null);
   // Everything the person has decided, kept beside the proposal as they
@@ -183,6 +179,80 @@ export function ProposeView({ onDone, onCancel }: {
   const [skipped, setSkipped] = useState<Set<number>>(new Set());
   const [facts, setFacts] = useState<Record<string, FactChoice>>({});
   const [types, setTypes] = useState<Record<string, TypeChoice>>({});
+  // The facts list: which section's group is open, and what is searched for.
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const [factSearch, setFactSearch] = useState("");
+  // What is being typed into a section's position box, until it is left.
+  // Moving on every keystroke would move the row out from under the cursor
+  // as soon as the first digit of "10" was typed.
+  const [position, setPosition] = useState<Record<number, string>>({});
+
+  /** Put a section at a position - the same box Configure uses.
+   *
+   *  Sections are referred to by position: the skipped set, and every fact's
+   *  list of sections. So every reference is renumbered with the move. Left
+   *  alone, a moved section would silently take the facts of the section
+   *  that took its place. */
+  const placeSection = (from: number, wanted: number) => {
+    if (!proposal) return;
+    const to = Math.max(1, Math.min(wanted, proposal.sections.length)) - 1;
+    if (to === from) return;
+
+    const order = proposal.sections.map((_, n) => n).filter((n) => n !== from);
+    order.splice(to, 0, from);
+    const where: Record<number, number> = {};
+    order.forEach((old, at) => { where[old] = at; });
+
+    setProposal({ ...proposal,
+                  sections: order.map((old) => proposal.sections[old]) });
+    setSkipped(new Set([...skipped].map((n) => where[n] ?? n)));
+    const next: Record<string, FactChoice> = {};
+    for (const [id, f] of Object.entries(facts)) {
+      next[id] = { ...f, sections: f.sections.map((n) => where[n] ?? n) };
+    }
+    setFacts(next);
+    if (shownSection !== null) setShownSection(where[shownSection] ?? null);
+    // The facts list keys a section's group by position too.
+    if (openGroup?.startsWith("s")) {
+      const at = where[Number(openGroup.slice(1))];
+      setOpenGroup(at === undefined ? null : "s" + at);
+    }
+    setAddingSection(null);
+  };
+
+  /** Two names for one fact. The report's sections are read one at a time,
+   *  so the same fact can arrive twice under different words - an
+   *  arrangement in one section, the requirements in another.
+   *
+   *  The folded fact's sections and documents join the other's, and it
+   *  leaves the list. It is kept, marked, so it can be undone; undoing does
+   *  not take back what it brought, which the person can remove. */
+  const mergeInto = (from: string, into: string) => {
+    const a = facts[from];
+    const b = facts[into];
+    if (!a || !b || from === into) return;
+
+    const documents = [...b.documents];
+    for (const d of a.documents) {
+      if (!documents.some((x) => x.trim().toLowerCase()
+          === d.trim().toLowerCase())) documents.push(d);
+    }
+    const sections = Array.from(new Set([...b.sections, ...a.sections]));
+    const changed = documents.length !== b.documents.length
+      || sections.length !== b.sections.length;
+
+    const next: Record<string, FactChoice> = { ...facts };
+    // Anything already folded into this one follows it.
+    for (const [id, f] of Object.entries(next)) {
+      if (f.mergedInto === from) next[id] = { ...f, mergedInto: into };
+    }
+    next[from] = { ...a, chosen: false, mergedInto: into };
+    next[into] = { ...b, documents, sections,
+      chosen: !!(b.chosen || a.chosen),
+      acknowledged: changed ? false : b.acknowledged };
+    setFacts(next);
+    setOpenFact(into);
+  };
 
   const polling = useRef<number | null>(null);
   // The last snapshot not yet written. Null once it has been.
@@ -247,6 +317,16 @@ export function ProposeView({ onDone, onCancel }: {
       flush();
     };
   }, []);
+
+  // Escape closes the fact drawer, as it closes every drawer in Configure.
+  useEffect(() => {
+    if (!openFact) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { setEditField(null); setOpenFact(null); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openFact]);
 
   // --- reading ------------------------------------------------------------
 
@@ -343,7 +423,15 @@ export function ProposeView({ onDone, onCancel }: {
   function restore(p: Proposal, w: Working) {
     setMemoLabel(w.memoLabel);
     setSkipped(new Set(w.skipped ?? []));
-    setFacts(w.facts ?? {});
+    // Decided before the list existed. "I do not need this fact" was the old
+    // way of saying no, and unticked is the way of saying it now.
+    const kept: Record<string, FactChoice> = {};
+    for (const [id, f] of Object.entries(w.facts ?? {})) {
+      kept[id] = f.use === "skip"
+        ? { ...f, use: f.existing ? "existing" : "new", chosen: false }
+        : f;
+    }
+    setFacts(kept);
     setTypes(w.types ?? {});
     setNewGroups(w.newGroups ?? []);
     setHeldGroup(w.heldGroup ?? {});
@@ -419,6 +507,7 @@ export function ProposeView({ onDone, onCancel }: {
           sections: [index],
           added: false,
           unused: false,
+          chosen: false,
           acknowledged: false,
         };
       });
@@ -473,14 +562,18 @@ export function ProposeView({ onDone, onCancel }: {
     return map;
   }, [draft, types]);
 
-  /** A fact still wanted: not set aside, and named by a section still kept.
-   *  A fact named only in sections he unticked would otherwise be created and
-   *  bound to nothing - clutter he did not ask for, and one more thing to
-   *  acknowledge before he can get on. */
-  // Created and extracted unless it is not wanted at all. Being reported by
-  // no section is a legitimate state - one vocabulary, several memoranda -
-  // and is shown rather than allowed to drop the fact silently.
-  const live = (f: FactChoice) => f.use !== "skip";
+  /** Taken: ticked, and not folded into another fact. Only a taken fact is
+   *  created, bound to a section, or brings a document in with it. */
+  const live = (f: FactChoice) =>
+    !!f.chosen && f.use !== "skip" && !f.mergedInto;
+
+  /** A proposed document is wanted only where a taken fact is looked for in
+   *  it. One nothing taken needs is neither shown nor created. */
+  const needed = (label: string) => {
+    const l = label.trim().toLowerCase();
+    return Object.values(facts).some((f) => live(f)
+      && f.documents.some((x) => x.trim().toLowerCase() === l));
+  };
 
   /** One key per section, unique within the memorandum. Two sections titled
    *  the same slug to the same key, and the second would silently overwrite
@@ -498,17 +591,16 @@ export function ProposeView({ onDone, onCancel }: {
     });
   }, [proposal]);
 
-  // A fact the person has set aside is not waiting on them. It is still
-  // created and still extracted; they have said this memorandum does not
-  // report it, and certifying wording for a fact just set aside is the same
-  // trap in a different place.
+  // A taken new fact waits on its acknowledgement wherever it sits. Exempting
+  // one reported by no section let a field be created that nobody had read.
   const wanting = (f: FactChoice) =>
-    f.use === "new" && live(f) && !f.unused && !f.acknowledged;
+    f.use === "new" && live(f) && !f.acknowledged;
 
   const outstanding = useMemo(() => {
     const n = Object.values(facts).filter(wanting).length
       + Object.values(types)
-        .filter((t) => t.use === "new" && !t.acknowledged).length;
+        .filter((t) => t.use === "new" && !t.acknowledged
+          && needed(t.label)).length;
     return n;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facts, types, skipped]);
@@ -543,7 +635,8 @@ export function ProposeView({ onDone, onCancel }: {
       }
 
       for (const t of Object.values(types)) {
-        if (t.use !== "new" || !t.groupLabel || groups.has(t.group)) continue;
+        if (t.use !== "new" || !needed(t.label) || !t.groupLabel
+            || groups.has(t.group)) continue;
         setBusy("Adding a group");
         await api.saveCategory({ key: t.group, label: t.groupLabel });
         done.push("group " + t.groupLabel);
@@ -551,7 +644,7 @@ export function ProposeView({ onDone, onCancel }: {
       }
 
       for (const t of Object.values(types)) {
-        if (t.use !== "new") continue;
+        if (t.use !== "new" || !needed(t.label)) continue;
         setBusy("Adding " + t.label);
         await api.saveDocumentType({
           key: slugKey(t.label),
@@ -903,7 +996,7 @@ export function ProposeView({ onDone, onCancel }: {
                             setFacts({
                               ...facts,
                               [fid]: { ...already,
-                                documents: [...kept, label],
+                                documents: [...kept, label], chosen: true,
                                 acknowledged: false } });
                           } else {
                             setFacts({
@@ -913,7 +1006,7 @@ export function ProposeView({ onDone, onCancel }: {
                                 shape: "one", existing: null, why: null,
                                 columns: [], documents: [label],
                                 held: [], sections: [],
-                                added: true, unused: false,
+                                added: true, unused: false, chosen: true,
                                 acknowledged: false,
                               } });
                           }
@@ -947,6 +1040,8 @@ export function ProposeView({ onDone, onCancel }: {
    */
   const factCard = (id: string, f: FactChoice) => {
         const match = f.existing ? heldField(f.existing) : null;
+        // Facts of this report already folded into this one.
+        const folded = factList.filter(([, o]) => o.mergedInto === id);
         return (
           <div className="review" key={id}>
             <div className="review-head">
@@ -957,6 +1052,14 @@ export function ProposeView({ onDone, onCancel }: {
                   ? ` \u00b7 named in ${f.sections.length} sections` : ""}
               </span>
             </div>
+
+            {/* The same tick as the fact's row in the list. */}
+            <label className="inline-check">
+              <input type="checkbox" checked={!!f.chosen}
+                onChange={(e) => setFacts({
+                  ...facts, [id]: { ...f, chosen: e.target.checked } })} />
+              Take this fact
+            </label>
 
             {/* Deliberately not the binder/bind pair the field list uses:
                 that is a multi-column grid, and it flowed the reason for the
@@ -1253,14 +1356,38 @@ export function ProposeView({ onDone, onCancel }: {
               </select>
             </label>
 
-            <div className="muted small">
-              <a onClick={() => setFacts({
-                ...facts,
-                [id]: { ...f, use: f.use === "skip"
-                  ? (f.existing ? "existing" : "new") : "skip" } })}>
-                {f.use === "skip" ? "Put it back" : "I do not need this fact"}
-              </a>
-            </div>
+            {/* Two names for one fact, the commonest thing wrong with what
+                a report proposes. Folding is kept and can be undone. */}
+            <label className="row">
+              <span>Same as</span>
+              <select value=""
+                onChange={(e) => {
+                  if (e.target.value !== "") mergeInto(id, e.target.value);
+                }}>
+                <option value="">Another fact in this report&hellip;</option>
+                {factList
+                  .filter(([oid, o]) => oid !== id && !o.mergedInto)
+                  .sort((a, b) => a[1].label.localeCompare(b[1].label))
+                  .map(([oid, o]) => (
+                    <option key={oid} value={oid}>{o.label}</option>
+                  ))}
+              </select>
+            </label>
+
+            {folded.length > 0 && (
+              <div className="muted small">
+                <strong>Folded into this:</strong>{" "}
+                {folded.map(([oid, o]) => (
+                  <span key={oid} style={{ marginRight: "0.75em" }}>
+                    {o.label}{" "}
+                    <a onClick={() => setFacts({
+                      ...facts, [oid]: { ...o, mergedInto: undefined } })}>
+                      undo
+                    </a>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         );
   };
@@ -1498,7 +1625,8 @@ export function ProposeView({ onDone, onCancel }: {
    *  picked up. */
   const offerFor = (i: number) => {
     const free = Object.entries(facts).filter(
-      ([, f]) => live(f) && !f.sections.includes(i));
+      ([, f]) => !f.mergedInto && f.use !== "skip"
+        && !f.sections.includes(i));
     const by = (test: (f: FactChoice) => boolean) => free
       .filter(([, f]) => test(f))
       .sort((a, b) => a[1].label.localeCompare(b[1].label));
@@ -1519,19 +1647,43 @@ export function ProposeView({ onDone, onCancel }: {
     return out.filter((g) => g.entries.length > 0);
   };
 
-  // Facts no kept section reports. Marked ones stay in the list, marked.
-  const stranded = factList
-    .filter(([, f]) => live(f)
-      && !f.sections.some((i) => !skipped.has(i)))
-    .sort((a, b) => a[1].label.localeCompare(b[1].label));
+  // The facts list: every fact not folded into another, grouped under each
+  // kept section that names it, and those no kept section names under a
+  // heading of their own. A fact in two sections appears under both.
+  const needle = factSearch.trim().toLowerCase();
+  const factRows = factList.filter(([, f]) => !f.mergedInto);
+  const chosenCount = factRows.filter(([, f]) => live(f)).length;
+  const factGroups = [
+    ...proposal.sections.map((s, n) => ({
+      key: "s" + n,
+      label: `${s.numeral} ${s.title}`.trim(),
+      all: skipped.has(n) ? []
+        : factRows.filter(([, f]) => f.sections.includes(n)),
+    })),
+    {
+      key: "none",
+      label: "Not in any kept section",
+      all: factRows.filter(([, f]) => !f.sections.some((n) => !skipped.has(n))),
+    },
+  ]
+    .map((g) => ({
+      ...g,
+      total: g.all.length,
+      chosen: g.all.filter(([, f]) => live(f)).length,
+      wants: g.all.filter(([, f]) => wanting(f)).length,
+      rows: g.all
+        .filter(([, f]) => !needle || f.label.toLowerCase().includes(needle))
+        .sort((a, b) => a[1].label.localeCompare(b[1].label)),
+    }))
+    .filter((g) => g.rows.length > 0);
 
-  const typeList = Object.entries(types).filter(([, t]) => t.use !== "existing"
-    || t.existing === null);
+  const typeList = Object.entries(types).filter(([, t]) =>
+    (t.use !== "existing" || t.existing === null) && needed(t.label));
 
   // Documents the tenant already holds, less any this report would add under
   // the same name - one document should not appear in both lists.
   const proposedLabels = new Set(
-    Object.values(types).filter((t) => t.use === "new")
+    Object.values(types).filter((t) => t.use === "new" && needed(t.label))
       .map((t) => t.label.trim().toLowerCase()));
   const heldTypes = (draft?.document_types ?? [])
     .filter((t) => !proposedLabels.has(t.label.trim().toLowerCase()))
@@ -1581,7 +1733,8 @@ export function ProposeView({ onDone, onCancel }: {
 
       {/* 2 --- its sections --------------------------------------------- */}
       {part("sections", "Memo sections",
-            `${proposal.sections.length} in the report`,
+            `${proposal.sections.length} in the report \u00b7 `
+              + `${proposal.sections.length - skipped.size} kept`,
             factList.filter(([, f]) => wanting(f)
               && f.sections.length > 0).length)}
 
@@ -1595,7 +1748,7 @@ export function ProposeView({ onDone, onCancel }: {
         <tbody>
           {proposal.sections.map((s, i) => {
             const carries = factList.filter(
-              ([, f]) => f.use !== "skip" && f.sections.includes(i));
+              ([, f]) => live(f) && f.sections.includes(i));
             const wants = carries.filter(([, f]) => wanting(f)).length;
             return (
             <tr key={i} className={skipped.has(i) ? "aside" : ""}>
@@ -1608,25 +1761,20 @@ export function ProposeView({ onDone, onCancel }: {
                   }} />
               </td>
               <td className="muted small">
-                {/* The order the memorandum reads in. A section is where a
-                    reader expects it or the memorandum is unreadable, and
-                    the reader's order is not always the report's. */}
-                <a onClick={() => {
-                  if (i === 0) return;
-                  const next = [...proposal.sections];
-                  [next[i - 1], next[i]] = [next[i], next[i - 1]];
-                  setProposal({ ...proposal, sections: next });
-                  setSkipped(moved(skipped, i, i - 1));
-                  setFacts(remapped(facts, i, i - 1));
-                }}>&uarr;</a>{" "}
-                <a onClick={() => {
-                  if (i === proposal.sections.length - 1) return;
-                  const next = [...proposal.sections];
-                  [next[i], next[i + 1]] = [next[i + 1], next[i]];
-                  setProposal({ ...proposal, sections: next });
-                  setSkipped(moved(skipped, i, i + 1));
-                  setFacts(remapped(facts, i, i + 1));
-                }}>&darr;</a>
+                {/* The order the memorandum reads in, typed as a position -
+                    the box Configure uses. A section is where a reader
+                    expects it or the memorandum is unreadable, and the
+                    reader's order is not always the report's. */}
+                <input value={position[i] ?? String(i + 1)}
+                  style={{ width: "2.6em", textAlign: "center" }}
+                  title="Position"
+                  onChange={(e) =>
+                    setPosition({ ...position, [i]: e.target.value })}
+                  onBlur={() => {
+                    const typed = parseInt(position[i] ?? "", 10);
+                    setPosition({});
+                    if (!isNaN(typed)) placeSection(i, typed);
+                  }} />
               </td>
               <td>
                 <input value={s.numeral}
@@ -1658,7 +1806,7 @@ export function ProposeView({ onDone, onCancel }: {
                    onClick={() => setShownSection(
                      shownSection === i ? null : i)}>
                   {shownSection === i ? "\u25be" : "\u25b8"} {carries.length}
-                  {carries.length === 1 ? " fact" : " facts"}
+                  {" chosen"}
                 </a>
                 {wants > 0 && (
                   <span className="warn small">
@@ -1712,7 +1860,7 @@ export function ProposeView({ onDone, onCancel }: {
                       const f2 = facts[v];
                       if (f2 && !f2.sections.includes(i)) {
                         setFacts({ ...facts,
-                          [v]: { ...f2, unused: false,
+                          [v]: { ...f2, unused: false, chosen: true,
                             sections: [...f2.sections, i] } });
                       }
                     }}>
@@ -1744,7 +1892,8 @@ export function ProposeView({ onDone, onCancel }: {
                           if (!already.sections.includes(i)) {
                             setFacts({ ...facts,
                               [fid]: { ...already,
-                                sections: [...already.sections, i] } });
+                                sections: [...already.sections, i],
+                                chosen: true } });
                           }
                         } else {
                           setFacts({ ...facts,
@@ -1753,7 +1902,7 @@ export function ProposeView({ onDone, onCancel }: {
                               shape: "one", existing: null, why: null,
                               columns: [], documents: [], held: [],
                               sections: [i],
-                              added: false, unused: false,
+                              added: false, unused: false, chosen: true,
                               acknowledged: false,
                             } });
                         }
@@ -1768,7 +1917,7 @@ export function ProposeView({ onDone, onCancel }: {
                 )}
               </td>
               <td className="muted small">
-                {carries.length} {carries.length === 1 ? "fact" : "facts"}
+                {carries.length} chosen
               </td>
             </tr>
             );
@@ -1841,69 +1990,116 @@ export function ProposeView({ onDone, onCancel }: {
         </div>
       )}
 
-      {/* 3 --- facts nothing reports ------------------------------------ */}
-      {/* A fact belongs to the tenant, not to one memorandum, so it is
-          expected that a memorandum reports only some of them. What is not
-          expected is losing track of which - so they are listed rather than
-          dropped, and stay listed once marked. */}
-      {stranded.length > 0 && (
-        <>
-          {part("stranded", "Not reported by this memorandum",
-                `${stranded.length}`,
-                stranded.filter(([, f]) => wanting(f)).length)}
+      {/* 3 --- the facts, to choose from ---------------------------------- */}
+      {/* Every fact the report names, new or matched to one already held,
+          under the sections that name it. Nothing is taken until ticked. The
+          tick is separate from the name: the tick decides, the name opens
+          the fact. */}
+      {part("facts", "Facts",
+            `${factRows.length} proposed \u00b7 ${chosenCount} chosen`,
+            factRows.filter(([, f]) => wanting(f)).length)}
 
-      {!shut.has("stranded") && (<>
-          <p className="muted small">
-            These will be read from your documents, but no section here
-            reports them. Put each in a section, or mark it as not used by
-            this memorandum. Another memorandum may still report it.
-          </p>
+      {!shut.has("facts") && (<>
+        <p className="muted small">
+          Tick the facts worth having. Nothing unticked is written. A fact
+          named in two sections appears under both, and the tick is the same
+          one.
+        </p>
 
-          <table className="docs">
-            <tbody>
-              {stranded.map(([id, f]) => (
-                <tr key={id} className={f.unused ? "aside" : ""}>
-                  <td>
-                    <a onClick={() => setOpenFact(id)}>{f.label}</a>
-                    {wanting(f) && (
-                      <span className="warn small"> needs you</span>
+        <div className="filters">
+          <input placeholder="Search facts" value={factSearch}
+                 onChange={(e) => setFactSearch(e.target.value)} />
+        </div>
+
+        <table className="docs">
+          <tbody>
+            {factGroups.map((g) => {
+              // A search opens every group it matched.
+              const open = needle !== "" || openGroup === g.key;
+              return (
+              <Fragment key={g.key}>
+                <tr>
+                  <td colSpan={4}>
+                    <a onClick={() =>
+                      setOpenGroup(openGroup === g.key ? null : g.key)}>
+                      {open ? "\u25be" : "\u25b8"} {g.label}
+                    </a>{" "}
+                    <span className="muted small">
+                      {g.chosen} of {g.total} chosen
+                    </span>
+                    {g.wants > 0 && (
+                      <span className="warn small">
+                        {" \u00b7 "}{g.wants} needing you
+                      </span>
                     )}
                   </td>
-                  <td>
-                    <select value=""
-                      onChange={(e) => {
-                        if (e.target.value === "") return;
-                        const at = Number(e.target.value);
-                        setFacts({ ...facts,
-                          [id]: { ...f, unused: false,
-                            sections: f.sections.includes(at)
-                              ? f.sections : [...f.sections, at] } });
-                      }}>
-                      <option value="">Add to a section&hellip;</option>
-                      {proposal.sections.map((s, i) => (
-                        skipped.has(i) ? null : (
-                          <option key={i} value={String(i)}>
-                            {s.numeral} {s.title}
-                          </option>
-                        )
-                      ))}
-                    </select>
-                  </td>
-                  <td className="muted small">
-                    <a onClick={() => setFacts({
-                      ...facts, [id]: { ...f, unused: !f.unused } })}>
-                      {f.unused
-                        ? "Marked not used \u2014 undo"
-                        : "Not used in this memorandum"}
-                    </a>
-                  </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+
+                {open && g.rows.map(([fid, f]) => (
+                  <tr key={g.key + ":" + fid}>
+                    <td>
+                      <input type="checkbox" checked={!!f.chosen}
+                        onChange={(e) => setFacts({
+                          ...facts, [fid]: { ...f, chosen: e.target.checked } })} />
+                    </td>
+                    <td>
+                      <a onClick={() => setOpenFact(fid)}>{f.label}</a>
+                      {wanting(f) && (
+                        <span className="warn small"> needs you</span>
+                      )}
+                    </td>
+                    <td className="muted small">
+                      {f.use === "existing" ? "you hold this"
+                        : f.shape === "group" ? "table" : "single"}
+                    </td>
+                    <td className="small">
+                      {/* Where it would report. Shown for an unticked fact
+                          too, muted, so choosing it is an informed act. */}
+                      <span className={f.chosen ? "" : "muted"}>
+                        {f.sections.map((n) => {
+                          const s = proposal.sections[n];
+                          if (!s) return null;
+                          return (
+                            <span key={n} style={{ marginRight: "0.75em" }}>
+                              {s.numeral || s.title}
+                              {skipped.has(n) ? " (not kept)" : ""}{" "}
+                              <a onClick={() => setFacts({
+                                ...facts,
+                                [fid]: { ...f,
+                                  sections: f.sections.filter((x) => x !== n),
+                                  acknowledged: false } })}>&times;</a>
+                            </span>
+                          );
+                        })}
+                      </span>
+                      <select value=""
+                        onChange={(e) => {
+                          if (e.target.value === "") return;
+                          const at = Number(e.target.value);
+                          setFacts({
+                            ...facts,
+                            [fid]: { ...f,
+                              sections: [...f.sections, at],
+                              acknowledged: false } });
+                        }}>
+                        <option value="">+ section</option>
+                        {proposal.sections.map((s, n) => (
+                          skipped.has(n) || f.sections.includes(n) ? null : (
+                            <option key={n} value={String(n)}>
+                              {s.numeral} {s.title}
+                            </option>
+                          )
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
       </>)}
-        </>
-      )}
 
       {/* 4 --- the documents --------------------------------------------- */}
       {typeList.length > 0 && (
@@ -1931,15 +2127,15 @@ export function ProposeView({ onDone, onCancel }: {
             </span>
           </div>
 
-          {part("newdocs", "Documents not yet referenced",
+          {part("newdocs", "Documents needed by what you chose",
                 `${typeList.length}`,
                 typeList.filter(([, t]) => t.use === "new"
                   && !t.acknowledged).length)}
 
           {!shut.has("newdocs") && (<>
           <p className="muted small">
-            Kinds of document your report appears to rest on, that are not in
-            your configuration.
+            Kinds of document your report appears to rest on, not in your
+            configuration, that a fact you chose is looked for in.
           </p>
 
           {typeList.map(([id, t]) => (
@@ -2107,6 +2303,19 @@ export function ProposeView({ onDone, onCancel }: {
         documents again.
       </p>
 
+      {/* What Accept will write, before it writes it. */}
+      <p className="muted small">
+        Creates{" "}
+        {factList.filter(([, f]) => live(f) && f.use === "new").length} new
+        {" "}fact(s),{" "}
+        {Object.values(types)
+          .filter((t) => t.use === "new" && needed(t.label)).length} new
+        {" "}document(s), and a memorandum with{" "}
+        {proposal.sections.length - skipped.size} section(s). Uses{" "}
+        {factList.filter(([, f]) => live(f) && f.use === "existing").length}
+        {" "}fact(s) you already hold.
+      </p>
+
       {Object.keys(heldEdits).length > 0 && (
         <p className="muted small">
           {Object.keys(heldEdits).length} fact
@@ -2130,7 +2339,8 @@ export function ProposeView({ onDone, onCancel }: {
               </li>
             ))}
             {Object.entries(types)
-              .filter(([, t]) => t.use === "new" && !t.acknowledged)
+              .filter(([, t]) => t.use === "new" && !t.acknowledged
+                && needed(t.label))
               .map(([tid, t]) => (
                 <li key={tid}>
                   <a onClick={() => setOpenDoc(tid)}>{t.label}</a>
