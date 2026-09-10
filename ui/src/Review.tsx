@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   api,
   type Pending,
@@ -45,6 +45,9 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [sortDown, setSortDown] = useState(false);
   const [nameFilter, setNameFilter] = useState("");
   const [showInactive, setShowInactive] = useState(true);
+  // Which group of the filed list is open. One at a time and none on arrival,
+  // as on the configuration screens.
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [passage, setPassage] = useState<Passage | null>(null);
   const [bounds, setBounds] = useState<[number, number]>([1, 1]);
@@ -215,6 +218,56 @@ export function EngagementView({ id, onBack, onMemo }: {
 
   const activeCount = docs.filter((d) => d.active && d.state === "filed").length;
 
+  /** The filed list under the groups its document types sit in - the same
+   *  division the configuration screens and the type selector above use.
+   *
+   *  A filed row names its type, and nothing in api.ts says whether that is
+   *  the type's key or its label, so it is matched on the key first and the
+   *  label second rather than on a guess.
+   *
+   *  A type the type list no longer carries is not dropped: its documents sit
+   *  under a heading of their own, since a document filed under a retired
+   *  type is exactly the one worth noticing. Groups keep the order of the
+   *  type list; rows inside a group keep the order the sort chose.
+   *
+   *  Counts on a heading are over every document in the group, whatever the
+   *  filter shows, and "in use" means what it means in the bar above. */
+  const groups = useMemo(() => {
+    const RETIRED = "\u0000retired";
+    const NONE = "\u0000none";
+    const groupOf = (d: Doc) => {
+      if (!d.document_type) return NONE;
+      const t = types.find((x) => x.key === d.document_type)
+        ?? types.find((x) => x.label === d.document_type);
+      return t ? t.category : RETIRED;
+    };
+
+    const order: string[] = [];
+    for (const t of types) {
+      if (!order.includes(t.category)) order.push(t.category);
+    }
+    order.push(RETIRED, NONE);
+
+    return order
+      .map((key) => {
+        const all = docs.filter((d) => groupOf(d) === key);
+        return {
+          key,
+          label: key === RETIRED ? "Not among the current document types"
+            : key === NONE ? "Unclassified"
+            : key,
+          rows: visible.filter((d) => groupOf(d) === key),
+          total: all.length,
+          inUse: all.filter((d) => d.active && d.state === "filed").length,
+        };
+      })
+      .filter((g) => g.rows.length > 0);
+  }, [docs, visible, types]);
+
+  // The filename and the value count both open what was read.
+  const openValues = (documentId: number) =>
+    api.documentValues(documentId).then(setDetail);
+
   const byCategory = types.reduce<Record<string, DocType[]>>((acc, t) => {
     (acc[t.category] ||= []).push(t);
     return acc;
@@ -372,7 +425,23 @@ export function EngagementView({ id, onBack, onMemo }: {
               </tr>
             </thead>
             <tbody>
-              {visible.map((d) => (
+              {groups.map((g) => {
+                // A filter opens every group it matched.
+                const open = nameFilter.trim() !== "" || openGroup === g.key;
+                return (
+              <Fragment key={g.key}>
+                <tr>
+                  <td colSpan={6}>
+                    <a onClick={() =>
+                      setOpenGroup(openGroup === g.key ? null : g.key)}>
+                      {open ? "\u25be" : "\u25b8"} {g.label}
+                    </a>{" "}
+                    <span className="muted small">
+                      {g.inUse} of {g.total} in use
+                    </span>
+                  </td>
+                </tr>
+                {open && g.rows.map((d) => (
                 <tr key={d.document_id} className={d.active ? "" : "aside"}>
                   <td>
                     <input
@@ -386,8 +455,7 @@ export function EngagementView({ id, onBack, onMemo }: {
                     />
                   </td>
                   <td>
-                    <a onClick={() =>
-                      api.documentValues(d.document_id).then(setDetail)}>
+                    <a onClick={() => openValues(d.document_id)}>
                       {d.filename}
                     </a>
                   </td>
@@ -416,12 +484,21 @@ export function EngagementView({ id, onBack, onMemo }: {
                   <td className="muted">
                     {d.state === "reading" || !d.extracted_at
                       ? <span className="warn">extracting&hellip;</span>
-                      : d.values}
+                      : (
+                        // Zero opens too: the drawer lists what was looked
+                        // for and not found.
+                        <a onClick={() => openValues(d.document_id)}>
+                          {d.values}
+                        </a>
+                      )}
                   </td>
                   <td className="muted">{(d.filed_at ?? "").slice(0, 16)}</td>
                   <td className="muted">{d.uploaded_by ?? "\u2014"}</td>
                 </tr>
-              ))}
+                ))}
+              </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </>
