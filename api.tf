@@ -181,6 +181,11 @@ locals {
     "GET /memos/{memo_id}",
     "GET /memos/{memo_id}/pdf",
     "POST /memos/{memo_id}/revise",
+
+    # Rewriting a section at a person's prompt. Started here, run by
+    # composition, polled for. Saved only through revise.
+    "POST /memos/{memo_id}/rewrites",
+    "GET /memos/{memo_id}/rewrites",
     "POST /uploads",
     "GET /settings",
     "POST /settings",

@@ -30,6 +30,11 @@ names the file a reader was given. See db/migrations/011_document_parts.sql.
 Editing a section names the memorandum it belongs to, in the path. Two
 memoranda may each carry a section called "summary".
   GET  /memos/{memo_id}                  a memo, its PDF link and its sources
+
+A section of a memo may be rewritten by the model at a person's prompt. The
+rewrite is recorded, and nothing changes until it is saved as a revision.
+  POST /memos/{memo_id}/rewrites         start rewriting sections
+  GET  /memos/{memo_id}/rewrites         how they are going, and what came back
   POST /uploads                          a signed link to upload one file
   GET  /document-types                   the type list, for the dropdown
 
@@ -626,6 +631,19 @@ def get_memo(tenant_id, memo_id):
     # today. Serving a file rendered weeks ago meant a presentation
     # improvement never reached a memo already written.
 
+    # Sections of this revision the model rewrote, and at whose prompt. A
+    # reader must never have to guess which words a person wrote and which a
+    # model did.
+    rewritten = _sql(
+        """
+        SELECT section_heading, prompted_by, model_id, completed_at
+        FROM memo_rewrite
+        WHERE tenant_id = :t AND accepted_in_memo_id = :m
+        ORDER BY rewrite_id
+        """,
+        [_p("t", tenant_id), _p("m", int(memo_id))],
+    )
+
     return {
         "memo_id": int(memo_id),
         "generated_at": _col(r, 2),
@@ -638,10 +656,13 @@ def get_memo(tenant_id, memo_id):
         "markdown": markdown,
         "sources": [{"document_id": _col(s, 0), "filename": _col(s, 1)}
                     for s in sources.get("records", [])],
+        "rewrites": [{"section_heading": _col(w, 0), "prompted_by": _col(w, 1),
+                      "model_id": _col(w, 2), "completed_at": _col(w, 3)}
+                     for w in rewritten.get("records", [])],
     }
 
 
-def revise_memo(tenant_id, email, memo_id, markdown):
+def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None):
     """Save an edited memo as a NEW row. The original and its PDF are never
     touched: a compliance record is not overwritten, and which version anyone
     read stays answerable.
@@ -704,6 +725,31 @@ def revise_memo(tenant_id, email, memo_id, markdown):
             "these citations name documents that are not sources of this "
             "memo: " + ", ".join(unknown[:6]))
 
+    # Rewrites the person accepted into this revision. Checked BEFORE anything
+    # is written, so a bad id refuses the whole save rather than producing a
+    # revision whose record of model-written sections is incomplete. Each must
+    # belong to this tenant and to the memo being revised, must have finished,
+    # and must not already sit in another revision.
+    accepted = sorted({int(r) for r in (rewrite_ids or [])})
+    if accepted:
+        slots = ", ".join(":r%d" % i for i in range(len(accepted)))
+        eligible = _sql(
+            """
+            SELECT rewrite_id FROM memo_rewrite
+            WHERE tenant_id = :t AND memo_id = :m AND status = 'done'
+              AND accepted_in_memo_id IS NULL
+              AND rewrite_id IN (%s)
+            """ % slots,
+            [_p("t", tenant_id), _p("m", int(memo_id))]
+            + [_p("r%d" % i, r) for i, r in enumerate(accepted)],
+        )
+        found = {_col(r, 0) for r in eligible.get("records", [])}
+        missing = [r for r in accepted if r not in found]
+        if missing:
+            raise ValueError(
+                "these rewrites cannot be saved into this revision: "
+                + ", ".join(str(r) for r in missing[:6]))
+
     # The next revision of this memo's line, not of this row.
     highest = _sql(
         """
@@ -761,17 +807,192 @@ def revise_memo(tenant_id, email, memo_id, markdown):
         [_p("new_id", new_id), _p("t", tenant_id), _p("root", root_id)],
     )
 
+    # The record that this revision carries model-written sections. Set once:
+    # a rewrite already accepted elsewhere is never moved.
+    if accepted:
+        slots = ", ".join(":r%d" % i for i in range(len(accepted)))
+        _sql(
+            """
+            UPDATE memo_rewrite SET accepted_in_memo_id = :new_id
+            WHERE tenant_id = :t AND memo_id = :m AND status = 'done'
+              AND accepted_in_memo_id IS NULL
+              AND rewrite_id IN (%s)
+            """ % slots,
+            [_p("new_id", new_id), _p("t", tenant_id),
+             _p("m", int(memo_id))]
+            + [_p("r%d" % i, r) for i, r in enumerate(accepted)],
+        )
+
     _lambda.invoke(
         FunctionName=RENDER_FUNCTION,
         InvocationType="Event",
         Payload=json.dumps({"tenant_id": tenant_id, "memo_id": new_id}))
 
-    print("[revised] memo=%s from=%s revision=%d by=%s" % (
-        new_id, memo_id, next_revision, email))
+    print("[revised] memo=%s from=%s revision=%d by=%s rewrites=%d" % (
+        new_id, memo_id, next_revision, email, len(accepted)))
 
     return {"memo_id": new_id, "parent_memo_id": root_id,
             "revision": next_revision,
             "label": "%s.%s" % (root_id, next_revision)}
+
+
+# --- rewriting a section ---------------------------------------------------
+#
+# A person writes a prompt against one or more sections and presses Go. Each
+# section becomes a memo_rewrite row and one asynchronous invocation of
+# composition, which holds the model call and the citation masking. Nothing
+# about the memo changes: a rewrite is saved only by revise, and only if the
+# person accepted it.
+
+# Bounds on one Go. The section count is the largest template any plan allows
+# (plans spec, 50 sections per template). The prompt bound keeps a poll of
+# every row in one Go well inside the Data API's 1 MiB response limit.
+_REWRITE_MAX_SECTIONS = 50
+_REWRITE_MAX_PROMPT = 4000
+_REWRITE_POLL_LATEST = 10
+
+
+def start_rewrites(tenant_id, email, memo_id, sections):
+    """Record each section's rewrite and start it. Returns the rows started.
+
+    Every section is checked before any row is written, so a bad section
+    refuses the Go rather than starting half of it."""
+    memo = _sql("SELECT memo_id FROM memo WHERE tenant_id = :t AND memo_id = :m",
+                [_p("t", tenant_id), _p("m", int(memo_id))])
+    if not memo.get("records"):
+        return None
+
+    if not isinstance(sections, list) or not sections:
+        raise ValueError("no sections were given to rewrite")
+    if len(sections) > _REWRITE_MAX_SECTIONS:
+        raise ValueError("at most %d sections can be rewritten at once"
+                         % _REWRITE_MAX_SECTIONS)
+
+    checked = []
+    for s in sections:
+        heading = str((s or {}).get("heading") or "").strip()
+        text = str((s or {}).get("text") or "")
+        prompt = str((s or {}).get("prompt") or "").strip()
+        if not heading or len(heading) > 512:
+            raise ValueError("every section needs a heading of at most 512 "
+                             "characters")
+        if not text.strip():
+            raise ValueError("%s has no text to rewrite" % heading)
+        if not prompt:
+            raise ValueError("%s has no prompt" % heading)
+        if len(prompt) > _REWRITE_MAX_PROMPT:
+            raise ValueError("the prompt for %s is longer than %d characters"
+                             % (heading, _REWRITE_MAX_PROMPT))
+        checked.append((heading, text, prompt))
+
+    started = []
+    for heading, text, prompt in checked:
+        created = _sql(
+            """
+            INSERT INTO memo_rewrite
+              (tenant_id, memo_id, section_heading, prompt, prompted_by,
+               input_text, status)
+            VALUES
+              (:t, :m, :heading, :prompt, :who, :input, 'running')
+            """,
+            [_p("t", tenant_id), _p("m", int(memo_id)),
+             _p("heading", heading), _p("prompt", prompt),
+             _p("who", email), _p("input", text)],
+        )
+        rewrite_id = created.get("generatedFields", [{}])[0].get("longValue")
+
+        status = "running"
+        try:
+            _lambda.invoke(
+                FunctionName=COMPOSITION_FUNCTION,
+                InvocationType="Event",
+                Payload=json.dumps({"action": "rewrite",
+                                    "tenant_id": tenant_id,
+                                    "rewrite_id": rewrite_id}))
+        except Exception as exc:  # noqa: BLE001 - recorded on the row
+            # Left running, the row would be polled for ever.
+            status = "failed"
+            _sql(
+                """
+                UPDATE memo_rewrite
+                SET status = 'failed', error = :e, completed_at = UTC_TIMESTAMP()
+                WHERE tenant_id = :t AND rewrite_id = :r AND status = 'running'
+                """,
+                [_p("e", ("could not be started: %s" % exc)[:1024]),
+                 _p("t", tenant_id), _p("r", rewrite_id)],
+            )
+
+        started.append({"rewrite_id": rewrite_id, "section_heading": heading,
+                        "status": status})
+
+    print("[rewrites-started] tenant=%s memo=%s sections=%d by=%s" % (
+        tenant_id, memo_id, len(started), email))
+    return {"memo_id": int(memo_id), "rewrites": started}
+
+
+def list_rewrites(tenant_id, memo_id, ids=None):
+    """How the rewrites are going, and the text of any that have finished.
+
+    Named ids are what the screen polls while a Go is running. With none, the
+    latest few for the memo, so a reloaded page can find its work again.
+
+    The text is read one row at a time. A section's rewrite can run to
+    thousands of words, and fifty in one result would pass the Data API's
+    1 MiB response limit - which terminates the call rather than truncating
+    it."""
+    params = [_p("t", tenant_id), _p("m", int(memo_id))]
+    if ids:
+        wanted = sorted({int(x) for x in str(ids).split(",") if x.strip()})
+        if not wanted:
+            raise ValueError("no rewrite ids were given")
+        if len(wanted) > _REWRITE_MAX_SECTIONS:
+            raise ValueError("at most %d rewrites can be read at once"
+                             % _REWRITE_MAX_SECTIONS)
+        slots = ", ".join(":r%d" % i for i in range(len(wanted)))
+        scope = "AND rewrite_id IN (%s) ORDER BY rewrite_id" % slots
+        params += [_p("r%d" % i, r) for i, r in enumerate(wanted)]
+    else:
+        scope = "ORDER BY rewrite_id DESC LIMIT %d" % _REWRITE_POLL_LATEST
+
+    result = _sql(
+        """
+        SELECT rewrite_id, section_heading, prompt, prompted_by, status,
+               error, citations_dropped, tokens_in, tokens_out, model_id,
+               created_at, completed_at, accepted_in_memo_id
+        FROM memo_rewrite
+        WHERE tenant_id = :t AND memo_id = :m
+        """ + scope,
+        params,
+    )
+
+    rows = []
+    for r in result.get("records", []):
+        row = {
+            "rewrite_id": _col(r, 0),
+            "section_heading": _col(r, 1),
+            "prompt": _col(r, 2),
+            "prompted_by": _col(r, 3),
+            "status": _col(r, 4),
+            "error": _col(r, 5),
+            "citations_dropped": _col(r, 6),
+            "tokens_in": _col(r, 7),
+            "tokens_out": _col(r, 8),
+            "model_id": _col(r, 9),
+            "created_at": _col(r, 10),
+            "completed_at": _col(r, 11),
+            "accepted_in_memo_id": _col(r, 12),
+            "output_text": None,
+        }
+        if row["status"] == "done":
+            text = _sql(
+                "SELECT output_text FROM memo_rewrite "
+                "WHERE tenant_id = :t AND rewrite_id = :r",
+                [_p("t", tenant_id), _p("r", row["rewrite_id"])],
+            ).get("records", [])
+            row["output_text"] = _col(text[0], 0) if text else None
+        rows.append(row)
+
+    return {"memo_id": int(memo_id), "rewrites": rows}
 
 
 # --- settings --------------------------------------------------------------
@@ -1335,10 +1556,23 @@ def lambda_handler(event, context):
         if route == "POST /memos/{memo_id}/revise":
             body = json.loads(event.get("body") or "{}")
             revised = revise_memo(tenant_id, email, params.get("memo_id"),
-                                  body.get("markdown", ""))
+                                  body.get("markdown", ""),
+                                  body.get("rewrites") or [])
             if revised is None:
                 return _reply(404, {"error": "not found"})
             return _reply(201, revised)
+
+        if route == "POST /memos/{memo_id}/rewrites":
+            body = json.loads(event.get("body") or "{}")
+            started = start_rewrites(tenant_id, email, params.get("memo_id"),
+                                     body.get("sections"))
+            if started is None:
+                return _reply(404, {"error": "not found"})
+            return _reply(202, started)
+
+        if route == "GET /memos/{memo_id}/rewrites":
+            return _reply(200, list_rewrites(tenant_id, params.get("memo_id"),
+                                             query.get("ids")))
 
         if route == "GET /memos/{memo_id}":
             memo = get_memo(tenant_id, params.get("memo_id"))
