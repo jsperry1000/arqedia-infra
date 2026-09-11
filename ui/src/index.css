@@ -346,7 +346,7 @@ p.warn { color: #b45309; }
 }
 .rewrite-prompt:focus-visible { outline: 2px solid var(--medium); outline-offset: 2px; }
 
-/* While revising, the memo's head is held under the site header (sticky at
+/* The memo's head is held under the site header (sticky at
    20, so this sits beneath it at 10, and under the drawer at 30). Its offset
    is the site header's measured height, set on the element by Memo.tsx. The
    wash background stops the memo showing through as it scrolls under. */
@@ -363,14 +363,6 @@ p.warn { color: #b45309; }
 .memo-head button + button,
 .memo-head .busy + button { margin-left: 8px; }
 .memo-head .busy { font-size: 13px; white-space: nowrap; }
-
-/* Unsaved changes, kept, shown on the reader. The same sheet as the revision
-   note, marked in the highlight so it is not read as part of the record. */
-.working-note {
-  background: var(--paper); border-left: 3px solid var(--gold);
-  padding: 10px 14px; margin: 0 0 16px;
-  font-size: 13px; color: var(--ink);
-}
 
 /* Unsaved changes, kept, shown on the reader. The same sheet as the revision
    note, marked in the highlight so it is not read as part of the record. */
