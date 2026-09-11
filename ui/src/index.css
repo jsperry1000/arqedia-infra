@@ -346,7 +346,23 @@ p.warn { color: #b45309; }
 }
 .rewrite-prompt:focus-visible { outline: 2px solid var(--medium); outline-offset: 2px; }
 
-.rewrite-go { display: flex; align-items: center; gap: 16px; margin: 8px 0 32px; }
+/* While revising, the memo's head is held under the site header (sticky at
+   20, so this sits beneath it at 10, and under the drawer at 30). Its offset
+   is the site header's measured height, set on the element by Memo.tsx. The
+   wash background stops the memo showing through as it scrolls under. */
+.memo-head.pinned {
+  position: sticky; z-index: 10;
+  align-items: center;
+  margin: 0 0 12px; padding: 10px 0;
+  background: var(--wash);
+  border-bottom: 1px solid var(--line);
+}
+
+/* Go and Save side by side. Each button pushes right on its own, so without
+   this the second takes all the space between them. */
+.memo-head button + button,
+.memo-head .busy + button { margin-left: 8px; }
+.memo-head .busy { font-size: 13px; white-space: nowrap; }
 
 /* Unsaved changes, kept, shown on the reader. The same sheet as the revision
    note, marked in the highlight so it is not read as part of the record. */
