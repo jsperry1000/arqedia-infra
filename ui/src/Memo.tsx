@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { api, type Memo, type Passage, type Rewrite } from "./api";
 
@@ -219,6 +219,26 @@ export function MemoView({ memoId, onBack, onOpen }: {
   // Which pane the pointer last touched. Without this, one pane scrolling the
   // other would scroll it back, and the two would fight.
   const driver = useRef<"editor" | "preview" | null>(null);
+
+  // While revising, the memo's own head - Go, Save, Edit, Close - is held
+  // just under the site header, so a person at the foot of a long memo does
+  // not scroll back to the top to act. The site header's height is measured,
+  // not assumed: it changes with the width of the window and the length of
+  // the signed-in address.
+  const [pinTop, setPinTop] = useState(0);
+  useLayoutEffect(() => {
+    const header = document.querySelector(".shell header");
+    if (!header) return;
+    const measure = () => setPinTop(header.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const watch = new ResizeObserver(measure);
+    watch.observe(header);
+    return () => watch.disconnect();
+  }, []);
 
   // What was last written to the server, and what would be written now - so a
   // leave can keep the difference without waiting for the pause.
@@ -629,7 +649,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
     <div className={mode !== "read" ? "wide" : ""}>
       <a onClick={back} className="back">Back</a>
 
-      <div className="memo-head">
+      <div className={mode === "read" ? "memo-head" : "memo-head pinned"}
+           style={mode === "read" ? undefined : { top: pinTop }}>
         <div>
           <h2>Memo {memo.label}</h2>
           <p className="muted">
@@ -652,6 +673,25 @@ export function MemoView({ memoId, onBack, onOpen }: {
           </>
         ) : (
           <>
+            {mode === "rewrite" && (
+              <>
+                <button onClick={go} disabled={starting || ready.length === 0}
+                        title={ready.length === 0
+                          ? "Write a prompt under a section first." : undefined}>
+                  {starting
+                    ? "Starting\u2026"
+                    : ready.length === 0
+                      ? "Go"
+                      : `Go \u2014 rewrite ${ready.length} ${
+                          ready.length === 1 ? "section" : "sections"}`}
+                </button>
+                {inFlight > 0 && (
+                  <span className="busy">
+                    {inFlight} {inFlight === 1 ? "section" : "sections"} rewriting
+                  </span>
+                )}
+              </>
+            )}
             <button onClick={save} disabled={!canSave} title={blockedTitle}>
               {saving ? "Saving\u2026" : "Save as a new revision"}
             </button>
@@ -809,22 +849,6 @@ export function MemoView({ memoId, onBack, onOpen }: {
               </section>
             );
           })}
-
-          <div className="rewrite-go">
-            <button onClick={go} disabled={starting || ready.length === 0}>
-              {starting
-                ? "Starting\u2026"
-                : ready.length === 0
-                  ? "Go"
-                  : `Go \u2014 rewrite ${ready.length} ${
-                      ready.length === 1 ? "section" : "sections"}`}
-            </button>
-            {inFlight > 0 && (
-              <span className="busy">
-                {inFlight} {inFlight === 1 ? "section" : "sections"} rewriting
-              </span>
-            )}
-          </div>
         </div>
       ) : mode === "edit" ? (
         <div className="split">
