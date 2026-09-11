@@ -28,6 +28,10 @@ group columns now come from config.Registry, which extraction already reads.
 
 Invoke with:
     {"tenant_id": 1, "engagement": "eng-001"}
+
+or, to rewrite one section of a memo already written, with the id of the
+memo_rewrite row the API has written for it:
+    {"action": "rewrite", "tenant_id": 1, "rewrite_id": 42}
 """
 
 import datetime
@@ -225,10 +229,16 @@ def _assemble_extract(registry, section, values):
 
 # --- model -----------------------------------------------------------------
 
+# The most a single model call may return. Named because a rewrite needs to
+# know it: a reply that uses every token was cut off, and a section missing its
+# end reads as finished.
+_MAX_TOKENS = 4096
+
+
 def _invoke(prompt, system=None):
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 4096,
+        "max_tokens": _MAX_TOKENS,
         "temperature": 0,
         "messages": [{"role": "user", "content": prompt}],
     }
@@ -404,6 +414,159 @@ def _consolidate(section, markdown):
     return text + "\n", usage
 
 
+# --- rewrite ---------------------------------------------------------------
+
+# A section heading as composition writes it: "## I. Introduction". Level two
+# only, so a subheading the section itself carries is never mistaken for it.
+_SECTION_HEADING = re.compile(r"^\s*##(?!#)\s+\S")
+
+
+def _split_heading(markdown):
+    """(heading, body). The heading is the first line, where that line is one."""
+    text = (markdown or "").replace("\r\n", "\n").strip("\n")
+    lines = text.split("\n")
+    if lines and _SECTION_HEADING.match(lines[0]):
+        return lines[0].rstrip(), "\n".join(lines[1:]).strip("\n")
+    return "", text
+
+
+def _rewrite(event):
+    """Rewrite one section of a memo at a person's prompt.
+
+    The API writes the memo_rewrite row, status running, and invokes this
+    asynchronously. The row is the whole request and the whole result, so the
+    screen polls the table rather than waiting on a function.
+
+    Citations are protected exactly as consolidation protects them: masked
+    before the call, restored after. A rewrite can move a citation and cannot
+    rewrite one. Any the model did not return are counted on the row.
+
+    The heading is never the model's. It is taken off before the call and put
+    back after, character for character, so no prompt can renumber or retitle
+    a section.
+
+    Refuses rather than truncates. Consolidation cuts its input at
+    _SECTION_INPUT_CHARS; a rewrite doing the same would hand back a section
+    missing its end, looking complete. A reply that used every output token is
+    refused for the same reason.
+
+    Never raises. Lambda retries an asynchronous invocation that raises, which
+    would spend the model call again on a request already failed. The failure
+    is written to the row instead, and the person presses Go again."""
+    tenant_id = int(event["tenant_id"])
+    rewrite_id = int(event["rewrite_id"])
+
+    found = _sql(
+        """
+        SELECT memo_id, prompt, input_text, status
+        FROM memo_rewrite
+        WHERE tenant_id = :t AND rewrite_id = :r
+        """,
+        [_p("t", tenant_id), _p("r", rewrite_id)],
+    ).get("records", [])
+    if not found:
+        return {"status": "not-found", "rewrite_id": rewrite_id}
+
+    memo_id = _col(found[0], 0)
+    instruction = (_col(found[0], 1) or "").strip()
+    section = _col(found[0], 2) or ""
+    status = _col(found[0], 3)
+
+    # Finished already. A second delivery of the same event must not call the
+    # model twice.
+    if status != "running":
+        return {"status": "already-" + str(status), "rewrite_id": rewrite_id}
+
+    def fail(reason, tokens_in=None, tokens_out=None):
+        _sql(
+            """
+            UPDATE memo_rewrite
+            SET status = 'failed', error = :error, model_id = :model,
+                tokens_in = :tokens_in, tokens_out = :tokens_out,
+                completed_at = UTC_TIMESTAMP()
+            WHERE tenant_id = :t AND rewrite_id = :r AND status = 'running'
+            """,
+            [_p("error", reason[:1024]), _p("model", MODEL_ID),
+             _p("tokens_in", tokens_in), _p("tokens_out", tokens_out),
+             _p("t", tenant_id), _p("r", rewrite_id)],
+        )
+        print("[rewrite] tenant=%s memo=%s rewrite=%s status=failed "
+              "reason=%s" % (tenant_id, memo_id, rewrite_id, reason))
+        return {"status": "failed", "rewrite_id": rewrite_id,
+                "error": reason}
+
+    tokens_in = tokens_out = None
+    try:
+        heading, body = _split_heading(section)
+        if not instruction:
+            return fail("no instruction was given")
+        if not body.strip():
+            return fail("the section has no text to rewrite")
+        if len(body) > _SECTION_INPUT_CHARS:
+            return fail("the section is too long to rewrite in one pass: "
+                        "%d characters, limit %d"
+                        % (len(body), _SECTION_INPUT_CHARS))
+
+        masked, tokens = _mask_citations(body)
+
+        prompt = (
+            cleanup.REWRITE_PROMPT
+            + "\n\nINSTRUCTION\n"
+            + instruction
+            + "\n"
+            + cleanup.CITATION_TOKENS
+            + "\n\n--- SECTION START ---\n"
+            + (heading + "\n\n" if heading else "")
+            + masked
+            + "\n--- SECTION END ---"
+        )
+
+        text, usage = _invoke(prompt, system=cleanup.REWRITE_PREAMBLE)
+        tokens_in = usage.get("input_tokens", 0)
+        tokens_out = usage.get("output_tokens", 0)
+
+        if tokens_out >= _MAX_TOKENS:
+            return fail("the rewrite ran past the length limit and was cut "
+                        "off", tokens_in, tokens_out)
+
+        text, dropped = _restore_citations(text, tokens)
+
+        # Written anyway, despite being told not to. Ours goes back instead.
+        _, text = _split_heading(text)
+        if not text.strip():
+            return fail("the model returned no text", tokens_in, tokens_out)
+
+        output = (heading + "\n\n" if heading else "") + text.strip() + "\n"
+
+        _sql(
+            """
+            UPDATE memo_rewrite
+            SET status = 'done', output_text = :output,
+                citations_dropped = :dropped, model_id = :model,
+                tokens_in = :tokens_in, tokens_out = :tokens_out,
+                completed_at = UTC_TIMESTAMP()
+            WHERE tenant_id = :t AND rewrite_id = :r AND status = 'running'
+            """,
+            [_p("output", output), _p("dropped", len(dropped)),
+             _p("model", MODEL_ID), _p("tokens_in", tokens_in),
+             _p("tokens_out", tokens_out),
+             _p("t", tenant_id), _p("r", rewrite_id)],
+        )
+
+        print("[rewrite] tenant=%s memo=%s rewrite=%s status=done "
+              "citations_dropped=%d of %d tokens_in=%s tokens_out=%s" % (
+                  tenant_id, memo_id, rewrite_id, len(dropped), len(tokens),
+                  tokens_in, tokens_out))
+
+        return {"status": "done", "rewrite_id": rewrite_id,
+                "citations_dropped": len(dropped),
+                "tokens": {"input": tokens_in, "output": tokens_out}}
+
+    except Exception as exc:  # noqa: BLE001 - written to the row, not raised
+        return fail("%s: %s" % (type(exc).__name__, exc),
+                    tokens_in, tokens_out)
+
+
 # --- claims ----------------------------------------------------------------
 
 def _record_claim(tenant_id, memo_id, section_key, ordinal, text, values):
@@ -443,6 +606,12 @@ def _record_claim(tenant_id, memo_id, section_key, ordinal, text, values):
 # --- handler ---------------------------------------------------------------
 
 def lambda_handler(event, context):
+    # A section rewrite shares the model call and the citation masking with
+    # generation, and nothing else. Routed first, so everything below runs
+    # exactly as it did.
+    if event.get("action") == "rewrite":
+        return _rewrite(event)
+
     tenant_id = int(event["tenant_id"])
     engagement = event["engagement"]
     generated_by = event.get("generated_by")
