@@ -35,6 +35,10 @@ A section of a memo may be rewritten by the model at a person's prompt. The
 rewrite is recorded, and nothing changes until it is saved as a revision.
   POST /memos/{memo_id}/rewrites         start rewriting sections
   GET  /memos/{memo_id}/rewrites         how they are going, and what came back
+
+A person's unsaved work on a memo is kept here, so leaving does not lose it.
+  GET  /memos/{memo_id}/working          what they had not yet saved
+  PUT  /memos/{memo_id}/working          keep it, or clear it
   POST /uploads                          a signed link to upload one file
   GET  /document-types                   the type list, for the dropdown
 
@@ -828,6 +832,15 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None):
         InvocationType="Event",
         Payload=json.dumps({"tenant_id": tenant_id, "memo_id": new_id}))
 
+    # The work is now a revision, so the kept copy of it is finished. Cleared,
+    # not deleted: a copy left behind would reopen on the old memo and offer
+    # to save the same changes twice. A failure here must not fail a save
+    # that has already happened.
+    try:
+        _put_working(tenant_id, email, memo_id, None, cleared_by=new_id)
+    except Exception as exc:  # noqa: BLE001 - logged; the revision stands
+        print("[working-not-cleared] memo=%s by=%s %r" % (memo_id, email, exc))
+
     print("[revised] memo=%s from=%s revision=%d by=%s rewrites=%d" % (
         new_id, memo_id, next_revision, email, len(accepted)))
 
@@ -993,6 +1006,84 @@ def list_rewrites(tenant_id, memo_id, ids=None):
         rows.append(row)
 
     return {"memo_id": int(memo_id), "rewrites": rows}
+
+
+# --- work in progress on a memo -------------------------------------------
+#
+# Prompts typed, rewrites accepted, hand edits - everything short of a saved
+# revision. Held only in the browser, it was lost to Close, Back, a reload or
+# opening another memo. Kept here instead, the same answer as the proposal's
+# working copy and for the same reason.
+#
+# One copy per memo per person: two people revising the same memo do not
+# overwrite each other. Stored opaque - the screen owns its shape.
+#
+# In the curated bucket beside the memos, under working/. Nothing watches that
+# bucket, so a write here starts nothing.
+
+_WORKING_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _working_key(tenant_id, memo_id, email):
+    # The person's address is hashed rather than written into the key: an
+    # address can carry characters a key should not, and the key is not
+    # where who-did-what is recorded.
+    who = hashlib.sha256((email or "").strip().lower().encode("utf-8"))
+    return "tenants/%d/working/memos/%d/%s.json" % (
+        tenant_id, int(memo_id), who.hexdigest()[:32])
+
+
+def _own_memo(tenant_id, memo_id):
+    found = _sql("SELECT memo_id FROM memo WHERE tenant_id = :t AND memo_id = :m",
+                 [_p("t", tenant_id), _p("m", int(memo_id))])
+    return bool(found.get("records"))
+
+
+def _put_working(tenant_id, email, memo_id, working, cleared_by=None):
+    now = datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+    stored = {"working": working, "saved_by": email, "saved_at": now}
+    if cleared_by is not None:
+        stored["cleared_by_revision"] = cleared_by
+    body = json.dumps(stored, ensure_ascii=False).encode("utf-8")
+    if len(body) > _WORKING_MAX_BYTES:
+        raise ValueError("these changes are too large to keep")
+    _s3.put_object(Bucket=CURATED_BUCKET,
+                   Key=_working_key(tenant_id, memo_id, email),
+                   Body=body, ContentType="application/json")
+    return now
+
+
+def memo_working(tenant_id, email, memo_id):
+    """The person's unsaved work on a memo, or none."""
+    if not _own_memo(tenant_id, memo_id):
+        return None
+    try:
+        body = _s3.get_object(
+            Bucket=CURATED_BUCKET,
+            Key=_working_key(tenant_id, memo_id, email))["Body"].read()
+    except ClientError as exc:
+        # Nothing kept is the ordinary case. S3 reports a missing key as
+        # NoSuchKey, or as AccessDenied to a caller without ListBucket, which
+        # this role is. Anything else is a real failure and is not hidden -
+        # the screen must not mistake an unreadable copy for no copy.
+        code = exc.response.get("Error", {}).get("Code")
+        if code in ("NoSuchKey", "404", "AccessDenied", "403"):
+            return {"memo_id": int(memo_id), "working": None}
+        raise
+    stored = json.loads(body.decode("utf-8"))
+    return {"memo_id": int(memo_id), "working": stored.get("working"),
+            "saved_at": stored.get("saved_at")}
+
+
+def keep_memo_working(tenant_id, email, memo_id, working):
+    """Keep the person's unsaved work, or clear it with None."""
+    if not _own_memo(tenant_id, memo_id):
+        return None
+    if working is not None and not isinstance(working, dict):
+        raise ValueError("working must be an object or null")
+    saved_at = _put_working(tenant_id, email, memo_id, working)
+    return {"memo_id": int(memo_id), "saved": True, "saved_at": saved_at}
 
 
 # --- settings --------------------------------------------------------------
@@ -1573,6 +1664,20 @@ def lambda_handler(event, context):
         if route == "GET /memos/{memo_id}/rewrites":
             return _reply(200, list_rewrites(tenant_id, params.get("memo_id"),
                                              query.get("ids")))
+
+        if route == "GET /memos/{memo_id}/working":
+            found = memo_working(tenant_id, email, params.get("memo_id"))
+            if found is None:
+                return _reply(404, {"error": "not found"})
+            return _reply(200, found)
+
+        if route == "PUT /memos/{memo_id}/working":
+            body = json.loads(event.get("body") or "{}")
+            kept = keep_memo_working(tenant_id, email, params.get("memo_id"),
+                                     body.get("working"))
+            if kept is None:
+                return _reply(404, {"error": "not found"})
+            return _reply(200, kept)
 
         if route == "GET /memos/{memo_id}":
             memo = get_memo(tenant_id, params.get("memo_id"))

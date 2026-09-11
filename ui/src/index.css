@@ -348,6 +348,14 @@ p.warn { color: #b45309; }
 
 .rewrite-go { display: flex; align-items: center; gap: 16px; margin: 8px 0 32px; }
 
+/* Unsaved changes, kept, shown on the reader. The same sheet as the revision
+   note, marked in the highlight so it is not read as part of the record. */
+.working-note {
+  background: var(--paper); border-left: 3px solid var(--gold);
+  padding: 10px 14px; margin: 0 0 16px;
+  font-size: 13px; color: var(--ink);
+}
+
 @media (max-width: 1100px) {
   .rewrite-compare { grid-template-columns: 1fr; }
 }

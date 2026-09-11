@@ -125,6 +125,17 @@ export type Rewrite = {
   output_text: string | null;
 };
 
+// Work in progress on a memo, kept on the server per person so leaving does
+// not lose it. The server stores it as given and does not interpret it.
+export type MemoWorking = {
+  version: 1;
+  mode: "edit" | "rewrite";
+  text: string;                            // the whole memo as it stands
+  prompts: Record<string, string>;         // typed, not yet sent, by section
+  accepted_by: Record<string, number[]>;   // rewrites accepted, by section
+  pending: Record<string, number>;         // rewrites out, by section
+};
+
 export type Passage = {
   document_id: number;
   filename: string;
@@ -586,6 +597,20 @@ export const api = {
   rewrites: (memoId: number, ids: number[]):
     Promise<{ memo_id: number; rewrites: Rewrite[] }> =>
     call(`/memos/${memoId}/rewrites?ids=${ids.join(",")}`),
+
+  // The person's unsaved work on a memo - the same copy whether they left it
+  // in Rewrite or in Edit. null when there is none.
+  memoWorking: (memoId: number): Promise<{ memo_id: number; working: MemoWorking | null;
+                                       saved_at?: string }> =>
+    call(`/memos/${memoId}/working`),
+
+  // Keep it, or pass null to clear it.
+  keepMemoWorking: (memoId: number, working: MemoWorking | null):
+    Promise<{ memo_id: number; saved: boolean; saved_at: string }> =>
+    call(`/memos/${memoId}/working`, {
+      method: "PUT",
+      body: JSON.stringify({ working }),
+    }),
 
   // The PDF is rendered when asked for, not stored. A rendering improvement
   // therefore reaches every memo rather than only the next one written.
