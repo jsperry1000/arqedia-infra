@@ -304,6 +304,54 @@ p.warn { color: #b45309; }
   .memo.preview { height: auto; max-height: 60vh; }
 }
 
+/* --- rewriting ------------------------------------------------------------ */
+
+/* Two links side by side in the head - Rewrite and Edit, or Edit before
+   saving and Cancel. Each secondary pushes right on its own, so without this
+   the second one takes all the space between them. */
+.memo-head .secondary + .secondary { margin-left: 8px; }
+.memo-head .secondary[aria-disabled="true"] { color: var(--muted); cursor: default; }
+
+/* A section and the prompt under it. Each section is its own sheet, so what a
+   prompt applies to is never in doubt. */
+.rewrite-section { margin: 0 0 22px; }
+.rewrite-note { margin: 6px 0 22px; }
+
+.memo.rewrite-body {
+  max-width: none; padding: 22px 28px; margin: 0;
+  overflow-x: auto;
+}
+
+/* What is there now, and what the model proposes, side by side at the same
+   width. min-width 0 lets a wide table scroll inside its column instead of
+   pushing the grid past the page. */
+.rewrite-compare {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  align-items: start;
+}
+.rewrite-compare > div { min-width: 0; }
+.rewrite-compare h4 { margin: 0 0 6px; }
+
+.rewrite-actions {
+  display: flex; align-items: center; gap: 16px;
+  margin-top: 8px; font-size: 13px;
+}
+.rewrite-actions:empty { display: none; }
+
+.rewrite-prompt {
+  display: block; width: 100%; margin-top: 8px; padding: 9px 11px;
+  font: inherit; font-size: 14px; color: var(--ink);
+  border: 1px solid var(--line); border-radius: 3px; background: var(--paper);
+  resize: vertical;
+}
+.rewrite-prompt:focus-visible { outline: 2px solid var(--medium); outline-offset: 2px; }
+
+.rewrite-go { display: flex; align-items: center; gap: 16px; margin: 8px 0 32px; }
+
+@media (max-width: 1100px) {
+  .rewrite-compare { grid-template-columns: 1fr; }
+}
+
 /* A revision is a human document. Saying so is not decoration: a reader
    should never have to work out whether they are looking at what the system
    produced or what somebody wrote. */
