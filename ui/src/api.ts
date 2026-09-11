@@ -95,6 +95,34 @@ export type Memo = {
   modified_at: string | null;
   markdown: string;
   sources: { document_id: number; filename: string }[];
+  // Sections of this memo the model rewrote, and at whose prompt. Empty on a
+  // generated memo and on a revision a person wrote alone.
+  rewrites?: {
+    section_heading: string;
+    prompted_by: string;
+    model_id: string | null;
+    completed_at: string | null;
+  }[];
+};
+
+// One section rewritten by the model at a person's prompt. output_text is
+// present once status is "done"; nothing about the memo changes until a
+// revision is saved naming this rewrite.
+export type Rewrite = {
+  rewrite_id: number;
+  section_heading: string;
+  prompt: string;
+  prompted_by: string;
+  status: "running" | "done" | "failed";
+  error: string | null;
+  citations_dropped: number | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  model_id: string | null;
+  created_at: string;
+  completed_at: string | null;
+  accepted_in_memo_id: number | null;
+  output_text: string | null;
 };
 
 export type Passage = {
@@ -532,13 +560,32 @@ export const api = {
 
   memo: (memoId: number): Promise<Memo> => call(`/memos/${memoId}`),
 
-  revise: (memoId: number, markdown: string): Promise<{
+  // rewrites names the model rewrites accepted into this revision, so the
+  // record says which sections the model wrote. Omitted for a plain edit.
+  revise: (memoId: number, markdown: string, rewrites: number[] = []): Promise<{
     memo_id: number; parent_memo_id: number; revision: number; label: string;
   }> =>
     call(`/memos/${memoId}/revise`, {
       method: "POST",
-      body: JSON.stringify({ markdown }),
+      body: JSON.stringify(rewrites.length ? { markdown, rewrites } : { markdown }),
     }),
+
+  // Start rewriting sections. Each returns running at once; the model's
+  // answer is read with rewrites() below.
+  startRewrites: (memoId: number,
+                  sections: { heading: string; text: string; prompt: string }[]):
+    Promise<{ memo_id: number; rewrites: {
+      rewrite_id: number; section_heading: string; status: string;
+    }[] }> =>
+    call(`/memos/${memoId}/rewrites`, {
+      method: "POST",
+      body: JSON.stringify({ sections }),
+    }),
+
+  // How named rewrites are going, with the text of any that have finished.
+  rewrites: (memoId: number, ids: number[]):
+    Promise<{ memo_id: number; rewrites: Rewrite[] }> =>
+    call(`/memos/${memoId}/rewrites?ids=${ids.join(",")}`),
 
   // The PDF is rendered when asked for, not stored. A rendering improvement
   // therefore reaches every memo rather than only the next one written.
