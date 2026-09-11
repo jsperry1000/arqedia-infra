@@ -186,6 +186,10 @@ locals {
     # composition, polled for. Saved only through revise.
     "POST /memos/{memo_id}/rewrites",
     "GET /memos/{memo_id}/rewrites",
+
+    # A person's unsaved work on a memo, kept so leaving does not lose it.
+    "GET /memos/{memo_id}/working",
+    "PUT /memos/{memo_id}/working",
     "POST /uploads",
     "GET /settings",
     "POST /settings",

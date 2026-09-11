@@ -21,6 +21,12 @@ import { api, type Memo, type Passage, type Rewrite } from "./api";
  * is shown beside what it replaces, to accept or discard. Nothing changes
  * until the accepted sections are saved as a revision, and that revision
  * records which sections the model wrote and at whose prompt.
+ *
+ * Rewrite and Edit are two views of ONE working copy: the text as it stands,
+ * the prompts typed, the rewrites accepted and the ones still out. Switching
+ * between them carries everything. Leaving - Close, Back, a reload, another
+ * memo - keeps it, on the server, and coming back reopens it where it was.
+ * Only saving a revision or Discard changes ends it.
  */
 
 type Ref = {
@@ -106,50 +112,49 @@ function protectFilenames(markdown: string): string {
 }
 
 
-/** A section as the rewrite screen holds it. */
-type Section = {
-  heading: string;
-  // As the memo has it, and as it stands now: the original, or the last
-  // rewrite accepted. A second prompt rewrites what is there now.
-  original: string;
-  text: string;
-  prompt: string;
-  // A rewrite in flight, and one finished and waiting to be accepted.
-  running: number | null;
-  result: Pick<Rewrite, "rewrite_id" | "status" | "error" | "output_text"
-                       | "citations_dropped"> | null;
-  // The rewrites that produced `text`. Saved with the revision, so its record
-  // names every prompt that shaped the section.
-  accepted: number[];
-};
-
 // A section heading as composition writes it: "## II. Business". Level two
 // only - composition's own rule, so the two cannot disagree about where a
 // section starts.
 const SECTION_HEADING = /^##(?!#)\s+\S/;
 
+type Part = { key: string; heading: string; text: string };
+
 /**
- * The memo as a head and its sections, losslessly: joining them back gives
- * the markdown exactly as it was, so a memo saved with nothing accepted is the
- * memo it started as.
+ * The text as a head and its sections, losslessly: joining them back gives
+ * the text exactly as it was, so a section nobody touched is saved unchanged.
+ *
+ * A section is known by its heading. Where a heading repeats, its occurrence
+ * number is part of the key, so two sections never share a prompt.
  */
-function splitSections(markdown: string): { head: string; sections: Section[] } {
+function splitSections(markdown: string): {
+  head: string; hasHead: boolean; sections: Part[];
+} {
   const lines = markdown.split("\n");
   const starts: number[] = [];
   lines.forEach((line, i) => { if (SECTION_HEADING.test(line)) starts.push(i); });
-  if (starts.length === 0) return { head: markdown, sections: [] };
+  if (starts.length === 0) return { head: markdown, hasHead: true, sections: [] };
 
+  const seen: Record<string, number> = {};
   const sections = starts.map((start, k) => {
     const end = k + 1 < starts.length ? starts[k + 1] : lines.length;
-    const text = lines.slice(start, end).join("\n");
-    return { heading: lines[start].trim(), original: text, text, prompt: "",
-             running: null, result: null, accepted: [] };
+    const heading = lines[start].trim();
+    seen[heading] = (seen[heading] ?? 0) + 1;
+    return { key: seen[heading] > 1 ? heading + " #" + seen[heading] : heading,
+             heading, text: lines.slice(start, end).join("\n") };
   });
-  return { head: lines.slice(0, starts[0]).join("\n"), sections };
+  return { head: lines.slice(0, starts[0]).join("\n"), hasHead: starts[0] > 0,
+           sections };
 }
 
-function joinSections(head: string, sections: Section[], headLines: boolean): string {
-  return (headLines ? [head] : []).concat(sections.map((s) => s.text)).join("\n");
+function joinSections(head: string, hasHead: boolean, sections: Part[]): string {
+  return (hasHead ? [head] : []).concat(sections.map((s) => s.text)).join("\n");
+}
+
+/** The text with one section replaced. */
+function replaceSection(markdown: string, key: string, text: string): string {
+  const split = splitSections(markdown);
+  return joinSections(split.head, split.hasHead, split.sections.map((s) =>
+    s.key === key ? { ...s, text } : s));
 }
 
 // What composition calls a citation - the same pattern it masks with.
@@ -170,6 +175,18 @@ function errorText(err: unknown): string {
   return message;
 }
 
+type Result = Pick<Rewrite, "rewrite_id" | "status" | "error" | "output_text"
+                           | "citations_dropped">;
+
+// A rewrite out for one section: in flight, or finished and waiting to be
+// accepted or discarded.
+type Run = { id: number; result: Result | null };
+
+type Mode = "read" | "edit" | "rewrite";
+
+// How long typing pauses before the working copy is kept. Short enough that a
+// reload loses a sentence at most; long enough not to write on every key.
+const KEEP_AFTER_MS = 1500;
 
 export function MemoView({ memoId, onBack, onOpen }: {
   memoId: number;
@@ -179,21 +196,23 @@ export function MemoView({ memoId, onBack, onOpen }: {
   const [memo, setMemo] = useState<Memo | null>(null);
   const [passage, setPassage] = useState<Passage | null>(null);
   const [loadingRef, setLoadingRef] = useState(false);
-
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [saving, setSaving] = useState(false);
   const [rendering, setRendering] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
-  const [rewriting, setRewriting] = useState(false);
-  const [head, setHead] = useState("");
-  const [hasHead, setHasHead] = useState(true);
-  const [sections, setSections] = useState<Section[]>([]);
+  // The working copy. Rewrite and Edit both read and write these.
+  const [mode, setMode] = useState<Mode>("read");
+  const [lastMode, setLastMode] = useState<"edit" | "rewrite">("rewrite");
+  const [draft, setDraft] = useState("");
+  const [prompts, setPrompts] = useState<Record<string, string>>({});
+  // Rewrites accepted, by section. Kept even when a hand edit renames the
+  // section, so the revision still records every section the model wrote.
+  const [acceptedBy, setAcceptedBy] = useState<Record<string, number[]>>({});
+  const [runs, setRuns] = useState<Record<string, Run>>({});
   const [starting, setStarting] = useState(false);
-  // Rewrites carried into the editor by "Edit before saving", so a revision
-  // finished by hand still records the sections the model wrote.
-  const [carried, setCarried] = useState<number[]>([]);
+
+  const [loaded, setLoaded] = useState(false);
+  const [keeping, setKeeping] = useState<"" | "keeping" | "kept" | "failed">("");
 
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const previewRef = useRef<HTMLElement | null>(null);
@@ -201,45 +220,136 @@ export function MemoView({ memoId, onBack, onOpen }: {
   // other would scroll it back, and the two would fight.
   const driver = useRef<"editor" | "preview" | null>(null);
 
+  // What was last written to the server, and what would be written now - so a
+  // leave can keep the difference without waiting for the pause.
+  const kept = useRef<{ id: number; payload: string }>({ id: 0, payload: "null" });
+  const latest = useRef<{ id: number; payload: string }>({ id: 0, payload: "null" });
+  const sending = useRef<{ id: number; payload: string } | null>(null);
+  // Set when the kept copy could not be read. Keeping anything then would
+  // overwrite a copy the person has not seen, so nothing is kept.
+  const keepBlocked = useRef(false);
+
+  function keepNow(id: number, payload: string) {
+    if (keepBlocked.current) return;
+    if (kept.current.id === id && kept.current.payload === payload) return;
+    if (sending.current?.id === id && sending.current.payload === payload) return;
+    sending.current = { id, payload };
+    setKeeping("keeping");
+    api.keepMemoWorking(id, JSON.parse(payload))
+      .then(() => {
+        kept.current = { id, payload };
+        if (latest.current.id === id) setKeeping("kept");
+      })
+      .catch((err) => {
+        setKeeping("failed");
+        setSaveError("Your changes could not be kept: " + errorText(err));
+      })
+      .finally(() => {
+        if (sending.current?.id === id && sending.current.payload === payload) {
+          sending.current = null;
+        }
+      });
+  }
+
+  // Load the memo and any working copy together, and reopen the copy where it
+  // was left. Leaving this memo - for another, or for Back - keeps what has
+  // not been kept yet.
   useEffect(() => {
-    setEditing(false);
-    setRewriting(false);
-    setSections([]);
-    setCarried([]);
+    let live = true;
+    setLoaded(false);
+    setMemo(null);
+    setMode("read");
     setSaveError("");
-    api.memo(memoId).then(setMemo);
+    setKeeping("");
+
+    keepBlocked.current = false;
+    const working = api.memoWorking(memoId).catch(() => null);
+
+    Promise.all([api.memo(memoId), working]).then(([m, w]) => {
+      if (!live) return;
+      if (w === null) {
+        keepBlocked.current = true;
+        setSaveError("Your kept changes to this memo could not be read, so "
+          + "nothing you change now will be kept. Reload to try again.");
+      }
+      const copy = w?.working ?? null;
+      setMemo(m);
+      setDraft(copy?.text ?? m.markdown);
+      setPrompts(copy?.prompts ?? {});
+      setAcceptedBy(copy?.accepted_by ?? {});
+      setRuns(Object.fromEntries(Object.entries(copy?.pending ?? {})
+        .map(([key, id]) => [key, { id, result: null }])));
+      setLastMode(copy?.mode ?? "rewrite");
+      setMode(copy ? copy.mode : "read");
+      const payload = copy ? JSON.stringify(copy) : "null";
+      kept.current = { id: memoId, payload };
+      latest.current = { id: memoId, payload };
+      setLoaded(true);
+    }).catch((err) => live && setSaveError(errorText(err)));
+
+    return () => {
+      live = false;
+      const { id, payload } = latest.current;
+      if (id === memoId) keepNow(id, payload);
+    };
   }, [memoId]);
 
-  // Poll while anything is running. Keyed on the ids in flight, so the timer
-  // restarts only when that set changes.
-  const runningKey = sections
-    .filter((s) => s.running !== null).map((s) => s.running).join(",");
+  const acceptedIds = Array.from(new Set(Object.values(acceptedBy).flat()));
+  const inFlight = Object.values(runs).filter((r) => r.result === null).length;
+  const undecided = Object.values(runs).filter((r) => r.result !== null).length;
+  const typedPrompts = Object.fromEntries(
+    Object.entries(prompts).filter(([, p]) => p.trim()));
+
+  const hasChanges = !!memo && (draft !== memo.markdown
+    || Object.keys(typedPrompts).length > 0 || acceptedIds.length > 0
+    || Object.keys(runs).length > 0);
+
+  const payload = !memo || !hasChanges ? "null" : JSON.stringify({
+    version: 1,
+    mode: lastMode,
+    text: draft,
+    prompts: typedPrompts,
+    accepted_by: acceptedBy,
+    pending: Object.fromEntries(Object.entries(runs).map(([k, r]) => [k, r.id])),
+  });
+
+  // Keep the working copy after a pause in the changes.
+  useEffect(() => {
+    if (!loaded || keepBlocked.current) return;
+    latest.current = { id: memoId, payload };
+    if (kept.current.id === memoId && kept.current.payload === payload) return;
+    const timer = setTimeout(() => keepNow(memoId, payload), KEEP_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [payload, loaded, memoId]);
+
+  // Poll while anything is in flight. Keyed on the ids, so the timer restarts
+  // only when that set changes.
+  const runningKey = Object.values(runs)
+    .filter((r) => r.result === null).map((r) => r.id).sort().join(",");
 
   useEffect(() => {
     if (!runningKey) return;
     const ids = runningKey.split(",").map(Number);
     const began = Date.now();
 
+    const settle = (id: number, result: Result) =>
+      setRuns((prev) => Object.fromEntries(Object.entries(prev).map(([k, r]) =>
+        [k, r.id === id && r.result === null ? { ...r, result } : r])));
+
     const timer = setInterval(async () => {
       // A single section takes seconds. Five minutes without an answer is a
       // function that died, and a spinner would say otherwise for ever.
       if (Date.now() - began > 5 * 60 * 1000) {
-        setSections((prev) => prev.map((s) =>
-          s.running !== null && ids.includes(s.running)
-            ? { ...s, running: null,
-                result: { rewrite_id: s.running, status: "failed",
-                          output_text: null, citations_dropped: null,
-                          error: "No answer after five minutes. Press Go again." } }
-            : s));
+        ids.forEach((id) => settle(id, {
+          rewrite_id: id, status: "failed", output_text: null,
+          citations_dropped: null,
+          error: "No answer after five minutes. Press Go again." }));
         return;
       }
       try {
         const { rewrites } = await api.rewrites(memoId, ids);
-        setSections((prev) => prev.map((s) => {
-          const r = rewrites.find((x) => x.rewrite_id === s.running);
-          if (!r || r.status === "running") return s;
-          return { ...s, running: null, result: r };
-        }));
+        rewrites.filter((r) => r.status !== "running")
+          .forEach((r) => settle(r.rewrite_id, r));
       } catch (err) {
         setSaveError(errorText(err));
       }
@@ -374,53 +484,64 @@ export function MemoView({ memoId, onBack, onOpen }: {
     }
   }
 
-  function startEditing() {
+  function openView(next: "edit" | "rewrite") {
+    setSaveError("");
+    setLastMode(next);
+    setMode(next);
+  }
+
+  /** Close, keeping the copy. The reader shows what is kept. */
+  function close() {
+    setMode("read");
+    keepNow(memoId, latest.current.payload);
+  }
+
+  function back() {
+    keepNow(memoId, latest.current.payload);
+    onBack();
+  }
+
+  function discard() {
+    if (!window.confirm("Discard your changes to this memo? Accepted rewrites "
+        + "and typed prompts are thrown away. The rewrites stay on record, but "
+        + "nothing is saved into the memo.")) return;
     if (!memo) return;
     setDraft(memo.markdown);
-    setCarried([]);
+    setPrompts({});
+    setAcceptedBy({});
+    setRuns({});
+    setMode("read");
     setSaveError("");
-    setEditing(true);
+    keepNow(memoId, "null");
   }
 
-  function startRewriting() {
-    if (!memo) return;
-    const split = splitSections(memo.markdown);
-    setHead(split.head);
-    setHasHead(!SECTION_HEADING.test(memo.markdown.split("\n")[0] ?? ""));
-    setSections(split.sections);
-    setSaveError("");
-    setRewriting(true);
-  }
+  const split = splitSections(draft);
+  const originals = Object.fromEntries(
+    splitSections(memo?.markdown ?? "").sections.map((s) => [s.key, s.text]));
 
-  const update = (i: number, change: Partial<Section>) =>
-    setSections((prev) => prev.map((s, k) => (k === i ? { ...s, ...change } : s)));
-
-  // Sections with a prompt and nothing already in flight or awaiting a
-  // decision. A section with an answer waiting is decided first.
-  const ready = sections
-    .map((s, i) => ({ s, i }))
-    .filter(({ s }) => s.prompt.trim() && s.running === null && !s.result);
-  const inFlight = sections.filter((s) => s.running !== null).length;
-  const undecided = sections.filter((s) => s.result !== null).length;
-  const acceptedIds = sections.flatMap((s) => s.accepted);
+  const ready = split.sections.filter((s) =>
+    (prompts[s.key] ?? "").trim() && !runs[s.key]);
 
   async function go() {
     if (ready.length === 0) return;
+    const sending = ready;
     setStarting(true);
     setSaveError("");
     try {
-      const { rewrites } = await api.startRewrites(memoId, ready.map(({ s }) => (
-        { heading: s.heading, text: s.text, prompt: s.prompt.trim() })));
-      setSections((prev) => prev.map((s, i) => {
-        const k = ready.findIndex((r) => r.i === i);
-        if (k < 0) return s;
-        const r = rewrites[k];
-        return r.status === "failed"
-          ? { ...s, result: { rewrite_id: r.rewrite_id, status: "failed",
-                              output_text: null, citations_dropped: null,
-                              error: "The rewrite could not be started." } }
-          : { ...s, running: r.rewrite_id };
-      }));
+      const { rewrites } = await api.startRewrites(memoId, sending.map((s) => (
+        { heading: s.heading, text: s.text, prompt: (prompts[s.key] ?? "").trim() })));
+      setRuns((prev) => {
+        const next = { ...prev };
+        sending.forEach((s, k) => {
+          const r = rewrites[k];
+          next[s.key] = r.status === "failed"
+            ? { id: r.rewrite_id, result: { rewrite_id: r.rewrite_id,
+                status: "failed", output_text: null, citations_dropped: null,
+                error: "The rewrite could not be started." } }
+            : { id: r.rewrite_id, result: null };
+        });
+        return next;
+      });
     } catch (err) {
       setSaveError(errorText(err));
     } finally {
@@ -428,69 +549,64 @@ export function MemoView({ memoId, onBack, onOpen }: {
     }
   }
 
-  function accept(i: number) {
-    const s = sections[i];
-    if (!s.result?.output_text) return;
-    update(i, { text: s.result.output_text.replace(/\s+$/, "") + "\n",
-                accepted: [...s.accepted, s.result.rewrite_id],
-                result: null, prompt: "" });
+  function dropRun(key: string) {
+    setRuns((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   }
 
-  function leaveRewriting() {
-    if ((acceptedIds.length || inFlight || undecided) && !window.confirm(
-      "Leave without saving? The rewrites stay on record, but nothing is "
-      + "saved into the memo.")) return;
-    setRewriting(false);
-    setSections([]);
+  function accept(key: string) {
+    const run = runs[key];
+    if (!run?.result?.output_text) return;
+    setDraft((d) => replaceSection(d, key,
+      run.result!.output_text!.replace(/\s+$/, "") + "\n"));
+    setAcceptedBy((prev) => ({ ...prev,
+                               [key]: [...(prev[key] ?? []), run.id] }));
+    setPrompts((prev) => ({ ...prev, [key]: "" }));
+    dropRun(key);
   }
 
-  function editBeforeSaving() {
-    setDraft(joinSections(head, sections, hasHead));
-    setCarried(acceptedIds);
-    setRewriting(false);
-    setSections([]);
-    setSaveError("");
-    setEditing(true);
+  function putBack(key: string) {
+    if (originals[key] === undefined) return;
+    setDraft((d) => replaceSection(d, key, originals[key]));
+    setAcceptedBy((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   }
 
-  async function saveRewrites() {
+  const blocked = inFlight > 0 || undecided > 0;
+  const canSave = !!memo && !saving && !blocked && !!draft.trim()
+    && draft !== memo.markdown;
+
+  async function save() {
     setSaving(true);
     setSaveError("");
     try {
-      const revised = await api.revise(
-        memoId, joinSections(head, sections, hasHead), acceptedIds);
-      setRewriting(false);
-      setSections([]);
+      const revised = await api.revise(memoId, draft, acceptedIds);
+      // The server clears the working copy with the save. Nothing is left to
+      // keep, so leaving must not write the old one back.
+      kept.current = { id: memoId, payload: "null" };
+      latest.current = { id: memoId, payload: "null" };
+      setMode("read");
       onOpen(revised.memo_id);
     } catch (err) {
+      // A citation naming a document that is not a source of this memo is
+      // refused rather than saved. The message names which.
       setSaveError(errorText(err));
     } finally {
       setSaving(false);
     }
   }
 
-  async function save() {
-    setSaving(true);
-    setSaveError("");
-    try {
-      const revised = await api.revise(memoId, draft, carried);
-      setEditing(false);
-      setCarried([]);
-      onOpen(revised.memo_id);
-    } catch (err: any) {
-      // A citation naming a document that is not a source of this memo is
-      // refused rather than saved. The message names which.
-      let message = String(err?.message ?? err);
-      try {
-        message = JSON.parse(message).error ?? message;
-      } catch { /* not JSON; show it as it came */ }
-      setSaveError(message);
-    } finally {
-      setSaving(false);
-    }
+  if (!memo) {
+    return saveError
+      ? <p className="error">{saveError}</p>
+      : <p className="muted">Loading&hellip;</p>;
   }
-
-  if (!memo) return <p className="muted">Loading&hellip;</p>;
 
   const isRevision = memo.revision > 1;
 
@@ -500,8 +616,6 @@ export function MemoView({ memoId, onBack, onOpen }: {
     </ReactMarkdown>
   );
 
-  const rendered = markdownOf(editing ? draft : memo.markdown);
-
   // Which sections of this memo the model wrote, grouped by who prompted.
   const rewrittenBy = (memo.rewrites ?? []).reduce<Record<string, string[]>>(
     (acc, w) => {
@@ -509,9 +623,11 @@ export function MemoView({ memoId, onBack, onOpen }: {
       return acc;
     }, {});
 
+  const blockedTitle = blocked ? "Accept or discard every rewrite first." : undefined;
+
   return (
-    <div className={editing || rewriting ? "wide" : ""}>
-      <a onClick={onBack} className="back">Back</a>
+    <div className={mode !== "read" ? "wide" : ""}>
+      <a onClick={back} className="back">Back</a>
 
       <div className="memo-head">
         <div>
@@ -525,47 +641,39 @@ export function MemoView({ memoId, onBack, onOpen }: {
           </p>
         </div>
 
-        {editing ? (
+        {mode === "read" ? (
           <>
-            <button onClick={save} disabled={saving || !draft.trim()}>
-              {saving ? "Saving\u2026" : "Save as a new revision"}
-            </button>
-            <a className="secondary" onClick={() => {
-              setEditing(false);
-              setCarried([]);
-            }}>Cancel</a>
-          </>
-        ) : rewriting ? (
-          <>
-            <button onClick={saveRewrites}
-                    disabled={saving || acceptedIds.length === 0
-                              || inFlight > 0 || undecided > 0}
-                    title={undecided > 0 || inFlight > 0
-                      ? "Accept or discard every rewrite first."
-                      : acceptedIds.length === 0
-                        ? "Nothing has been accepted yet." : undefined}>
-              {saving ? "Saving\u2026" : "Save as a new revision"}
-            </button>
-            <a className="secondary"
-               onClick={inFlight || undecided ? undefined : editBeforeSaving}
-               aria-disabled={inFlight > 0 || undecided > 0}>
-              Edit before saving
-            </a>
-            <a className="secondary" onClick={leaveRewriting}>Cancel</a>
-          </>
-        ) : (
-          <>
-            <a className="secondary" onClick={startRewriting}>Rewrite</a>
-            <a className="secondary" onClick={startEditing}>Edit</a>
+            <a className="secondary" onClick={() => openView("rewrite")}>Rewrite</a>
+            <a className="secondary" onClick={() => openView("edit")}>Edit</a>
             <a className="pdf" onClick={rendering ? undefined : downloadPdf}
                aria-disabled={rendering}>
               {rendering ? "Rendering\u2026" : "Download PDF"}
             </a>
           </>
+        ) : (
+          <>
+            <button onClick={save} disabled={!canSave} title={blockedTitle}>
+              {saving ? "Saving\u2026" : "Save as a new revision"}
+            </button>
+            {mode === "edit"
+              ? <a className="secondary" onClick={() => openView("rewrite")}>Rewrite</a>
+              : <a className="secondary" onClick={() => openView("edit")}>Edit</a>}
+            <a className="secondary" onClick={close}>Close</a>
+          </>
         )}
       </div>
 
-      {isRevision && !editing && !rewriting && (
+      {mode === "read" && hasChanges && (
+        <p className="working-note">
+          You have unsaved changes to this memo. They are kept until you save
+          or discard them.{" "}
+          <a onClick={() => openView(lastMode)}>Continue</a>
+          {" \u00b7 "}
+          <a onClick={discard}>Discard changes</a>
+        </p>
+      )}
+
+      {isRevision && mode === "read" && (
         <p className="revision-note">
           This is a revision. It was edited by a person, so the citations are
           their responsibility rather than the system's.
@@ -584,46 +692,50 @@ export function MemoView({ memoId, onBack, onOpen }: {
         </p>
       )}
 
-      {editing && (
+      {mode !== "read" && (
         <p className="muted small edit-note">
-          Saving creates a new memo. This one stays as it is. The panes scroll
-          together; scroll either one on its own to move it alone.
+          {mode === "rewrite"
+            ? "Write a prompt under any section and press Go. Each rewrite "
+              + "appears beside what it would replace; nothing changes until you "
+              + "accept it and save. "
+            : "The panes scroll together; scroll either one on its own to move "
+              + "it alone. "}
+          Your changes are kept if you close or leave, until you save or{" "}
+          <a onClick={discard}>discard them</a>. Saving creates a new memo; this
+          one stays as it is.
+          {keeping === "keeping" && <span> Keeping&hellip;</span>}
+          {keeping === "kept" && hasChanges && <span> Kept.</span>}
         </p>
       )}
 
       {saveError && <p className="error">{saveError}</p>}
       {loadingRef && <p className="busy">Opening source&hellip;</p>}
 
-      {rewriting && (
-        <p className="muted small edit-note">
-          Write a prompt under any section and press Go. Each rewrite appears
-          beside what it would replace; nothing changes until you accept it and
-          save. Saving creates a new memo. This one stays as it is.
-        </p>
-      )}
-
-      {rewriting ? (
+      {mode === "rewrite" ? (
         <div className="rewrite">
-          {head.trim() && (
+          {split.head.trim() && (
             <>
-              <article className="memo rewrite-body">{markdownOf(head)}</article>
+              <article className="memo rewrite-body">{markdownOf(split.head)}</article>
               <p className="muted small rewrite-note">
                 The title and header are not rewritten.
               </p>
             </>
           )}
-          {sections.length === 0 && (
+          {split.sections.length === 0 && (
             <p className="warn">
               This memo has no numbered sections to rewrite.
             </p>
           )}
 
-          {sections.map((s, i) => {
-            const lost = s.result?.output_text
-              ? lostCitations(s.text, s.result.output_text) : [];
+          {split.sections.map((s) => {
+            const run = runs[s.key];
+            const result = run?.result ?? null;
+            const accepted = acceptedBy[s.key] ?? [];
+            const lost = result?.output_text
+              ? lostCitations(s.text, result.output_text) : [];
             return (
-              <section className="rewrite-section" key={i}>
-                {s.result?.status === "done" && s.result.output_text ? (
+              <section className="rewrite-section" key={s.key}>
+                {result?.status === "done" && result.output_text ? (
                   <div className="rewrite-compare">
                     <div>
                       <h4>Now</h4>
@@ -634,7 +746,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
                     <div>
                       <h4>Rewritten</h4>
                       <article className="memo rewrite-body">
-                        {markdownOf(s.result.output_text)}
+                        {markdownOf(result.output_text)}
                       </article>
                     </div>
                   </div>
@@ -652,43 +764,47 @@ export function MemoView({ memoId, onBack, onOpen }: {
                   </p>
                 )}
 
-                {s.result?.status === "failed" && (
-                  <p className="error">{s.result.error}</p>
+                {result?.status === "failed" && (
+                  <p className="error">{result.error}</p>
                 )}
 
                 <div className="rewrite-actions">
-                  {s.running !== null && (
+                  {run && !result && (
                     <span className="busy">Rewriting&hellip;</span>
                   )}
-                  {s.result?.status === "done" && (
+                  {result?.status === "done" && (
                     <>
-                      <a onClick={() => accept(i)}>Accept</a>
-                      <a onClick={() => update(i, { result: null })}>Discard</a>
+                      <a onClick={() => accept(s.key)}>Accept</a>
+                      <a onClick={() => dropRun(s.key)}>Discard</a>
                     </>
                   )}
-                  {s.result?.status === "failed" && (
-                    <a onClick={() => update(i, { result: null })}>Dismiss</a>
+                  {result?.status === "failed" && (
+                    <a onClick={() => dropRun(s.key)}>Dismiss</a>
                   )}
-                  {s.accepted.length > 0 && s.running === null && !s.result && (
+                  {accepted.length > 0 && !run && (
                     <>
                       <span className="muted">
-                        Rewritten{s.accepted.length > 1
-                          ? " " + s.accepted.length + " times" : ""}
+                        Rewritten{accepted.length > 1
+                          ? " " + accepted.length + " times" : ""}
                       </span>
-                      <a onClick={() => update(i, { text: s.original,
-                                                    accepted: [] })}>
-                        Put back the original
-                      </a>
+                      {originals[s.key] !== undefined && (
+                        <a onClick={() => putBack(s.key)}>
+                          Put back the original
+                        </a>
+                      )}
                     </>
                   )}
                 </div>
 
-                {s.running === null && !s.result && (
+                {!run && (
                   <textarea className="rewrite-prompt" rows={2}
                     placeholder={"How " + s.heading.replace(/^#+\s*/, "")
                                  + " should be rewritten"}
-                    value={s.prompt}
-                    onChange={(e) => update(i, { prompt: e.target.value })} />
+                    value={prompts[s.key] ?? ""}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setPrompts((prev) => ({ ...prev, [s.key]: value }));
+                    }} />
                 )}
               </section>
             );
@@ -710,7 +826,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
             )}
           </div>
         </div>
-      ) : editing ? (
+      ) : mode === "edit" ? (
         <div className="split">
           <textarea
             ref={editorRef}
@@ -727,11 +843,11 @@ export function MemoView({ memoId, onBack, onOpen }: {
             onMouseEnter={() => (driver.current = "preview")}
             onScroll={() => syncFrom("preview")}
           >
-            {rendered}
+            {markdownOf(draft)}
           </article>
         </div>
       ) : (
-        <article className="memo">{rendered}</article>
+        <article className="memo">{markdownOf(memo.markdown)}</article>
       )}
 
       {passage && (
