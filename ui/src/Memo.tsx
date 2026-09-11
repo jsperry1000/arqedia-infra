@@ -220,9 +220,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
   // other would scroll it back, and the two would fight.
   const driver = useRef<"editor" | "preview" | null>(null);
 
-  // While revising, the memo's own head - Go, Save, Edit, Close - is held
-  // just under the site header, so a person at the foot of a long memo does
-  // not scroll back to the top to act. The site header's height is measured,
+  // The memo's own head - Rewrite, Edit and the PDF while reading; Go, Save,
+  // Edit and Close while revising - is held just under the site header, so a
+  // person at the foot of a long memo does not scroll back to the top to act. The site header's height is measured,
   // not assumed: it changes with the width of the window and the length of
   // the signed-in address.
   const [pinTop, setPinTop] = useState(0);
@@ -649,8 +649,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
     <div className={mode !== "read" ? "wide" : ""}>
       <a onClick={back} className="back">Back</a>
 
-      <div className={mode === "read" ? "memo-head" : "memo-head pinned"}
-           style={mode === "read" ? undefined : { top: pinTop }}>
+      <div className="memo-head pinned" style={{ top: pinTop }}>
         <div>
           <h2>Memo {memo.label}</h2>
           <p className="muted">
