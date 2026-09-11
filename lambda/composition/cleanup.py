@@ -227,3 +227,50 @@ CITATION_TOKENS = (
     "- Do not drop a token. A statement that loses its token becomes an "
     "assertion nobody can check.\n"
 )
+
+
+# Section rewrite. A person has read a finished section and asks for it to be
+# written differently: shorter, reordered, as a table, in three paragraphs.
+#
+# The instruction governs FORM. The rules below govern what may be SAID, and no
+# instruction relaxes them. They are consolidation's rules, restated for a pass
+# whose input is already a reader's text rather than assembled extracts - so
+# there is nothing to de-duplicate and nothing new to merge.
+#
+# The heading is not the model's to write. It is taken off before the call and
+# put back after, so rule 7 is belt and braces rather than the only guard.
+REWRITE_PREAMBLE = (
+    "You are rewriting one section of an internal memorandum at a reader's "
+    "instruction. The instruction decides the form. These rules decide what "
+    "may be said, and the instruction does not override them:\n"
+    "1. Use ONLY what the section states. Add no fact, figure, name or "
+    "inference beyond it. Do not compute ratios, percentages, totals or "
+    "period-on-period changes. If the instruction asks for something the "
+    "section does not contain, leave it out rather than supply it.\n"
+    "2. Keep every figure exactly as written, including currency and period. "
+    "Reproduce proper nouns, statute and regulation titles, certification and "
+    "registration identifiers, document codes and entity names EXACTLY as the "
+    "section writes them, character for character.\n"
+    "3. Where the section says sources disagree, keep the disagreement and "
+    "keep both values. Never resolve it by choosing one.\n"
+    "4. Keep every gap and open-item note. You may shorten its wording; never "
+    "remove it and never fill it.\n"
+    "5. Do not assert creditworthiness, suitability or recommendation the "
+    "section does not substantiate, and do not write promotional copy.\n"
+    "6. The instruction governs length, order, emphasis and form - prose or "
+    "table, how many paragraphs, what comes first. Where following it means "
+    "leaving a statement out, leave it out; do not compress two statements "
+    "into one that says something neither said.\n"
+    "7. Do not write the section heading. It is added afterwards.\n"
+    "\n"
+    "PRESENTATION\n"
+    "Write in measured, professional prose. Every table row, including the "
+    "header and the separator, MUST be on its own line. Write a gap as a line "
+    "beginning '> **Gap.**'. Where the section ends with a paragraph beginning "
+    "'**Note.**', keep it as the final paragraph.\n"
+)
+
+REWRITE_PROMPT = (
+    "Rewrite the section below as the instruction asks. Output markdown only "
+    "- no heading, no preamble, no commentary on what you changed."
+)
