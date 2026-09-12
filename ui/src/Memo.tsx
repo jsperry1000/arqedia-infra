@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, type Memo, type Passage, type Rewrite } from "./api";
 import { MemoDocument, type Ref } from "./MemoReader";
 
@@ -22,11 +22,16 @@ import { MemoDocument, type Ref } from "./MemoReader";
  * until the accepted sections are saved as a revision, and that revision
  * records which sections the model wrote and at whose prompt.
  *
- * Rewrite and Edit are two views of ONE working copy: the text as it stands,
- * the prompts typed, the rewrites accepted and the ones still out. Switching
- * between them carries everything. Leaving - Close, Back, a reload, another
- * memo - keeps it, on the server, and coming back reopens it where it was.
- * Only saving a revision or Discard changes ends it.
+ * Editing happens in the document itself - an edit control on each block,
+ * and the block opens where it sits. There is no second pane and no markdown
+ * on screen: the stored form is storage, and a person revising a memorandum
+ * should be looking at a memorandum.
+ *
+ * Reading, editing and rewriting all work on ONE working copy: the text as it
+ * stands, the prompts typed, the rewrites accepted and the ones still out.
+ * Leaving - Back, a reload, another memo - keeps it, on the server, and
+ * coming back reopens it where it was. Only saving a revision or Discard
+ * changes ends it.
  */
 
 // A section heading as composition writes it: "## II. Business". Level two
@@ -99,7 +104,9 @@ type Result = Pick<Rewrite, "rewrite_id" | "status" | "error" | "output_text"
 // accepted or discarded.
 type Run = { id: number; result: Result | null };
 
-type Mode = "read" | "edit" | "rewrite";
+// Editing is not a mode: every block carries its own control while reading.
+// Rewriting is, because the whole document is laid out differently for it.
+type Mode = "read" | "rewrite";
 
 // How long typing pauses before the working copy is kept. Short enough that a
 // reload loses a sentence at most; long enough not to write on every key.
@@ -119,7 +126,6 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
   // The working copy. Rewrite and Edit both read and write these.
   const [mode, setMode] = useState<Mode>("read");
-  const [lastMode, setLastMode] = useState<"edit" | "rewrite">("rewrite");
   const [draft, setDraft] = useState("");
   const [prompts, setPrompts] = useState<Record<string, string>>({});
   // Rewrites accepted, by section. Kept even when a hand edit renames the
@@ -130,12 +136,6 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
   const [loaded, setLoaded] = useState(false);
   const [keeping, setKeeping] = useState<"" | "keeping" | "kept" | "failed">("");
-
-  const editorRef = useRef<HTMLTextAreaElement | null>(null);
-  const previewRef = useRef<HTMLDivElement | null>(null);
-  // Which pane the pointer last touched. Without this, one pane scrolling the
-  // other would scroll it back, and the two would fight.
-  const driver = useRef<"editor" | "preview" | null>(null);
 
   // The memo's own head - Rewrite, Edit and the PDF while reading; Go, Save,
   // Edit and Close while revising - is held just under the site header, so a
@@ -216,8 +216,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
       setAcceptedBy(copy?.accepted_by ?? {});
       setRuns(Object.fromEntries(Object.entries(copy?.pending ?? {})
         .map(([key, id]) => [key, { id, result: null }])));
-      setLastMode(copy?.mode ?? "rewrite");
-      setMode(copy ? copy.mode : "read");
+      // A copy kept before editing moved into the document names a mode that
+      // no longer exists; it opens in the reader, where editing now lives.
+      setMode(copy?.mode === "rewrite" ? "rewrite" : "read");
       const payload = copy ? JSON.stringify(copy) : "null";
       kept.current = { id: memoId, payload };
       latest.current = { id: memoId, payload };
@@ -243,7 +244,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
   const payload = !memo || !hasChanges ? "null" : JSON.stringify({
     version: 1,
-    mode: lastMode,
+    mode,
     text: draft,
     prompts: typedPrompts,
     accepted_by: acceptedBy,
@@ -312,24 +313,6 @@ export function MemoView({ memoId, onBack, onOpen }: {
     }
   }
 
-  /**
-   * Proportional scroll sync. The two panes have different heights for the
-   * same content, so anything better than proportional would mean mapping
-   * source lines to rendered elements - real work for a small gain. Either
-   * pane can be scrolled alone; only the one under the pointer drives.
-   */
-  const syncFrom = useCallback((from: "editor" | "preview") => {
-    if (driver.current !== from) return;
-    const a = from === "editor" ? editorRef.current : previewRef.current;
-    const b = from === "editor" ? previewRef.current : editorRef.current;
-    if (!a || !b) return;
-
-    const travel = a.scrollHeight - a.clientHeight;
-    if (travel <= 0) return;
-    const ratio = a.scrollTop / travel;
-    b.scrollTop = ratio * (b.scrollHeight - b.clientHeight);
-  }, []);
-
   async function downloadPdf() {
     // Rendered on demand, so it takes a couple of seconds on a long memo.
     // Saying so beats a button that appears to do nothing.
@@ -345,13 +328,13 @@ export function MemoView({ memoId, onBack, onOpen }: {
     }
   }
 
-  function openView(next: "edit" | "rewrite") {
+  /** Into the rewrite screen, or back out of it, keeping the copy either
+   *  way. */
+  function openRewrite() {
     setSaveError("");
-    setLastMode(next);
-    setMode(next);
+    setMode("rewrite");
   }
 
-  /** Close, keeping the copy. The reader shows what is kept. */
   function close() {
     setMode("read");
     keepNow(memoId, latest.current.payload);
@@ -505,8 +488,12 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
         {mode === "read" ? (
           <>
-            <a className="secondary" onClick={() => openView("rewrite")}>Rewrite</a>
-            <a className="secondary" onClick={() => openView("edit")}>Edit</a>
+            {hasChanges && (
+              <button onClick={save} disabled={!canSave} title={blockedTitle}>
+                {saving ? "Saving\u2026" : "Save as a new revision"}
+              </button>
+            )}
+            <a className="secondary" onClick={openRewrite}>Rewrite</a>
             <a className="pdf" onClick={rendering ? undefined : downloadPdf}
                aria-disabled={rendering}>
               {rendering ? "Rendering\u2026" : "Download PDF"}
@@ -536,9 +523,6 @@ export function MemoView({ memoId, onBack, onOpen }: {
             <button onClick={save} disabled={!canSave} title={blockedTitle}>
               {saving ? "Saving\u2026" : "Save as a new revision"}
             </button>
-            {mode === "edit"
-              ? <a className="secondary" onClick={() => openView("rewrite")}>Rewrite</a>
-              : <a className="secondary" onClick={() => openView("edit")}>Edit</a>}
             <a className="secondary" onClick={close}>Close</a>
           </>
         )}
@@ -546,11 +530,11 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
       {mode === "read" && hasChanges && (
         <p className="working-note">
-          You have unsaved changes to this memo. They are kept until you save
-          or discard them.{" "}
-          <a onClick={() => openView(lastMode)}>Continue</a>
-          {" \u00b7 "}
-          <a onClick={discard}>Discard changes</a>
+          You have unsaved changes to this memo. They are kept if you leave,
+          until you save or{" "}
+          <a onClick={discard}>discard them</a>.
+          {keeping === "keeping" && <span> Keeping&hellip;</span>}
+          {keeping === "kept" && <span> Kept.</span>}
         </p>
       )}
 
@@ -573,15 +557,11 @@ export function MemoView({ memoId, onBack, onOpen }: {
         </p>
       )}
 
-      {mode !== "read" && (
+      {mode === "rewrite" && (
         <p className="muted small edit-note">
-          {mode === "rewrite"
-            ? "Write a prompt under any section and press Go. Each rewrite "
-              + "appears beside what it would replace; nothing changes until you "
-              + "accept it and save. "
-            : "The panes scroll together; scroll either one on its own to move "
-              + "it alone. "}
-          Your changes are kept if you close or leave, until you save or{" "}
+          Write a prompt under any section and press Go. Each rewrite appears
+          beside what it would replace; nothing changes until you accept it and
+          save. Your changes are kept if you leave, until you save or{" "}
           <a onClick={discard}>discard them</a>. Saving creates a new memo; this
           one stays as it is.
           {keeping === "keeping" && <span> Keeping&hellip;</span>}
@@ -596,7 +576,12 @@ export function MemoView({ memoId, onBack, onOpen }: {
         <div className="rewrite">
           {split.head.trim() && (
             <>
-              <div className="rewrite-body">{markdownOf(split.head)}</div>
+              <div className="rewrite-body">
+                <MemoDocument markdown={split.head} byFilename={byFilename}
+                              onOpen={openRef}
+                              onChange={(text) => setDraft(
+                                joinSections(text, split.hasHead, split.sections))} />
+              </div>
               <p className="muted small rewrite-note">
                 The title and header are not rewritten.
               </p>
@@ -633,7 +618,10 @@ export function MemoView({ memoId, onBack, onOpen }: {
                   </div>
                 ) : (
                   <div className="rewrite-body">
-                    {markdownOf(s.text)}
+                    <MemoDocument markdown={s.text} byFilename={byFilename}
+                                  onOpen={openRef}
+                                  onChange={(text) => setDraft(
+                                    replaceSection(draft, s.key, text))} />
                   </div>
                 )}
 
@@ -691,28 +679,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
             );
           })}
         </div>
-      ) : mode === "edit" ? (
-        <div className="split">
-          <textarea
-            ref={editorRef}
-            className="editor"
-            value={draft}
-            spellCheck={false}
-            onMouseEnter={() => (driver.current = "editor")}
-            onScroll={() => syncFrom("editor")}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-          <div
-            ref={previewRef as React.RefObject<HTMLDivElement>}
-            className="preview"
-            onMouseEnter={() => (driver.current = "preview")}
-            onScroll={() => syncFrom("preview")}
-          >
-            {markdownOf(draft)}
-          </div>
-        </div>
       ) : (
-        markdownOf(memo.markdown)
+        <MemoDocument markdown={draft} byFilename={byFilename} onOpen={openRef}
+                      onChange={setDraft} />
       )}
 
       {passage && (
