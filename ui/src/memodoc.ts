@@ -355,7 +355,10 @@ export function blockToMarkdown(block: Block, trailing: string): string {
     default:
       body = block.source.replace(/\n+$/, "");
   }
-  return body + trailing;
+  // No trailing spaces. Two of them at the end of a line are a hard break in
+  // markdown, and a paragraph broken in two leaves the first half ending in
+  // the space that was before the caret.
+  return body.replace(/[ \t]+$/gm, "") + trailing;
 }
 
 /** The blank space a block's source ends with, so an edit keeps the spacing
