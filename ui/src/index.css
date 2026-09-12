@@ -364,6 +364,87 @@ p.warn { color: #b45309; }
 .memo-head .busy + button { margin-left: 8px; }
 .memo-head .busy { font-size: 13px; white-space: nowrap; }
 
+/* --- the memo as a document ---------------------------------------------- */
+
+/* Headings by their level in the memo, not by which tag they landed on. The
+   memo's own H1 is its title; a numbered section is the level below it. */
+.memo.doc .doc-h1 {
+  font-size: 20px; margin: 0 0 18px; padding-bottom: 10px;
+  border-bottom: 2px solid var(--deep);
+}
+.memo.doc .doc-h2 {
+  font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em;
+  margin: 30px 0 12px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--light);
+}
+.memo.doc .doc-h3 { font-size: 13.5px; margin: 22px 0 8px; color: var(--deep); }
+.memo.doc .doc-h4 { font-size: 12.5px; margin: 16px 0 6px; color: var(--muted);
+                    text-transform: uppercase; letter-spacing: 0.05em; }
+
+.memo.doc p { margin: 0 0 12px; }
+.memo.doc ul, .memo.doc ol { margin: 0 0 12px; padding-left: 22px; }
+.memo.doc li { margin: 0 0 5px; }
+.memo.doc hr { border: 0; border-top: 1px solid var(--line); margin: 22px 0; }
+
+/* A table is a table. It was a run of pipe characters, because the reader
+   passed the memo to a CommonMark renderer, which has no tables. */
+.memo.doc .table-wrap { overflow-x: auto; margin: 0 0 16px; }
+.memo.doc table {
+  border-collapse: collapse; width: 100%; font-size: 13px;
+  border: 1px solid var(--line);
+}
+.memo.doc th, .memo.doc td {
+  padding: 7px 10px; border: 1px solid var(--line);
+  vertical-align: top; text-align: left;
+}
+.memo.doc th {
+  background: var(--wash); color: var(--deep); font-weight: 600;
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.memo.doc tbody tr:nth-child(even) { background: #fbfdff; }
+.memo.doc td.al-right, .memo.doc th.al-right { text-align: right; }
+.memo.doc td.al-centre, .memo.doc th.al-centre { text-align: center; }
+
+/* A gap, a coverage note, a caveat. Quoted in the stored text; a panel here,
+   as the rendered document has it. */
+.memo.doc .callout {
+  border-left: 3px solid var(--medium); background: var(--wash);
+  padding: 10px 14px; margin: 0 0 14px; font-size: 13px;
+}
+.memo.doc .callout p { margin: 0; }
+.memo.doc .callout.gap { border-left-color: var(--gold); background: #FDF6DA; }
+.memo.doc .callout.coverage { border-left-color: var(--gold); background: #FDF6DA; }
+
+/* --- citations ----------------------------------------------------------- */
+
+/* Put away, a run of references is one small mark carrying how many there
+   are. Seven filenames after a sentence is longer than the sentence. */
+.cite-mark {
+  font: inherit; font-size: 10px; font-weight: 600; line-height: 1;
+  vertical-align: super;
+  margin-left: 2px; padding: 2px 5px;
+  color: var(--medium); background: var(--light);
+  border: 0; border-radius: 8px; cursor: pointer;
+}
+.cite-mark:hover { background: var(--medium); color: var(--paper); }
+.cite-mark.shown { vertical-align: baseline; margin-left: 4px; }
+.cite-run { display: inline; }
+
+/* The per-block control. Always present, so it is never hunted for; quiet
+   until the pointer is near it. */
+.block-tools { margin-left: 6px; white-space: nowrap; }
+.block-tools .tool {
+  font: inherit; font-size: 11px; line-height: 1;
+  padding: 3px 7px; cursor: pointer;
+  color: var(--muted); background: transparent;
+  border: 1px solid var(--line); border-radius: 3px;
+  opacity: 0.45; transition: opacity 0.1s;
+}
+.memo.doc p:hover .tool, .memo.doc .callout:hover .tool,
+.block-tools .tool:focus-visible { opacity: 1; }
+.block-tools .tool:hover { color: var(--medium); border-color: var(--medium); opacity: 1; }
+.block-tools .tool.on { opacity: 1; color: var(--medium); border-color: var(--light); }
+
 /* Unsaved changes, kept, shown on the reader. The same sheet as the revision
    note, marked in the highlight so it is not read as part of the record. */
 .working-note {
