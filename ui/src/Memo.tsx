@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
 import { api, type Memo, type Passage, type Rewrite } from "./api";
+import { MemoDocument, type Ref } from "./MemoReader";
 
 /**
  * Reading and revising a memo.
@@ -28,89 +28,6 @@ import { api, type Memo, type Passage, type Rewrite } from "./api";
  * memo - keeps it, on the server, and coming back reopens it where it was.
  * Only saving a revision or Discard changes ends it.
  */
-
-type Ref = {
-  documentId: number;
-  filename: string;
-  unit: number | null;
-  text: string;
-};
-
-/**
- * Split a table emitted on one line back into rows.
- *
- * The consolidation sometimes returns a whole table as a single line -
- * "| Item | Status | |---|---| | ... |" - which renders as a run of pipes
- * rather than a table. Telling it not to did not hold, so it is repaired
- * here: the divider is an unambiguous anchor, since "|---|---|" cannot occur
- * in prose, and its column count gives the width of a row.
- *
- * Deterministic, and it repairs memos already written rather than only the
- * next one.
- */
-function unwrapTables(markdown: string): string {
-  const divider = /\|(?:\s*:?-{2,}:?\s*\|)+/;
-  const out: string[] = [];
-
-  for (const line of markdown.split("\n")) {
-    const trimmed = line.trim();
-    const m = trimmed.match(divider);
-
-    if (!m || !trimmed.startsWith("|") ||
-        !trimmed.slice(m.index! + m[0].length).trim()) {
-      out.push(line);
-      continue;
-    }
-
-    const width = (m[0].match(/\|/g) || []).length - 1;
-    if (width < 1) { out.push(line); continue; }
-
-    out.push(trimmed.slice(0, m.index!).trim());
-    out.push(m[0]);
-
-    const cells = trimmed.slice(m.index! + m[0].length).trim()
-      .split(/\s*\|\s*/).filter((c) => c !== "");
-    for (let i = 0; i < cells.length; i += width) {
-      out.push("| " + cells.slice(i, i + width).join(" | ") + " |");
-    }
-  }
-
-  return out.join("\n");
-}
-
-
-/**
- * The text inside a node, however deeply nested.
- *
- * String() on React children gives "[object Object]" the moment they are
- * anything but a plain string - which happens whenever a filename contains
- * characters CommonMark reads as markup.
- */
-function textOf(node: React.ReactNode): string {
-  if (node === null || node === undefined || typeof node === "boolean") return "";
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(textOf).join("");
-  const element = node as { props?: { children?: React.ReactNode } };
-  return element.props ? textOf(element.props.children) : "";
-}
-
-/**
- * Escape the underscores inside a filename before the markdown is parsed.
- *
- * "CE-_-Corporate-Legal-Deck.pdf" contains -_-, which CommonMark reads as
- * emphasis: the citation came apart into nested elements, the underscores
- * were consumed as markup, and the filename rendered as
- * "CE-,[object Object],-Corporate-Legal-Deck.pdf".
- *
- * Only filenames are touched, so ordinary emphasis elsewhere is unaffected -
- * including in memos written before citations moved to asterisks.
- */
-function protectFilenames(markdown: string): string {
-  return markdown.replace(
-    /[A-Za-z0-9._()\-]+\.(?:pdf|docx|xlsx|txt|json|xml)/gi,
-    (name) => name.replace(/_/g, "\\_"));
-}
-
 
 // A section heading as composition writes it: "## II. Business". Level two
 // only - composition's own rule, so the two cannot disagree about where a
@@ -215,7 +132,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
   const [keeping, setKeeping] = useState<"" | "keeping" | "kept" | "failed">("");
 
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
-  const previewRef = useRef<HTMLElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
   // Which pane the pointer last touched. Without this, one pane scrolling the
   // other would scroll it back, and the two would fight.
   const driver = useRef<"editor" | "preview" | null>(null);
@@ -386,38 +303,6 @@ export function MemoView({ memoId, onBack, onOpen }: {
     return map;
   }, [memo]);
 
-  /**
-   * Split a citation line into its parts. "Sources: a.pdf, page 1;
-   * b.docx, section 2." is EIGHT citations on some sections, not one - and
-   * matching only the first meant every click opened the same document.
-   */
-  function parseRefs(raw: string): (string | Ref)[] {
-    // The backslashes added to protect a filename from the parser are not
-    // part of its name.
-    const text = raw.replace(/\\_/g, "_");
-    const pattern =
-      /([A-Za-z0-9._()\-]+\.(?:pdf|docx|xlsx|txt|json|xml))(\s*,\s*(?:page|section|sheet)\s*(\d+))?/gi;
-
-    const out: (string | Ref)[] = [];
-    let last = 0;
-    let m: RegExpExecArray | null;
-
-    while ((m = pattern.exec(text)) !== null) {
-      const documentId = byFilename[m[1]];
-      if (!documentId) continue;
-      if (m.index > last) out.push(text.slice(last, m.index));
-      out.push({
-        documentId,
-        filename: m[1],
-        unit: m[3] ? Number(m[3]) : null,
-        text: m[0],
-      });
-      last = m.index + m[0].length;
-    }
-    if (last < text.length) out.push(text.slice(last));
-    return out;
-  }
-
   async function openRef(ref: Ref) {
     setLoadingRef(true);
     try {
@@ -425,50 +310,6 @@ export function MemoView({ memoId, onBack, onOpen }: {
     } finally {
       setLoadingRef(false);
     }
-  }
-
-  // What composition calls a citation. It masks citations before consolidation
-  // with a regex requiring one of these extensions, so an italic run without
-  // one was never a citation on the way in and must not become one here.
-  const CITATION_FILE = /\.(?:pdf|docx|xlsx|txt|json|xml)\b/i;
-
-  /** A citation renders in the brand mid blue, small and italic. Each
-   *  filename that is one of this memo's sources is separately clickable. */
-  function Citation({ children }: { children?: React.ReactNode }) {
-    const text = textOf(children);
-
-    // Emphasis, not a citation. An extracted value carrying its own italics -
-    // a French term from a trade register, a document title - arrives here
-    // looking exactly like a citation, and bracketing it takes the word out of
-    // the sentence: "The entity is Manty SA, a [Société anonyme]."
-    if (!CITATION_FILE.test(text)) {
-      return <em>{children}</em>;
-    }
-
-    const parts = parseRefs(text);
-
-    // Bracketed, because colour and size alone were not carrying the
-    // boundary: "page 1 Its registered office" read as continuous prose, and
-    // two consecutive citations read as one long reference.
-    if (parts.every((p) => typeof p === "string")) {
-      return <em className="ref">[{children}]</em>;
-    }
-
-    return (
-      <em className="ref">
-        [
-        {parts.map((p, i) =>
-          typeof p === "string" ? (
-            <span key={i}>{p}</span>
-          ) : (
-            <span key={i} className="cite" onClick={() => openRef(p)}
-                  title={"Open " + p.filename}>
-              {p.text}
-            </span>
-          ))}
-        ]
-      </em>
-    );
   }
 
   /**
@@ -630,10 +471,11 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
   const isRevision = memo.revision > 1;
 
+  // Every rendering of memo text on this screen - the reader, the editor's
+  // preview, both panes of a rewrite - goes through here, so tables are
+  // tables and citations behave the same way everywhere.
   const markdownOf = (text: string) => (
-    <ReactMarkdown components={{ em: Citation }}>
-      {protectFilenames(unwrapTables(text))}
-    </ReactMarkdown>
+    <MemoDocument markdown={text} byFilename={byFilename} onOpen={openRef} />
   );
 
   // Which sections of this memo the model wrote, grouped by who prompted.
@@ -754,7 +596,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
         <div className="rewrite">
           {split.head.trim() && (
             <>
-              <article className="memo rewrite-body">{markdownOf(split.head)}</article>
+              <div className="rewrite-body">{markdownOf(split.head)}</div>
               <p className="muted small rewrite-note">
                 The title and header are not rewritten.
               </p>
@@ -778,21 +620,21 @@ export function MemoView({ memoId, onBack, onOpen }: {
                   <div className="rewrite-compare">
                     <div>
                       <h4>Now</h4>
-                      <article className="memo rewrite-body">
+                      <div className="rewrite-body">
                         {markdownOf(s.text)}
-                      </article>
+                      </div>
                     </div>
                     <div>
                       <h4>Rewritten</h4>
-                      <article className="memo rewrite-body">
+                      <div className="rewrite-body">
                         {markdownOf(result.output_text)}
-                      </article>
+                      </div>
                     </div>
                   </div>
                 ) : (
-                  <article className="memo rewrite-body">
+                  <div className="rewrite-body">
                     {markdownOf(s.text)}
-                  </article>
+                  </div>
                 )}
 
                 {lost.length > 0 && (
@@ -860,17 +702,17 @@ export function MemoView({ memoId, onBack, onOpen }: {
             onScroll={() => syncFrom("editor")}
             onChange={(e) => setDraft(e.target.value)}
           />
-          <article
-            ref={previewRef as React.RefObject<HTMLElement>}
-            className="memo preview"
+          <div
+            ref={previewRef as React.RefObject<HTMLDivElement>}
+            className="preview"
             onMouseEnter={() => (driver.current = "preview")}
             onScroll={() => syncFrom("preview")}
           >
             {markdownOf(draft)}
-          </article>
+          </div>
         </div>
       ) : (
-        <article className="memo">{markdownOf(memo.markdown)}</article>
+        markdownOf(memo.markdown)
       )}
 
       {passage && (
