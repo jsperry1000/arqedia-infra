@@ -474,6 +474,9 @@ p.warn { color: #b45309; }
 .list-wrap { position: relative; }
 .table-tools { margin: 0 0 4px; }
 .row-tools { display: flex; gap: 8px; margin: 6px 0 0; }
+.block-tools .tool.danger { color: #b42318; border-color: #f3c9c4; opacity: 1; }
+.block-tools .tool.danger:hover { color: var(--paper); background: #b42318;
+                                  border-color: #b42318; }
 .memo.doc table.editing td, .memo.doc table.editing th { background: transparent; }
 .memo.doc thead.empty { display: none; }
 
