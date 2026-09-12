@@ -129,7 +129,9 @@ export type Rewrite = {
 // not lose it. The server stores it as given and does not interpret it.
 export type MemoWorking = {
   version: 1;
-  mode: "edit" | "rewrite";
+  // "edit" appears in copies kept before editing moved into the document;
+  // it is read as "read".
+  mode: "read" | "rewrite" | "edit";
   text: string;                            // the whole memo as it stands
   prompts: Record<string, string>;         // typed, not yet sent, by section
   accepted_by: Record<string, number[]>;   // rewrites accepted, by section

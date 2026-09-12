@@ -1,5 +1,7 @@
-import { useState } from "react";
-import { parseBlocks, citationsIn, type Block, type Inline } from "./memodoc";
+import { useEffect, useRef, useState } from "react";
+import { parseBlocks, serializeBlocks, blockToMarkdown, trailingOf, citationsIn,
+         type Block, type Inline } from "./memodoc";
+import { inlinesToHtml, nodesToInlines } from "./memoedit";
 
 /**
  * The memo as it reads.
@@ -8,6 +10,12 @@ import { parseBlocks, citationsIn, type Block, type Inline } from "./memodoc";
  * headings, gap callouts. What it does NOT draw is the markdown underneath -
  * the pipes, the asterisks, the filenames - which is storage, not something a
  * person should have to read past.
+ *
+ * Editing happens here too, in the document rather than beside it. An edit
+ * icon on a block opens that block where it sits: same type, same table, same
+ * spacing, so nothing moves when a person starts typing. What comes out is
+ * markdown of the shape the renderer expects, and every other block is
+ * written back exactly as it came.
  *
  * Citations are the other half of that. A finished sentence carrying seven
  * references ended in a paragraph of filenames longer than the sentence. Each
@@ -124,10 +132,77 @@ function calloutKind(inlines: Inline[]): string {
   return "note";
 }
 
-export function MemoDocument({ markdown, byFilename, onOpen }: {
+/**
+ * A block being edited.
+ *
+ * The content is written into the element ONCE, when it opens, and read back
+ * when it closes. React must not re-render it in between: setting the HTML on
+ * every keystroke puts the caret back to the start, which is the classic way
+ * this goes wrong.
+ */
+function Editable({ html, onDone, multiline, className }: {
+  html: string;
+  onDone: (root: HTMLElement) => void;
+  multiline?: boolean;
+  className?: string;
+}) {
+  // A span, not a div: a paragraph is a <p>, and a block element inside one
+  // is invalid HTML the browser silently closes the paragraph to escape.
+  const box = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.innerHTML = html;
+    el.focus();
+    // The caret at the end of what is there, not the start: a person clicking
+    // into a paragraph is usually adding to it.
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    // Read back on unmount as well, so an edit is never lost to a click that
+    // closes the block another way.
+    return () => { onDone(el); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <span
+      ref={box}
+      className={"editable" + (className ? " " + className : "")}
+      contentEditable
+      suppressContentEditableWarning
+      spellCheck
+      onKeyDown={(e) => {
+        // Bold and italic are the only marks a memo uses.
+        const meta = e.metaKey || e.ctrlKey;
+        if (meta && (e.key === "b" || e.key === "i")) {
+          e.preventDefault();
+          document.execCommand(e.key === "b" ? "bold" : "italic");
+          return;
+        }
+        if (e.key === "Enter" && !multiline) e.preventDefault();
+        // A paste of formatted text arrives as text; see nodesToInlines.
+      }}
+      onPaste={(e) => {
+        e.preventDefault();
+        const text = e.clipboardData.getData("text/plain");
+        document.execCommand("insertText", false, text);
+      }}
+    />
+  );
+}
+
+export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
   markdown: string;
   byFilename: Record<string, number>;
   onOpen: (ref: Ref) => void;
+  // Absent, the memo is read-only. Present, every block carries an edit
+  // control and this is called with the whole memo after each change.
+  onChange?: (markdown: string) => void;
 }) {
   // Which runs are out, by block and position. Put away by default: a memo is
   // read far more often than it is checked.
@@ -135,7 +210,30 @@ export function MemoDocument({ markdown, byFilename, onOpen }: {
   const toggle = (key: string) =>
     setShown((prev) => ({ ...prev, [key]: !prev[key] }));
 
+  // Which block is open. One at a time: two carets in one document is a way
+  // to lose track of which change went where.
+  const [editing, setEditing] = useState<string | null>(null);
+
   const blocks = parseBlocks(markdown);
+  const editable = !!onChange;
+
+  /** Write one block back into the memo, leaving every other character of it
+   *  alone. */
+  function replace(id: string, change: (b: Block) => Block) {
+    if (!onChange) return;
+    const next = blocks.map((b) => {
+      if (b.id !== id) return b;
+      const edited = change(b);
+      return { ...edited, source: blockToMarkdown(edited, trailingOf(b.source)) };
+    });
+    const after = serializeBlocks(next);
+    if (after !== markdown) onChange(after);
+  }
+
+  /** Inline content out of an edited element, written back to its block. */
+  const commitInlines = (id: string, set: (b: Block, nodes: Inline[]) => Block) =>
+    (root: HTMLElement) => replace(id, (b) => set(b, nodesToInlines(root)));
+
 
   /** Show or put away every run in one block at once. */
   function toggleBlock(block: Block) {
@@ -156,20 +254,30 @@ export function MemoDocument({ markdown, byFilename, onOpen }: {
              byFilename={byFilename} onOpen={onOpen} />
   );
 
-  /** The per-block control. Always there, so a reader never hunts for it. */
-  function Sources({ block }: { block: Block }) {
-    const refs = "inlines" in block ? citationsIn(block.inlines) : [];
-    if (!refs.length) return null;
+  /** The per-block controls. Always there, so they are never hunted for. */
+  function Tools({ block }: { block: Block }) {
     const inlines = "inlines" in block ? block.inlines : [];
+    const refs = citationsIn(inlines);
     const out = inlines.some((n, i) => n.kind === "cites" && shown[block.id + ":" + i]);
+    const open = editing === block.id;
+    if (!refs.length && !editable) return null;
     return (
       <span className="block-tools">
-        <button type="button" className={out ? "tool on" : "tool"}
-                onClick={() => toggleBlock(block)}
-                title={out ? "Put the sources away"
-                           : `Show all ${refs.length} sources`}>
-          {out ? "Hide sources" : "Sources"}
-        </button>
+        {refs.length > 0 && !open && (
+          <button type="button" className={out ? "tool on" : "tool"}
+                  onClick={() => toggleBlock(block)}
+                  title={out ? "Put the sources away"
+                             : `Show all ${refs.length} sources`}>
+            {out ? "Hide sources" : "Sources"}
+          </button>
+        )}
+        {editable && (
+          <button type="button" className={open ? "tool on" : "tool"}
+                  onClick={() => setEditing(open ? null : block.id)}
+                  title={open ? "Finish editing" : "Edit this"}>
+            {open ? "Done" : "Edit"}
+          </button>
+        )}
       </span>
     );
   }
@@ -188,7 +296,12 @@ export function MemoDocument({ markdown, byFilename, onOpen }: {
             const H = ("h" + Math.min(block.level + 1, 6)) as "h2";
             return (
               <H key={block.id} className={"doc-h" + block.level}>
-                {inlinesOf(block, block.inlines)}
+                {editing === block.id ? (
+                  <Editable html={inlinesToHtml(block.inlines)}
+                            onDone={commitInlines(block.id, (b, nodes) =>
+                              ({ ...b, inlines: nodes } as Block))} />
+                ) : inlinesOf(block, block.inlines)}
+                <Tools block={block} />
               </H>
             );
           }
@@ -196,35 +309,57 @@ export function MemoDocument({ markdown, byFilename, onOpen }: {
           case "quote":
             return (
               <div key={block.id} className={"callout " + calloutKind(block.inlines)}>
-                <p>{inlinesOf(block, block.inlines)}<Sources block={block} /></p>
+                <p>
+                  {editing === block.id ? (
+                    <Editable html={inlinesToHtml(block.inlines)}
+                              onDone={commitInlines(block.id, (b, nodes) =>
+                                ({ ...b, inlines: nodes } as Block))} />
+                  ) : inlinesOf(block, block.inlines)}
+                  <Tools block={block} />
+                </p>
               </div>
             );
 
           case "list":
-            return block.ordered ? (
-              <ol key={block.id}>
-                {block.items.map((it, k) => (
-                  <li key={k}>{inlinesOf(block, it.inlines)}</li>
-                ))}
-                <Sources block={block} />
-              </ol>
-            ) : (
-              <ul key={block.id}>
-                {block.items.map((it, k) => (
-                  <li key={k}>{inlinesOf(block, it.inlines)}</li>
-                ))}
-              </ul>
+            const items = block.items.map((it, k) => (
+              <li key={k}>
+                {editing === block.id ? (
+                  <Editable html={inlinesToHtml(it.inlines)}
+                            onDone={(root) => replace(block.id, (b) => {
+                              if (b.kind !== "list") return b;
+                              const next = b.items.slice();
+                              next[k] = { ...next[k], inlines: nodesToInlines(root) };
+                              return { ...b, items: next };
+                            })} />
+                ) : inlinesOf(block, it.inlines)}
+              </li>
+            ));
+            return (
+              <div className="list-wrap" key={block.id}>
+                {block.ordered ? <ol>{items}</ol> : <ul>{items}</ul>}
+                <Tools block={block} />
+              </div>
             );
 
           case "table":
             return (
               <div className="table-wrap" key={block.id}>
-                <table>
-                  <thead>
+                <div className="table-tools"><Tools block={block} /></div>
+                <table className={editing === block.id ? "editing" : undefined}>
+                  <thead className={block.head.every((c) => c.length === 0)
+                                    ? "empty" : undefined}>
                     <tr>
                       {block.head.map((c, k) => (
                         <th key={k} className={"al-" + (block.align[k] ?? "left")}>
-                          {inlinesOf(block, c)}
+                          {editing === block.id ? (
+                            <Editable html={inlinesToHtml(c)}
+                                      onDone={(root) => replace(block.id, (b) => {
+                                        if (b.kind !== "table") return b;
+                                        const head = b.head.slice();
+                                        head[k] = nodesToInlines(root);
+                                        return { ...b, head };
+                                      })} />
+                          ) : inlinesOf(block, c)}
                         </th>
                       ))}
                     </tr>
@@ -234,21 +369,49 @@ export function MemoDocument({ markdown, byFilename, onOpen }: {
                       <tr key={r}>
                         {row.map((c, k) => (
                           <td key={k} className={"al-" + (block.align[k] ?? "left")}>
-                            {inlinesOf(block, c)}
+                            {editing === block.id ? (
+                              <Editable html={inlinesToHtml(c)}
+                                        onDone={(root) => replace(block.id, (b) => {
+                                          if (b.kind !== "table") return b;
+                                          const rows = b.rows.map((x) => x.slice());
+                                          rows[r][k] = nodesToInlines(root);
+                                          return { ...b, rows };
+                                        })} />
+                            ) : inlinesOf(block, c)}
                           </td>
                         ))}
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                {editing === block.id && (
+                  <div className="row-tools">
+                    <button type="button" className="tool"
+                            onClick={() => replace(block.id, (b) => b.kind === "table"
+                              ? { ...b, rows: [...b.rows, b.head.map(() => [])] } : b)}>
+                      Add a row
+                    </button>
+                    {block.rows.length > 0 && (
+                      <button type="button" className="tool"
+                              onClick={() => replace(block.id, (b) => b.kind === "table"
+                                ? { ...b, rows: b.rows.slice(0, -1) } : b)}>
+                        Remove the last row
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             );
 
           default:
             return (
               <p key={block.id}>
-                {inlinesOf(block, block.inlines)}
-                <Sources block={block} />
+                {editing === block.id ? (
+                  <Editable html={inlinesToHtml(block.inlines)} multiline
+                            onDone={commitInlines(block.id, (b, nodes) =>
+                              ({ ...b, inlines: nodes } as Block))} />
+                ) : inlinesOf(block, block.inlines)}
+                <Tools block={block} />
               </p>
             );
         }
