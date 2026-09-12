@@ -474,6 +474,29 @@ p.warn { color: #b45309; }
 .list-wrap { position: relative; }
 .table-tools { margin: 0 0 4px; }
 .row-tools { display: flex; gap: 8px; margin: 6px 0 0; }
+
+/* A place to start a paragraph. A thin strip between blocks: nothing until
+   the pointer is near it, so a document being read is not a page of plus
+   signs. */
+.insert-point {
+  position: relative; height: 10px; margin: -5px 0;
+  display: flex; align-items: center;
+}
+.insert-point button {
+  font: inherit; font-size: 13px; line-height: 1;
+  width: 20px; height: 18px; padding: 0; cursor: pointer;
+  color: var(--muted); background: var(--paper);
+  border: 1px solid var(--line); border-radius: 3px;
+  opacity: 0; transition: opacity 0.1s;
+}
+.insert-point:hover button, .insert-point button:focus-visible {
+  opacity: 1; color: var(--medium); border-color: var(--medium);
+}
+.insert-point::before {
+  content: ""; position: absolute; left: 26px; right: 0; top: 50%;
+  border-top: 1px dashed var(--light); opacity: 0;
+}
+.insert-point:hover::before { opacity: 1; }
 .block-tools .tool.danger { color: #b42318; border-color: #f3c9c4; opacity: 1; }
 .block-tools .tool.danger:hover { color: var(--paper); background: #b42318;
                                   border-color: #b42318; }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { parseBlocks, serializeBlocks, blockToMarkdown, trailingOf, citationsIn,
          type Block, type Inline } from "./memodoc";
 import { inlinesToHtml, nodesToInlines } from "./memoedit";
@@ -148,10 +148,18 @@ function calloutKind(inlines: Inline[]): string {
  * short pause after typing stops, and again the moment focus leaves. By the
  * time anything else happens the edit is already in.
  */
-function Editable({ html, onEdit, multiline, className }: {
+function Editable({ html, onEdit, onSplit, deferred, className }: {
   html: string;
   onEdit: (root: HTMLElement) => void;
-  multiline?: boolean;
+  // A paragraph that does not exist yet is read out only when it is finished,
+  // not as it is typed: writing it into the memo on the first letter would
+  // replace this element with the block's own and take the caret with it.
+  deferred?: boolean;
+  // Enter, where the block can be broken in two: what is before the caret
+  // stays, what is after it begins the next paragraph or item. Absent -
+  // a heading, a table cell - Enter does nothing, because a heading on two
+  // lines is not a thing a memorandum has.
+  onSplit?: (before: HTMLElement, after: HTMLElement) => void;
   className?: string;
 }) {
   // A span, not a div: a paragraph is a <p>, and a block element inside one
@@ -198,6 +206,7 @@ function Editable({ html, onEdit, multiline, className }: {
       suppressContentEditableWarning
       spellCheck
       onInput={() => {
+        if (deferred) return;
         if (pending.current) clearTimeout(pending.current);
         pending.current = setTimeout(commit, 400);
       }}
@@ -210,7 +219,26 @@ function Editable({ html, onEdit, multiline, className }: {
           document.execCommand(e.key === "b" ? "bold" : "italic");
           return;
         }
-        if (e.key === "Enter" && !multiline) { e.preventDefault(); commit(); }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const el = box.current;
+          const selection = window.getSelection();
+          if (!el || !onSplit || !selection || selection.rangeCount === 0) {
+            commit();
+            return;
+          }
+          // Everything after the caret is lifted out and handed over as the
+          // new block; what is left in the element is the old one.
+          const caret = selection.getRangeAt(0);
+          const tail = document.createRange();
+          tail.setStart(caret.endContainer, caret.endOffset);
+          tail.setEnd(el, el.childNodes.length);
+          const after = document.createElement("span");
+          after.appendChild(tail.extractContents());
+          if (pending.current) clearTimeout(pending.current);
+          onSplit(el, after);
+          return;
+        }
         // A paste of formatted text arrives as text; see nodesToInlines.
       }}
       onPaste={(e) => {
@@ -241,6 +269,11 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
   const [editing, setEditing] = useState<string | null>(null);
   // A block just closed, waiting to be judged empty or not.
   const [closed, setClosed] = useState<string | null>(null);
+  // Where a block was just added, so it can be opened once the document has
+  // been read back and the blocks renumbered.
+  const opening = useRef<number | null>(null);
+  // Where a new paragraph is being typed, before it is part of the memo.
+  const [adding, setAdding] = useState<number | null>(null);
 
   // A memorandum is a hundred thousand characters. Parsed on every keystroke
   // it would be, and the whole document laid out again with it.
@@ -258,6 +291,69 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
     });
     const after = serializeBlocks(next);
     if (after !== markdown) onChange(after);
+  }
+
+  /** A new paragraph, typed in place before it exists.
+   *
+   *  It is not written into the memo as it is typed. An empty paragraph is
+   *  nothing at all in the stored form - a blank line between two others - so
+   *  a new one put there straight away would vanish on being read back, and
+   *  taking the caret with it. It goes in when it is finished, and a new one
+   *  left empty was never there. */
+  function addParagraph(index: number, root: HTMLElement) {
+    if (!onChange) return;
+    const inlines = nodesToInlines(root);
+    if (!inlines.some((n) => n.kind === "cites" || n.text.trim() !== "")) return;
+    const block: Block = { id: "new", source: "", kind: "para", indent: "",
+                           inlines };
+    // A last block carries no blank line after it; anywhere else does.
+    const trailing = index >= blocks.length ? "\n" : "\n\n";
+    onChange(serializeBlocks([
+      ...blocks.slice(0, index),
+      { ...block, source: blockToMarkdown(block, trailing) },
+      ...blocks.slice(index),
+    ]));
+  }
+
+  useEffect(() => {
+    const at = opening.current;
+    if (at === null) return;
+    opening.current = null;
+    const block = blocks[at];
+    if (block) setEditing(block.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markdown]);
+
+  /** Break a block in two at the caret. A paragraph becomes two paragraphs;
+   *  a list item becomes two items of the same list. */
+  function splitBlock(block: Block, before: HTMLElement, after: HTMLElement,
+                      item?: number) {
+    if (!onChange) return;
+    const head = nodesToInlines(before);
+    const tail = nodesToInlines(after);
+    const index = blocks.findIndex((b) => b.id === block.id);
+
+    if (block.kind === "list" && item !== undefined) {
+      const items = block.items.slice();
+      items[item] = { ...items[item], inlines: head };
+      items.splice(item + 1, 0, { prefix: items[item].prefix, inlines: tail });
+      const next = { ...block, items } as Block;
+      opening.current = index;
+      onChange(serializeBlocks(blocks.map((b) => b.id !== block.id ? b
+        : { ...next, source: blockToMarkdown(next, trailingOf(b.source)) })));
+      return;
+    }
+
+    if (block.kind !== "para") return;
+    const first = { ...block, inlines: head } as Block;
+    const second = { ...block, id: "new", inlines: tail } as Block;
+    opening.current = index + 1;
+    onChange(serializeBlocks([
+      ...blocks.slice(0, index),
+      { ...first, source: blockToMarkdown(first, "\n") },
+      { ...second, source: blockToMarkdown(second, trailingOf(block.source)) },
+      ...blocks.slice(index + 1),
+    ]));
   }
 
   /** Take a block out of the memo altogether, with the blank lines that
@@ -373,9 +469,39 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
     );
   }
 
+  /** A place to start a new paragraph. Between every two blocks and at the
+   *  end, quiet until the pointer is near it. */
+  function Insert({ index }: { index: number }) {
+    if (!editable) return null;
+    if (adding === index) {
+      return (
+        <p className="new-para">
+          <Editable html="" deferred
+                    onEdit={(root) => addParagraph(index, root)}
+                    onSplit={(before) => {
+                      addParagraph(index, before);
+                      // Enter finishes this one and offers the next.
+                      setAdding(index + 1);
+                    }} />
+          <span className="block-tools">
+            <button type="button" className="tool on"
+                    onClick={() => setAdding(null)}>Done</button>
+          </span>
+        </p>
+      );
+    }
+    return (
+      <div className="insert-point">
+        <button type="button" onClick={() => { setEditing(null); setAdding(index); }}
+                title="Start a paragraph here">+</button>
+      </div>
+    );
+  }
+
   return (
     <article className="memo doc">
-      {blocks.map((block) => {
+      {blocks.map((block, index) => {
+        const content = (() => {
         switch (block.kind) {
           case "raw":
             return null;
@@ -421,7 +547,9 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
                               const next = b.items.slice();
                               next[k] = { ...next[k], inlines: nodesToInlines(root) };
                               return { ...b, items: next };
-                            })} />
+                            })}
+                            onSplit={(before, after) =>
+                              splitBlock(block, before, after, k)} />
                 ) : inlinesOf(block, it.inlines)}
               </li>
             ));
@@ -498,15 +626,27 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
             return (
               <p key={block.id}>
                 {editing === block.id ? (
-                  <Editable html={inlinesToHtml(block.inlines)} multiline
+                  <Editable html={inlinesToHtml(block.inlines)}
                             onEdit={commitInlines(block.id, (b, nodes) =>
-                              ({ ...b, inlines: nodes } as Block))} />
+                              ({ ...b, inlines: nodes } as Block))}
+                            onSplit={(before, after) =>
+                              splitBlock(block, before, after)} />
                 ) : inlinesOf(block, block.inlines)}
                 <Tools block={block} />
               </p>
             );
         }
+        })();
+        // A place to start a paragraph before every block, and one at the
+        // end, so there is nowhere in the memo a new one cannot go.
+        return (
+          <Fragment key={block.id}>
+            <Insert index={index} />
+            {content}
+          </Fragment>
+        );
       })}
+      <Insert index={blocks.length} />
     </article>
   );
 }
