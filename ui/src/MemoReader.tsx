@@ -293,6 +293,30 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
     if (after !== markdown) onChange(after);
   }
 
+  /** A blank row put in at a given place, or a row taken out.
+   *
+   *  A table is where a memorandum's facts sit, and a fact arrives in the
+   *  middle of a list as often as at the end of one - a supplier between two
+   *  others, a term between two terms. Appending and then moving it is not
+   *  something this screen can do, so the row goes in where it belongs. */
+  function insertRow(id: string, at: number) {
+    replace(id, (b) => b.kind !== "table" ? b : {
+      ...b, rows: [...b.rows.slice(0, at), b.head.map(() => []),
+                   ...b.rows.slice(at)] });
+  }
+
+  function removeRow(id: string, at: number) {
+    const block = blocks.find((b) => b.id === id);
+    if (block?.kind === "table") {
+      const row = block.rows[at] ?? [];
+      const written = row.some((c) =>
+        c.some((n) => n.kind === "cites" || n.text.trim() !== ""));
+      if (written && !window.confirm("Delete this row?")) return;
+    }
+    replace(id, (b) => b.kind !== "table" ? b
+      : { ...b, rows: b.rows.filter((_, i) => i !== at) });
+  }
+
   /** A new paragraph, typed in place before it exists.
    *
    *  It is not written into the memo as it is typed. An empty paragraph is
@@ -538,8 +562,10 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
             );
 
           case "list":
+            // Keyed by position and count, as the table rows are, and for
+            // the same reason: breaking an item in two shifts the ones below.
             const items = block.items.map((it, k) => (
-              <li key={k}>
+              <li key={k + "/" + block.items.length}>
                 {editing === block.id ? (
                   <Editable html={inlinesToHtml(it.inlines)}
                             onEdit={(root) => replace(block.id, (b) => {
@@ -568,6 +594,7 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
                   <thead className={block.head.every((c) => c.length === 0)
                                     ? "empty" : undefined}>
                     <tr>
+                      {editing === block.id && <th className="row-handle" />}
                       {block.head.map((c, k) => (
                         <th key={k} className={"al-" + (block.align[k] ?? "left")}>
                           {editing === block.id ? (
@@ -584,8 +611,24 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
                     </tr>
                   </thead>
                   <tbody>
+                    {/* The count is part of the key on purpose. An editable
+                        cell holds its own content and is never re-rendered
+                        from the model while it is open, so rows keyed by
+                        position alone kept their old text when a row was put
+                        in above them - the table shifted and the words did
+                        not. Changing the count remounts the rows, and each
+                        cell reads its content again. */}
                     {block.rows.map((row, r) => (
-                      <tr key={r}>
+                      <tr key={r + "/" + block.rows.length}>
+                        {editing === block.id && (
+                          <td className="row-handle">
+                            <button type="button" onClick={() => insertRow(block.id, r)}
+                                    title="Put a row in above this one">+</button>
+                            <button type="button" className="drop"
+                                    onClick={() => removeRow(block.id, r)}
+                                    title="Take this row out">&times;</button>
+                          </td>
+                        )}
                         {row.map((c, k) => (
                           <td key={k} className={"al-" + (block.align[k] ?? "left")}>
                             {editing === block.id ? (
@@ -606,17 +649,9 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
                 {editing === block.id && (
                   <div className="row-tools">
                     <button type="button" className="tool"
-                            onClick={() => replace(block.id, (b) => b.kind === "table"
-                              ? { ...b, rows: [...b.rows, b.head.map(() => [])] } : b)}>
-                      Add a row
+                            onClick={() => insertRow(block.id, block.rows.length)}>
+                      Add a row at the end
                     </button>
-                    {block.rows.length > 0 && (
-                      <button type="button" className="tool"
-                              onClick={() => replace(block.id, (b) => b.kind === "table"
-                                ? { ...b, rows: b.rows.slice(0, -1) } : b)}>
-                        Remove the last row
-                      </button>
-                    )}
                   </div>
                 )}
               </div>

@@ -475,6 +475,24 @@ p.warn { color: #b45309; }
 .table-tools { margin: 0 0 4px; }
 .row-tools { display: flex; gap: 8px; margin: 6px 0 0; }
 
+/* Row controls, only while the table is open. A narrow column of its own, so
+   the table's own columns keep the widths they had. */
+.memo.doc td.row-handle, .memo.doc th.row-handle {
+  width: 1%; white-space: nowrap; padding: 4px 4px;
+  border: 0; background: transparent; vertical-align: middle;
+}
+.memo.doc td.row-handle button {
+  font: inherit; font-size: 12px; line-height: 1;
+  width: 18px; height: 18px; padding: 0; margin-right: 2px; cursor: pointer;
+  color: var(--muted); background: var(--paper);
+  border: 1px solid var(--line); border-radius: 3px;
+  opacity: 0.35; transition: opacity 0.1s;
+}
+.memo.doc tr:hover td.row-handle button { opacity: 1; }
+.memo.doc td.row-handle button:hover { color: var(--medium); border-color: var(--medium); }
+.memo.doc td.row-handle button.drop:hover { color: var(--paper);
+  background: #b42318; border-color: #b42318; }
+
 /* A place to start a paragraph. A thin strip between blocks: nothing until
    the pointer is near it, so a document being read is not a page of plus
    signs. */
