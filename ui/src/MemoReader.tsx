@@ -239,6 +239,8 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
   // Which block is open. One at a time: two carets in one document is a way
   // to lose track of which change went where.
   const [editing, setEditing] = useState<string | null>(null);
+  // A block just closed, waiting to be judged empty or not.
+  const [closed, setClosed] = useState<string | null>(null);
 
   // A memorandum is a hundred thousand characters. Parsed on every keystroke
   // it would be, and the whole document laid out again with it.
@@ -257,6 +259,58 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
     const after = serializeBlocks(next);
     if (after !== markdown) onChange(after);
   }
+
+  /** Take a block out of the memo altogether, with the blank lines that
+   *  followed it, so the document closes up rather than keeping a hole.
+   *
+   *  Emptying a block is not the same as removing it: a paragraph typed down
+   *  to nothing is still a paragraph, and left there it is an empty box on
+   *  the page and a stray blank line in the document. */
+  function removeBlock(id: string) {
+    if (!onChange) return;
+    const block = blocks.find((b) => b.id === id);
+    const what = block && "inlines" in block
+      ? citationsIn(block.inlines).length : 0;
+    if (!window.confirm(
+      what > 0
+        ? "Delete this, and the " + what
+          + (what === 1 ? " reference" : " references") + " in it?"
+        : "Delete this?")) return;
+    setEditing(null);
+    onChange(serializeBlocks(blocks.filter((b) => b.id !== id)));
+  }
+
+  /** True when a block has been typed down to nothing. */
+  function isEmpty(block: Block): boolean {
+    const words = (nodes: Inline[]) =>
+      nodes.some((n) => n.kind === "cites" || n.text.trim() !== "");
+    if (block.kind === "table") {
+      return ![...block.head, ...block.rows.flat()].some(words);
+    }
+    if (block.kind === "list") return !block.items.some((i) => words(i.inlines));
+    if ("inlines" in block) return !words(block.inlines);
+    return false;
+  }
+
+  /** Close a block, and drop it if there is nothing left in it.
+   *
+   *  The check waits for the next render rather than happening here: closing
+   *  a block takes focus out of it, and the edit that empties it is still on
+   *  its way in when the button is pressed. Judging it now would be judging
+   *  the block as it stood a moment ago.  */
+  function finish(id: string) {
+    setEditing(null);
+    setClosed(id);
+  }
+
+  useEffect(() => {
+    if (!closed) return;
+    const block = blocks.find((b) => b.id === closed);
+    setClosed(null);
+    if (!onChange || !block || !isEmpty(block)) return;
+    onChange(serializeBlocks(blocks.filter((b) => b.id !== closed)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closed, markdown]);
 
   /** Inline content out of an edited element, written back to its block.
    *  Called on every change, so it must be cheap and must write nothing when
@@ -303,9 +357,16 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
         )}
         {editable && (
           <button type="button" className={open ? "tool on" : "tool"}
-                  onClick={() => setEditing(open ? null : block.id)}
+                  onClick={() => (open ? finish(block.id) : setEditing(block.id))}
                   title={open ? "Finish editing" : "Edit this"}>
             {open ? "Done" : block.kind === "table" ? "Edit table" : "Edit"}
+          </button>
+        )}
+        {editable && open && (
+          <button type="button" className="tool danger"
+                  onClick={() => removeBlock(block.id)}
+                  title="Take this out of the memo">
+            Delete
           </button>
         )}
       </span>
