@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { parseBlocks, serializeBlocks, blockToMarkdown, trailingOf, citationsIn,
          type Block, type Inline } from "./memodoc";
 import { inlinesToHtml, nodesToInlines } from "./memoedit";
@@ -135,20 +135,38 @@ function calloutKind(inlines: Inline[]): string {
 /**
  * A block being edited.
  *
- * The content is written into the element ONCE, when it opens, and read back
- * when it closes. React must not re-render it in between: setting the HTML on
+ * The content is written into the element ONCE, when it opens, and read out
+ * as it changes. React must not re-render it in between: setting the HTML on
  * every keystroke puts the caret back to the start, which is the classic way
  * this goes wrong.
+ *
+ * Reading it out is the part that has to be reliable. Reading only when the
+ * block closed meant relying on an unmount, which React runs after the
+ * element has already left the page and which does not run at all if the tab
+ * goes first - so an edit took most of the time and occasionally did not,
+ * which is worse than no editing. The content is read out on every change, a
+ * short pause after typing stops, and again the moment focus leaves. By the
+ * time anything else happens the edit is already in.
  */
-function Editable({ html, onDone, multiline, className }: {
+function Editable({ html, onEdit, multiline, className }: {
   html: string;
-  onDone: (root: HTMLElement) => void;
+  onEdit: (root: HTMLElement) => void;
   multiline?: boolean;
   className?: string;
 }) {
   // A span, not a div: a paragraph is a <p>, and a block element inside one
   // is invalid HTML the browser silently closes the paragraph to escape.
   const box = useRef<HTMLSpanElement | null>(null);
+  // The current reader, so a commit never writes through a stale copy of the
+  // document it was mounted with.
+  const read = useRef(onEdit);
+  read.current = onEdit;
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const commit = () => {
+    if (pending.current) { clearTimeout(pending.current); pending.current = null; }
+    if (box.current) read.current(box.current);
+  };
 
   useEffect(() => {
     const el = box.current;
@@ -163,9 +181,12 @@ function Editable({ html, onDone, multiline, className }: {
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
-    // Read back on unmount as well, so an edit is never lost to a click that
-    // closes the block another way.
-    return () => { onDone(el); };
+    // And once more on the way out, for a change that arrived between the
+    // last commit and the block closing.
+    return () => {
+      if (pending.current) clearTimeout(pending.current);
+      read.current(el);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -176,6 +197,11 @@ function Editable({ html, onDone, multiline, className }: {
       contentEditable
       suppressContentEditableWarning
       spellCheck
+      onInput={() => {
+        if (pending.current) clearTimeout(pending.current);
+        pending.current = setTimeout(commit, 400);
+      }}
+      onBlur={commit}
       onKeyDown={(e) => {
         // Bold and italic are the only marks a memo uses.
         const meta = e.metaKey || e.ctrlKey;
@@ -184,7 +210,7 @@ function Editable({ html, onDone, multiline, className }: {
           document.execCommand(e.key === "b" ? "bold" : "italic");
           return;
         }
-        if (e.key === "Enter" && !multiline) e.preventDefault();
+        if (e.key === "Enter" && !multiline) { e.preventDefault(); commit(); }
         // A paste of formatted text arrives as text; see nodesToInlines.
       }}
       onPaste={(e) => {
@@ -214,7 +240,9 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
   // to lose track of which change went where.
   const [editing, setEditing] = useState<string | null>(null);
 
-  const blocks = parseBlocks(markdown);
+  // A memorandum is a hundred thousand characters. Parsed on every keystroke
+  // it would be, and the whole document laid out again with it.
+  const blocks = useMemo(() => parseBlocks(markdown), [markdown]);
   const editable = !!onChange;
 
   /** Write one block back into the memo, leaving every other character of it
@@ -230,7 +258,9 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
     if (after !== markdown) onChange(after);
   }
 
-  /** Inline content out of an edited element, written back to its block. */
+  /** Inline content out of an edited element, written back to its block.
+   *  Called on every change, so it must be cheap and must write nothing when
+   *  nothing differs - which replace() checks. */
   const commitInlines = (id: string, set: (b: Block, nodes: Inline[]) => Block) =>
     (root: HTMLElement) => replace(id, (b) => set(b, nodesToInlines(root)));
 
@@ -275,7 +305,7 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
           <button type="button" className={open ? "tool on" : "tool"}
                   onClick={() => setEditing(open ? null : block.id)}
                   title={open ? "Finish editing" : "Edit this"}>
-            {open ? "Done" : "Edit"}
+            {open ? "Done" : block.kind === "table" ? "Edit table" : "Edit"}
           </button>
         )}
       </span>
@@ -298,7 +328,7 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
               <H key={block.id} className={"doc-h" + block.level}>
                 {editing === block.id ? (
                   <Editable html={inlinesToHtml(block.inlines)}
-                            onDone={commitInlines(block.id, (b, nodes) =>
+                            onEdit={commitInlines(block.id, (b, nodes) =>
                               ({ ...b, inlines: nodes } as Block))} />
                 ) : inlinesOf(block, block.inlines)}
                 <Tools block={block} />
@@ -312,7 +342,7 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
                 <p>
                   {editing === block.id ? (
                     <Editable html={inlinesToHtml(block.inlines)}
-                              onDone={commitInlines(block.id, (b, nodes) =>
+                              onEdit={commitInlines(block.id, (b, nodes) =>
                                 ({ ...b, inlines: nodes } as Block))} />
                   ) : inlinesOf(block, block.inlines)}
                   <Tools block={block} />
@@ -325,7 +355,7 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
               <li key={k}>
                 {editing === block.id ? (
                   <Editable html={inlinesToHtml(it.inlines)}
-                            onDone={(root) => replace(block.id, (b) => {
+                            onEdit={(root) => replace(block.id, (b) => {
                               if (b.kind !== "list") return b;
                               const next = b.items.slice();
                               next[k] = { ...next[k], inlines: nodesToInlines(root) };
@@ -353,7 +383,7 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
                         <th key={k} className={"al-" + (block.align[k] ?? "left")}>
                           {editing === block.id ? (
                             <Editable html={inlinesToHtml(c)}
-                                      onDone={(root) => replace(block.id, (b) => {
+                                      onEdit={(root) => replace(block.id, (b) => {
                                         if (b.kind !== "table") return b;
                                         const head = b.head.slice();
                                         head[k] = nodesToInlines(root);
@@ -371,7 +401,7 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
                           <td key={k} className={"al-" + (block.align[k] ?? "left")}>
                             {editing === block.id ? (
                               <Editable html={inlinesToHtml(c)}
-                                        onDone={(root) => replace(block.id, (b) => {
+                                        onEdit={(root) => replace(block.id, (b) => {
                                           if (b.kind !== "table") return b;
                                           const rows = b.rows.map((x) => x.slice());
                                           rows[r][k] = nodesToInlines(root);
@@ -408,7 +438,7 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
               <p key={block.id}>
                 {editing === block.id ? (
                   <Editable html={inlinesToHtml(block.inlines)} multiline
-                            onDone={commitInlines(block.id, (b, nodes) =>
+                            onEdit={commitInlines(block.id, (b, nodes) =>
                               ({ ...b, inlines: nodes } as Block))} />
                 ) : inlinesOf(block, block.inlines)}
                 <Tools block={block} />
