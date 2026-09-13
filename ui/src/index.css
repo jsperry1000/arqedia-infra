@@ -63,7 +63,11 @@ a:hover { text-decoration: underline; }
   z-index: 20;
 }
 .shell header strong { letter-spacing: 0.14em; font-size: 13px; }
-.shell header .muted  { color: var(--light); margin-left: auto; font-size: 13px; }
+/* The signed-in line, which is the account control, and Sign out beside it
+   once opened (UX-19). */
+.shell header .account {
+  margin-left: auto; display: flex; align-items: center; gap: 16px;
+}
 .shell header a       { color: var(--light); font-size: 13px; }
 
 main { max-width: 1040px; margin: 32px auto; padding: 0 24px; }
@@ -100,7 +104,6 @@ main:has(.wide-page) { max-width: 1560px; }
   background: var(--deep);
 }
 .rail > a, .rail-item > a { padding: 8px 24px; color: var(--light); font-size: 13px; }
-.rail .sign-out { margin-top: auto; }
 
 /* Configure a report opens a choice rather than a screen (UX-04), attached
    to the rail's right edge level with its link. */
@@ -136,13 +139,13 @@ main:has(.wide-page) { max-width: 1560px; }
 
 /* Back, in the tenant's own deep colour with the text reversed out.
    --tenant-deep is set on .shell by App.tsx; the platform's deep otherwise. */
-.back-pill {
+.back-pill, .start-pill {
   display: inline-block; white-space: nowrap;
   padding: 9px 16px; border-radius: var(--pill-round);
   background: var(--tenant-deep, var(--deep)); color: #fff;
   font-size: 13px; font-weight: 500;
 }
-.back-pill:hover { text-decoration: none; }
+.back-pill:hover, .start-pill:hover { text-decoration: none; }
 
 /* --- sign in ------------------------------------------------------------- */
 
@@ -939,13 +942,35 @@ a.add:hover { background: var(--paper); text-decoration: none; }
 }
 .pill:hover { text-decoration: none; }
 
-/* An open section's facts: a subsection, in the tenant's light colour. The
-   proposer's lists share .binder and are unchanged. */
-.binder.section-fields {
-  padding: 14px 16px;
-  border-top: 0; border-radius: var(--pill-radius);
-  background: var(--tenant-light, var(--light));
+/* An open section's facts (UX-20). The panel itself must not scroll, not even
+   sideways: a scrolling ancestor holds a sticky child to itself rather than
+   to the window, and the head below would never stay put. The sideways
+   scroll moves to the unbound list, which is not an ancestor of the head. */
+.binder.section-fields { overflow: visible; }
+
+/* What the section renders, the rule and the search, held directly beneath
+   the section's pinned row while the unbound list scrolls past. White, so
+   nothing shows through; beneath the pinned row at 9. */
+.fields-head {
+  position: sticky; top: var(--fields-top, 0px); z-index: 8;
+  background: var(--paper);
+  /* Its own block, so the search box's bottom margin sits inside the white
+     rather than leaving a strip where the list shows through beneath it.
+     Rendered: without this a clipped row of facts showed under the search. */
+  display: flow-root;
 }
+
+/* The bound facts alone carry a ground, the canvas colour: it marks what is
+   in use, it is not brand. Past a third of the space beneath the pins it
+   scrolls within itself. */
+.bound-facts {
+  background: var(--wash); border-radius: var(--pill-radius);
+  padding: 8px 12px;
+  max-height: calc((100vh - var(--fields-top, 0px)) / 3);
+  overflow: auto;
+}
+
+.unbound-facts { overflow-x: auto; }
 
 /* What a section already renders, above what it could (UX-08). */
 .bound-rule {
@@ -955,3 +980,31 @@ a.add:hover { background: var(--paper); text-decoration: none; }
 
 /* How a section should read grows with what is written (UX-09). */
 .form textarea.grows { resize: none; }
+
+/* --- the working indicator ------------------------------------------------ */
+
+/* One indicator for everything that runs (UX-12): what is running, over a
+   thin bar as wide as the words, with a band sweeping along it. */
+.working {
+  width: fit-content; margin: 8px 0 12px;
+  color: var(--medium); font-size: 13px;
+}
+.working-bar {
+  display: block; position: relative; overflow: hidden;
+  height: 2px; margin-top: 4px;
+  background: var(--line);
+}
+.working-bar::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 30%;
+  background: var(--tenant-mid, var(--medium));
+  animation: working-sweep 1.2s ease-in-out infinite;
+}
+@keyframes working-sweep {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(340%); }
+}
+/* The page-wide rule matches elements, not the bar's band, which is a
+   pseudo-element. Asked for less motion, the bar is simply full and still. */
+@media (prefers-reduced-motion: reduce) {
+  .working-bar::after { animation: none; width: 100%; }
+}

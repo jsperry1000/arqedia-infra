@@ -1,104 +1,83 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import {
-  api,
-  type Draft,
-  type Proposal,
-  type ProposedFact,
-  type ProposalRef,
-  type ConfigColumn,
-} from "./api";
-import {
-  slugKey, fieldKey, ColumnEditor, columnsReady, columnsForSave,
-  ReadModeControls, RECOGNISE_NOTE,
-} from "./config-parts";
-import { takeReport } from "./shell";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api, type Draft, type Proposal, type ProposedFact } from "./api";
+import { slugKey, fieldKey } from "./config-parts";
+import { Working } from "./shell";
 
 /**
- * Create your own memorandum from a report you already write.
+ * Create your own memorandum from a report you already write - a first cut.
  *
- * The client gives us a copy of his own report. We read its shape - its
- * sections, the facts each one reports, the documents those facts come from -
- * and put a configuration to him. He corrects it and accepts. Nothing reaches
- * his draft until he does.
+ * The client gives us a copy of a report they already write. We read its
+ * shape - its sections, and the facts each one reports - and put that to them
+ * as a first cut: which sections to keep, and which facts each should carry.
+ * Accept writes it into the draft and opens the configuration editor on the
+ * new memorandum. The editor is where it is corrected; this screen does not
+ * reproduce it (UX-21).
  *
  * THE FILE IS FORM, NOT SUBSTANCE. It is read once for its layout and deleted.
  * It is never filed, classified, extracted from, cited or charged for.
  *
- * TWO STEPS ON PURPOSE. A field's description is what extraction reads, and a
- * document type's description is what the classifier reads. Neither can be
- * corrected afterwards for documents already filed - the only remedy is filing
- * them again and paying again. So every new one has to be acknowledged before
- * it can be accepted. The friction is the point.
- *
- * WE SUGGEST A MATCH, HE DECIDES. Where a fact looks like a field he already
- * holds, both are shown and he picks. Deciding for him binds a section to a
- * field that means something else, which renders a number that is wrong and
- * looks right.
- *
  * NOTHING IS TAKEN UNLESS TICKED. A report names far more facts than anyone
- * wants configured, and near-synonyms across its sections. Every fact starts
- * unticked; the person picks the ones worth having, and nothing unticked is
+ * wants configured. Every fact starts unticked, and nothing unticked is
  * written - no field, no binding, no document brought in for it.
+ *
+ * A fact the reader matched to one the tenant already holds uses that one.
+ * New facts and document types are written in the reader's own words. Nothing
+ * has been filed against them yet, so every one can still be corrected in the
+ * editor before a document is read.
  */
 
-
-/** Mirrors slugKey in Configure and _slug in the editor. A key is permanent
- *  identity; it is derived from the label once and never follows it. */
-/** What the person has decided about one fact. */
+/** One fact the report names, and whether the person has ticked it. */
 type FactChoice = {
-  use: "existing" | "new" | "skip";
   label: string;
   description: string;
   shape: string;
-  existing: string | null;
-  why: string | null;
   columns: string[];
-  // Document type LABELS, as the reader names them. Resolved to keys only
-  // when the proposal is accepted, because a type may not exist yet.
+  // A field the tenant already holds that the reader matched this to.
+  existing: string | null;
+  // Document type LABELS the reader named. Resolved to keys only at Accept,
+  // because a type may not exist until then.
   documents: string[];
-  // For a matched fact, the document type KEYS the tenant already looks in.
-  // Kept so accepting can add to that set without ever taking from it.
-  held: string[];
-  // Which of the report's sections name this fact. Empty for one the person
-  // added themselves, until they say where it belongs.
+  // Positions in the proposal's section list that name this fact.
   sections: number[];
-  // Added from a document card rather than found in the report. It has no
-  // section of its own until one is chosen, so it cannot be placed by the
-  // ordinary rule.
-  added: boolean;
-  // No longer read. It marked a fact reported by no section, and let one be
-  // created without its wording ever being acknowledged. Kept only so a
-  // proposal decided before the list existed still restores.
-  unused: boolean;
-  // Taken into the configuration. Every proposed fact starts unticked.
-  // Optional, because a proposal saved before this existed carries none.
-  chosen?: boolean;
-  // Folded into another fact of this report, by its id. Its sections and
-  // documents joined that fact's; it leaves the list and is never written.
-  mergedInto?: string;
-  acknowledged: boolean;
+  chosen: boolean;
 };
 
+/** A document type the reader named. */
 type TypeChoice = {
-  use: "existing" | "new" | "skip";
   label: string;
   description: string;
-  // The KEY of the group this document sits in. The reader answers with a
-  // label, and a label is not a key: creating the group under a slug while
-  // pointing the document at the label left the group empty and the document
-  // ungrouped. Both are resolved once, here, and never again.
+  // The KEY of the group it sits in. The reader answers with a label, and a
+  // label is not a key: both are resolved once, here, and never again.
   group: string;
-  // Set only where the group does not exist yet, and then it is what the
-  // group will be called.
+  // Set only where the group does not exist yet: what it will be called.
   groupLabel: string;
+  // A type the tenant already holds under this name, which is used as it is.
   existing: string | null;
-  // How the document is read. The editor has always offered these and this
-  // screen never did, so a scanned ledger proposed from a client's own
-  // memorandum was set to be read as prose with no way to say otherwise.
-  // Optional, because a proposal saved before they existed carries neither.
-  read_mode?: string;
-  always_ocr?: boolean;
-  acknowledged: boolean;
+};
+
+// Every ending that is not a proposal. One shape, so none of them can be the
+// one that forgets to offer a way out.
+const STOPPED: Record<string, { title: string; body: string }> = {
+  "unreadable": {
+    title: "That file could not be read",
+    body: "It carries no text we can read — a scan, most likely."
+      + " Send the Word original, or a PDF exported rather than scanned.",
+  },
+  "nothing-found": {
+    title: "No sections found",
+    body: "We read the file but could not make out headings in it. A report"
+      + " with numbered or titled sections is what this works from.",
+  },
+  "model-unavailable": {
+    title: "It could not be read just now",
+    body: "The service that reads reports would not take the request. This"
+      + " is nothing to do with your file — try again in a few"
+      + " minutes.",
+  },
+  "failed": {
+    title: "It stopped before finishing",
+    body: "Something went wrong while reading it. Nothing was saved.",
+  },
 };
 
 export function ProposeView({ onDone, onCancel }: {
@@ -111,153 +90,14 @@ export function ProposeView({ onDone, onCancel }: {
   const [busy, setBusy] = useState("");
 
   const [memoLabel, setMemoLabel] = useState("");
-  // Document cards carry a form each. One open at a time, or the page is
-  // metres long before the person has read the first one.
-  const [openDoc, setOpenDoc] = useState<string | null>(null);
-  // The parts of the page. The facts are open, since choosing them is the
-  // work; sections and documents are shut until wanted.
-  const [shut, setShut] = useState<Set<string>>(
-    new Set(["sections", "newdocs", "helddocs"]));
-  const part = (key: string, label: string, count: string, wants: number) => (
-    <h3>
-      <a onClick={() => {
-        const next = new Set(shut);
-        if (next.has(key)) next.delete(key); else next.add(key);
-        setShut(next);
-      }}>
-        {shut.has(key) ? "\u25b8" : "\u25be"} {label}
-      </a>{" "}
-      <span className="muted small">{count}</span>
-      {shut.has(key) && wants > 0 && (
-        <span className="warn small">{" \u00b7 "}{wants} needing you</span>
-      )}
-    </h3>
-  );
-  // Accepting is a sequence of writes, not one. Whatever it managed before
-  // it stopped is IN the draft, so the person is told what landed rather than
-  // left to find out by reading their configuration.
-  // Naming a document from a fact card, where the person has found that none
-  // of the documents on offer is where this fact actually lives.
-  const [addingDoc, setAddingDoc] = useState<string | null>(null);
-  const [newDocName, setNewDocName] = useState("");
-  // And the reverse: naming a fact from a document card.
-  const [addingFact, setAddingFact] = useState<string | null>(null);
-  // Groups the person makes here, and held documents they move between
-  // groups. Grouping is presentation and nothing else reads it, so moving one
-  // disturbs no extraction and no memorandum.
-  const [newGroups, setNewGroups] = useState<{ key: string; label: string }[]>(
-    []);
-  const [heldGroup, setHeldGroup] = useState<Record<string, string>>({});
-  const [newGroupName, setNewGroupName] = useState("");
-  // Sections the report never had, and facts named onto a section.
-  const [newSectionTitle, setNewSectionTitle] = useState("");
-  const [newSectionNumeral, setNewSectionNumeral] = useState("");
-  const [addingSection, setAddingSection] = useState<number | null>(null);
-  const [newInSection, setNewInSection] = useState("");
-  // Which section's facts are on show. One at a time, on purpose.
-  const [shownSection, setShownSection] = useState<number | null>(null);
-
-  // Which fact is open over the page.
-  const [openFact, setOpenFact] = useState<string | null>(null);
-  // Everything the person has decided, kept beside the proposal as they
-  // decide it. Restored on the way back in, so a closed tab, a refresh or an
-  // accept that stops part way costs nothing.
-  const [restored, setRestored] = useState(false);
-  const [saved, setSaved] = useState("");
-  const [waiting, setWaiting] = useState<ProposalRef[]>([]);
-  // Amending a field the tenant already holds - its wording, or the columns
-  // of a table. Held here and written at Accept with everything else, so the
-  // screen keeps its promise that nothing is saved until then.
-  const [editField, setEditField] = useState<string | null>(null);
-  const [heldEdits, setHeldEdits] = useState<Record<string, {
-    label: string; description: string | null; cardinality: string;
-    columns: ConfigColumn[];
-  }>>({});
-  const [newFactName, setNewFactName] = useState("");
-  const [written, setWritten] = useState<string[]>([]);
-  const [result, setResult] = useState<
-    { ok: boolean; error?: string; templateKey?: string } | null>(null);
   const [skipped, setSkipped] = useState<Set<number>>(new Set());
   const [facts, setFacts] = useState<Record<string, FactChoice>>({});
   const [types, setTypes] = useState<Record<string, TypeChoice>>({});
-  // The facts list: which section's group is open, and what is searched for.
-  const [openGroup, setOpenGroup] = useState<string | null>(null);
-  const [factSearch, setFactSearch] = useState("");
-  // What is being typed into a section's position box, until it is left.
-  // Moving on every keystroke would move the row out from under the cursor
-  // as soon as the first digit of "10" was typed.
-  const [position, setPosition] = useState<Record<number, string>>({});
-
-  /** Put a section at a position - the same box Configure uses.
-   *
-   *  Sections are referred to by position: the skipped set, and every fact's
-   *  list of sections. So every reference is renumbered with the move. Left
-   *  alone, a moved section would silently take the facts of the section
-   *  that took its place. */
-  const placeSection = (from: number, wanted: number) => {
-    if (!proposal) return;
-    const to = Math.max(1, Math.min(wanted, proposal.sections.length)) - 1;
-    if (to === from) return;
-
-    const order = proposal.sections.map((_, n) => n).filter((n) => n !== from);
-    order.splice(to, 0, from);
-    const where: Record<number, number> = {};
-    order.forEach((old, at) => { where[old] = at; });
-
-    setProposal({ ...proposal,
-                  sections: order.map((old) => proposal.sections[old]) });
-    setSkipped(new Set([...skipped].map((n) => where[n] ?? n)));
-    const next: Record<string, FactChoice> = {};
-    for (const [id, f] of Object.entries(facts)) {
-      next[id] = { ...f, sections: f.sections.map((n) => where[n] ?? n) };
-    }
-    setFacts(next);
-    if (shownSection !== null) setShownSection(where[shownSection] ?? null);
-    // The facts list keys a section's group by position too.
-    if (openGroup?.startsWith("s")) {
-      const at = where[Number(openGroup.slice(1))];
-      setOpenGroup(at === undefined ? null : "s" + at);
-    }
-    setAddingSection(null);
-  };
-
-  /** Two names for one fact. The report's sections are read one at a time,
-   *  so the same fact can arrive twice under different words - an
-   *  arrangement in one section, the requirements in another.
-   *
-   *  The folded fact's sections and documents join the other's, and it
-   *  leaves the list. It is kept, marked, so it can be undone; undoing does
-   *  not take back what it brought, which the person can remove. */
-  const mergeInto = (from: string, into: string) => {
-    const a = facts[from];
-    const b = facts[into];
-    if (!a || !b || from === into) return;
-
-    const documents = [...b.documents];
-    for (const d of a.documents) {
-      if (!documents.some((x) => x.trim().toLowerCase()
-          === d.trim().toLowerCase())) documents.push(d);
-    }
-    const sections = Array.from(new Set([...b.sections, ...a.sections]));
-    const changed = documents.length !== b.documents.length
-      || sections.length !== b.sections.length;
-
-    const next: Record<string, FactChoice> = { ...facts };
-    // Anything already folded into this one follows it.
-    for (const [id, f] of Object.entries(next)) {
-      if (f.mergedInto === from) next[id] = { ...f, mergedInto: into };
-    }
-    next[from] = { ...a, chosen: false, mergedInto: into };
-    next[into] = { ...b, documents, sections,
-      chosen: !!(b.chosen || a.chosen),
-      acknowledged: changed ? false : b.acknowledged };
-    setFacts(next);
-    setOpenFact(into);
-  };
+  // Accepting is a sequence of writes. Whatever it managed before it stopped
+  // is IN the draft, so the person is told what landed.
+  const [written, setWritten] = useState<string[]>([]);
 
   const polling = useRef<number | null>(null);
-  // The last snapshot not yet written. Null once it has been.
-  const pending = useRef<{ key: string; snapshot: unknown } | null>(null);
   // A reader that dies mid-read would otherwise leave "section 4 of 13" on
   // screen for ever, which reads as working.
   const polls = useRef(0);
@@ -270,86 +110,21 @@ export function ProposeView({ onDone, onCancel }: {
     return text;
   }
 
-  // Kept a second or so after the last change, not on every keystroke. The
-  // whole of what was decided goes each time - it is a few kilobytes, and a
-  // partial write is a worse thing to come back to than a slightly old one.
-  //
-  // The latest of it is also held in a ref, so leaving the screen inside that
-  // second - a click on Engagements, say - flushes rather than drops it.
-  useEffect(() => {
-    if (!proposal || proposal.status !== "ready" || !restored) {
-      pending.current = null;
-      return;
-    }
-    const key = proposal.key;
-    const snapshot = {
-      memoLabel, skipped: [...skipped], sections: proposal.sections,
-      facts, types, newGroups, heldGroup, heldEdits,
-    };
-    pending.current = { key, snapshot };
-
-    const timer = window.setTimeout(() => {
-      api.saveWorking(key, snapshot)
-        .then(() => { pending.current = null;
-                      setSaved(new Date().toLocaleTimeString()); })
-        .catch(() => setSaved(""));
-    }, 1200);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [proposal, memoLabel, skipped, facts, types, newGroups, heldGroup,
-      heldEdits, restored]);
-
   useEffect(() => {
     api.draft().then(setDraft).catch((e) => setError(message(e)));
-    api.proposals().then((r) => setWaiting(r.proposals)).catch(() => {});
-    // A change made in the last second is written when the screen goes away,
-    // whether that is a click on Engagements or the tab being closed.
-    const flush = () => {
-      const p = pending.current;
-      if (!p) return;
-      pending.current = null;
-      api.saveWorking(p.key, p.snapshot).catch(() => {});
-    };
-    window.addEventListener("pagehide", flush);
-
     return () => {
       if (polling.current) window.clearInterval(polling.current);
-      window.removeEventListener("pagehide", flush);
-      flush();
     };
   }, []);
-
-  // A report chosen in the rail's chooser, read as soon as the draft is here
-  // and not before: what the reader proposes is matched against the facts
-  // the tenant already holds, and without the draft every fact would be
-  // offered as new with no match suggested.
-  const chosen = useRef(false);
-  useEffect(() => {
-    if (!draft || chosen.current) return;
-    chosen.current = true;
-    const file = takeReport();
-    if (file) send(file);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft]);
-
-  // Escape closes the fact drawer, as it closes every drawer in Configure.
-  useEffect(() => {
-    if (!openFact) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { setEditField(null); setOpenFact(null); }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [openFact]);
 
   // --- reading ------------------------------------------------------------
 
   async function send(file: File) {
     setError("");
-    setBusy("Uploading");
+    setBusy("Uploading your report");
     try {
       const { key } = await api.proposeFromFile(file);
-      setBusy("Reading");
+      setBusy("");
       setProposal({
         status: "starting", key, sections_done: 0, sections_total: null,
         memorandum_label: null, document_types: [], sections: [],
@@ -362,7 +137,6 @@ export function ProposeView({ onDone, onCancel }: {
       const stop = () => {
         if (polling.current) window.clearInterval(polling.current);
         polling.current = null;
-        setBusy("");
       };
 
       polling.current = window.setInterval(async () => {
@@ -370,18 +144,9 @@ export function ProposeView({ onDone, onCancel }: {
           const p = await api.proposal(key);
           setProposal(p);
 
-          if (p.status === "ready" || p.status === "unreadable"
-              || p.status === "nothing-found" || p.status === "failed"
-              || p.status === "model-unavailable") {
+          if (p.status === "ready" || STOPPED[p.status]) {
             stop();
-            if (p.status === "ready") {
-              // A proposal read before and left. Its decisions come back
-              // rather than being started again.
-              api.working(key)
-                .then(({ working: w }) =>
-                  w ? restore(p, w as Working) : prepare(p))
-                .catch(() => prepare(p));
-            }
+            if (p.status === "ready") prepare(p);
             return;
           }
 
@@ -410,134 +175,59 @@ export function ProposeView({ onDone, onCancel }: {
   }
 
   /**
-   * Turn what the reader found into what the person will decide on.
+   * Turn what the reader found into what the person ticks.
    *
    * Facts are collapsed by name across sections. A memorandum naming Total
    * Assets in three sections is naming one fact three times, and creating
    * three fields would leave two of them empty for ever.
    */
-  /** Everything decided about a proposal, in one object. Kept beside the
-   *  proposal rather than inside it: the reader owns that one and the person
-   *  owns this, so neither can overwrite the other. */
-  type Working = {
-    memoLabel: string;
-    skipped: number[];
-    sections: Proposal["sections"];
-    facts: Record<string, FactChoice>;
-    types: Record<string, TypeChoice>;
-    newGroups: { key: string; label: string }[];
-    heldGroup: Record<string, string>;
-    heldEdits: Record<string, {
-      label: string; description: string | null; cardinality: string;
-      columns: ConfigColumn[];
-    }>;
-  };
-
-  /** Put back what was decided last time. */
-  function restore(p: Proposal, w: Working) {
-    setMemoLabel(w.memoLabel);
-    setSkipped(new Set(w.skipped ?? []));
-    // Decided before the list existed. "I do not need this fact" was the old
-    // way of saying no, and unticked is the way of saying it now.
-    const kept: Record<string, FactChoice> = {};
-    for (const [id, f] of Object.entries(w.facts ?? {})) {
-      kept[id] = f.use === "skip"
-        ? { ...f, use: f.existing ? "existing" : "new", chosen: false }
-        : f;
-    }
-    setFacts(kept);
-    setTypes(w.types ?? {});
-    setNewGroups(w.newGroups ?? []);
-    setHeldGroup(w.heldGroup ?? {});
-    setHeldEdits(w.heldEdits ?? {});
-    if (w.sections?.length) setProposal({ ...p, sections: w.sections });
-    setRestored(true);
-  }
-
-  /** A proposal already read, opened again. */
-  async function reopen(key: string) {
-    setError("");
-    setBusy("Opening");
-    try {
-      const p = await api.proposal(key);
-      setProposal(p);
-      const { working: w } = await api.working(key);
-      if (w) restore(p, w as Working); else prepare(p);
-    } catch (e) {
-      setError(message(e));
-    } finally {
-      setBusy("");
-    }
-  }
-
   function prepare(p: Proposal) {
     setMemoLabel(p.memorandum_label || "My memorandum");
+    setSkipped(new Set());
 
     const known = new Set((draft?.fields ?? []).map((f) => f.key));
     const collected: Record<string, FactChoice> = {};
-
-    const labelOfKey: Record<string, string> = {};
-    for (const t of draft?.document_types ?? []) labelOfKey[t.key] = t.label;
 
     p.sections.forEach((section, index) => {
       (section.facts ?? []).forEach((f: ProposedFact) => {
         const id = (f.label || "").trim().toLowerCase();
         if (!id) return;
 
-        const existing = f.matches_existing && known.has(f.matches_existing)
-          ? f.matches_existing : null;
-
         if (collected[id]) {
-          collected[id].sections.push(index);
+          if (!collected[id].sections.includes(index)) {
+            collected[id].sections.push(index);
+          }
           return;
         }
 
-        const foundIn = f.found_in ?? [];
-        // A matched fact inherits where the tenant already looks for it, so
-        // it is grouped where they would expect to find it rather than where
-        // this one report happened to mention it.
-        const inherited = existing
-          ? (draft?.fields ?? []).find((x) => x.key === existing)?.found_in
-          : null;
-
         collected[id] = {
-          // A suggested match is taken as the starting position because it is
-          // the cheaper mistake: declining it costs a click, while missing it
-          // costs a duplicate field nobody notices is empty.
-          use: existing ? "existing" : "new",
           label: f.label,
           description: f.description || "",
           shape: f.shape === "table" ? "group" : "one",
-          existing,
-          why: f.why_match ?? null,
           columns: f.columns ?? [],
-          // A matched fact shows where the tenant ALREADY looks, not where
-          // this report guessed. Otherwise every match would arrive with our
-          // guesses tacked onto routing they settled long ago.
-          documents: existing
-            ? (inherited ?? []).map((k) => labelOfKey[k]).filter(Boolean)
-            : foundIn,
-          held: existing ? (inherited ?? []) : [],
+          existing: f.matches_existing && known.has(f.matches_existing)
+            ? f.matches_existing : null,
+          documents: f.found_in ?? [],
           sections: [index],
-          added: false,
-          unused: false,
           chosen: false,
-          acknowledged: false,
         };
       });
     });
     setFacts(collected);
 
-    const knownTypes = new Set((draft?.document_types ?? []).map((t) => t.key));
+    const heldTypes = draft?.document_types ?? [];
     const gathered: Record<string, TypeChoice> = {};
     for (const t of p.document_types ?? []) {
       const id = (t.label || "").trim().toLowerCase();
       if (!id || gathered[id]) continue;
-      const existing = t.existing_key && knownTypes.has(t.existing_key)
-        ? t.existing_key : null;
+      const existing = (t.existing_key
+          && heldTypes.some((h) => h.key === t.existing_key)
+          ? t.existing_key : null)
+        ?? heldTypes.find((h) => h.label.trim().toLowerCase() === id)?.key
+        ?? null;
       // The reader answers with a group by name. Match it to one the tenant
       // already holds, by key or by label; only where neither matches is a
-      // new group proposed.
+      // new group made.
       const named = (t.group || "").trim();
       const match = (draft?.categories ?? []).find(
         (c) => c.key === named
@@ -545,54 +235,49 @@ export function ProposeView({ onDone, onCancel }: {
       const fallback = draft?.categories[0];
 
       gathered[id] = {
-        use: existing ? "existing" : "new",
         label: t.label,
         description: t.description || "",
         group: match ? match.key
           : (named ? slugKey(named) : (fallback?.key ?? "")),
         groupLabel: match || !named ? "" : named,
         existing,
-        acknowledged: false,
       };
     }
     setTypes(gathered);
-    setRestored(true);
   }
 
   // --- accepting ----------------------------------------------------------
 
+  /** Taken: ticked, and named by at least one section that is kept. A fact
+   *  bound to nothing would be extracted on every filing and read by no
+   *  one. */
+  const live = (f: FactChoice) =>
+    f.chosen && f.sections.some((i) => !skipped.has(i));
+
+  /** A document type is wanted only where a taken new fact is looked for in
+   *  it. */
+  const needed = (label: string) => {
+    const l = label.trim().toLowerCase();
+    return Object.values(facts).some((f) => live(f) && !f.existing
+      && f.documents.some((x) => x.trim().toLowerCase() === l));
+  };
+
   /** Every document type the person will hold once this is accepted, by the
-   *  label the reader used for it. found_in names labels, not keys. */
+   *  label the reader used. found_in names labels, not keys. */
   const typeKeyByLabel = useMemo(() => {
     const map: Record<string, string> = {};
     for (const t of draft?.document_types ?? []) {
       map[t.label.trim().toLowerCase()] = t.key;
     }
     for (const t of Object.values(types)) {
-      if (t.use === "skip") continue;
-      map[t.label.trim().toLowerCase()] =
-        t.use === "existing" && t.existing ? t.existing : slugKey(t.label);
+      map[t.label.trim().toLowerCase()] = t.existing ?? slugKey(t.label);
     }
     return map;
   }, [draft, types]);
 
-  /** Taken: ticked, and not folded into another fact. Only a taken fact is
-   *  created, bound to a section, or brings a document in with it. */
-  const live = (f: FactChoice) =>
-    !!f.chosen && f.use !== "skip" && !f.mergedInto;
-
-  /** A proposed document is wanted only where a taken fact is looked for in
-   *  it. One nothing taken needs is neither shown nor created. */
-  const needed = (label: string) => {
-    const l = label.trim().toLowerCase();
-    return Object.values(facts).some((f) => live(f)
-      && f.documents.some((x) => x.trim().toLowerCase() === l));
-  };
-
   /** One key per section, unique within the memorandum. Two sections titled
    *  the same slug to the same key, and the second would silently overwrite
-   *  the first. Derived from the proposal alone so a key never moves when he
-   *  unticks something. */
+   *  the first. */
   const sectionKeys = useMemo(() => {
     const taken = new Set<string>();
     return (proposal?.sections ?? []).map((s) => {
@@ -605,165 +290,86 @@ export function ProposeView({ onDone, onCancel }: {
     });
   }, [proposal]);
 
-  // A taken new fact waits on its acknowledgement wherever it sits. Exempting
-  // one reported by no section let a field be created that nobody had read.
-  const wanting = (f: FactChoice) =>
-    f.use === "new" && live(f) && !f.acknowledged;
-
-  const outstanding = useMemo(() => {
-    const n = Object.values(facts).filter(wanting).length
-      + Object.values(types)
-        .filter((t) => t.use === "new" && !t.acknowledged
-          && needed(t.label)).length;
-    return n;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [facts, types, skipped]);
-
   /**
-   * Write the accepted proposal into the draft, through the same calls a
-   * person authoring by hand would make.
+   * Write the first cut into the draft, through the same calls a person
+   * authoring by hand would make, and open the editor on it.
    *
    * The order is not a preference. Binding a section to a field that does not
    * exist yet is refused - deliberately, because a section bound to a missing
    * field reports facts as absent when they were extracted. So: groups,
-   * documents, fields, where each is found, the memorandum, its sections, and
-   * only then what each section renders.
+   * document types, facts, where each is found, the memorandum, its sections,
+   * and only then what each section renders.
    */
   async function accept() {
     if (!proposal) return;
     setError("");
-
+    setWritten([]);
     const done: string[] = [];
-    let made_key = "";
-    setWritten(done);
 
     try {
       const groups = new Set((draft?.categories ?? []).map((c) => c.key));
+      const wantedTypes = Object.values(types)
+        .filter((t) => !t.existing && needed(t.label));
 
-      for (const g of newGroups) {
-        if (groups.has(g.key)) continue;
-        setBusy("Adding a group");
-        await api.saveCategory({ key: g.key, label: g.label });
-        groups.add(g.key);
-        done.push("group " + g.label);
-      }
-
-      for (const t of Object.values(types)) {
-        if (t.use !== "new" || !needed(t.label) || !t.groupLabel
-            || groups.has(t.group)) continue;
-        setBusy("Adding a group");
+      for (const t of wantedTypes) {
+        if (!t.groupLabel || groups.has(t.group)) continue;
+        setBusy("Adding the group " + t.groupLabel);
         await api.saveCategory({ key: t.group, label: t.groupLabel });
-        done.push("group " + t.groupLabel);
         groups.add(t.group);
+        done.push("group " + t.groupLabel);
       }
 
-      for (const t of Object.values(types)) {
-        if (t.use !== "new" || !needed(t.label)) continue;
-        setBusy("Adding " + t.label);
+      for (const t of wantedTypes) {
+        setBusy("Adding the document type " + t.label);
         await api.saveDocumentType({
           key: slugKey(t.label),
           label: t.label,
           description: t.description,
           category: t.group,
-          read_mode: t.read_mode ?? "text",
-          always_ocr: t.always_ocr ?? false,
+          read_mode: "text",
+          always_ocr: false,
         });
-        done.push("document " + t.label);
+        done.push("document type " + t.label);
       }
 
-      // Fields the person amended while deciding a match. Sent whole, with
-      // every existing column's key intact, because save_field rewrites a
-      // table's columns rather than merging them - a column sent without its
-      // key would be created afresh and everything extracted under the old
-      // one would stop resolving.
-      for (const [key, edit] of Object.entries(heldEdits)) {
-        const base = fieldsByKey[key];
-        if (!base) continue;
-        setBusy("Amending " + base.label);
-        await api.saveField({
-          key,
-          label: edit.label,
-          type: base.type,
-          cardinality: edit.cardinality,
-          description: edit.description,
-          columns: edit.cardinality === "group"
-            ? columnsForSave(edit.columns)
-            : [],
-        } as never);
-        done.push("amended " + edit.label);
-      }
+      const newFacts = Object.values(facts)
+        .filter((f) => live(f) && !f.existing);
 
-      // A held document moved to another group. Its name, description and
-      // reading are sent back exactly as they were - the group is the only
-      // thing this screen may change about a document already held.
-      for (const t of (draft?.document_types ?? [])) {
-        const moved = heldGroup[t.key];
-        if (!moved || moved === t.category) continue;
-        setBusy("Moving " + t.label);
-        await api.saveDocumentType({
-          key: t.key,
-          label: t.label,
-          description: t.description,
-          category: moved,
-          read_mode: t.read_mode,
-          always_ocr: t.always_ocr,
-        });
-        done.push("moved " + t.label);
-      }
-
-      for (const f of Object.values(facts)) {
-        if (f.use !== "new" || !live(f)) continue;
-        setBusy("Adding " + f.label);
+      for (const f of newFacts) {
+        // A table with no columns holds nothing; written as a single fact
+        // instead, and made a table in the editor if it should be one.
+        const columns = f.columns.filter((c) => c.trim());
+        const table = f.shape === "group" && columns.length > 0;
+        setBusy("Adding the fact " + f.label);
         await api.saveField({
           key: fieldKey(f.label),
           label: f.label,
           type: "text",
-          cardinality: f.shape,
+          cardinality: table ? "group" : "one",
           description: f.description,
-          // No key. A column's identity is the group's key and a suffix -
-          // f_vessel_carriers.role, not role - and the editor mints it that
-          // way when none is given. Sending a bare slug produced columns
-          // extraction could not read, and it stopped on every document
-          // carrying a table.
-          columns: f.shape === "group"
-            ? f.columns.filter((c) => c.trim()).map((c) => ({
-                label: c.trim(), type: "text", description: "",
-              }))
+          // No column key. A column's identity is the group's key and a
+          // suffix, and the editor mints it that way when none is given.
+          columns: table
+            ? columns.map((c) => ({ label: c.trim(), type: "text",
+                                    description: "" }))
             : [],
         } as never);
         done.push("fact " + f.label);
       }
 
-      for (const f of Object.values(facts)) {
-        if (!live(f)) continue;
-        const documents = f.documents
+      for (const f of newFacts) {
+        const documents = Array.from(new Set(f.documents
           .map((label) => typeKeyByLabel[label.trim().toLowerCase()])
-          .filter((k): k is string => Boolean(k));
-
-        if (f.use === "new") {
-          if (documents.length === 0) continue;
-          setBusy("Where to find " + f.label);
-          await api.setFieldDocuments(fieldKey(f.label), documents);
-          continue;
-        }
-
-        // A fact the tenant already holds. Only ever ADD a document to where
-        // it is looked for: they settled that routing, and a screen about a
-        // new report is not the place to quietly undo it. Unticking here
-        // therefore does nothing, and the note beside it says so.
-        if (!f.existing) continue;
-        const added = documents.filter((k) => !f.held.includes(k));
-        if (added.length === 0) continue;
+          .filter((k): k is string => Boolean(k))));
+        if (documents.length === 0) continue;
         setBusy("Where to find " + f.label);
-        await api.setFieldDocuments(f.existing, [...f.held, ...added]);
+        await api.setFieldDocuments(fieldKey(f.label), documents);
       }
 
       setBusy("Adding the memorandum");
       const made = await api.saveTemplate({ label: memoLabel.trim() });
-      done.push("memorandum " + memoLabel.trim());
       const templateKey = made.key as string;
-      // Held so the result screen can hand it back, whatever happens after.
-      made_key = templateKey;
+      done.push("memorandum " + memoLabel.trim());
 
       const included = proposal.sections
         .map((s, i) => ({ s, i }))
@@ -771,44 +377,36 @@ export function ProposeView({ onDone, onCancel }: {
 
       let order = 0;
       for (const { s, i } of included) {
-        setBusy("Adding " + s.title);
         order += 1;
+        setBusy("Adding the section " + s.title);
         await api.saveSection({
           key: sectionKeys[i],
           numeral: s.numeral || "",
           title: s.title,
           kind: "extract",
           template_key: templateKey,
-          // Sent, not left to default. Every section arrived at zero, they
-          // all tied, and the memorandum came out in whatever order the
-          // database happened to return.
+          // Sent, not left to default: sections left at zero tie, and the
+          // memorandum comes out in whatever order the database returns.
           sort_order: order,
         } as never);
         done.push("section " + s.title);
       }
 
       for (const { s, i } of included) {
-        // Deduplicated, because two facts can land on one field: two of the
-        // report's names matched to the same field the tenant holds, or two
-        // labels that slug to the same key. A section binding the same field
-        // twice is a duplicate primary key and the whole accept stops on its
-        // last step, after everything else has been written.
+        // Deduplicated: two of the report's names can land on one field, and
+        // a section binding the same field twice is refused.
         const keys = Array.from(new Set(Object.values(facts)
           .filter((f) => live(f) && f.sections.includes(i))
-          .map((f) => f.use === "existing" && f.existing
-            ? f.existing : fieldKey(f.label))));
+          .map((f) => f.existing ?? fieldKey(f.label))));
         if (keys.length === 0) continue;
         setBusy("Binding " + s.title);
         await api.setSectionFields(templateKey, sectionKeys[i], keys);
       }
 
       setBusy("");
-      setWritten(done);
-      setResult({ ok: true, templateKey: made_key });
+      onDone(templateKey);
     } catch (e) {
-      // Stay on the screen. Replacing it with a result threw away every
-      // decision the person had made, which cost an hour of somebody's
-      // judgement for a duplicate key on the very last write.
+      // Stay on the screen, with what was written named: it is in the draft.
       setBusy("");
       setWritten(done);
       setError(message(e));
@@ -817,40 +415,14 @@ export function ProposeView({ onDone, onCancel }: {
 
   // --- the screen ---------------------------------------------------------
 
-  const fieldsByKey = useMemo(() => {
-    const map: Record<string, {
-      label: string; description: string | null; found_in: string[];
-      type: string; cardinality: string; columns: ConfigColumn[];
-    }> = {};
-    for (const f of draft?.fields ?? []) {
-      map[f.key] = { label: f.label, description: f.description,
-                     found_in: f.found_in ?? [],
-                     type: f.type, cardinality: f.cardinality,
-                     columns: f.columns ?? [] };
-    }
-    return map;
-  }, [draft]);
-
-  /** A held field as it stands, amendments included. The fact card reads
-   *  this rather than the draft, so a description edited here is the one the
-   *  person then decides the match on. */
-  const heldField = (key: string) => {
-    const base = fieldsByKey[key];
-    if (!base) return null;
-    const edit = heldEdits[key];
-    return edit ? { ...base, ...edit } : base;
-  };
-
-
   if (!proposal) {
     return (
       <div>
         <h2>Create your own from a report</h2>
         <p className="muted">
           Give us a report you already write. We read its shape &mdash; its
-          sections, and the facts each one reports &mdash; and put a
-          configuration to you to correct. Nothing is saved until you accept
-          it.
+          sections, and the facts each one reports &mdash; and put a first cut
+          to you. Accept it and it opens in the editor, where you correct it.
         </p>
         <p className="muted small">
           The file is read for its layout and then deleted. Nothing in it is
@@ -860,8 +432,8 @@ export function ProposeView({ onDone, onCancel }: {
         {error && <p className="error">{error}</p>}
 
         {/* Held until the draft has loaded. Without it we do not know what
-            fields the tenant holds, and every fact would be offered as new
-            with no match suggested - silently, and wrongly. */}
+            facts the tenant holds, and nothing the reader proposes could be
+            matched to one. */}
         <label className="row">
           <span>Your report</span>
           <input type="file" accept=".pdf,.docx" disabled={!!busy || !draft}
@@ -871,700 +443,14 @@ export function ProposeView({ onDone, onCancel }: {
             }} />
         </label>
         <p className="muted small">
-          {draft ? "PDF or Word." : "Loading your configuration\u2026"}
+          {draft ? "PDF or Word." : "Loading your configuration…"}
         </p>
-        {busy && <p className="busy">{busy}&hellip;</p>}
-
-        {/* Reports read before and not yet accepted. A person can put one
-            down and come back to it, decisions and all. */}
-        {waiting.length > 0 && (
-          <>
-            <h3>Or carry on with one you started</h3>
-            <table className="docs">
-              <tbody>
-                {waiting.map((w) => (
-                  <tr key={w.key}>
-                    <td>
-                      <a onClick={() => reopen(w.key)}>
-                        {w.memorandum_label || w.filename}
-                      </a>
-                      <div className="muted small">{w.filename}</div>
-                    </td>
-                    <td className="muted small">
-                      {w.sections} {w.sections === 1 ? "section" : "sections"}
-                    </td>
-                    <td className="muted small">{w.read_at}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
-        )}
+        {busy && <Working what={busy} />}
       </div>
     );
   }
 
-  /**
-   * What is read from one document.
-   *
-   * The same relationship as "where to look for it" on a fact card, from the
-   * other end - one list of facts underneath, so ticking here and ticking
-   * there are the same act and the two cannot disagree.
-   *
-   * Written once and used for both kinds of document, the ones the tenant
-   * holds and the ones this report would add. Two copies of a form this
-   * particular would drift within a week.
-   */
-  const readFrom = (label: string, cardId: string) => (
-    <>
-                {/* The same relationship as "where to look for it", from
-                    the other end. One list of facts underneath, so ticking
-                    here and ticking there are the same act - a document
-                    that reads nothing is a document filed for no reason. */}
-                <div className="columns">
-                  <h4>What to read from it</h4>
-                  <p className="muted small">
-                    The facts you already hold. Ticking one adds this
-                    document to where it is looked for; unticking leaves
-                    what you had alone. Anything this document holds that
-                    you do not have a fact for yet, name it below.
-                  </p>
-                  <p className="muted small">
-                    Documents and facts belong to you, not to one memorandum.
-                    What is read from this document is read for every
-                    memorandum, not only this one.
-                  </p>
-
-                  <div className="binder">
-                    {/* Facts the tenant already holds, and nothing else.
-                        Offering every fact the report proposed made a list
-                        of a hundred boxes on each document, most of them
-                        repeats of what the fact cards above already ask.
-                        Anything genuinely missing is named below. */}
-                    {factList
-                      .filter(([, f]) => live(f) && f.use === "existing")
-                      .sort((a, b) => a[1].label.localeCompare(b[1].label))
-                      .map(([fid, f]) => (
-                        <label className="bind" key={fid}>
-                          <input type="checkbox"
-                            checked={f.documents.some(
-                              (x) => x.trim().toLowerCase()
-                                === label.trim().toLowerCase())}
-                            onChange={(e) => {
-                              const kept = f.documents.filter(
-                                (x) => x.trim().toLowerCase()
-                                  !== label.trim().toLowerCase());
-                              setFacts({
-                                ...facts,
-                                [fid]: { ...f,
-                                  documents: e.target.checked
-                                    ? [...kept, label] : kept,
-                                  acknowledged: f.use === "new"
-                                    ? false : f.acknowledged } });
-                            }} />
-                          {f.label}
-                        </label>
-                      ))}
-                  </div>
-
-                  {factList.filter(([, f]) => live(f)
-                    && f.documents.some((x) => x.trim().toLowerCase()
-                      === label.trim().toLowerCase())).length === 0 && (
-                    <p className="warn small">
-                      Nothing is read from this document, so filing one
-                      would extract nothing. Tick a fact above, or name a
-                      new one below.
-                    </p>
-                  )}
-
-                  {/* The other direction. A document may hold a fact the
-                      report never mentioned, and naming it here beats
-                      remembering to add it afterwards. */}
-                  {addingFact !== cardId ? (
-                    <a className="small"
-                       onClick={() => {
-                         setAddingFact(cardId); setNewFactName("");
-                       }}>
-                      None of these? Add a fact
-                    </a>
-                  ) : (
-                    <div className="filters">
-                      <input placeholder="What the fact is called"
-                             value={newFactName} autoFocus
-                             onChange={(e) =>
-                               setNewFactName(e.target.value)} />
-                      <button disabled={!newFactName.trim()}
-                        onClick={() => {
-                          const label = newFactName.trim();
-                          const fid = label.toLowerCase();
-                          const already = facts[fid];
-
-                          // Known already. Tick this document onto it
-                          // rather than make a second fact meaning the
-                          // same thing.
-                          if (already) {
-                            const kept = already.documents.filter(
-                              (x) => x.trim().toLowerCase()
-                                !== label.trim().toLowerCase());
-                            setFacts({
-                              ...facts,
-                              [fid]: { ...already,
-                                documents: [...kept, label], chosen: true,
-                                acknowledged: false } });
-                          } else {
-                            setFacts({
-                              ...facts,
-                              [fid]: {
-                                use: "new", label, description: "",
-                                shape: "one", existing: null, why: null,
-                                columns: [], documents: [label],
-                                held: [], sections: [],
-                                added: true, unused: false, chosen: true,
-                                acknowledged: false,
-                              } });
-                          }
-                          // Straight to its card. Left at the foot of the
-                          // page it is one more thing to find later, and it
-                          // has no description yet.
-                          setOpenFact(fid);
-                          setAddingFact(null);
-                          setNewFactName("");
-                        }}>
-                        Add
-                      </button>
-                      <a className="small"
-                         onClick={() => setAddingFact(null)}>Cancel</a>
-                      <span className="muted small">
-                        It appears among the facts above, where it needs a
-                        description and a section before you can accept.
-                      </span>
-                    </div>
-                  )}
-                </div>
-    </>
-  );
-
-  /**
-   * One fact, opened over the page from wherever it is named.
-   *
-   * The same card whether it was found in the report, picked from a
-   * section, or created from a document - a fact is a fact, and a
-   * second form for the same thing is a second set of rules.
-   */
-  const factCard = (id: string, f: FactChoice) => {
-        const match = f.existing ? heldField(f.existing) : null;
-        // Facts of this report already folded into this one.
-        const folded = factList.filter(([, o]) => o.mergedInto === id);
-        return (
-          <div className="review" key={id}>
-            <div className="review-head">
-              <label><strong>{f.label}</strong></label>
-              <span className="muted small">
-                {f.shape === "group" ? "a table" : "a single fact"}
-                {f.sections.length > 1
-                  ? ` \u00b7 named in ${f.sections.length} sections` : ""}
-              </span>
-            </div>
-
-            {/* The same tick as the fact's row in the list. */}
-            <label className="inline-check">
-              <input type="checkbox" checked={!!f.chosen}
-                onChange={(e) => setFacts({
-                  ...facts, [id]: { ...f, chosen: e.target.checked } })} />
-              Take this fact
-            </label>
-
-            {/* Deliberately not the binder/bind pair the field list uses:
-                that is a multi-column grid, and it flowed the reason for the
-                match into the column beside the choice it explains. A
-                decision and its grounds have to read in that order. */}
-            {match && (
-              <div className="form">
-                <label className="inline-check">
-                  <input type="radio" name={"m-" + id}
-                    checked={f.use === "existing"}
-                    onChange={() => setFacts({
-                      ...facts, [id]: { ...f, use: "existing" } })} />
-                  Use <strong>{match.label}</strong>, which you already hold
-                </label>
-                {/* The better answer to a fact that nearly fits is often to
-                    amend the one you have - a residency column on Ownership
-                    and Control rather than a Residency field nobody asked
-                    for. */}
-                <p className="muted small">
-                  <a onClick={() => setEditField(f.existing)}>
-                    Open {match.label} and amend it
-                  </a>
-                  {heldEdits[f.existing ?? ""] ? " \u00b7 amended" : ""}
-                </p>
-                <p className="muted small">
-                  {match.description}
-                  {f.why ? " \u2014 " + f.why : ""}
-                </p>
-                <label className="inline-check">
-                  <input type="radio" name={"m-" + id}
-                    checked={f.use === "new"}
-                    onChange={() => setFacts({
-                      ...facts, [id]: { ...f, use: "new" } })} />
-                  No, this is a different fact &mdash; add it
-                </label>
-              </div>
-            )}
-
-            {f.use === "new" && (
-              <div className="form">
-                <label className="row">
-                  <span>Name</span>
-                  <input value={f.label}
-                    onChange={(e) => setFacts({
-                      ...facts,
-                      [id]: { ...f, label: e.target.value,
-                              acknowledged: false } })} />
-                </label>
-
-                <label className="row">
-                  <span>What it is</span>
-                  <textarea rows={2} value={f.description}
-                    onChange={(e) => setFacts({
-                      ...facts,
-                      [id]: { ...f, description: e.target.value,
-                              acknowledged: false } })} />
-                </label>
-                <p className="muted small">
-                  This is what the system reads when deciding whether it has
-                  found this fact. It cannot be corrected later for documents
-                  already filed.
-                </p>
-
-                <label className="row">
-                  <span>Shape</span>
-                  <select value={f.shape}
-                    onChange={(e) => setFacts({
-                      ...facts,
-                      [id]: { ...f, shape: e.target.value,
-                              acknowledged: false } })}>
-                    <option value="one">A single fact</option>
-                    <option value="group">
-                      A table &mdash; several rows with columns
-                    </option>
-                  </select>
-                </label>
-
-                {/* A table with no columns holds nothing, and there is no
-                    other screen to add them on. So they are named here, and
-                    a table cannot be acknowledged without at least one. */}
-                {f.shape === "group" && (
-                  <div className="columns">
-                    <h4>Columns</h4>
-                    <p className="muted small">
-                      What each row holds. A name means nothing without the
-                      things beside it &mdash; a buyer without its country, a
-                      figure without its period.
-                    </p>
-
-                    {f.columns.map((c, i) => (
-                      <div className="column-row" key={i}>
-                        <input placeholder="Column" value={c}
-                          onChange={(e) => {
-                            const next = [...f.columns];
-                            next[i] = e.target.value;
-                            setFacts({ ...facts,
-                              [id]: { ...f, columns: next,
-                                      acknowledged: false } });
-                          }} />
-                        <a className="small" onClick={() => setFacts({
-                          ...facts,
-                          [id]: { ...f,
-                            columns: f.columns.filter((_, j) => j !== i),
-                            acknowledged: false } })}>
-                          Remove
-                        </a>
-                      </div>
-                    ))}
-
-                    <a className="small" onClick={() => setFacts({
-                      ...facts,
-                      [id]: { ...f, columns: [...f.columns, ""],
-                              acknowledged: false } })}>
-                      Add a column
-                    </a>
-
-                    {f.columns.filter((c) => c.trim()).length === 0 && (
-                      <p className="warn small">
-                        A table needs at least one column, or it holds
-                        nothing.
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                <label className="inline-check">
-                  <input type="checkbox" checked={f.acknowledged}
-                    disabled={!f.label.trim() || !f.description.trim()
-                      || f.documents.length === 0
-                      || (f.shape === "group"
-                          && f.columns.filter((c) => c.trim()).length === 0)}
-                    onChange={(e) => setFacts({
-                      ...facts,
-                      [id]: { ...f, acknowledged: e.target.checked } })} />
-                  I have read this and it says what I mean
-                </label>
-              </div>
-            )}
-
-            {/* Where a fact is read from, shown on every card. It sat inside
-                the new-fact form, so the sources of a fact the tenant already
-                holds could only be seen by declining the match - the one
-                moment nobody is looking for them.
-
-                Guessed from the report and shown rather than applied quietly:
-                a fact looked for in the wrong document is never found, and a
-                fact looked for in none is never extracted at all. Neither
-                says so. */}
-              <div className="columns">
-                <h4>Where to look for it</h4>
-                <p className="muted small">
-                  Only the documents ticked here are read for this fact.
-                  Tick widely and the wrong answer creeps in; tick nothing
-                  and it is never looked for.
-                </p>
-                {f.use === "existing" && (
-                  <p className="muted small">
-                    Where you already look for it. Ticking another document
-                    adds to that; unticking here leaves what you had alone.
-                  </p>
-                )}
-
-                <div className="binder">
-                  {docOptions.map((label) => (
-                    <label className="bind" key={label}>
-                      <input type="checkbox"
-                        checked={f.documents.some(
-                          (x) => x.trim().toLowerCase()
-                            === label.toLowerCase())}
-                        onChange={(e) => {
-                          const kept = f.documents.filter(
-                            (x) => x.trim().toLowerCase()
-                              !== label.toLowerCase());
-                          setFacts({
-                            ...facts,
-                            [id]: { ...f,
-                              documents: e.target.checked
-                                ? [...kept, label] : kept,
-                              acknowledged: false } });
-                        }} />
-                      {label}
-                    </label>
-                  ))}
-                </div>
-
-                {f.documents.length === 0 && (
-                  <p className="warn small">
-                    Nothing is ticked, so this fact would never be looked
-                    for.
-                  </p>
-                )}
-
-                {/* A fact whose document is not on the list. Named here
-                    and described below, rather than authored twice: the
-                    description is what the classifier reads, and it earns
-                    its own acknowledgement wherever it is written. */}
-                {addingDoc !== id ? (
-                  <a className="small"
-                     onClick={() => { setAddingDoc(id); setNewDocName(""); }}>
-                    None of these? Add a document
-                  </a>
-                ) : (
-                  <div className="filters">
-                    <input placeholder="What the document is called"
-                           value={newDocName} autoFocus
-                           onChange={(e) => setNewDocName(e.target.value)} />
-                    <button disabled={!newDocName.trim()}
-                      onClick={() => {
-                        const label = newDocName.trim();
-                        const tid = label.toLowerCase();
-                        const held = (draft?.document_types ?? []).find(
-                          (t) => t.label.trim().toLowerCase() === tid);
-
-                        // Already known, under either name. Tick it rather
-                        // than make a second document meaning the same.
-                        if (!held && !types[tid]) {
-                          setTypes({
-                            ...types,
-                            [tid]: {
-                              use: "new", label, description: "",
-                              group: draft?.categories[0]?.key ?? "",
-                              groupLabel: "", existing: null,
-                              acknowledged: false,
-                            },
-                          });
-                        }
-                        const name = held ? held.label : label;
-                        if (!f.documents.some(
-                          (x) => x.trim().toLowerCase()
-                            === name.toLowerCase())) {
-                          setFacts({
-                            ...facts,
-                            [id]: { ...f,
-                              documents: [...f.documents, name],
-                              acknowledged: false } });
-                        }
-                        setAddingDoc(null);
-                        setNewDocName("");
-                      }}>
-                      Add
-                    </button>
-                    <a className="small"
-                       onClick={() => setAddingDoc(null)}>Cancel</a>
-                    <span className="muted small">
-                      It appears under Documents below, where it needs a
-                      description before you can accept.
-                    </span>
-                  </div>
-                )}
-              </div>
-
-            {/* Where this fact is reported. A fact in no section is extracted
-                on every filing and reaches no reader, so it is named here
-                rather than left to be noticed at publish. */}
-            <div className="muted small">
-              <strong>Reported in:</strong>{" "}
-              {f.sections.length === 0 && "no section yet"}
-              {f.sections.map((i) => {
-                const s = proposal.sections[i];
-                if (!s) return null;
-                return (
-                  <span key={i} style={{ marginRight: "0.75em" }}>
-                    {s.numeral} {s.title}
-                    {skipped.has(i) ? " (not wanted)" : ""}{" "}
-                    <a onClick={() => setFacts({
-                      ...facts,
-                      [id]: { ...f,
-                        sections: f.sections.filter((x) => x !== i),
-                        acknowledged: false } })}>&times;</a>
-                  </span>
-                );
-              })}
-            </div>
-
-            <label className="row">
-              <span>Add to a section</span>
-              <select value=""
-                onChange={(e) => {
-                  if (e.target.value === "") return;
-                  setFacts({
-                    ...facts,
-                    [id]: { ...f,
-                      sections: [...f.sections, Number(e.target.value)],
-                      acknowledged: false } });
-                }}>
-                <option value="">Choose&hellip;</option>
-                {proposal.sections.map((s, i) => (
-                  skipped.has(i) || f.sections.includes(i) ? null : (
-                    <option key={i} value={String(i)}>
-                      {s.numeral} {s.title}
-                    </option>
-                  )
-                ))}
-              </select>
-            </label>
-
-            {/* Two names for one fact, the commonest thing wrong with what
-                a report proposes. Folding is kept and can be undone. */}
-            <label className="row">
-              <span>Same as</span>
-              <select value=""
-                onChange={(e) => {
-                  if (e.target.value !== "") mergeInto(id, e.target.value);
-                }}>
-                <option value="">Another fact in this report&hellip;</option>
-                {factList
-                  .filter(([oid, o]) => oid !== id && !o.mergedInto)
-                  .sort((a, b) => a[1].label.localeCompare(b[1].label))
-                  .map(([oid, o]) => (
-                    <option key={oid} value={oid}>{o.label}</option>
-                  ))}
-              </select>
-            </label>
-
-            {folded.length > 0 && (
-              <div className="muted small">
-                <strong>Folded into this:</strong>{" "}
-                {folded.map(([oid, o]) => (
-                  <span key={oid} style={{ marginRight: "0.75em" }}>
-                    {o.label}{" "}
-                    <a onClick={() => setFacts({
-                      ...facts, [oid]: { ...o, mergedInto: undefined } })}>
-                      undo
-                    </a>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-  };
-
-  /**
-   * A field the tenant already holds, opened to be amended.
-   *
-   * Nothing is written here. The amendment is held and applied at Accept
-   * with everything else, because the screen tells the person all the way
-   * down that nothing is saved until then.
-   */
-  const fieldEditor = (key: string) => {
-    const base = fieldsByKey[key];
-    if (!base) return null;
-    const cur = heldEdits[key] ?? {
-      label: base.label, description: base.description,
-      cardinality: base.cardinality, columns: base.columns,
-    };
-    const set = (next: Partial<typeof cur>) =>
-      setHeldEdits({ ...heldEdits, [key]: { ...cur, ...next } });
-    const isTable = cur.cardinality === "group";
-
-    return (
-      <div className="form">
-        <h4>{base.label}</h4>
-        <p className="muted small">
-          A fact you already hold. Amending it here changes it for every
-          memorandum that reports it, not only this one.
-        </p>
-
-        <label className="row">
-          <span>Name</span>
-          <input value={cur.label}
-                 onChange={(e) => set({ label: e.target.value })} />
-        </label>
-        <p className="muted small">
-          Renaming is free and reaches memoranda already written: the identity
-          never follows the label.
-        </p>
-
-        <label className="row">
-          <span>What it is</span>
-          <textarea rows={3} value={cur.description ?? ""}
-                    onChange={(e) => set({ description: e.target.value })} />
-        </label>
-        <p className="muted small">
-          This is what the system reads when deciding whether it has found
-          this fact. Changing it applies to documents filed from now on, not
-          to those already filed.
-        </p>
-
-        {/* A single value that turns out to want columns. The alternative was
-            to decline the match and make a second fact meaning the same
-            thing, with the first left behind to be remembered and deleted -
-            which is the duplicate this whole screen exists to prevent.
-
-            Extraction is pinned, so this reaches documents filed from now on
-            and not those already filed: a memorandum written before it still
-            reproduces against the revision it was written under. */}
-        <label className="row">
-          <span>Shape</span>
-          <select value={cur.cardinality}
-            onChange={(e) => set({ cardinality: e.target.value })}>
-            <option value="one">A single fact</option>
-            <option value="many">Several values</option>
-            <option value="group">
-              A table &mdash; several rows with columns
-            </option>
-          </select>
-        </label>
-
-        {cur.cardinality !== base.cardinality && (
-          <p className="warn small">
-            Changing the shape applies to documents filed from now on. What
-            was already read from documents you have filed stays as it was,
-            and memoranda already written still reproduce.
-          </p>
-        )}
-
-        {isTable && (
-          <ColumnEditor columns={cur.columns}
-                        onChange={(next) => set({ columns: next })} />
-        )}
-
-        <div className="form-actions">
-          <button disabled={isTable && !columnsReady(cur.columns)}
-                  onClick={() => setEditField(null)}>Done</button>
-          <a className="secondary" onClick={() => {
-            const next = { ...heldEdits };
-            delete next[key];
-            setHeldEdits(next);
-            setEditField(null);
-          }}>Leave it as it was</a>
-        </div>
-      </div>
-    );
-  };
-
-  // Accepting has run. Said plainly, either way: it wrote to the draft, and a
-  // screen that goes quiet afterwards leaves a person unsure whether it did.
-  if (result) {
-    return (
-      <div>
-        <h2>{result.ok ? "Added to your draft" : "It stopped part way"}</h2>
-
-        {result.ok ? (
-          <p className="muted">
-            Your draft now holds this memorandum and everything below.
-            Nothing reaches a report until you publish.
-          </p>
-        ) : (
-          <>
-            <p className="error">{result.error}</p>
-            <p className="muted">
-              What is listed below was written before it stopped and is in
-              your draft. The rest was not. Nothing has been published.
-            </p>
-          </>
-        )}
-
-        {written.length === 0 && (
-          <p className="muted small">Nothing was written.</p>
-        )}
-
-        <ul className="muted small">
-          {written.map((w, i) => <li key={i}>{w}</li>)}
-        </ul>
-
-        <div className="form-actions">
-          <button onClick={() => onDone(result.templateKey || "")}>
-            Back to the configuration
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Every ending that is not a proposal. One shape, so none of them can be
-  // the one that forgets to offer a way out - the first version told a person
-  // to try a shorter report and gave them nothing to click.
-  const stopped: Record<string, { title: string; body: string }> = {
-    "unreadable": {
-      title: "That file could not be read",
-      body: "It carries no text we can read \u2014 a scan, most likely."
-        + " Send the Word original, or a PDF exported rather than scanned.",
-    },
-    "nothing-found": {
-      title: "No sections found",
-      body: "We read the file but could not make out headings in it. A report"
-        + " with numbered or titled sections is what this works from.",
-    },
-    "model-unavailable": {
-      title: "It could not be read just now",
-      body: "The service that reads reports would not take the request. This"
-        + " is nothing to do with your file \u2014 try again in a few"
-        + " minutes.",
-    },
-    "failed": {
-      title: "It stopped before finishing",
-      body: "Something went wrong while reading it. Nothing was saved.",
-    },
-  };
-
-  const ending = stopped[proposal.status];
+  const ending = STOPPED[proposal.status];
   if (ending) {
     return (
       <div>
@@ -1583,16 +469,15 @@ export function ProposeView({ onDone, onCancel }: {
   }
 
   if (proposal.status !== "ready") {
-    const done = proposal.sections_done;
     const total = proposal.sections_total;
     return (
       <div>
         <h2>Reading your report</h2>
-        <p className="muted">
-          {total
-            ? `Section ${done} of ${total}.`
-            : "Finding the sections\u2026"}
-        </p>
+        {!error && (
+          <Working what={total
+            ? `Reading your report — section ${proposal.sections_done} of ${total}`
+            : "Reading your report — finding the sections"} />
+        )}
         {proposal.memorandum_label && (
           <p className="muted small">
             It reads as a {proposal.memorandum_label}.
@@ -1601,8 +486,8 @@ export function ProposeView({ onDone, onCancel }: {
         <ul className="muted small">
           {proposal.sections.map((s, i) => (
             <li key={i}>
-              {s.numeral} {s.title}
-              {" \u00b7 "}{s.facts.length}{" "}
+              {s.title}
+              {" · "}{s.facts.length}{" "}
               {s.facts.length === 1 ? "fact" : "facts"}
             </li>
           ))}
@@ -1621,118 +506,38 @@ export function ProposeView({ onDone, onCancel }: {
     );
   }
 
-  // Every group a document could sit in: the tenant's, plus any made here.
-  // Declared before anything that reads it: groupsOf runs during render, and
-  // a const referenced above its own declaration is a blank screen with no
-  // message anywhere on the page.
-  const allGroups = [...(draft?.categories ?? []), ...newGroups];
-
   const factList = Object.entries(facts);
-
-  /** What a section may still be given, in the order that tells the person
-   *  something: what they already hold, what this report proposed, and what
-   *  nothing reports yet - which is where an orphan is most likely to be
-   *  picked up. */
-  const offerFor = (i: number) => {
-    const free = Object.entries(facts).filter(
-      ([, f]) => !f.mergedInto && f.use !== "skip"
-        && !f.sections.includes(i));
-    const by = (test: (f: FactChoice) => boolean) => free
-      .filter(([, f]) => test(f))
-      .sort((a, b) => a[1].label.localeCompare(b[1].label));
-
-    const nowhere = ([, f]: [string, FactChoice]) =>
-      !f.sections.some((x) => !skipped.has(x));
-
-    const out = [
-      { label: "Not reported anywhere yet",
-        entries: free.filter(nowhere)
-          .sort((a, b) => a[1].label.localeCompare(b[1].label)) },
-      { label: "You already hold these",
-        entries: by((f) => f.use === "existing").filter(
-          (e) => !nowhere(e)) },
-      { label: "New in this report",
-        entries: by((f) => f.use === "new").filter((e) => !nowhere(e)) },
-    ];
-    return out.filter((g) => g.entries.length > 0);
-  };
-
-  // The facts list: every fact not folded into another, grouped under each
-  // kept section that names it, and those no kept section names under a
-  // heading of their own. A fact in two sections appears under both.
-  const needle = factSearch.trim().toLowerCase();
-  const factRows = factList.filter(([, f]) => !f.mergedInto);
-  const chosenCount = factRows.filter(([, f]) => live(f)).length;
-  const factGroups = [
-    ...proposal.sections.map((s, n) => ({
-      key: "s" + n,
-      label: `${s.numeral} ${s.title}`.trim(),
-      all: skipped.has(n) ? []
-        : factRows.filter(([, f]) => f.sections.includes(n)),
-    })),
-    {
-      key: "none",
-      label: "Not in any kept section",
-      all: factRows.filter(([, f]) => !f.sections.some((n) => !skipped.has(n))),
-    },
-  ]
-    .map((g) => ({
-      ...g,
-      total: g.all.length,
-      chosen: g.all.filter(([, f]) => live(f)).length,
-      wants: g.all.filter(([, f]) => wanting(f)).length,
-      rows: g.all
-        .filter(([, f]) => !needle || f.label.toLowerCase().includes(needle))
-        .sort((a, b) => a[1].label.localeCompare(b[1].label)),
-    }))
-    .filter((g) => g.rows.length > 0);
-
-  const typeList = Object.entries(types).filter(([, t]) =>
-    (t.use !== "existing" || t.existing === null) && needed(t.label));
-
-  // Documents the tenant already holds, less any this report would add under
-  // the same name - one document should not appear in both lists.
-  const proposedLabels = new Set(
-    Object.values(types).filter((t) => t.use === "new" && needed(t.label))
-      .map((t) => t.label.trim().toLowerCase()));
-  const heldTypes = (draft?.document_types ?? [])
-    .filter((t) => !proposedLabels.has(t.label.trim().toLowerCase()))
-    .slice()
-    .sort((a, b) => a.label.localeCompare(b.label));
-
-  // Every document a fact could be looked for in once this is accepted: the
-  // ones the tenant holds, and the ones this proposal would add. Named by
-  // label, because a proposed type has no key until it is created.
-  const docOptions: string[] = (() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const t of draft?.document_types ?? []) {
-      const l = t.label.trim();
-      if (l && !seen.has(l.toLowerCase())) { seen.add(l.toLowerCase()); out.push(l); }
-    }
-    for (const t of Object.values(types)) {
-      if (t.use === "skip") continue;
-      const l = t.label.trim();
-      if (l && !seen.has(l.toLowerCase())) { seen.add(l.toLowerCase()); out.push(l); }
-    }
-    return out.sort((a, b) => a.localeCompare(b));
-  })();
+  const keptCount = proposal.sections.length - skipped.size;
+  const taken = factList.filter(([, f]) => live(f));
+  const newCount = taken.filter(([, f]) => !f.existing).length;
+  const heldCount = taken.length - newCount;
+  const typeCount = Object.values(types)
+    .filter((t) => !t.existing && needed(t.label)).length;
 
   return (
     <div>
-      <h2>What we found in your report</h2>
+      <h2>A first cut from your report</h2>
       <p className="muted">
-        Correct anything that is wrong. Nothing reaches your configuration
-        until you accept it, but what you decide here is kept as you go &mdash;
-        close this and come back to it.
+        Keep the sections you want and tick the facts each should carry.
+        Accept writes this into your draft and opens it in the editor, where
+        everything can be corrected. Nothing reaches a report until you
+        publish.
       </p>
-      {saved && (
-        <p className="muted small">Your decisions were kept at {saved}.</p>
-      )}
       {error && <p className="error">{error}</p>}
-      {busy && <p className="busy">{busy}&hellip;</p>}
+      {written.length > 0 && (
+        <div className="revision-note">
+          <strong>It stopped part way.</strong>
+          <p className="muted small">
+            What is listed below is already in your draft. Accepting again
+            writes the same things under the same names and finishes the rest.
+          </p>
+          <ul className="muted small">
+            {written.map((w, i) => <li key={i}>{w}</li>)}
+          </ul>
+        </div>
+      )}
+      {busy && <Working what={busy} />}
 
-      {/* 1 --- the memorandum ------------------------------------------- */}
       <h3>The memorandum</h3>
       <label className="row">
         <span>Name</span>
@@ -1740,645 +545,74 @@ export function ProposeView({ onDone, onCancel }: {
                onChange={(e) => setMemoLabel(e.target.value)} />
       </label>
 
-      {/* 2 --- its sections --------------------------------------------- */}
-      {part("sections", "Memo sections",
-            `${proposal.sections.length} in the report \u00b7 `
-              + `${proposal.sections.length - skipped.size} kept`,
-            factList.filter(([, f]) => wanting(f)
-              && f.sections.length > 0).length)}
-
-      {!shut.has("sections") && (<>
+      <h3>Sections</h3>
       <p className="muted small">
-        In the order they appear in your report. Untick anything you do not
-        want.
+        In the order they appear in your report. Untick a section to leave it
+        out. A fact named in two sections is the same tick in both.
       </p>
 
-      <table className="docs">
-        <tbody>
-          {proposal.sections.map((s, i) => {
-            const carries = factList.filter(
-              ([, f]) => live(f) && f.sections.includes(i));
-            const wants = carries.filter(([, f]) => wanting(f)).length;
-            return (
-            <tr key={i} className={skipped.has(i) ? "aside" : ""}>
-              <td>
-                <input type="checkbox" checked={!skipped.has(i)}
+      {proposal.sections.map((s, i) => {
+        const kept = !skipped.has(i);
+        const here = factList
+          .filter(([, f]) => f.sections.includes(i))
+          .sort((a, b) => a[1].label.localeCompare(b[1].label));
+        const ticked = here.filter(([, f]) => f.chosen).length;
+        return (
+          <div className="review" key={i}>
+            <div className="review-head">
+              <label>
+                <input type="checkbox" checked={kept}
                   onChange={() => {
                     const next = new Set(skipped);
                     if (next.has(i)) next.delete(i); else next.add(i);
                     setSkipped(next);
                   }} />
-              </td>
-              <td className="muted small">
-                {/* The order the memorandum reads in, typed as a position -
-                    the box Configure uses. A section is where a reader
-                    expects it or the memorandum is unreadable, and the
-                    reader's order is not always the report's. */}
-                <input value={position[i] ?? String(i + 1)}
-                  style={{ width: "2.6em", textAlign: "center" }}
-                  title="Position"
-                  onChange={(e) =>
-                    setPosition({ ...position, [i]: e.target.value })}
-                  onBlur={() => {
-                    const typed = parseInt(position[i] ?? "", 10);
-                    setPosition({});
-                    if (!isNaN(typed)) placeSection(i, typed);
-                  }} />
-              </td>
-              <td>
-                <input value={s.numeral}
-                  style={{ width: "4em", marginRight: "0.5em" }}
-                  onChange={(e) => {
-                    const next = [...proposal.sections];
-                    next[i] = { ...s, numeral: e.target.value };
-                    setProposal({ ...proposal, sections: next });
-                  }} />
-                <input value={s.title}
-                  onChange={(e) => {
-                    const next = [...proposal.sections];
-                    next[i] = { ...s, title: e.target.value };
-                    setProposal({ ...proposal, sections: next });
-                  }} />
-                <div className="muted small">{s.purpose}</div>
-                {!s.located && (
-                  <div className="warn small">
-                    We could not find this heading again in the text, so it was
-                    read against the whole report. Worth checking.
-                  </div>
-                )}
-
-                {/* This section's facts, opened one section at a time. A
-                    fact is read where it belongs - inside the section that
-                    reports it - rather than in a list of every fact the
-                    report named. */}
-                <a className="small"
-                   onClick={() => setShownSection(
-                     shownSection === i ? null : i)}>
-                  {shownSection === i ? "\u25be" : "\u25b8"} {carries.length}
-                  {" chosen"}
-                </a>
-                {wants > 0 && (
-                  <span className="warn small">
-                    {" \u00b7 "}{wants} needing you
-                  </span>
-                )}
-
-                {shownSection === i && (
-                  <ul className="muted small">
-                    {carries
-                      .sort((a, b) => a[1].label.localeCompare(b[1].label))
-                      .map(([fid, f]) => (
-                      <li key={fid}>
-                        <a onClick={() => setOpenFact(fid)}>{f.label}</a>
-                        {f.use === "existing"
-                          ? " \u00b7 you already hold this"
-                          : " \u00b7 new"}
-                        {wanting(f) && (
-                          <span className="warn"> needs you</span>
-                        )}{" "}
-                        <a onClick={() => setFacts({
-                          ...facts,
-                          [fid]: { ...f,
-                            sections: f.sections
-                              .filter((x) => x !== i) } })}>
-                          &times;
-                        </a>
-                      </li>
-                    ))}
-                    {carries.length === 0 && <li>Nothing in it yet.</li>}
-                  </ul>
-                )}
-
-                {/* Pick from what is already on the table before naming
-                    anything: typing a name that already exists was the
-                    ordinary way to end up with two facts meaning one thing.
-                    Sorted by what the person needs to know about each -
-                    whether they hold it, whether the report proposed it, and
-                    whether anything reports it yet. */}
-                <label className="row">
-                  <span>Add a fact</span>
-                  <select value=""
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v === "") return;
-                      if (v === "\u0000new") {
-                        setAddingSection(i);
-                        setNewInSection("");
-                        return;
-                      }
-                      const f2 = facts[v];
-                      if (f2 && !f2.sections.includes(i)) {
-                        setFacts({ ...facts,
-                          [v]: { ...f2, unused: false, chosen: true,
-                            sections: [...f2.sections, i] } });
-                      }
-                    }}>
-                    <option value="">Choose&hellip;</option>
-                    {offerFor(i).map((g) => (
-                      <optgroup key={g.label} label={g.label}>
-                        {g.entries.map(([fid, f]) => (
-                          <option key={fid} value={fid}>{f.label}</option>
-                        ))}
-                      </optgroup>
-                    ))}
-                    <option value={"\u0000new"}>
-                      Create a new fact
-                    </option>
-                  </select>
-                </label>
-
-                {addingSection === i && (
-                  <div className="filters">
-                    <input placeholder="What the fact is called" autoFocus
-                           value={newInSection}
-                           onChange={(e) => setNewInSection(e.target.value)} />
-                    <button disabled={!newInSection.trim()}
-                      onClick={() => {
-                        const label = newInSection.trim();
-                        const fid = label.toLowerCase();
-                        const already = facts[fid];
-                        if (already) {
-                          if (!already.sections.includes(i)) {
-                            setFacts({ ...facts,
-                              [fid]: { ...already,
-                                sections: [...already.sections, i],
-                                chosen: true } });
-                          }
-                        } else {
-                          setFacts({ ...facts,
-                            [fid]: {
-                              use: "new", label, description: "",
-                              shape: "one", existing: null, why: null,
-                              columns: [], documents: [], held: [],
-                              sections: [i],
-                              added: false, unused: false, chosen: true,
-                              acknowledged: false,
-                            } });
-                        }
-                        setAddingSection(null);
-                        setNewInSection("");
-                      }}>
-                      Add
-                    </button>
-                    <a className="small"
-                       onClick={() => setAddingSection(null)}>Cancel</a>
-                  </div>
-                )}
-              </td>
-              <td className="muted small">
-                {carries.length} chosen
-              </td>
-            </tr>
-            );
-          })}
-        </tbody>
-      </table>
-
-      {/* A section the report never had. Its facts are named on it, the same
-          way as any other. */}
-      <div className="filters">
-        <input placeholder="Numeral" value={newSectionNumeral}
-               style={{ width: "5em" }}
-               onChange={(e) => setNewSectionNumeral(e.target.value)} />
-        <input placeholder="Add a section" value={newSectionTitle}
-               onChange={(e) => setNewSectionTitle(e.target.value)} />
-        <button disabled={!newSectionTitle.trim()}
-          onClick={() => {
-            setProposal({
-              ...proposal,
-              sections: [...proposal.sections, {
-                heading: newSectionTitle.trim(),
-                title: newSectionTitle.trim(),
-                numeral: newSectionNumeral.trim(),
-                purpose: "Added by you.",
-                located: true,
-                facts: [],
-              }],
-            });
-            setNewSectionTitle("");
-            setNewSectionNumeral("");
-          }}>
-          Add
-        </button>
-      </div>
-
-      {/* 3 --- the facts ------------------------------------------------- */}
-      </>)}
-      {/* The fact card, opened over the page. The stylesheet already has a
-          drawer - panel-backdrop and panel - so this uses it rather than
-          introducing a second thing that means the same. */}
-      {openFact && facts[openFact] && (
-        <div className="panel-backdrop" onClick={() => {
-          setEditField(null); setOpenFact(null);
-        }}>
-          <div className="panel" onClick={(e) => e.stopPropagation()}>
-            <a className="panel-close" onClick={() => {
-              setEditField(null); setOpenFact(null);
-            }}>Close</a>
-
-            {/* One drawer, two things in it. Amending a held field is a step
-                inside deciding a match, not a second window over it. */}
-            {editField ? (
-              <>
-                <p className="muted small">
-                  <a onClick={() => setEditField(null)}>
-                    &lsaquo; Back to {facts[openFact].label}
-                  </a>
-                </p>
-                {fieldEditor(editField)}
-              </>
-            ) : (
-              <>
-                {factCard(openFact, facts[openFact])}
-                <div className="form-actions">
-                  <button onClick={() => setOpenFact(null)}>Done</button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 3 --- the facts, to choose from ---------------------------------- */}
-      {/* Every fact the report names, new or matched to one already held,
-          under the sections that name it. Nothing is taken until ticked. The
-          tick is separate from the name: the tick decides, the name opens
-          the fact. */}
-      {part("facts", "Facts",
-            `${factRows.length} proposed \u00b7 ${chosenCount} chosen`,
-            factRows.filter(([, f]) => wanting(f)).length)}
-
-      {!shut.has("facts") && (<>
-        <p className="muted small">
-          Tick the facts worth having. Nothing unticked is written. A fact
-          named in two sections appears under both, and the tick is the same
-          one.
-        </p>
-
-        <div className="filters">
-          <input placeholder="Search facts" value={factSearch}
-                 onChange={(e) => setFactSearch(e.target.value)} />
-        </div>
-
-        <table className="docs">
-          <tbody>
-            {factGroups.map((g) => {
-              // A search opens every group it matched.
-              const open = needle !== "" || openGroup === g.key;
-              return (
-              <Fragment key={g.key}>
-                <tr>
-                  <td colSpan={4}>
-                    <a onClick={() =>
-                      setOpenGroup(openGroup === g.key ? null : g.key)}>
-                      {open ? "\u25be" : "\u25b8"} {g.label}
-                    </a>{" "}
-                    <span className="muted small">
-                      {g.chosen} of {g.total} chosen
-                    </span>
-                    {g.wants > 0 && (
-                      <span className="warn small">
-                        {" \u00b7 "}{g.wants} needing you
-                      </span>
-                    )}
-                  </td>
-                </tr>
-
-                {open && g.rows.map(([fid, f]) => (
-                  <tr key={g.key + ":" + fid}>
-                    <td>
-                      <input type="checkbox" checked={!!f.chosen}
-                        onChange={(e) => setFacts({
-                          ...facts, [fid]: { ...f, chosen: e.target.checked } })} />
-                    </td>
-                    <td>
-                      <a onClick={() => setOpenFact(fid)}>{f.label}</a>
-                      {wanting(f) && (
-                        <span className="warn small"> needs you</span>
-                      )}
-                    </td>
-                    <td className="muted small">
-                      {f.use === "existing" ? "you hold this"
-                        : f.shape === "group" ? "table" : "single"}
-                    </td>
-                    <td className="small">
-                      {/* Where it would report. Shown for an unticked fact
-                          too, muted, so choosing it is an informed act. */}
-                      <span className={f.chosen ? "" : "muted"}>
-                        {f.sections.map((n) => {
-                          const s = proposal.sections[n];
-                          if (!s) return null;
-                          return (
-                            <span key={n} style={{ marginRight: "0.75em" }}>
-                              {s.numeral || s.title}
-                              {skipped.has(n) ? " (not kept)" : ""}{" "}
-                              <a onClick={() => setFacts({
-                                ...facts,
-                                [fid]: { ...f,
-                                  sections: f.sections.filter((x) => x !== n),
-                                  acknowledged: false } })}>&times;</a>
-                            </span>
-                          );
-                        })}
-                      </span>
-                      <select value=""
-                        onChange={(e) => {
-                          if (e.target.value === "") return;
-                          const at = Number(e.target.value);
-                          setFacts({
-                            ...facts,
-                            [fid]: { ...f,
-                              sections: [...f.sections, at],
-                              acknowledged: false } });
-                        }}>
-                        <option value="">+ section</option>
-                        {proposal.sections.map((s, n) => (
-                          skipped.has(n) || f.sections.includes(n) ? null : (
-                            <option key={n} value={String(n)}>
-                              {s.numeral} {s.title}
-                            </option>
-                          )
-                        ))}
-                      </select>
-                    </td>
-                  </tr>
-                ))}
-              </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      </>)}
-
-      {/* 4 --- the documents --------------------------------------------- */}
-      {typeList.length > 0 && (
-        <>
-          {/* Grouping is for the eye. Nothing reads it, so a group made here
-              and a document moved between groups disturb no extraction and no
-              memorandum - which is why this is the one thing on the screen
-              that may be changed for documents already held. */}
-          <div className="filters">
-            <input placeholder="Add a group" value={newGroupName}
-                   onChange={(e) => setNewGroupName(e.target.value)} />
-            <button disabled={!newGroupName.trim()}
-              onClick={() => {
-                const label = newGroupName.trim();
-                const key = slugKey(label);
-                if (!allGroups.some((c) => c.key === key)) {
-                  setNewGroups([...newGroups, { key, label }]);
-                }
-                setNewGroupName("");
-              }}>
-              Add
-            </button>
-            <span className="muted small">
-              Groups order the documents on screen and nothing else.
-            </span>
-          </div>
-
-          {part("newdocs", "Documents needed by what you chose",
-                `${typeList.length}`,
-                typeList.filter(([, t]) => t.use === "new"
-                  && !t.acknowledged).length)}
-
-          {!shut.has("newdocs") && (<>
-          <p className="muted small">
-            Kinds of document your report appears to rest on, not in your
-            configuration, that a fact you chose is looked for in.
-          </p>
-
-          {typeList.map(([id, t]) => (
-            <div className="review" key={id}>
-              <div className="review-head">
-                <a onClick={() => setOpenDoc(openDoc === id ? null : id)}>
-                  <strong>
-                    {openDoc === id ? "\u25be" : "\u25b8"} {t.label}
-                  </strong>
-                </a>
-                <span className="muted small">
-                  {t.use === "skip" ? "not wanted" : "new"}
-                </span>
-                {openDoc !== id && t.use === "new"
-                  && !t.acknowledged && (
-                  <span className="warn small">needs you</span>
-                )}
-              </div>
-
-              {openDoc === id && t.use === "new" && (
-                <div className="form">
-                  <label className="row">
-                    <span>Name</span>
-                    <input value={t.label}
-                      onChange={(e) => setTypes({
-                        ...types,
-                        [id]: { ...t, label: e.target.value,
-                                acknowledged: false } })} />
-                  </label>
-
-                  <label className="row">
-                    <span>How to recognise it</span>
-                    <textarea rows={3} value={t.description}
-                      onChange={(e) => setTypes({
-                        ...types,
-                        [id]: { ...t, description: e.target.value,
-                                acknowledged: false } })} />
-                  </label>
-                  <p className="muted small">{RECOGNISE_NOTE}</p>
-
-                  <label className="row">
-                    <span>Group</span>
-                    <select value={t.group}
-                      onChange={(e) => {
-                        const key = e.target.value;
-                        const known = allGroups.some((c) => c.key === key);
-                        setTypes({ ...types, [id]: { ...t, group: key,
-                          groupLabel: known ? "" : t.groupLabel } });
-                      }}>
-                      {allGroups.map((c) => (
-                        <option key={c.key} value={c.key}>{c.label}</option>
-                      ))}
-                      {t.groupLabel && (
-                        <option value={t.group}>
-                          {t.groupLabel} (new group)
-                        </option>
-                      )}
-                    </select>
-                  </label>
-                  <p className="muted small">
-                    Grouping is for the eye alone and can be changed at any
-                    time without disturbing anything.
-                  </p>
-
-                  <ReadModeControls
-                    readMode={t.read_mode ?? "text"}
-                    alwaysOcr={t.always_ocr ?? false}
-                    onChange={(next) => setTypes({
-                      ...types,
-                      [id]: { ...t, ...next, acknowledged: false } })} />
-
-                  {readFrom(t.label, id)}
-
-                  <label className="inline-check">
-                    <input type="checkbox" checked={t.acknowledged}
-                      disabled={!t.label.trim() || !t.description.trim()
-                        || factList.filter(([, f]) => live(f)
-                          && f.documents.some((x) => x.trim().toLowerCase()
-                            === t.label.trim().toLowerCase())).length === 0}
-                      onChange={(e) => setTypes({
-                        ...types,
-                        [id]: { ...t, acknowledged: e.target.checked } })} />
-                    I have read this and it says what I mean
-                  </label>
-                </div>
-              )}
-
-              <div className="muted small">
-                <a onClick={() => setTypes({
-                  ...types,
-                  [id]: { ...t, use: t.use === "skip" ? "new" : "skip" } })}>
-                  {t.use === "skip"
-                    ? "Put it back" : "I do not need this document"}
-                </a>
-              </div>
+                <strong>{s.title}</strong>
+              </label>
+              <span className="muted small">
+                {ticked} of {here.length} {here.length === 1 ? "fact" : "facts"}
+              </span>
             </div>
-          ))}
-          </>)}
-        </>
-      )}
-
-      {/* 4b --- documents the tenant already holds ----------------------- */}
-      {heldTypes.length > 0 && (
-        <>
-          {part("helddocs", "Documents you already hold",
-                `${heldTypes.length}`, 0)}
-
-          {!shut.has("helddocs") && (<>
-          <p className="muted small">
-            Say what each of these is read for, and the whole configuration is
-            done here rather than half here and half in the editor afterwards.
-            Their names and descriptions are settled and are not changed on
-            this screen.
-          </p>
-
-          {heldTypes.map((t) => {
-            const id = "held:" + t.key;
-            const reads = factList.filter(([, f]) => live(f)
-              && f.documents.some((x) => x.trim().toLowerCase()
-                === t.label.trim().toLowerCase())).length;
-            return (
-              <div className="review" key={id}>
-                <div className="review-head">
-                  <a onClick={() => setOpenDoc(openDoc === id ? null : id)}>
-                    <strong>
-                      {openDoc === id ? "\u25be" : "\u25b8"} {t.label}
-                    </strong>
-                  </a>
-                  <span className="muted small">
-                    {reads} {reads === 1 ? "fact" : "facts"}
-                  </span>
-                </div>
-
-                {openDoc === id && (
-                  <div className="form">
-                    <label className="row">
-                      <span>Group</span>
-                      <select value={heldGroup[t.key] ?? t.category}
-                        onChange={(e) => setHeldGroup({
-                          ...heldGroup, [t.key]: e.target.value })}>
-                        {allGroups.map((c) => (
-                          <option key={c.key} value={c.key}>{c.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                    {readFrom(t.label, id)}
-                  </div>
+            {s.purpose && <p className="why">{s.purpose}</p>}
+            {!s.located && (
+              <p className="why warn">
+                We could not find this heading again in the text, so it was
+                read against the whole report. Worth checking.
+              </p>
+            )}
+            {kept && here.map(([fid, f]) => (
+              <label className="bind" key={fid}>
+                <input type="checkbox" checked={f.chosen}
+                  onChange={(e) => setFacts({
+                    ...facts, [fid]: { ...f, chosen: e.target.checked } })} />
+                {f.label}
+                {f.existing && (
+                  <span className="muted small">&middot; you hold this</span>
                 )}
-              </div>
-            );
-          })}
-          </>)}
-        </>
-      )}
+              </label>
+            ))}
+          </div>
+        );
+      })}
 
-      {/* 5 --- accept ------------------------------------------------------ */}
       <h3>Accept</h3>
       <p className="muted small">
-        This writes the memorandum, its sections and anything new into your
-        draft. Nothing reaches a report until you publish.
+        Writes a memorandum with {keptCount}{" "}
+        {keptCount === 1 ? "section" : "sections"}, {newCount} new{" "}
+        {newCount === 1 ? "fact" : "facts"} and {typeCount} new document{" "}
+        {typeCount === 1 ? "type" : "types"}, using {heldCount}{" "}
+        {heldCount === 1 ? "fact" : "facts"} you already hold, and opens it in
+        the editor.
       </p>
       <p className="muted small">
         Worth doing before you upload any documents. A fact added afterwards is
-        empty on everything already filed, and the only remedy is filing those
-        documents again.
+        empty on everything already filed.
       </p>
-
-      {/* What Accept will write, before it writes it. */}
-      <p className="muted small">
-        Creates{" "}
-        {factList.filter(([, f]) => live(f) && f.use === "new").length} new
-        {" "}fact(s),{" "}
-        {Object.values(types)
-          .filter((t) => t.use === "new" && needed(t.label)).length} new
-        {" "}document(s), and a memorandum with{" "}
-        {proposal.sections.length - skipped.size} section(s). Uses{" "}
-        {factList.filter(([, f]) => live(f) && f.use === "existing").length}
-        {" "}fact(s) you already hold.
-      </p>
-
-      {Object.keys(heldEdits).length > 0 && (
-        <p className="muted small">
-          {Object.keys(heldEdits).length} fact
-          {Object.keys(heldEdits).length === 1 ? "" : "s"} you already hold
-          will be amended. That reaches every memorandum reporting them.
-        </p>
-      )}
-
-      {/* A number is not much use at the foot of a long page. Each of these
-          opens the thing that is waiting. */}
-      {outstanding > 0 && (
-        <div className="warn">
-          <p>
-            {outstanding} {outstanding === 1 ? "thing has" : "things have"}
-            {" "}still to be acknowledged.
-          </p>
-          <ul className="small">
-            {factList.filter(([, f]) => wanting(f)).map(([fid, f]) => (
-              <li key={fid}>
-                <a onClick={() => setOpenFact(fid)}>{f.label}</a>
-              </li>
-            ))}
-            {Object.entries(types)
-              .filter(([, t]) => t.use === "new" && !t.acknowledged
-                && needed(t.label))
-              .map(([tid, t]) => (
-                <li key={tid}>
-                  <a onClick={() => setOpenDoc(tid)}>{t.label}</a>
-                  {" \u00b7 a document"}
-                </li>
-              ))}
-          </ul>
-        </div>
-      )}
-
-      {written.length > 0 && (
-        <div className="revision-note">
-          <strong>An earlier attempt stopped part way.</strong>
-          <p className="muted small">
-            What is listed below is already in your draft. Everything is
-            written under a name rather than a number, so accepting again
-            writes the same things and finishes the rest. Nothing is
-            duplicated.
-          </p>
-          <ul className="muted small">
-            {written.map((w, i) => <li key={i}>{w}</li>)}
-          </ul>
-        </div>
-      )}
 
       <div className="form-actions">
-        <button disabled={!!busy || outstanding > 0 || !memoLabel.trim()}
+        <button disabled={!!busy || !memoLabel.trim() || keptCount === 0}
                 onClick={accept}>
-          {busy ? busy + "\u2026" : "Accept and add to my draft"}
+          Accept and open in the editor
         </button>
         <a className="secondary" onClick={onCancel}>Cancel</a>
       </div>

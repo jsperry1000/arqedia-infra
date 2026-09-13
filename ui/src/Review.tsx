@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   type Pending,
@@ -10,7 +10,23 @@ import {
   type Passage,
   type Template,
 } from "./api";
-import { useBackAction } from "./shell";
+import { useBackAction, Working } from "./shell";
+
+/** The name a file is stored under: the API's _clean, whitespace to a dash
+ *  and anything else unsafe dropped. Compared on both sides, so a row whose
+ *  filename was or was not cleaned still matches the file that was sent. */
+function stored(name: string) {
+  return (name || "").trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^A-Za-z0-9._-]/g, "")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 120);
+}
+
+// How long nothing may change before the screen stops asking. A step that
+// died - a read that never came back - would otherwise be polled for ever.
+const WAIT_CEILING_MS = 10 * 60 * 1000;
 
 /**
  * The engagement. Three states of a document are visible here:
@@ -43,6 +59,19 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
+  // Files sent and not yet seen as a row. The row exists only once the file
+  // has been read, so between an upload finishing and its row appearing the
+  // screen had nothing unfinished to watch, and stopped. Known ids are the
+  // rows that were there before, so a file sent again under a name already
+  // on screen still waits for its own row.
+  const [expected, setExpected] = useState<
+    { names: string[]; known: Set<number> } | null>(null);
+  // A memo asked for and not yet listed: how many memos there were when it
+  // was asked for.
+  const [generating, setGenerating] = useState<{ before: number } | null>(null);
+  // Set once nothing has changed for the ceiling, so polling stops.
+  const [gaveUp, setGaveUp] = useState(false);
+
   const [sortKey, setSortKey] = useState<SortKey>("filename");
   const [sortDown, setSortDown] = useState(false);
   const [nameFilter, setNameFilter] = useState("");
@@ -61,6 +90,17 @@ export function EngagementView({ id, onBack, onMemo }: {
     setPending(p.pending);
     setDocs(d.documents);
     setMemos(m.memos);
+
+    // A sent file is seen once a row it produced is on screen.
+    setExpected((e) => {
+      if (!e) return e;
+      const rows = [...p.pending, ...d.documents];
+      const left = e.names.filter((n) => !rows.some(
+        (r) => !e.known.has(r.document_id) && stored(r.filename) === n));
+      return left.length ? { ...e, names: left } : null;
+    });
+    // A memo asked for is ready once the list has grown.
+    setGenerating((g) => g && m.memos.length > g.before ? null : g);
 
     // Seed a choice for anything newly analysed, without disturbing edits.
     setChoices((prev) => {
@@ -88,25 +128,73 @@ export function EngagementView({ id, onBack, onMemo }: {
 
   // A document being read by OCR is still in flight. Generating now would
   // produce a memo missing whatever it is about to say.
-  const reading = docs.filter((d) => d.state === "reading").length;
+  const reading = docs.filter((d) => d.state === "reading").length
+    + pending.filter((p) => p.state === "reading").length;
   const unfiled = pending.length;
-  const settling = busy !== "" || reading > 0 || unfiled > 0;
+  const extracting = docs.filter(
+    (d) => d.state === "filed" && !d.extracted_at).length;
+  const waitingFiles = expected?.names.length ?? 0;
+  const blocked = busy !== "" || reading > 0 || unfiled > 0
+    || generating !== null;
+
+  // The screen updates itself (UX-11). It asks while any row is unfinished -
+  // a file not yet read, a scan being read, a document being extracted, a
+  // memo being written - and stops once every row has reached a state that
+  // nothing further will change. A document waiting to be filed is finished
+  // as far as the machine goes: it waits on a person.
+  const unfinished = busy !== "" || reading > 0 || extracting > 0
+    || waitingFiles > 0 || generating !== null;
+
+  // When what is unfinished last changed. Nothing changing for the ceiling
+  // means a step died, and the screen says so rather than asking for ever.
+  const signature = [busy, reading, extracting, waitingFiles,
+                     generating ? generating.before : -1].join("|");
+  const changedAt = useRef(Date.now());
+  useEffect(() => { changedAt.current = Date.now(); }, [signature]);
 
   useEffect(() => {
-    if (!settling) return;
-    const timer = setInterval(refresh, 5000);
+    if (!unfinished || gaveUp) return;
+    const timer = setInterval(() => {
+      if (Date.now() - changedAt.current > WAIT_CEILING_MS) {
+        setGaveUp(true);
+        setExpected(null);
+        setGenerating(null);
+        return;
+      }
+      refresh();
+    }, 5000);
     return () => clearInterval(timer);
-  }, [id, settling]);
+  }, [id, unfinished, gaveUp]);
+
+  // What is running, named, for the one indicator (UX-12).
+  const plural = (n: number, one: string, many: string) =>
+    `${n} ${n === 1 ? one : many}`;
+  const working = busy
+    || (gaveUp ? "" : generating
+      ? "Generating a memo — this takes a minute or two"
+      : waitingFiles > 0
+        ? "Analysing " + plural(waitingFiles, "uploaded file", "uploaded files")
+        : reading > 0
+          ? "Reading " + plural(reading, "scanned document", "scanned documents")
+          : extracting > 0
+            ? "Extracting from " + plural(extracting, "filed document",
+                                          "filed documents")
+            : "");
 
   async function upload(files: FileList | null) {
     if (!files) return;
     const list = Array.from(files);
     setError("");
+    setGaveUp(false);
+    const known = new Set([...pending, ...docs].map((r) => r.document_id));
 
     for (let i = 0; i < list.length; i++) {
       setBusy(`Uploading ${i + 1} of ${list.length} \u2014 ${list[i].name}`);
       try {
         await api.upload(id, list[i]);
+        const name = stored(list[i].name);
+        setExpected((e) => ({ names: [...(e?.names ?? []), name],
+                              known: e?.known ?? known }));
       } catch (err) {
         // A failure used to leave "Uploading" on screen indefinitely, which
         // reads as a hang rather than as the refusal it is.
@@ -166,6 +254,7 @@ export function EngagementView({ id, onBack, onMemo }: {
       include: true,
     }));
     setBusy("Filing");
+    setGaveUp(false);
     await api.file(id, decisions);
     setChoices({});
     setBusy("");
@@ -180,17 +269,25 @@ export function EngagementView({ id, onBack, onMemo }: {
     refresh();
   }
 
+  // Generating starts the memo and returns. The memo appears in the list when
+  // it is written, found by polling rather than by a fixed wait.
   async function generate() {
-    setBusy("Generating - this takes a minute or two");
+    setBusy("Starting a memo");
     setError("");
     try {
       await api.generate(id, template || undefined);
+      setGaveUp(false);
+      setGenerating({ before: memos.length });
+      setShut((prev) => {
+        const next = new Set(prev);
+        next.delete("memos");
+        return next;
+      });
     } catch (err) {
       setError(String((err as Error)?.message ?? err));
+    } finally {
       setBusy("");
-      return;
     }
-    setTimeout(() => { setBusy(""); refresh(); }, 150000);
   }
 
   function sortBy(key: SortKey) {
@@ -302,7 +399,13 @@ export function EngagementView({ id, onBack, onMemo }: {
       <h2>{id}</h2>
 
       <input type="file" multiple onChange={(e) => upload(e.target.files)} />
-      {busy && <p className="busy">{busy}</p>}
+      {working && <Working what={working} />}
+      {gaveUp && !busy && (
+        <p className="muted small">
+          Nothing has changed for ten minutes, so this screen has stopped
+          checking. Reload to check again.
+        </p>
+      )}
       {error && <p className="error">{error}</p>}
 
       {pending.length > 0 && (
@@ -528,12 +631,12 @@ export function EngagementView({ id, onBack, onMemo }: {
         </div>
       )}
 
-      <button onClick={generate} disabled={settling || activeCount === 0}>
+      <button onClick={generate} disabled={blocked || activeCount === 0}>
         {reading > 0
           ? `Wait \u2014 reading ${reading} ${reading === 1 ? "document" : "documents"}`
           : unfiled > 0
             ? `Wait \u2014 ${unfiled} to file`
-            : busy
+            : busy || generating
               ? "Wait\u2026"
               : `Generate memo from ${activeCount} ${activeCount === 1 ? "document" : "documents"}`}
       </button>

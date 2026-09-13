@@ -3,7 +3,8 @@ import { SettingsView } from "./Settings";
 import { MemoView } from "./Memo";
 import { EngagementView } from "./Review";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { BackContext, BackPill, handReport } from "./shell";
+import { BackContext, BackPill } from "./shell";
+import { WelcomeView } from "./Welcome";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Amplify } from "aws-amplify";
 import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
@@ -161,7 +162,6 @@ function ReportChooser({ onClose, onOpened }: {
   onOpened: (to: string, state?: unknown) => void;
 }) {
   const box = useRef<HTMLDivElement | null>(null);
-  const picker = useRef<HTMLInputElement | null>(null);
   // What the panel shows: the three options, or the reports to open. A choice
   // replaces the options rather than opening a list beneath them (UX-17).
   const [view, setView] = useState<"options" | "reports">("options");
@@ -237,12 +237,10 @@ function ReportChooser({ onClose, onOpened }: {
     onOpened(`/configure?report=${key}&part=sections`);
   });
 
-  // A report of the person's own: the file picker, and nothing else. The file
-  // goes to the proposer, which reads it once it has the draft. A report put
-  // down part way is resumed on the proposer's own screen, where it was left.
-  const fromReport = (file: File) => run("Opening", async () => {
+  // A report of the person's own: the proposer page, which carries its own
+  // upload (UX-21). No file dialog fires from here.
+  const fromReport = () => run("Opening", async () => {
     await ensureDraft();
-    handReport(file);
     onOpened("/configure", { propose: true });
   });
 
@@ -252,15 +250,9 @@ function ReportChooser({ onClose, onOpened }: {
         <>
           <a onClick={list}>Open an existing report</a>
           <a onClick={scratch}>Create from scratch</a>
-          <a onClick={() => picker.current?.click()}>
+          <a onClick={fromReport}>
             Create from a report you already write
           </a>
-          <input ref={picker} type="file" accept=".pdf,.docx" hidden
-                 onChange={(e) => {
-                   const file = e.target.files?.[0];
-                   e.target.value = "";
-                   if (file) fromReport(file);
-                 }} />
         </>
       ) : (
         <>
@@ -388,8 +380,34 @@ export default function App() {
   }, []);
   const back = useBack();
 
+  // The signed-in line opens the account's own controls - Sign out, and room
+  // for more (UX-19). A click elsewhere or Escape puts them away.
+  const [accountOpen, setAccountOpen] = useState(false);
+  const account = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    if (!accountOpen) return;
+    const away = (e: MouseEvent) => {
+      if (account.current && !account.current.contains(e.target as Node)) {
+        setAccountOpen(false);
+      }
+    };
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAccountOpen(false);
+    };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [accountOpen]);
+
   if (signedIn === null) return <div className="centre"><p className="muted">...</p></div>;
-  if (!signedIn) return <SignIn onDone={check} />;
+  // Signing in lands on the introduction, before any editor (UX-14). A
+  // session already open on load keeps the address it was opened at.
+  if (!signedIn) {
+    return <SignIn onDone={() => { navigate("/welcome"); check(); }} />;
+  }
 
   const shellVars = {
     "--header-h": headerHeight + "px",
@@ -409,7 +427,19 @@ export default function App() {
       <header ref={header}>
         <img src="/icon-white.png" alt="" width="22" height="22" />
         <strong>ARQEDIA</strong>
-        <span className="muted">{who}</span>
+        <span className="account" ref={account}>
+          <a aria-expanded={accountOpen}
+             onClick={() => setAccountOpen(!accountOpen)}>
+            {who} {accountOpen ? "▴" : "▾"}
+          </a>
+          {accountOpen && (
+            <a onClick={async () => {
+              setAccountOpen(false);
+              await signOut();
+              setSignedIn(false);
+            }}>Sign out</a>
+          )}
+        </span>
       </header>
       {/* The top-level destinations, on a rail of their own so the header of
           a working screen is free for that screen's controls (UX-03). Home
@@ -423,7 +453,6 @@ export default function App() {
           {choosing && <ReportChooser onClose={closeChooser} onOpened={opened} />}
         </div>
         <a onClick={() => navigate("/settings")}>Settings</a>
-        <a className="sign-out" onClick={async () => { await signOut(); setSignedIn(false); }}>Sign out</a>
       </nav>
       {/* The working column. Back is drawn once, here, in the same place on
           every screen and held there while the page scrolls (UX-16). */}
@@ -439,6 +468,8 @@ export default function App() {
               <Route path="/memos/:id" element={<MemoRoute />} />
               <Route path="/configure" element={<ConfigureRoute epoch={configEpoch} />} />
               <Route path="/settings" element={<SettingsRoute />} />
+              <Route path="/welcome"
+                     element={<WelcomeView onStart={() => setChoosing(true)} />} />
               {/* Anything else would render an empty page. */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

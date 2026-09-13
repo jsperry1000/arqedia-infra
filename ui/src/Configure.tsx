@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
-import { useBackAction, usePinTop } from "./shell";
+import { useBackAction, usePinTop, Working } from "./shell";
 import {
   api,
   type ConfigCategory,
@@ -479,7 +479,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
 
   // Reading a report of the client's own. Begun from the rail's chooser as
   // well as from inside the editor; the chooser says so in the location's
-  // state, so the screen opens straight into it with the file chosen there.
+  // state, so the screen opens straight onto the proposer's upload.
   const location = useLocation();
   const arrived = location.state as { propose?: boolean } | null;
   const [proposing, setProposing] = useState(Boolean(arrived?.propose));
@@ -778,6 +778,23 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     };
   }, [openSection, part, pinTop, barHeight]);
 
+  // The open section's row, measured, so what it already renders can be held
+  // directly beneath it (UX-20).
+  const [rowHeight, setRowHeight] = useState(0);
+  useLayoutEffect(() => {
+    const el = openHead.current;
+    if (!el) { setRowHeight(0); return; }
+    const measure = () => setRowHeight(el.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const watch = new ResizeObserver(measure);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [openSection, part]);
+
   if (!state) return <p className="muted">Loading&hellip;</p>;
 
   // Reading a report of the client's own. Held above every other screen: it
@@ -788,8 +805,11 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       <ProposeView
         onCancel={leaveProposer}
         onDone={(templateKey) => {
+          // Straight into the editor on the new memorandum, with no screen
+          // in between (UX-21).
           setProposing(false);
-          setTemplate(templateKey);
+          place({ report: templateKey || null, part: "sections",
+                  section: null });
           refresh().catch((e) => setError(message(e)));
         }}
       />
@@ -992,7 +1012,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       </div>
 
       {error && <p className="error">{error}</p>}
-      {busy && <p className="busy">{busy}&hellip;</p>}
+      {busy && <Working what={busy} />}
 
       {validation && !validation.may_publish && (
         <div className="revision-note fatal">
@@ -1171,48 +1191,56 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           </div>
 
           {openSection === s.key && (
-            // A subsection, in the tenant's light colour (UX-06).
-            <div className="binder section-fields" ref={openList}>
+            // The open section's facts. What it already renders, the rule and
+            // the search are held beneath its heading while the facts it
+            // could render scroll past (UX-20).
+            <div className="binder section-fields" ref={openList}
+                 style={{ "--fields-top": `${pinTop + barHeight + rowHeight}px` } as React.CSSProperties}>
               <p className="muted small">
                 Which facts this section renders. A section binding a field
                 that no longer exists would report it absent whether or not it
                 was found, so that is refused here rather than at publish.
               </p>
 
-              {/* What this section already renders, at the top and grouped as
-                  the list below is, then a rule, then everything it could
-                  (UX-08). Unticking one moves it down. */}
-              {s.fields.length > 0 && (
-                <>
-                  <div className="binder-groups">
-                    {byGroup.map((g) => {
-                      const fields = g.fields.filter(
-                        (f) => s.fields.includes(f.key));
-                      if (fields.length === 0) return null;
-                      return (
-                        <div key={g.key}>
-                          <h5>
-                            {g.label}{" "}
-                            <span className="muted">{fields.length}</span>
-                          </h5>
-                          {fields.map((f) => bindRow(s, f))}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <hr className="bound-rule" />
-                </>
-              )}
-
-              <div className="filters">
-                <input placeholder="Search facts" value={sectionSearch}
-                       onChange={(e) => setSectionSearch(e.target.value)} />
-                {sectionSearch && (
-                  <a className="small"
-                     onClick={() => setSectionSearch("")}>Clear</a>
+              <div className="fields-head">
+                {/* What this section already renders, at the top and grouped
+                    as the list below is, then a rule, then everything it
+                    could (UX-08). Unticking one moves it down. */}
+                {s.fields.length > 0 && (
+                  <>
+                    <div className="bound-facts">
+                      <div className="binder-groups">
+                        {byGroup.map((g) => {
+                          const fields = g.fields.filter(
+                            (f) => s.fields.includes(f.key));
+                          if (fields.length === 0) return null;
+                          return (
+                            <div key={g.key}>
+                              <h5>
+                                {g.label}{" "}
+                                <span className="muted">{fields.length}</span>
+                              </h5>
+                              {fields.map((f) => bindRow(s, f))}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <hr className="bound-rule" />
+                  </>
                 )}
+
+                <div className="filters">
+                  <input placeholder="Search facts" value={sectionSearch}
+                         onChange={(e) => setSectionSearch(e.target.value)} />
+                  {sectionSearch && (
+                    <a className="small"
+                       onClick={() => setSectionSearch("")}>Clear</a>
+                  )}
+                </div>
               </div>
 
+              <div className="unbound-facts">
               <div className="binder-groups">
                 {byGroup.map((g) => {
                   // Searching narrows what is shown and never what is bound.
@@ -1236,6 +1264,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                   </div>
                   );
                 })}
+              </div>
               </div>
             </div>
           )}
@@ -1597,6 +1626,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             </a>
             <h3>Publish</h3>
             {error && <p className="error">{error}</p>}
+            {busy && <Working what={busy} />}
 
             {validation && validation.warnings.length > 0 && (
               <details className="warnings">
