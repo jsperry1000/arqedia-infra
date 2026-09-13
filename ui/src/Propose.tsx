@@ -100,9 +100,12 @@ type TypeChoice = {
   acknowledged: boolean;
 };
 
-export function ProposeView({ onDone, onCancel }: {
+export function ProposeView({ onDone, onCancel, resume }: {
   onDone: (templateKey: string) => void;
   onCancel: () => void;
+  /** A proposal already started, to carry on with on arrival - as choosing
+   *  it from the list below does. */
+  resume?: string;
 }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [proposal, setProposal] = useState<Proposal | null>(null);
@@ -301,6 +304,8 @@ export function ProposeView({ onDone, onCancel }: {
   useEffect(() => {
     api.draft().then(setDraft).catch((e) => setError(message(e)));
     api.proposals().then((r) => setWaiting(r.proposals)).catch(() => {});
+    // Opened from the rail's chooser to carry on with one already started.
+    if (resume) reopen(resume);
     // A change made in the last second is written when the screen goes away,
     // whether that is a click on Engagements or the tab being closed.
     const flush = () => {
@@ -831,7 +836,6 @@ export function ProposeView({ onDone, onCancel }: {
   if (!proposal) {
     return (
       <div>
-        <a onClick={onCancel} className="back">Back</a>
         <h2>Create your own from a report</h2>
         <p className="muted">
           Give us a report you already write. We read its shape &mdash; its
@@ -1555,7 +1559,6 @@ export function ProposeView({ onDone, onCancel }: {
   if (ending) {
     return (
       <div>
-        <a onClick={onCancel} className="back">Back</a>
         <h2>{ending.title}</h2>
         <p className="muted">{ending.body}</p>
         {proposal.reason && (
@@ -1565,7 +1568,6 @@ export function ProposeView({ onDone, onCancel }: {
           <button onClick={() => { setProposal(null); setError(""); }}>
             Try another report
           </button>
-          <a className="secondary" onClick={onCancel}>Back</a>
         </div>
       </div>
     );
@@ -1603,7 +1605,6 @@ export function ProposeView({ onDone, onCancel }: {
               <button onClick={() => { setProposal(null); setError(""); }}>
                 Try another report
               </button>
-              <a className="secondary" onClick={onCancel}>Back</a>
             </div>
           </>
         )}
@@ -1710,7 +1711,6 @@ export function ProposeView({ onDone, onCancel }: {
 
   return (
     <div>
-      <a onClick={onCancel} className="back">Back</a>
       <h2>What we found in your report</h2>
       <p className="muted">
         Correct anything that is wrong. Nothing reaches your configuration

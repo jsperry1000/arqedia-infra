@@ -85,15 +85,59 @@ main:has(.wide-page) { max-width: 1560px; }
    main's own max-width and margins centre it in what is left. */
 .shell main { width: 100%; }
 
+/* At 25: above the Back strip and the configuration bar, so the chooser
+   opening from it lies over the page, and beneath the drawers at 30. */
 .rail {
-  position: sticky; top: var(--header-h, 0px);
+  position: sticky; top: var(--header-h, 0px); z-index: 25;
   height: calc(100vh - var(--header-h, 0px));
   display: flex; flex-direction: column;
   padding: 20px 0;
   background: var(--deep);
 }
-.rail a { padding: 8px 24px; color: var(--light); font-size: 13px; }
+.rail > a, .rail-item > a { padding: 8px 24px; color: var(--light); font-size: 13px; }
 .rail .sign-out { margin-top: auto; }
+
+/* Configure a report opens a choice rather than a screen (UX-04), attached
+   to the rail's right edge level with its link. */
+.rail-item { position: relative; display: flex; flex-direction: column; }
+.chooser {
+  position: absolute; left: 100%; top: 0;
+  width: 320px; padding: 8px 0;
+  background: var(--paper);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+}
+.chooser > a { display: block; padding: 8px 16px; font-size: 13px; }
+.chooser p { margin: 6px 16px 0; }
+/* Five rows, then the list scrolls. */
+.chooser-list {
+  max-height: calc(5 * 36px); overflow-y: auto;
+  border-block: 1px solid var(--line);
+}
+.chooser-list > * {
+  display: flex; align-items: center; height: 36px; padding: 0 28px;
+  font-size: 13px;
+}
+
+/* The one Back (UX-16), held beneath the header beside the rail on every
+   screen. It sits in .work, the column holding it and the page, so it holds
+   against the whole column rather than a grid row of its own height. The
+   page's own ground, so what scrolls beneath it is hidden and only the pill
+   shows. */
+.back-strip {
+  position: sticky; top: var(--header-h, 0px); z-index: 15;
+  padding: 12px 24px;
+  background: var(--wash);
+}
+
+/* Back, in the tenant's own deep colour with the text reversed out.
+   --tenant-deep is set on .shell by App.tsx; the platform's deep otherwise. */
+.back-pill {
+  display: inline-block; white-space: nowrap;
+  padding: 9px 16px; border-radius: 999px;
+  background: var(--tenant-deep, var(--deep)); color: #fff;
+  font-size: 13px; font-weight: 500;
+}
+.back-pill:hover { text-decoration: none; }
 
 /* --- sign in ------------------------------------------------------------- */
 
@@ -134,8 +178,6 @@ main button:disabled { background: var(--line); color: var(--muted); }
 
 .inline { display: flex; gap: 8px; margin-top: 20px; }
 .inline input { flex: 1; }
-
-.back { display: inline-block; margin-bottom: 12px; font-size: 13px; }
 
 input[type="file"] {
   padding: 20px; border: 1px dashed var(--medium); border-radius: 4px;
@@ -825,10 +867,11 @@ a.add:hover { background: var(--paper); text-decoration: none; }
 
 /* --- the configuration bar ------------------------------------------------ */
 
-/* The working controls, held beneath the site header while the page scrolls
-   (UX-02). Its offset is the header's measured height, set on the element by
-   Configure.tsx as the memo reader's pinned head does. Above an open
-   section's row at 9, beneath the site header at 20 and the drawers at 30. */
+/* The working controls, held beneath the site header and the Back strip
+   while the page scrolls (UX-02). Its offset is their measured height, set on
+   the element by Configure.tsx as the memo reader's pinned head does. Above
+   an open section's row at 9, beneath the strip at 15, the site header at 20
+   and the drawers at 30. */
 .config-bar {
   position: sticky; z-index: 10;
   display: flex; align-items: center; gap: 12px;
@@ -840,14 +883,10 @@ a.add:hover { background: var(--paper); text-decoration: none; }
    the bar. */
 .config-bar.covered { box-shadow: none; }
 
-/* Back, in the tenant's own deep colour with the text reversed out.
-   --tenant-deep is set on .shell by App.tsx; the platform's deep otherwise. */
-.config-bar .back-pill {
-  white-space: nowrap; padding: 9px 16px; border-radius: 999px;
-  background: var(--tenant-deep, var(--deep)); color: #fff;
-  font-size: 13px; font-weight: 500;
-}
-.config-bar .back-pill:hover { text-decoration: none; }
+/* What Publish covers (UX-05). It takes the space that pushed Discard right,
+   so Discard and Publish stay together at the end. */
+.config-bar .live { margin-left: auto; white-space: nowrap; }
+.config-bar .live + .secondary { margin-left: 0; }
 
 .config-bar .parts { display: flex; gap: 18px; margin-left: 8px; }
 .config-bar .parts a {

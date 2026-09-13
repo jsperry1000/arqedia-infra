@@ -10,6 +10,7 @@ import {
   type Passage,
   type Template,
 } from "./api";
+import { useBackAction } from "./shell";
 
 /**
  * The engagement. Three states of a document are visible here:
@@ -31,6 +32,7 @@ export function EngagementView({ id, onBack, onMemo }: {
   onBack: () => void;
   onMemo: (memoId: number) => void;
 }) {
+  useBackAction(onBack);
   const [pending, setPending] = useState<Pending[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [memos, setMemos] = useState<MemoRef[]>([]);
@@ -297,7 +299,6 @@ export function EngagementView({ id, onBack, onMemo }: {
 
   return (
     <div>
-      <a onClick={onBack} className="back">Back</a>
       <h2>{id}</h2>
 
       <input type="file" multiple onChange={(e) => upload(e.target.files)} />
