@@ -3,12 +3,12 @@ import { SettingsView } from "./Settings";
 import { MemoView } from "./Memo";
 import { EngagementView } from "./Review";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { BackContext, BackPill } from "./shell";
+import { BackContext, BackPill, handReport } from "./shell";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Amplify } from "aws-amplify";
 import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
 import { config } from "./config";
-import { api, type Engagement, type ProposalRef } from "./api";
+import { api, type Engagement } from "./api";
 
 Amplify.configure({
   Auth: {
@@ -121,6 +121,17 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
   );
 }
 
+// --- the tenant's colours --------------------------------------------------
+
+/** The tenant's light where it has set none: its mid taken most of the way to
+ *  white, as the rendered memorandum does (style.palette_for, LIGHT_MIX). */
+function towardsWhite(hex: string) {
+  const n = parseInt(hex.slice(1), 16);
+  const mix = (c: number) =>
+    Math.round(c + (255 - c) * 0.7).toString(16).padStart(2, "0");
+  return "#" + mix(n >> 16) + mix((n >> 8) & 255) + mix(n & 255);
+}
+
 // --- choosing a report -----------------------------------------------------
 
 /** A draft to work in. A tenant with nothing configured starts from our pack,
@@ -150,15 +161,11 @@ function ReportChooser({ onClose, onOpened }: {
   onOpened: (to: string, state?: unknown) => void;
 }) {
   const box = useRef<HTMLDivElement | null>(null);
-  const [listing, setListing] = useState(false);
+  const picker = useRef<HTMLInputElement | null>(null);
+  // What the panel shows: the three options, or the reports to open. A choice
+  // replaces the options rather than opening a list beneath them (UX-17).
+  const [view, setView] = useState<"options" | "reports">("options");
   const [reports, setReports] = useState<{ key: string; label: string }[] | null>(null);
-
-  // Reports read and not yet accepted, so one put down can be carried on with
-  // from here. Refused to anyone but an administrator, who then sees none.
-  const [started, setStarted] = useState<ProposalRef[]>([]);
-  useEffect(() => {
-    api.proposals().then((r) => setStarted(r.proposals)).catch(() => setStarted([]));
-  }, []);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
@@ -192,12 +199,11 @@ function ReportChooser({ onClose, onOpened }: {
     }
   }
 
-  // The reports in the draft where one is open, since that is what will be
-  // edited; otherwise the live revision's. Read once, when first asked for.
+  // The memoranda in the draft where one is open, since that is what will be
+  // edited; otherwise the live revision's. One row each, read once.
   async function list() {
-    const next = !listing;
-    setListing(next);
-    if (!next || reports !== null) return;
+    setView("reports");
+    if (reports !== null) return;
     try {
       const state = await api.configState();
       const found: { key: string; label: string }[] = state.draft
@@ -231,43 +237,42 @@ function ReportChooser({ onClose, onOpened }: {
     onOpened(`/configure?report=${key}&part=sections`);
   });
 
-  // The proposer: a report the tenant already writes, read for its shape.
-  const fromReport = () => run("Opening", async () => {
+  // A report of the person's own: the file picker, and nothing else. The file
+  // goes to the proposer, which reads it once it has the draft. A report put
+  // down part way is resumed on the proposer's own screen, where it was left.
+  const fromReport = (file: File) => run("Opening", async () => {
     await ensureDraft();
+    handReport(file);
     onOpened("/configure", { propose: true });
-  });
-
-  // One already started, opened where it was left, decisions and all. The
-  // proposal routes need an open draft, as starting one does.
-  const resume = (key: string) => run("Opening", async () => {
-    await ensureDraft();
-    onOpened("/configure", { propose: true, resume: key });
   });
 
   return (
     <div className="chooser" ref={box}>
-      <a onClick={list}>
-        Open an existing report {listing ? "▾" : "▸"}
-      </a>
-      {listing && (
-        <div className="chooser-list">
-          {reports === null && <span className="muted">Loading&hellip;</span>}
-          {reports?.length === 0 && <span className="muted">No reports yet.</span>}
-          {reports?.map((r) => (
-            <a key={r.key} onClick={() => open(r.key)}>{r.label}</a>
-          ))}
-        </div>
-      )}
-      <a onClick={scratch}>Create from scratch</a>
-      <a onClick={fromReport}>Create from a report you already write</a>
-      {started.length > 0 && (
-        <div className="chooser-list">
-          {started.map((p) => (
-            <a key={p.key} onClick={() => resume(p.key)}>
-              Resume {p.memorandum_label || p.filename}
-            </a>
-          ))}
-        </div>
+      {view === "options" ? (
+        <>
+          <a onClick={list}>Open an existing report</a>
+          <a onClick={scratch}>Create from scratch</a>
+          <a onClick={() => picker.current?.click()}>
+            Create from a report you already write
+          </a>
+          <input ref={picker} type="file" accept=".pdf,.docx" hidden
+                 onChange={(e) => {
+                   const file = e.target.files?.[0];
+                   e.target.value = "";
+                   if (file) fromReport(file);
+                 }} />
+        </>
+      ) : (
+        <>
+          <a onClick={() => setView("options")}>&lsaquo; All options</a>
+          <div className="chooser-list">
+            {reports === null && <span className="muted">Loading&hellip;</span>}
+            {reports?.length === 0 && <span className="muted">No reports yet.</span>}
+            {reports?.map((r) => (
+              <a key={r.key} onClick={() => open(r.key)}>{r.label}</a>
+            ))}
+          </div>
+        </>
       )}
       {busy && <p className="busy small">{busy}&hellip;</p>}
       {error && <p className="error small">{error}</p>}
@@ -336,12 +341,17 @@ export default function App() {
 
   useEffect(() => { check(); }, []);
 
-  // The tenant's own deep colour, for Back on the configuration screen. The
-  // platform's when the tenant has set none, or the settings cannot be read.
-  const [brandDeep, setBrandDeep] = useState<string | null>(null);
+  // The tenant's own colours, for the controls that wear them: Back in its
+  // deep, a pill in its light, a rule in its mid. The platform's where the
+  // tenant has set none, or the settings cannot be read.
+  const [brand, setBrand] = useState<{ deep?: string; mid?: string; light?: string }>({});
   useEffect(() => {
     if (!signedIn) return;
-    api.settings().then((s) => setBrandDeep(s.deep)).catch(() => setBrandDeep(null));
+    api.settings().then((s) => setBrand({
+      deep: s.deep ?? undefined,
+      mid: s.mid ?? undefined,
+      light: s.light ?? (s.mid ? towardsWhite(s.mid) : undefined),
+    })).catch(() => setBrand({}));
   }, [signedIn]);
 
   // The rail sits beneath the header and runs to the foot of the window, so it
@@ -383,7 +393,9 @@ export default function App() {
 
   const shellVars = {
     "--header-h": headerHeight + "px",
-    ...(brandDeep ? { "--tenant-deep": brandDeep } : {}),
+    ...(brand.deep ? { "--tenant-deep": brand.deep } : {}),
+    ...(brand.mid ? { "--tenant-mid": brand.mid } : {}),
+    ...(brand.light ? { "--tenant-light": brand.light } : {}),
   } as React.CSSProperties;
 
   const opened = (to: string, state?: unknown) => {

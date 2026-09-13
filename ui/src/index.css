@@ -10,6 +10,9 @@
   --line:   #e2e8f0;
   --paper:  #ffffff;
   --wash:   #f7fafd;
+
+  /* One radius for every pill (UX-06). */
+  --pill-radius: 8px;
 }
 
 * { box-sizing: border-box; }
@@ -133,7 +136,7 @@ main:has(.wide-page) { max-width: 1560px; }
    --tenant-deep is set on .shell by App.tsx; the platform's deep otherwise. */
 .back-pill {
   display: inline-block; white-space: nowrap;
-  padding: 9px 16px; border-radius: 999px;
+  padding: 9px 16px; border-radius: var(--pill-radius);
   background: var(--tenant-deep, var(--deep)); color: #fff;
   font-size: 13px; font-weight: 500;
 }
@@ -489,7 +492,7 @@ p.warn { color: #b45309; }
   vertical-align: super;
   margin-left: 2px; padding: 2px 5px;
   color: var(--medium); background: var(--light);
-  border: 0; border-radius: 8px; cursor: pointer;
+  border: 0; border-radius: var(--pill-radius); cursor: pointer;
 }
 .cite-mark:hover { background: var(--medium); color: var(--paper); }
 .cite-mark.shown { vertical-align: baseline; margin-left: 4px; }
@@ -533,7 +536,7 @@ p.warn { color: #b45309; }
   font-size: 10px; font-weight: 600; line-height: 1;
   margin: 0 2px; padding: 2px 5px;
   color: var(--medium); background: var(--light);
-  border-radius: 8px; user-select: none; cursor: default;
+  border-radius: var(--pill-radius); user-select: none; cursor: default;
 }
 
 .list-wrap { position: relative; }
@@ -915,3 +918,38 @@ a.add:hover { background: var(--paper); text-decoration: none; }
   background: var(--paper);
 }
 .review-head.pinned.stuck { box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12); }
+
+/* --- surfaces ------------------------------------------------------------- */
+
+/* A section of the memorandum as a row: its position, its title, and its
+   Fields and Edit pills on one line (UX-06). The configuration screen's own
+   class, so the proposer's cards, which share .review, are unchanged. */
+.review.section-row { border-radius: var(--pill-radius); }
+
+/* A pill: the tenant's light colour with its deep text. Sized as the memo
+   reader's block tools are. */
+.pill {
+  display: inline-block; white-space: nowrap;
+  padding: 3px 7px; border-radius: var(--pill-radius);
+  background: var(--tenant-light, var(--light));
+  color: var(--tenant-deep, var(--deep));
+  font-size: 12px; font-weight: 500;
+}
+.pill:hover { text-decoration: none; }
+
+/* An open section's facts: a subsection, in the tenant's light colour. The
+   proposer's lists share .binder and are unchanged. */
+.binder.section-fields {
+  padding: 14px 16px;
+  border-top: 0; border-radius: var(--pill-radius);
+  background: var(--tenant-light, var(--light));
+}
+
+/* What a section already renders, above what it could (UX-08). */
+.bound-rule {
+  border: 0; border-top: 1px solid var(--tenant-mid, var(--medium));
+  margin: 12px 0;
+}
+
+/* How a section should read grows with what is written (UX-09). */
+.form textarea.grows { resize: none; }

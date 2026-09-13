@@ -179,6 +179,7 @@ export type Settings = {
   deep: string | null;
   mid: string | null;
   highlight: string | null;
+  light: string | null;
 };
 
 export type ConfigSection = {
@@ -498,7 +499,7 @@ export const api = {
 
   settings: (): Promise<Settings> => call("/settings"),
 
-  saveSettings: (body: Partial<Record<"deep" | "mid" | "highlight" | "logo_key", string | null>>):
+  saveSettings: (body: Partial<Record<"deep" | "mid" | "highlight" | "light" | "logo_key", string | null>>):
     Promise<Settings> =>
     call("/settings", { method: "POST", body: JSON.stringify(body) }),
 

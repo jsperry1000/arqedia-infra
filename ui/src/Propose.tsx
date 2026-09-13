@@ -11,6 +11,7 @@ import {
   slugKey, fieldKey, ColumnEditor, columnsReady, columnsForSave,
   ReadModeControls, RECOGNISE_NOTE,
 } from "./config-parts";
+import { takeReport } from "./shell";
 
 /**
  * Create your own memorandum from a report you already write.
@@ -100,12 +101,9 @@ type TypeChoice = {
   acknowledged: boolean;
 };
 
-export function ProposeView({ onDone, onCancel, resume }: {
+export function ProposeView({ onDone, onCancel }: {
   onDone: (templateKey: string) => void;
   onCancel: () => void;
-  /** A proposal already started, to carry on with on arrival - as choosing
-   *  it from the list below does. */
-  resume?: string;
 }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [proposal, setProposal] = useState<Proposal | null>(null);
@@ -304,8 +302,6 @@ export function ProposeView({ onDone, onCancel, resume }: {
   useEffect(() => {
     api.draft().then(setDraft).catch((e) => setError(message(e)));
     api.proposals().then((r) => setWaiting(r.proposals)).catch(() => {});
-    // Opened from the rail's chooser to carry on with one already started.
-    if (resume) reopen(resume);
     // A change made in the last second is written when the screen goes away,
     // whether that is a click on Engagements or the tab being closed.
     const flush = () => {
@@ -322,6 +318,19 @@ export function ProposeView({ onDone, onCancel, resume }: {
       flush();
     };
   }, []);
+
+  // A report chosen in the rail's chooser, read as soon as the draft is here
+  // and not before: what the reader proposes is matched against the facts
+  // the tenant already holds, and without the draft every fact would be
+  // offered as new with no match suggested.
+  const chosen = useRef(false);
+  useEffect(() => {
+    if (!draft || chosen.current) return;
+    chosen.current = true;
+    const file = takeReport();
+    if (file) send(file);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft]);
 
   // Escape closes the fact drawer, as it closes every drawer in Configure.
   useEffect(() => {

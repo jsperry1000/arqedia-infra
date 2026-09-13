@@ -11,16 +11,17 @@ import { useBackAction } from "./shell";
  * hiding it.
  */
 
-const PLATFORM = { deep: "#002561", mid: "#278ACA", highlight: "#FFDD00" };
+const PLATFORM = { deep: "#002561", mid: "#278ACA", highlight: "#FFDD00", light: "#BEDBEF" };
 
 const SWATCHES: {
-  key: "deep" | "mid" | "highlight";
+  key: "deep" | "mid" | "highlight" | "light";
   label: string;
   note: string;
 }[] = [
   { key: "deep", label: "Deep", note: "Masthead, headings and table headers" },
   { key: "mid", label: "Mid", note: "Citations and the subject line" },
   { key: "highlight", label: "Highlight", note: "The rule and gap markers" },
+  { key: "light", label: "Light", note: "The fourth-level heading pill" },
 ];
 
 export function SettingsView({ onBack }: { onBack: () => void }) {
@@ -41,7 +42,7 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
     return text;
   }
 
-  async function setColour(key: "deep" | "mid" | "highlight", value: string | null) {
+  async function setColour(key: "deep" | "mid" | "highlight" | "light", value: string | null) {
     if (!settings) return;
     setSettings({ ...settings, [key]: value });
     setError("");

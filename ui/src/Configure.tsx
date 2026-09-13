@@ -301,6 +301,28 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
   });
   const key = s.key ?? slugKey(s.title);
 
+  // How it should read grows with what is written, to a ceiling of 25 lines,
+  // and then scrolls inside itself (UX-09).
+  const prompt = useRef<HTMLTextAreaElement | null>(null);
+  useLayoutEffect(() => {
+    const box = prompt.current;
+    if (!box) return;
+    const fit = () => {
+      const css = getComputedStyle(box);
+      const line = parseFloat(css.lineHeight) || parseFloat(css.fontSize) * 1.55;
+      const edges = parseFloat(css.borderTopWidth) + parseFloat(css.borderBottomWidth);
+      const ceiling = line * 25 + parseFloat(css.paddingTop)
+        + parseFloat(css.paddingBottom) + edges;
+      box.style.height = "auto";
+      const wanted = box.scrollHeight + edges;
+      box.style.height = Math.min(wanted, ceiling) + "px";
+      box.style.overflowY = wanted > ceiling ? "auto" : "hidden";
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [s.prompt]);
+
   const dirty = s.numeral !== (initial?.numeral ?? "")
     || s.title !== (initial?.title ?? "")
     || s.kind !== (initial?.kind ?? "extract")
@@ -353,7 +375,7 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
           shaped what was EXTRACTED and never reached the writer. */}
       <label className="row">
         <span>How it should read</span>
-        <textarea rows={4} value={s.prompt}
+        <textarea rows={4} value={s.prompt} ref={prompt} className="grows"
           onChange={(e) => setS({ ...s, prompt: e.target.value })}
           placeholder={s.kind === "composed"
             ? "What this section should say, and what it must not."
@@ -382,6 +404,21 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
   );
 }
 
+
+/**
+ * Every delete asks first (UX-10), and says what the deletion reaches.
+ *
+ * Nothing in the API computes what else refers to a thing - each delete
+ * returns only the key it removed - so the question carries no count of
+ * references. It says what the editor does on delete, and that the draft is
+ * all it touches.
+ */
+const DRAFT_ONLY = "This changes the draft only. Nothing changes until you "
+  + "publish, and no document already filed is touched.";
+
+function confirmDelete(what: string, reaches: string) {
+  return window.confirm(`Delete ${what}? ${reaches}\n\n${DRAFT_ONLY}`);
+}
 
 // The parts of the configuration screen, in the order the bar offers them.
 // How documents group sits on the documents tab rather than a tab of its own.
@@ -434,13 +471,11 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     templates.find((t) => t.key === key)?.label ?? key;
 
   // Reading a report of the client's own. Begun from the rail's chooser as
-  // well as from inside the editor; the chooser hands it over in the
-  // location's state, so the screen opens straight into it - and, where the
-  // chooser offered one already started, into that one.
+  // well as from inside the editor; the chooser says so in the location's
+  // state, so the screen opens straight into it with the file chosen there.
   const location = useLocation();
-  const arrived = location.state as { propose?: boolean; resume?: string } | null;
+  const arrived = location.state as { propose?: boolean } | null;
   const [proposing, setProposing] = useState(Boolean(arrived?.propose));
-  const [resumeKey] = useState(arrived?.resume);
   // Leaving clears that state too, so a refresh does not reopen it.
   const leaveProposer = () => { setProposing(false); place({}); };
 
@@ -498,6 +533,9 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // Renaming a memorandum. Held apart from the label being shown so an
   // abandoned edit leaves the name alone.
   const [renaming, setRenaming] = useState<string | null>(null);
+  // Deleting a memorandum, confirmed by typing its name.
+  const [deletingMemo, setDeletingMemo] = useState(false);
+  const [typedName, setTypedName] = useState("");
   const [openField, setOpenField] = useState<string | null>(null);
   const [fieldFilter, setFieldFilter] = useState("");
 
@@ -741,7 +779,6 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   if (proposing) {
     return (
       <ProposeView
-        resume={resumeKey}
         onCancel={leaveProposer}
         onDone={(templateKey) => {
           setProposing(false);
@@ -865,6 +902,29 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     );
   }
 
+  /** One fact on a section's list, ticked to bind it. The tick and the name
+   *  do different things: wrapping both in one label meant clicking a name to
+   *  read what the fact is silently bound it. */
+  const bindRow = (s: ConfigSection, f: ConfigField) => {
+    const on = s.fields.includes(f.key);
+    return (
+      <div className="bind" key={f.key}>
+        <input type="checkbox" checked={on}
+          onChange={() => {
+            const next = on
+              ? s.fields.filter((x) => x !== f.key)
+              : [...s.fields, f.key];
+            act("Saving",
+                () => api.setSectionFields(s.template_key, s.key, next));
+          }} />{" "}
+        <a onClick={() => setEditField(f.key)}>{f.label}</a>
+        {f.is_group && (
+          <span className="muted small"> (table)</span>
+        )}
+      </div>
+    );
+  };
+
   // --- editing --------------------------------------------------------------
 
   return (
@@ -971,15 +1031,21 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             Duplicate
           </a>
         )}
-        {templates.length > 1 && current && (
-          <a className="danger small" onClick={() =>
-            act("Deleting", async () => {
-              await api.deleteTemplate(current.key);
-              setTemplate("");
-            })}>
+        {/* Asked, with the name typed (UX-10). The last memorandum cannot go
+            - the API refuses it - so the control says so rather than
+            offering a delete that fails. */}
+        {current && (templates.length > 1 ? (
+          <a className="danger small" onClick={() => {
+            setTypedName("");
+            setDeletingMemo(true);
+          }}>
             Delete this memorandum
           </a>
-        )}
+        ) : (
+          <span className="muted small">
+            The only memorandum &mdash; it cannot be deleted
+          </span>
+        ))}
       </div>
 
       {current && renaming !== null && (
@@ -1008,6 +1074,44 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         written. A document is read once whichever memoranda you write from it.
       </p>
 
+      {deletingMemo && current && (() => {
+        const name = current.label || current.key;
+        const count = sections.length;
+        const close = () => setDeletingMemo(false);
+        return (
+          <div className="panel-backdrop" onClick={close}>
+            <div className="panel narrow" onClick={(e) => e.stopPropagation()}
+                 onKeyDown={(e) => { if (e.key === "Escape") close(); }}>
+              <a className="panel-close" onClick={close}>Close</a>
+              <div className="form">
+                <h4>Delete {name}</h4>
+                <p className="muted small">
+                  {count} {count === 1 ? "section goes" : "sections go"} with
+                  it, and which facts each renders. The facts themselves stay:
+                  they belong to you, not to one memorandum. {DRAFT_ONLY}
+                </p>
+                <label className="row">
+                  <span>Type {name} to confirm</span>
+                  <input value={typedName} autoFocus
+                         onChange={(e) => setTypedName(e.target.value)} />
+                </label>
+                <div className="form-actions">
+                  <button disabled={!!busy || typedName.trim() !== name}
+                          onClick={() => act("Deleting", async () => {
+                            await api.deleteTemplate(current.key);
+                            setDeletingMemo(false);
+                            setTemplate("");
+                          })}>
+                    Delete this memorandum
+                  </button>
+                  <a className="secondary" onClick={close}>Cancel</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {editSection !== null && (
         <SectionForm
           initial={sections.find((x) => x.key === editSection)}
@@ -1017,15 +1121,23 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                                     template_key: current?.key });
             setEditSection(null);
           })}
-          onDelete={editSection ? () => act("Deleting", async () => {
-            await api.deleteSection(current?.key ?? "", editSection);
-            setEditSection(null);
-          }) : undefined}
+          onDelete={editSection ? () => {
+            const doomed = sections.find((x) => x.key === editSection);
+            if (!confirmDelete(
+              `the section "${doomed ? `${doomed.numeral}. ${doomed.title}` : editSection}"`
+                + ` from ${current?.label || current?.key}`,
+              "Which facts it renders goes with it; the facts themselves stay."))
+              return;
+            act("Deleting", async () => {
+              await api.deleteSection(current?.key ?? "", editSection);
+              setEditSection(null);
+            });
+          } : undefined}
         />
       )}
 
       {sections.map((s, i) => (
-        <div className="review" key={s.key}>
+        <div className="review section-row" key={s.key}>
           {/* Open, its heading and Close are held beneath the bar while its
               field list scrolls, so closing is always one click. */}
           <div className={"review-head" + (openSection === s.key
@@ -1052,18 +1164,18 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             </label>
             <span className="muted small">
               {s.kind === "composed" ? "written by the model" : "assembled"}
-              {" \u00b7 "}{s.fields.length} fields
             </span>
-            <a className="small" onClick={() => {
+            {/* Pills (UX-06). The count lives on Fields itself. */}
+            <a className="pill" onClick={() => {
               // The search and the open group belong to whichever section is
               // open, so both are cleared as it changes.
               setSectionSearch("");
               setOpenFactGroup(null);
               setOpenSection(openSection === s.key ? null : s.key);
             }}>
-              {openSection === s.key ? "Close" : "Fields"}
+              {openSection === s.key ? "Close" : `Fields · ${s.fields.length}`}
             </a>
-            <a className="small" onClick={() => {
+            <a className="pill" onClick={() => {
               // One thing open at a time. Editing a section with
               // another section's field list open left both on screen
               // and it was not obvious which the buttons belonged to.
@@ -1073,12 +1185,38 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           </div>
 
           {openSection === s.key && (
-            <div className="binder" ref={openList}>
+            // A subsection, in the tenant's light colour (UX-06).
+            <div className="binder section-fields" ref={openList}>
               <p className="muted small">
                 Which facts this section renders. A section binding a field
                 that no longer exists would report it absent whether or not it
                 was found, so that is refused here rather than at publish.
               </p>
+
+              {/* What this section already renders, at the top and grouped as
+                  the list below is, then a rule, then everything it could
+                  (UX-08). Unticking one moves it down. */}
+              {s.fields.length > 0 && (
+                <>
+                  <div className="binder-groups">
+                    {byGroup.map((g) => {
+                      const fields = g.fields.filter(
+                        (f) => s.fields.includes(f.key));
+                      if (fields.length === 0) return null;
+                      return (
+                        <div key={g.key}>
+                          <h5>
+                            {g.label}{" "}
+                            <span className="muted">{fields.length}</span>
+                          </h5>
+                          {fields.map((f) => bindRow(s, f))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <hr className="bound-rule" />
+                </>
+              )}
 
               <div className="filters">
                 <input placeholder="Search facts" value={sectionSearch}
@@ -1093,50 +1231,22 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 {byGroup.map((g) => {
                   // Searching narrows what is shown and never what is bound.
                   const needle = sectionSearch.trim().toLowerCase();
-                  const fields = needle
-                    ? g.fields.filter((f) =>
-                        f.label.toLowerCase().includes(needle))
-                    : g.fields;
+                  const fields = g.fields.filter((f) =>
+                    !s.fields.includes(f.key)
+                    && (!needle || f.label.toLowerCase().includes(needle)));
                   if (fields.length === 0) return null;
 
                   // EVERYTHING OPEN. This is where facts are bound to a
                   // section, and a person doing that needs to see the whole
                   // vocabulary at once. Collapsing it here was a mistake -
                   // the browsing lists collapse, the working list does not.
-                  const chosen = fields.filter(
-                    (f) => s.fields.includes(f.key)).length;
-
                   return (
                   <div key={g.key}>
                     <h5>
                       {g.label}{" "}
-                      <span className="muted">
-                        {chosen > 0 ? chosen + " of " : ""}{fields.length}
-                      </span>
+                      <span className="muted">{fields.length}</span>
                     </h5>
-                    {fields.map((f) => {
-                      const on = s.fields.includes(f.key);
-                      return (
-                        <div className="bind" key={f.key}>
-                          {/* The tick and the name do different things.
-                              Wrapping both in one label meant clicking a name
-                              to read what the fact is silently bound it. */}
-                          <input type="checkbox" checked={on}
-                            onChange={() => {
-                              const next = on
-                                ? s.fields.filter((x) => x !== f.key)
-                                : [...s.fields, f.key];
-                              act("Saving",
-                                  () => api.setSectionFields(
-                                    s.template_key, s.key, next));
-                            }} />{" "}
-                          <a onClick={() => setEditField(f.key)}>{f.label}</a>
-                          {f.is_group && (
-                            <span className="muted small"> (table)</span>
-                          )}
-                        </div>
-                      );
-                    })}
+                    {fields.map((f) => bindRow(s, f))}
                   </div>
                   );
                 })}
@@ -1292,10 +1402,17 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             await api.saveDocumentType(body);
             setEditType(null);
           })}
-          onDelete={editType ? () => act("Deleting", async () => {
-            await api.deleteDocumentType(editType);
-            setEditType(null);
-          }) : undefined}
+          onDelete={editType ? () => {
+            const doomed = draft.document_types.find((x) => x.key === editType);
+            if (!confirmDelete(
+              `the document type "${doomed?.label ?? editType}"`,
+              "Facts looked for in it are no longer looked for there."))
+              return;
+            act("Deleting", async () => {
+              await api.deleteDocumentType(editType);
+              setEditType(null);
+            });
+          } : undefined}
         />
       )}
 
@@ -1442,10 +1559,17 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             await api.saveCategory(body);
             setEditCategory(null);
           })}
-          onDelete={editCategory ? () => act("Deleting", async () => {
-            await api.deleteCategory(editCategory);
-            setEditCategory(null);
-          }) : undefined}
+          onDelete={editCategory ? () => {
+            const doomed = draft?.categories.find((x) => x.key === editCategory);
+            if (!confirmDelete(
+              `the group "${doomed?.label ?? editCategory}"`,
+              "Its document types stay, without a group."))
+              return;
+            act("Deleting", async () => {
+              await api.deleteCategory(editCategory);
+              setEditCategory(null);
+            });
+          } : undefined}
         />
       )}
 
@@ -1552,10 +1676,17 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 await api.saveField(body as never);
                 setEditField(null);
               })}
-              onDelete={editField ? () => act("Deleting", async () => {
-                await api.deleteField(editField);
-                setEditField(null);
-              }) : undefined}
+              onDelete={editField ? () => {
+                if (!confirmDelete(
+                  `the fact "${fieldsByKey[editField] ?? editField}"`,
+                  "It is taken out of every section that renders it, in "
+                    + "every memorandum."))
+                  return;
+                act("Deleting", async () => {
+                  await api.deleteField(editField);
+                  setEditField(null);
+                });
+              } : undefined}
             />
           </div>
         </div>

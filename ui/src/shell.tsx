@@ -50,3 +50,18 @@ export function usePinTop() {
   }, []);
   return top;
 }
+
+/** A report file chosen in the rail's chooser, handed to the proposer once.
+ *  Held here rather than in the location's state, so a later visit to the
+ *  same history entry cannot send the same file to be read a second time. */
+let chosenReport: File | null = null;
+
+export function handReport(file: File) {
+  chosenReport = file;
+}
+
+export function takeReport() {
+  const file = chosenReport;
+  chosenReport = null;
+  return file;
+}
