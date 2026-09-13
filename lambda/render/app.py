@@ -162,6 +162,12 @@ _CITE_COLOUR = "#278ACA"
 # The same document cited twice takes the same number, or a memo citing one
 # file thirty times ends with thirty identical entries.
 #
+# A RUN of citations takes ONE number, not one each. Composition cites every
+# document that states a fact, so a single sentence routinely ends in seven
+# references, and seven superscripts in a row are no more readable than the
+# seven filenames they replaced. One mark, and the entry it points at lists
+# every source behind that statement.
+#
 # Module-level for the same reason as the colour: _inline is called from a
 # dozen places and threading a register through all of them would obscure
 # what it does. Reset at the start of every render.
@@ -188,9 +194,12 @@ def _reference_section(styles, palette):
     # from model text, which is why it was left unguarded - but it interpolates
     # a citation, and a malformed citation registered as one entry breaks it
     # exactly as it breaks the body.
+    # An entry carrying several sources is one statement's evidence, and reads
+    # as a list rather than as a run-on line.
     for number, text in enumerate(_CITATIONS, start=1):
+        shown = text.replace("; ", "]  [")
         out.append(_safe(
-            '<super><font size="6.5">%d</font></super>  [%s]' % (number, text),
+            '<super><font size="6.5">%d</font></super>  [%s]' % (number, shown),
             text, styles["citation"]))
 
     return out
@@ -207,13 +216,86 @@ def _reset_citations():
     _CITATION_INDEX.clear()
 
 
-def _cite_number(text):
-    """The number for one citation, assigning a new one if unseen."""
-    key = " ".join(text.split())
+def _cite_number(bodies):
+    """The number for one run of citations, assigning a new one if unseen.
+
+    A run is keyed by all of its sources together, so the same statement cited
+    from the same four documents anywhere in the memo takes one number, and a
+    document cited alone elsewhere takes its own."""
+    if isinstance(bodies, str):
+        bodies = [bodies]
+    key = "; ".join(" ".join(b.split()) for b in bodies)
     if key not in _CITATION_INDEX:
         _CITATIONS.append(key)
         _CITATION_INDEX[key] = len(_CITATIONS)
     return _CITATION_INDEX[key]
+
+
+def _is_citation(body):
+    """A citation, rather than emphasis or a Sources line.
+
+    An extracted value carrying its own italics - a French term from a trade
+    register, a document title - arrives looking exactly like a citation, and
+    numbering it takes the word out of the sentence and adds a reference to
+    something that is not a document.
+
+    A "Sources:" line is dropped entirely: every citation it lists is already
+    numbered inline and collected at the end."""
+    if re.match(r"^sources?\s*:", body, re.I):
+        return False
+    return bool(_CITATION_FILE.search(body))
+
+
+def _number_citations(text, pattern):
+    """Citations to superscript numbers, a run of them to a single number.
+
+    Adjacent citations - separated by nothing but whitespace - support one
+    statement and are marked once. Anything between them, even a full stop,
+    ends the run: two sentences each carrying a reference are two marks."""
+    matches = list(pattern.finditer(text))
+    if not matches:
+        return text
+
+    out = []
+    last = 0
+    i = 0
+    while i < len(matches):
+        m = matches[i]
+        body = m.group(1).strip()
+        out.append(text[last:m.start()])
+
+        if re.match(r"^sources?\s*:", body, re.I):
+            last = m.end()
+            i += 1
+            continue
+
+        if not _is_citation(body):
+            out.append("<i>" + body + "</i>")
+            last = m.end()
+            i += 1
+            continue
+
+        bodies = [body]
+        end = m.end()
+        j = i + 1
+        while j < len(matches):
+            following = matches[j]
+            if text[end:following.start()].strip() != "":
+                break
+            next_body = following.group(1).strip()
+            if not _is_citation(next_body):
+                break
+            bodies.append(next_body)
+            end = following.end()
+            j += 1
+
+        out.append('<super><font size="6.5" color="%s">%d</font></super>'
+                   % (_CITE_COLOUR, _cite_number(bodies)))
+        last = end
+        i = j
+
+    out.append(text[last:])
+    return "".join(out)
 
 
 def _set_cite_colour(palette):
@@ -239,25 +321,8 @@ def _inline(text):
     # superscript number and the full reference is collected at the end. The
     # browser keeps the bracketed form, where a reader IS checking sources
     # while reviewing and editing - different readers, different surfaces.
-    #
-    # A "Sources:" line is dropped entirely: every citation it lists is
-    # already numbered inline and collected at the end.
-    def numbered(m):
-        body = m.group(1).strip()
-        if re.match(r"^sources?\s*:", body, re.I):
-            return ""
-        # Emphasis, not a citation. An extracted value carrying its own
-        # italics - a French term from a trade register, a document title -
-        # arrives here looking exactly like a citation, and numbering it takes
-        # the word out of the sentence and adds a reference to something that
-        # is not a document.
-        if not _CITATION_FILE.search(body):
-            return "<i>" + body + "</i>"
-        return '<super><font size="6.5" color="%s">%d</font></super>' % (
-            _CITE_COLOUR, _cite_number(body))
-
-    text = _ITALIC.sub(numbered, text)
-    text = _ITALIC_U.sub(numbered, text)
+    text = _number_citations(text, _ITALIC)
+    text = _number_citations(text, _ITALIC_U)
 
     # Take back the space left where a citation stood before a stop.
     text = re.sub(r"[ ]{2,}", " ", text)
