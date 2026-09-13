@@ -11,7 +11,7 @@ import { useBackAction } from "./shell";
  * hiding it.
  */
 
-const PLATFORM = { deep: "#002561", mid: "#278ACA", highlight: "#FFDD00", light: "#BEDBEF" };
+const PLATFORM = { deep: "#002561", mid: "#278ACA", highlight: "#FFDD00", light: "#C7E4F8" };
 
 const SWATCHES: {
   key: "deep" | "mid" | "highlight" | "light";

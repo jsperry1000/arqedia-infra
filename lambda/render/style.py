@@ -50,6 +50,9 @@ DEFAULT_PALETTE = {
     "deep": "#002561",
     "mid": "#278ACA",
     "highlight": "#FFDD00",
+    # The same light the product's own screens use, so a tenant who has set
+    # nothing sees one pale blue on screen and on paper.
+    "light": "#C7E4F8",
 }
 
 INK = colors.HexColor("#0d1b2a")
@@ -66,24 +69,29 @@ def palette_for(tenant):
     """Four colours, falling back per colour rather than all-or-nothing - a
     tenant setting only its deep colour still gets a coherent page.
 
-    Light has no platform default of its own. Unset, it is the mid mixed
-    towards white, so a tenant who chose three colours still gets a light
-    that belongs to its palette rather than to ours - see BR-01."""
+    Light, where the tenant has not set it, is their own mid mixed towards
+    white, so a tenant who chose three colours still gets a light that
+    belongs to its palette rather than to ours - see BR-01. Only a tenant who
+    has set neither takes the platform light."""
     out = {}
+    own_mid = False
     for key in ("deep", "mid", "highlight"):
         value = (tenant or {}).get("brand_" + key)
         try:
             out[key] = colors.HexColor(value) if value else \
                 colors.HexColor(DEFAULT_PALETTE[key])
+            if key == "mid" and value:
+                own_mid = True
         except Exception:
             out[key] = colors.HexColor(DEFAULT_PALETTE[key])
 
+    fallback = _towards_white(out["mid"]) if own_mid else \
+        colors.HexColor(DEFAULT_PALETTE["light"])
     value = (tenant or {}).get("brand_light")
     try:
-        out["light"] = colors.HexColor(value) if value else \
-            _towards_white(out["mid"])
+        out["light"] = colors.HexColor(value) if value else fallback
     except Exception:
-        out["light"] = _towards_white(out["mid"])
+        out["light"] = fallback
     return out
 
 

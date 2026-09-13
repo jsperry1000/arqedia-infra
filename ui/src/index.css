@@ -11,8 +11,10 @@
   --paper:  #ffffff;
   --wash:   #f7fafd;
 
-  /* One radius for every pill (UX-06). */
+  /* Section rows, cards and their pills (UX-06). */
   --pill-radius: 8px;
+  /* The fully round pill, which Back alone wears. */
+  --pill-round: 999px;
 }
 
 * { box-sizing: border-box; }
@@ -136,7 +138,7 @@ main:has(.wide-page) { max-width: 1560px; }
    --tenant-deep is set on .shell by App.tsx; the platform's deep otherwise. */
 .back-pill {
   display: inline-block; white-space: nowrap;
-  padding: 9px 16px; border-radius: var(--pill-radius);
+  padding: 9px 16px; border-radius: var(--pill-round);
   background: var(--tenant-deep, var(--deep)); color: #fff;
   font-size: 13px; font-weight: 500;
 }

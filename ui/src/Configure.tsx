@@ -406,19 +406,26 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
 
 
 /**
- * Every delete asks first (UX-10), and says what the deletion reaches.
+ * Every delete asks first (UX-10), in a drawer rather than a browser dialog,
+ * and says what the deletion reaches.
  *
  * Nothing in the API computes what else refers to a thing - each delete
- * returns only the key it removed - so the question carries no count of
+ * returns only the key it removed - so the drawer carries no count of
  * references. It says what the editor does on delete, and that the draft is
  * all it touches.
  */
 const DRAFT_ONLY = "This changes the draft only. Nothing changes until you "
   + "publish, and no document already filed is touched.";
 
-function confirmDelete(what: string, reaches: string) {
-  return window.confirm(`Delete ${what}? ${reaches}\n\n${DRAFT_ONLY}`);
-}
+/** A deletion waiting to be confirmed. A name is typed only for a whole
+ *  memorandum. */
+type Deleting = {
+  title: string;
+  reaches: string;
+  action: string;
+  name?: string;
+  run: () => Promise<unknown>;
+};
 
 // The parts of the configuration screen, in the order the bar offers them.
 // How documents group sits on the documents tab rather than a tab of its own.
@@ -533,8 +540,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // Renaming a memorandum. Held apart from the label being shown so an
   // abandoned edit leaves the name alone.
   const [renaming, setRenaming] = useState<string | null>(null);
-  // Deleting a memorandum, confirmed by typing its name.
-  const [deletingMemo, setDeletingMemo] = useState(false);
+  // A deletion waiting to be confirmed, and the name typed for a memorandum.
+  const [deleting, setDeleting] = useState<Deleting | null>(null);
   const [typedName, setTypedName] = useState("");
   const [openField, setOpenField] = useState<string | null>(null);
   const [fieldFilter, setFieldFilter] = useState("");
@@ -1036,8 +1043,22 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             offering a delete that fails. */}
         {current && (templates.length > 1 ? (
           <a className="danger small" onClick={() => {
+            const name = current.label || current.key;
+            const count = sections.length;
             setTypedName("");
-            setDeletingMemo(true);
+            setDeleting({
+              title: `Delete ${name}`,
+              reaches: `${count} ${count === 1 ? "section goes" : "sections go"}`
+                + " with it, and which facts each renders. The facts"
+                + " themselves stay: they belong to you, not to one"
+                + " memorandum.",
+              action: "Delete this memorandum",
+              name,
+              run: async () => {
+                await api.deleteTemplate(current.key);
+                setTemplate("");
+              },
+            });
           }}>
             Delete this memorandum
           </a>
@@ -1074,44 +1095,6 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         written. A document is read once whichever memoranda you write from it.
       </p>
 
-      {deletingMemo && current && (() => {
-        const name = current.label || current.key;
-        const count = sections.length;
-        const close = () => setDeletingMemo(false);
-        return (
-          <div className="panel-backdrop" onClick={close}>
-            <div className="panel narrow" onClick={(e) => e.stopPropagation()}
-                 onKeyDown={(e) => { if (e.key === "Escape") close(); }}>
-              <a className="panel-close" onClick={close}>Close</a>
-              <div className="form">
-                <h4>Delete {name}</h4>
-                <p className="muted small">
-                  {count} {count === 1 ? "section goes" : "sections go"} with
-                  it, and which facts each renders. The facts themselves stay:
-                  they belong to you, not to one memorandum. {DRAFT_ONLY}
-                </p>
-                <label className="row">
-                  <span>Type {name} to confirm</span>
-                  <input value={typedName} autoFocus
-                         onChange={(e) => setTypedName(e.target.value)} />
-                </label>
-                <div className="form-actions">
-                  <button disabled={!!busy || typedName.trim() !== name}
-                          onClick={() => act("Deleting", async () => {
-                            await api.deleteTemplate(current.key);
-                            setDeletingMemo(false);
-                            setTemplate("");
-                          })}>
-                    Delete this memorandum
-                  </button>
-                  <a className="secondary" onClick={close}>Cancel</a>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
       {editSection !== null && (
         <SectionForm
           initial={sections.find((x) => x.key === editSection)}
@@ -1123,14 +1106,17 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           })}
           onDelete={editSection ? () => {
             const doomed = sections.find((x) => x.key === editSection);
-            if (!confirmDelete(
-              `the section "${doomed ? `${doomed.numeral}. ${doomed.title}` : editSection}"`
-                + ` from ${current?.label || current?.key}`,
-              "Which facts it renders goes with it; the facts themselves stay."))
-              return;
-            act("Deleting", async () => {
-              await api.deleteSection(current?.key ?? "", editSection);
-              setEditSection(null);
+            setDeleting({
+              title: "Delete the section "
+                + (doomed ? `${doomed.numeral}. ${doomed.title}` : editSection),
+              reaches: `It comes out of ${current?.label || current?.key},`
+                + " and which facts it renders goes with it. The facts"
+                + " themselves stay.",
+              action: "Delete this section",
+              run: async () => {
+                await api.deleteSection(current?.key ?? "", editSection);
+                setEditSection(null);
+              },
             });
           } : undefined}
         />
@@ -1404,13 +1390,15 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           })}
           onDelete={editType ? () => {
             const doomed = draft.document_types.find((x) => x.key === editType);
-            if (!confirmDelete(
-              `the document type "${doomed?.label ?? editType}"`,
-              "Facts looked for in it are no longer looked for there."))
-              return;
-            act("Deleting", async () => {
-              await api.deleteDocumentType(editType);
-              setEditType(null);
+            setDeleting({
+              title: `Delete the document type ${doomed?.label ?? editType}`,
+              reaches: "Facts looked for in it are no longer looked for"
+                + " there.",
+              action: "Delete this document type",
+              run: async () => {
+                await api.deleteDocumentType(editType);
+                setEditType(null);
+              },
             });
           } : undefined}
         />
@@ -1561,13 +1549,14 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           })}
           onDelete={editCategory ? () => {
             const doomed = draft?.categories.find((x) => x.key === editCategory);
-            if (!confirmDelete(
-              `the group "${doomed?.label ?? editCategory}"`,
-              "Its document types stay, without a group."))
-              return;
-            act("Deleting", async () => {
-              await api.deleteCategory(editCategory);
-              setEditCategory(null);
+            setDeleting({
+              title: `Delete the group ${doomed?.label ?? editCategory}`,
+              reaches: "Its document types stay, without a group.",
+              action: "Delete this group",
+              run: async () => {
+                await api.deleteCategory(editCategory);
+                setEditCategory(null);
+              },
             });
           } : undefined}
         />
@@ -1677,14 +1666,15 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 setEditField(null);
               })}
               onDelete={editField ? () => {
-                if (!confirmDelete(
-                  `the fact "${fieldsByKey[editField] ?? editField}"`,
-                  "It is taken out of every section that renders it, in "
-                    + "every memorandum."))
-                  return;
-                act("Deleting", async () => {
-                  await api.deleteField(editField);
-                  setEditField(null);
+                setDeleting({
+                  title: `Delete the fact ${fieldsByKey[editField] ?? editField}`,
+                  reaches: "It is taken out of every section that renders"
+                    + " it, in every memorandum.",
+                  action: "Delete this fact",
+                  run: async () => {
+                    await api.deleteField(editField);
+                    setEditField(null);
+                  },
                 });
               } : undefined}
             />
@@ -1735,6 +1725,48 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
               </div>
             ))}
           </aside>
+        </div>
+      )}
+
+      {/* A deletion, asked in a drawer (UX-10). LAST, so it stacks above the
+          drawer the delete was chosen from. The name is typed only for a
+          whole memorandum. */}
+      {deleting && (
+        <div className="panel-backdrop" onClick={() => setDeleting(null)}>
+          <div className="panel narrow" onClick={(e) => e.stopPropagation()}
+               onKeyDown={(e) => { if (e.key === "Escape") setDeleting(null); }}>
+            <a className="panel-close" onClick={() => setDeleting(null)}>
+              Close
+            </a>
+            <div className="form">
+              <h4>{deleting.title}</h4>
+              {error && <p className="error">{error}</p>}
+              <p className="muted small">
+                {deleting.reaches} {DRAFT_ONLY}
+              </p>
+              {deleting.name !== undefined && (
+                <label className="row">
+                  <span>Type {deleting.name} to confirm</span>
+                  <input value={typedName} autoFocus
+                         onChange={(e) => setTypedName(e.target.value)} />
+                </label>
+              )}
+              <div className="form-actions">
+                <button autoFocus={deleting.name === undefined}
+                  disabled={!!busy || (deleting.name !== undefined
+                    && typedName.trim() !== deleting.name)}
+                  onClick={() => act("Deleting", async () => {
+                    await deleting.run();
+                    setDeleting(null);
+                  })}>
+                  {deleting.action}
+                </button>
+                <a className="secondary" onClick={() => setDeleting(null)}>
+                  Cancel
+                </a>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
