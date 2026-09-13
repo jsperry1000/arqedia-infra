@@ -7,8 +7,8 @@ detail line, and a highlight rule closing it. Later pages carry a slim band
 with a running title.
 
 The palette is an argument, not a constant. A tenant on Business or Enterprise
-supplies three colours - deep, mid and highlight - and those drive every rule,
-band and heading. Base takes the platform default.
+supplies four colours - deep, mid, highlight and light - and those drive every
+rule, band and heading. Base takes the platform default.
 
 Built-in fonts only. Bundling a typeface would mean a licence per tenant and a
 larger layer for no gain a reader would notice; Helvetica renders identically
@@ -63,8 +63,12 @@ FOOTER_LINK = "https://arqedia.com"
 
 
 def palette_for(tenant):
-    """Three colours, falling back per colour rather than all-or-nothing - a
-    tenant setting only its deep colour still gets a coherent page."""
+    """Four colours, falling back per colour rather than all-or-nothing - a
+    tenant setting only its deep colour still gets a coherent page.
+
+    Light has no platform default of its own. Unset, it is the mid mixed
+    towards white, so a tenant who chose three colours still gets a light
+    that belongs to its palette rather than to ours - see BR-01."""
     out = {}
     for key in ("deep", "mid", "highlight"):
         value = (tenant or {}).get("brand_" + key)
@@ -73,7 +77,24 @@ def palette_for(tenant):
                 colors.HexColor(DEFAULT_PALETTE[key])
         except Exception:
             out[key] = colors.HexColor(DEFAULT_PALETTE[key])
+
+    value = (tenant or {}).get("brand_light")
+    try:
+        out["light"] = colors.HexColor(value) if value else \
+            _towards_white(out["mid"])
+    except Exception:
+        out["light"] = _towards_white(out["mid"])
     return out
+
+
+# How far the mid is taken towards white when a tenant has set no light.
+LIGHT_MIX = 0.7
+
+
+def _towards_white(colour):
+    return colors.Color(colour.red + (1 - colour.red) * LIGHT_MIX,
+                        colour.green + (1 - colour.green) * LIGHT_MIX,
+                        colour.blue + (1 - colour.blue) * LIGHT_MIX)
 
 
 def build_styles(palette):

@@ -1099,7 +1099,7 @@ def get_settings(tenant_id):
     result = _sql(
         """
         SELECT name, plan, brand_logo_key, brand_deep, brand_mid,
-               brand_highlight
+               brand_highlight, brand_light
         FROM tenant WHERE tenant_id = :t
         """,
         [_p("t", tenant_id)],
@@ -1132,6 +1132,7 @@ def get_settings(tenant_id):
         "deep": _col(r, 3),
         "mid": _col(r, 4),
         "highlight": _col(r, 5),
+        "light": _col(r, 6),
     }
 
 
@@ -1151,14 +1152,15 @@ def _require_branding(tenant_id, role):
 
 
 def update_settings(tenant_id, role, body):
-    """Set the three colours, or clear them. Clearing returns the tenant to
+    """Set the four colours, or clear them. Clearing returns the tenant to
     the platform palette rather than leaving a half-set page."""
     _require_branding(tenant_id, role)
 
     fields, params = [], [_p("t", tenant_id)]
     for key, column in (("deep", "brand_deep"),
                         ("mid", "brand_mid"),
-                        ("highlight", "brand_highlight")):
+                        ("highlight", "brand_highlight"),
+                        ("light", "brand_light")):
         if key not in body:
             continue
         value = (body.get(key) or "").strip() or None
