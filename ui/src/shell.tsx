@@ -51,17 +51,14 @@ export function usePinTop() {
   return top;
 }
 
-/** A report file chosen in the rail's chooser, handed to the proposer once.
- *  Held here rather than in the location's state, so a later visit to the
- *  same history entry cannot send the same file to be read a second time. */
-let chosenReport: File | null = null;
-
-export function handReport(file: File) {
-  chosenReport = file;
-}
-
-export function takeReport() {
-  const file = chosenReport;
-  chosenReport = null;
-  return file;
+/** The one working indicator (UX-12): what is running, named, over a moving
+ *  bar. Announced to a screen reader as it changes; the bar stands still
+ *  where the person has asked for less motion. */
+export function Working({ what }: { what: string }) {
+  return (
+    <div className="working" role="status" aria-live="polite">
+      <span>{what}&hellip;</span>
+      <span className="working-bar" aria-hidden="true" />
+    </div>
+  );
 }
