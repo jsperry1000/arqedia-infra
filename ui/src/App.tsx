@@ -3,6 +3,7 @@ import { SettingsView } from "./Settings";
 import { MemoView } from "./Memo";
 import { EngagementView } from "./Review";
 import { useEffect, useState } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Amplify } from "aws-amplify";
 import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
 import { config } from "./config";
@@ -119,19 +120,50 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
   );
 }
 
-// --- one engagement --------------------------------------------------------
+// --- routes ----------------------------------------------------------------
 
-// --- memo ------------------------------------------------------------------
+// Back is the browser's back, so a view returns to wherever it was opened
+// from. A view reached by a pasted link has nowhere in the app behind it, and
+// goes home rather than leaving the app.
+function useBack() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  return () => { if (location.key === "default") navigate("/"); else navigate(-1); };
+}
+
+function EngagementsRoute() {
+  const navigate = useNavigate();
+  return <Engagements onOpen={(id) => navigate(`/engagements/${encodeURIComponent(id)}`)} />;
+}
+
+function EngagementRoute() {
+  const { id = "" } = useParams();
+  const navigate = useNavigate();
+  const back = useBack();
+  return <EngagementView id={id} onBack={back} onMemo={(memoId) => navigate(`/memos/${memoId}`)} />;
+}
+
+function MemoRoute() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const back = useBack();
+  return <MemoView memoId={Number(id)} onBack={back} onOpen={(memoId) => navigate(`/memos/${memoId}`)} />;
+}
+
+function ConfigureRoute() {
+  return <ConfigureView onBack={useBack()} />;
+}
+
+function SettingsRoute() {
+  return <SettingsView onBack={useBack()} />;
+}
 
 // --- shell -----------------------------------------------------------------
 
 export default function App() {
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [who, setWho] = useState("");
-  const [engagement, setEngagement] = useState<string | null>(null);
-  const [memoId, setMemoId] = useState<number | null>(null);
-  const [settings, setSettings] = useState(false);
-  const [configuring, setConfiguring] = useState(false);
+  const navigate = useNavigate();
 
   async function check() {
     try {
@@ -159,27 +191,21 @@ export default function App() {
         {/* Home. Every other screen is reached from here and there was no way
             back to the list except the Back link on whichever page you were
             on, which is several clicks from a memo. */}
-        <a className="settings" onClick={() => {
-          setEngagement(null); setMemoId(null);
-          setSettings(false); setConfiguring(false);
-        }}>Engagements</a>
-        <a className="settings" onClick={() => { setConfiguring(true); setSettings(false); setMemoId(null); }}>Configure a Report</a>
-        <a className="settings" onClick={() => { setSettings(true); setConfiguring(false); setMemoId(null); }}>Settings</a>
+        <a className="settings" onClick={() => navigate("/")}>Engagements</a>
+        <a className="settings" onClick={() => navigate("/configure")}>Configure a Report</a>
+        <a className="settings" onClick={() => navigate("/settings")}>Settings</a>
         <a onClick={async () => { await signOut(); setSignedIn(false); }}>Sign out</a>
       </header>
       <main>
-        {configuring ? (
-          <ConfigureView onBack={() => setConfiguring(false)} />
-        ) : settings ? (
-          <SettingsView onBack={() => setSettings(false)} />
-        ) : memoId !== null ? (
-          <MemoView memoId={memoId} onBack={() => setMemoId(null)} onOpen={setMemoId} />
-        ) : engagement !== null ? (
-          <EngagementView id={engagement} onBack={() => setEngagement(null)}
-                          onMemo={setMemoId} />
-        ) : (
-          <Engagements onOpen={setEngagement} />
-        )}
+        <Routes>
+          <Route path="/" element={<EngagementsRoute />} />
+          <Route path="/engagements/:id" element={<EngagementRoute />} />
+          <Route path="/memos/:id" element={<MemoRoute />} />
+          <Route path="/configure" element={<ConfigureRoute />} />
+          <Route path="/settings" element={<SettingsRoute />} />
+          {/* Anything else would render an empty page. */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </main>
     </div>
   );
