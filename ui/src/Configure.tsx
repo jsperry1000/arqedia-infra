@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   api,
   type ConfigCategory,
@@ -381,7 +382,35 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
 }
 
 
+// The parts of the configuration screen, in the order the bar offers them.
+// How documents group sits on the documents tab rather than a tab of its own.
+const PARTS = [
+  ["sections", "Report sections"],
+  ["facts", "Facts"],
+  ["documents", "Document types"],
+] as const;
+
 export function ConfigureView({ onBack }: { onBack: () => void }) {
+  // Which memorandum, which part and which section is open live in the
+  // address, so a refresh returns a person to where they were (UX-13).
+  const [params, setParams] = useSearchParams();
+
+  /** Change part of the address. Replaced rather than pushed, so Back leaves
+   *  the screen instead of stepping through every tab looked at on the way.
+   *  Read from the address itself rather than from this render: two changes
+   *  in one handler, or one after an await, would otherwise both start from
+   *  the same stale copy and the second would undo the first. */
+  const place = (next: Record<string, string | null>) => {
+    const merged = new URLSearchParams(window.location.search);
+    for (const [key, value] of Object.entries(next)) {
+      if (value) merged.set(key, value); else merged.delete(key);
+    }
+    setParams(merged, { replace: true });
+  };
+
+  const openSection = params.get("section");
+  const setOpenSection = (key: string | null) => place({ section: key });
+
   const [state, setState] = useState<ConfigState | null>(null);
   const [packs, setPacks] = useState<Pack[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -407,7 +436,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
-  const [openSection, setOpenSection] = useState<string | null>(null);
+  // Publishing is asked from the bar and confirmed in a drawer.
+  const [publishing, setPublishing] = useState(false);
 
   // Searching a section's field list. Its own box, cleared when the section
   // closes: a filter shared with the fact table once emptied controls
@@ -446,7 +476,11 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   }, [openSection]);
   // Which memorandum is being edited. A tenant may hold a credit, a KYC and a
   // lender memorandum over the same documents.
-  const [template, setTemplate] = useState("");
+  // In the address, beside the part and the open section. A different
+  // memorandum closes whichever section was open.
+  const template = params.get("report") ?? "";
+  const setTemplate = (key: string) =>
+    place({ report: key || null, section: null });
   const [newTemplate, setNewTemplate] = useState("");
   // Renaming a memorandum. Held apart from the label being shown so an
   // abandoned edit leaves the name alone.
@@ -465,23 +499,13 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // one save rather than a dozen.
   const [typeFields, setTypeFields] = useState<string[]>([]);
 
-  // The page is five long parts. Closed to begin with, so a person arrives
-  // at a list of what is here rather than the middle of the fields table.
-  const [shut, setShut] = useState<Set<string>>(new Set(
-    ["says", "needs", "documents", "groups"]));
-
-  const part = (key: string, label: string, count: string) => (
-    <h3>
-      <a onClick={() => {
-        const next = new Set(shut);
-        if (next.has(key)) next.delete(key); else next.add(key);
-        setShut(next);
-      }}>
-        {shut.has(key) ? "\u25b8" : "\u25be"} {label}
-      </a>{" "}
-      <span className="muted small">{count}</span>
-    </h3>
-  );
+  // The page is three parts, one on screen at a time, chosen in the bar. It
+  // was five long collapsible parts, and a person twenty rows into one had to
+  // scroll back up to reach another. Changing part closes the open section.
+  const wantedPart = params.get("part");
+  const part = PARTS.some(([key]) => key === wantedPart)
+    ? wantedPart as string : "sections";
+  const setPart = (key: string) => place({ part: key, section: null });
 
   /** Put a section at a position and renumber the rest.
    *
@@ -654,6 +678,62 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     return set;
   }, [draft]);
 
+  // The bar is held beneath the site header, and an open section's row
+  // beneath the bar. Both offsets are measured rather than assumed, as the
+  // memo reader's are: they change with the width of the window and the
+  // length of the signed-in address.
+  const [pinTop, setPinTop] = useState(0);
+  useLayoutEffect(() => {
+    const header = document.querySelector(".shell header");
+    if (!header) return;
+    const measure = () => setPinTop(header.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const watch = new ResizeObserver(measure);
+    watch.observe(header);
+    return () => watch.disconnect();
+  }, []);
+
+  const bar = useRef<HTMLDivElement | null>(null);
+  const [barHeight, setBarHeight] = useState(0);
+  const editing = Boolean(state?.draft) && !proposing;
+  useLayoutEffect(() => {
+    const el = bar.current;
+    if (!el) return;
+    const measure = () => setBarHeight(el.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const watch = new ResizeObserver(measure);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [editing]);
+
+  // The bar's shadow passes to the open section's row while that row is held
+  // beneath it, so the shadow always marks the foot of what stays put.
+  const openHead = useRef<HTMLDivElement | null>(null);
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    if (!openSection) { setStuck(false); return; }
+    const check = () => {
+      const row = openHead.current;
+      setStuck(!!row && Math.abs(
+        row.getBoundingClientRect().top - (pinTop + barHeight)) < 1);
+    };
+    check();
+    window.addEventListener("scroll", check, { passive: true });
+    window.addEventListener("resize", check);
+    return () => {
+      window.removeEventListener("scroll", check);
+      window.removeEventListener("resize", check);
+    };
+  }, [openSection, part, pinTop, barHeight]);
+
   if (!state) return <p className="muted">Loading&hellip;</p>;
 
   // Reading a report of the client's own. Held above every other screen: it
@@ -794,7 +874,35 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     // per document group, and four groups do not fit the width that suits
     // prose. See main:has(.wide-page).
     <div className="wide-page">
-      <a onClick={onBack} className="back">Back</a>
+      {/* The working controls, held at the top while the page scrolls. A
+          person deep in a section list could not leave, change part or
+          publish without scrolling back up to find them (UX-02). */}
+      <div className={"config-bar" + (stuck ? " covered" : "")}
+           ref={bar} style={{ top: pinTop }}>
+        <a onClick={onBack} className="back-pill">Back</a>
+        <select aria-label="Memorandum" value={current?.key ?? ""}
+                onChange={(e) => {
+                  setTemplate(e.target.value);
+                  setEditSection(null);
+                }}>
+          {templates.map((t) => (
+            <option key={t.key} value={t.key}>{t.label || t.key}</option>
+          ))}
+        </select>
+        <nav className="parts">
+          {PARTS.map(([key, label]) => (
+            <a key={key} className={part === key ? "on" : undefined}
+               onClick={() => setPart(key)}>{label}</a>
+          ))}
+        </nav>
+        <a className="secondary" onClick={() =>
+          act("Discarding", api.discardDraft)}>Discard</a>
+        <button
+          disabled={!!busy || (validation ? !validation.may_publish : false)}
+          onClick={() => setPublishing(true)}>
+          Publish
+        </button>
+      </div>
 
       <div className="memo-head">
         <div>
@@ -804,8 +912,6 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             until you publish.
           </p>
         </div>
-        <a className="secondary" onClick={() =>
-          act("Discarding", api.discardDraft)}>Discard</a>
       </div>
 
       {error && <p className="error">{error}</p>}
@@ -824,28 +930,14 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           needs", so clicking a fact name from a section did nothing at all
           while that part was closed - which it is on arrival - and clicking
       {/* 1 --- what the report says ---------------------------------------- */}
-      {part("says", "Report sections", `${sections.length} ${sections.length === 1 ? "section" : "sections"}`)}
-
-      {!shut.has("says") && (<>
+      {part === "sections" && (<>
       <p className="muted small">
         Each section of the memorandum, in order. A section renders the fields
         bound to it and nothing else.
       </p>
 
+      {/* The memorandum is chosen in the bar. */}
       <div className="filters">
-        <label className="inline-check">
-          Memorandum
-          <select value={current?.key ?? ""}
-                  onChange={(e) => {
-                    setTemplate(e.target.value);
-                    setOpenSection(null);
-                    setEditSection(null);
-                  }}>
-            {templates.map((t) => (
-              <option key={t.key} value={t.key}>{t.label || t.key}</option>
-            ))}
-          </select>
-        </label>
         <span className="muted">
           {sections.length} {sections.length === 1 ? "section" : "sections"}
         </span>
@@ -924,7 +1016,13 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
 
       {sections.map((s, i) => (
         <div className="review" key={s.key}>
-          <div className="review-head">
+          {/* Open, its heading and Close are held beneath the bar while its
+              field list scrolls, so closing is always one click. */}
+          <div className={"review-head" + (openSection === s.key
+                 ? " pinned" + (stuck ? " stuck" : "") : "")}
+               ref={openSection === s.key ? openHead : undefined}
+               style={openSection === s.key
+                 ? { top: pinTop + barHeight } : undefined}>
             {/* The order the memorandum reads in. There was no way to change
                 it, so a memorandum whose sections all sat at zero stayed in
                 whatever order the database returned. */}
@@ -1065,9 +1163,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       {/* 2 --- what it needs ----------------------------------------------- */}
       </>)}
 
-      {part("needs", "Facts included in sections", `${draft?.fields.length ?? 0} facts`)}
-
-      {!shut.has("needs") && (<>
+      {part === "facts" && (<>
       <p className="muted small">
         Every fact the report can draw on. A field bound to no section is
         extracted and never read; one found in no document is never extracted.
@@ -1162,9 +1258,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       {/* 4 --- the documents ------------------------------------------------ */}
       </>)}
 
-      {part("documents", "The document types", `${draft?.document_types.length ?? 0} kinds`)}
-
-      {!shut.has("documents") && (<>
+      {part === "documents" && (<>
       <p className="muted small">
         Types of documents a client may provide. The description is what the
         system reads to tell one document from another, so it is worth
@@ -1322,12 +1416,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      {/* 4b --- how documents group ----------------------------------------- */}
-      </>)}
-
-      {part("groups", "How documents group", `${draft?.categories.length ?? 0} groups`)}
-
-      {!shut.has("groups") && (<>
+      {/* 4b --- how documents group, on the documents tab ------------------- */}
+      <h3>How documents group</h3>
       <p className="muted small">
         Grouping is for the eye alone &mdash; it decides how documents are
         listed when somebody confirms what one is. It has no effect on what is
@@ -1370,40 +1460,60 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         Add a group
       </a>
 
-      {/* 5 --- publish ------------------------------------------------------ */}
       </>)}
 
-      <h3>Publish</h3>
+      {/* 5 --- publish ------------------------------------------------------ */}
+      {/* Asked from the bar, so it is reachable from anywhere on the page, and
+          confirmed here with the note and what is worth knowing. */}
+      {publishing && (
+        <div className="panel-backdrop" onClick={() => setPublishing(false)}>
+          <div className="panel narrow" onClick={(e) => e.stopPropagation()}
+               onKeyDown={(e) => { if (e.key === "Escape") setPublishing(false); }}>
+            <a className="panel-close" onClick={() => setPublishing(false)}>
+              Close
+            </a>
+            <h3>Publish</h3>
+            {error && <p className="error">{error}</p>}
 
-      {validation && validation.warnings.length > 0 && (
-        <details className="warnings">
-          <summary>
-            {validation.warnings.length} things worth knowing
-          </summary>
-          <ul>
-            {validation.warnings.map((w, i) => <li key={i}>{w.detail}</li>)}
-          </ul>
-        </details>
+            {validation && validation.warnings.length > 0 && (
+              <details className="warnings">
+                <summary>
+                  {validation.warnings.length} things worth knowing
+                </summary>
+                <ul>
+                  {validation.warnings.map((w, i) => <li key={i}>{w.detail}</li>)}
+                </ul>
+              </details>
+            )}
+
+            <p className="muted small">
+              Publishing makes this the configuration new work is filed against.
+              Everything already filed keeps resolving against the revision it
+              was filed under, so memos already written still reproduce.
+            </p>
+
+            <div className="inline">
+              <input placeholder="What changed?" value={note} autoFocus
+                     onChange={(e) => setNote(e.target.value)} />
+              <button
+                disabled={!!busy || (validation ? !validation.may_publish : false)}
+                onClick={() => act("Publishing", async () => {
+                  await api.publish(note);
+                  setNote("");
+                  setPublishing(false);
+                })}>
+                {busy ? busy + "\u2026" : "Publish"}
+              </button>
+            </div>
+
+            <div className="form-actions">
+              <a className="secondary" onClick={() => setPublishing(false)}>
+                Cancel
+              </a>
+            </div>
+          </div>
+        </div>
       )}
-
-      <p className="muted small">
-        Publishing makes this the configuration new work is filed against.
-        Everything already filed keeps resolving against the revision it was
-        filed under, so memos already written still reproduce.
-      </p>
-
-      <div className="inline">
-        <input placeholder="What changed?" value={note}
-               onChange={(e) => setNote(e.target.value)} />
-        <button
-          disabled={!!busy || (validation ? !validation.may_publish : false)}
-          onClick={() => act("Publishing", async () => {
-            await api.publish(note);
-            setNote("");
-          })}>
-          {busy ? busy + "\u2026" : "Publish"}
-        </button>
-      </div>
 
       {/* LAST, so it sits above every other drawer. A fact opened from a
           document's list must be on top of that list, and stacking follows

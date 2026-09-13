@@ -72,6 +72,29 @@ main { max-width: 1040px; margin: 32px auto; padding: 0 24px; }
    that needs the room asks for it and no other screen has to know. */
 main:has(.wide-page) { max-width: 1560px; }
 
+/* The header across the top, and beneath it the rail on the left beside the
+   page (UX-03). The header's measured height is set on .shell by App.tsx as
+   --header-h, so the rail can sit under it and run to the foot of the window. */
+.shell {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  align-items: start;
+}
+.shell header { grid-column: 1 / -1; }
+/* A grid item with auto margins shrinks to its content. Full width first, then
+   main's own max-width and margins centre it in what is left. */
+.shell main { width: 100%; }
+
+.rail {
+  position: sticky; top: var(--header-h, 0px);
+  height: calc(100vh - var(--header-h, 0px));
+  display: flex; flex-direction: column;
+  padding: 20px 0;
+  background: var(--deep);
+}
+.rail a { padding: 8px 24px; color: var(--light); font-size: 13px; }
+.rail .sign-out { margin-top: auto; }
+
 /* --- sign in ------------------------------------------------------------- */
 
 .centre {
@@ -799,3 +822,57 @@ a.add:hover { background: var(--paper); text-decoration: none; }
 .docs tr.group-head:first-child td {
   padding-top: 0.35rem;
 }
+
+/* --- the configuration bar ------------------------------------------------ */
+
+/* The working controls, held beneath the site header while the page scrolls
+   (UX-02). Its offset is the header's measured height, set on the element by
+   Configure.tsx as the memo reader's pinned head does. Above an open
+   section's row at 9, beneath the site header at 20 and the drawers at 30. */
+.config-bar {
+  position: sticky; z-index: 10;
+  display: flex; align-items: center; gap: 12px;
+  margin: 0 0 18px; padding: 10px 16px;
+  background: var(--paper);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+}
+/* The shadow moves to the open section's row while that row is held beneath
+   the bar. */
+.config-bar.covered { box-shadow: none; }
+
+/* Back, in the tenant's own deep colour with the text reversed out.
+   --tenant-deep is set on .shell by App.tsx; the platform's deep otherwise. */
+.config-bar .back-pill {
+  white-space: nowrap; padding: 9px 16px; border-radius: 999px;
+  background: var(--tenant-deep, var(--deep)); color: #fff;
+  font-size: 13px; font-weight: 500;
+}
+.config-bar .back-pill:hover { text-decoration: none; }
+
+.config-bar .parts { display: flex; gap: 18px; margin-left: 8px; }
+.config-bar .parts a {
+  padding: 4px 0; font-size: 13px; white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+.config-bar .parts a.on { color: var(--deep); border-bottom-color: var(--deep); }
+.config-bar .parts a:hover { text-decoration: none; }
+
+/* Discard and Publish together at the right-hand end. */
+.config-bar .secondary {
+  margin-left: auto; white-space: nowrap; font-size: 13px;
+  padding: 9px 16px; border: 1px solid var(--line); border-radius: 3px;
+  color: var(--deep); background: var(--paper);
+}
+.config-bar .secondary:hover { border-color: var(--medium); text-decoration: none; }
+.config-bar button { white-space: nowrap; }
+
+/* An open section's heading and Close, held directly beneath the bar while
+   its field list scrolls. Sticky inside its own card, so it lets go when the
+   section ends. The padding is taken back by the margin, so the row sits
+   where it did and only gains ground for the list to pass under. */
+.review-head.pinned {
+  position: sticky; z-index: 9;
+  margin: -8px 0; padding: 8px 0;
+  background: var(--paper);
+}
+.review-head.pinned.stuck { box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12); }

@@ -2,7 +2,7 @@ import { ConfigureView } from "./Configure";
 import { SettingsView } from "./Settings";
 import { MemoView } from "./Memo";
 import { EngagementView } from "./Review";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Amplify } from "aws-amplify";
 import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
@@ -179,23 +179,57 @@ export default function App() {
 
   useEffect(() => { check(); }, []);
 
+  // The tenant's own deep colour, for Back on the configuration screen. The
+  // platform's when the tenant has set none, or the settings cannot be read.
+  const [brandDeep, setBrandDeep] = useState<string | null>(null);
+  useEffect(() => {
+    if (!signedIn) return;
+    api.settings().then((s) => setBrandDeep(s.deep)).catch(() => setBrandDeep(null));
+  }, [signedIn]);
+
+  // The rail sits beneath the header and runs to the foot of the window, so it
+  // needs the header's height. Measured, as Memo.tsx does, because it changes
+  // with the width of the window and the length of the signed-in address.
+  const header = useRef<HTMLElement | null>(null);
+  const [headerHeight, setHeaderHeight] = useState(0);
+  useLayoutEffect(() => {
+    const el = header.current;
+    if (!el) return;
+    const measure = () => setHeaderHeight(el.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const watch = new ResizeObserver(measure);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [signedIn]);
+
   if (signedIn === null) return <div className="centre"><p className="muted">...</p></div>;
   if (!signedIn) return <SignIn onDone={check} />;
 
+  const shellVars = {
+    "--header-h": headerHeight + "px",
+    ...(brandDeep ? { "--tenant-deep": brandDeep } : {}),
+  } as React.CSSProperties;
+
   return (
-    <div className="shell">
-      <header>
+    <div className="shell" style={shellVars}>
+      <header ref={header}>
         <img src="/icon-white.png" alt="" width="22" height="22" />
         <strong>ARQEDIA</strong>
         <span className="muted">{who}</span>
-        {/* Home. Every other screen is reached from here and there was no way
-            back to the list except the Back link on whichever page you were
-            on, which is several clicks from a memo. */}
-        <a className="settings" onClick={() => navigate("/")}>Engagements</a>
-        <a className="settings" onClick={() => navigate("/configure")}>Configure a Report</a>
-        <a className="settings" onClick={() => navigate("/settings")}>Settings</a>
-        <a onClick={async () => { await signOut(); setSignedIn(false); }}>Sign out</a>
       </header>
+      {/* The top-level destinations, on a rail of their own so the header of
+          a working screen is free for that screen's controls (UX-03). Home
+          is first: every other screen is reached from it. */}
+      <nav className="rail">
+        <a onClick={() => navigate("/")}>Engagements</a>
+        <a onClick={() => navigate("/configure")}>Configure a report</a>
+        <a onClick={() => navigate("/settings")}>Settings</a>
+        <a className="sign-out" onClick={async () => { await signOut(); setSignedIn(false); }}>Sign out</a>
+      </nav>
       <main>
         <Routes>
           <Route path="/" element={<EngagementsRoute />} />
