@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Settings } from "./api";
+import { useBackAction } from "./shell";
 
 /**
  * Settings. Branding today; seats, plan and billing will join it.
@@ -23,6 +24,7 @@ const SWATCHES: {
 ];
 
 export function SettingsView({ onBack }: { onBack: () => void }) {
+  useBackAction(onBack);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [busy, setBusy] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
@@ -97,7 +99,6 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
 
   return (
     <div>
-      <a onClick={onBack} className="back">Back</a>
       <h2>Settings</h2>
 
       <p className="muted">

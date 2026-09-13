@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Memo, type Passage, type Rewrite } from "./api";
 import { MemoDocument, type Ref } from "./MemoReader";
+import { useBackAction, usePinTop } from "./shell";
 
 /**
  * Reading and revising a memo.
@@ -141,21 +142,11 @@ export function MemoView({ memoId, onBack, onOpen }: {
   // Edit and Close while revising - is held just under the site header, so a
   // person at the foot of a long memo does not scroll back to the top to act. The site header's height is measured,
   // not assumed: it changes with the width of the window and the length of
-  // the signed-in address.
-  const [pinTop, setPinTop] = useState(0);
-  useLayoutEffect(() => {
-    const header = document.querySelector(".shell header");
-    if (!header) return;
-    const measure = () => setPinTop(header.getBoundingClientRect().height);
-    measure();
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", measure);
-      return () => window.removeEventListener("resize", measure);
-    }
-    const watch = new ResizeObserver(measure);
-    watch.observe(header);
-    return () => watch.disconnect();
-  }, []);
+  // the signed-in address. Beneath the Back strip as well as the header.
+  const pinTop = usePinTop();
+
+  // The shell's Back keeps what has not been kept before it leaves.
+  useBackAction(back);
 
   // What was last written to the server, and what would be written now - so a
   // leave can keep the difference without waiting for the pause.
@@ -472,7 +463,6 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
   return (
     <div className={mode !== "read" ? "wide" : ""}>
-      <a onClick={back} className="back">Back</a>
 
       <div className="memo-head pinned" style={{ top: pinTop }}>
         <div>

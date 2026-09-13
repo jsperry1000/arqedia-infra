@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
+import { useBackAction, usePinTop } from "./shell";
 import {
   api,
   type ConfigCategory,
@@ -432,7 +433,19 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   const labelOf = (key: string) =>
     templates.find((t) => t.key === key)?.label ?? key;
 
-  const [proposing, setProposing] = useState(false);
+  // Reading a report of the client's own. Begun from the rail's chooser as
+  // well as from inside the editor; the chooser hands it over in the
+  // location's state, so the screen opens straight into it - and, where the
+  // chooser offered one already started, into that one.
+  const location = useLocation();
+  const arrived = location.state as { propose?: boolean; resume?: string } | null;
+  const [proposing, setProposing] = useState(Boolean(arrived?.propose));
+  const [resumeKey] = useState(arrived?.resume);
+  // Leaving clears that state too, so a refresh does not reopen it.
+  const leaveProposer = () => { setProposing(false); place({}); };
+
+  // Back leaves the proposer for the editor; otherwise it leaves the screen.
+  useBackAction(proposing ? leaveProposer : onBack);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
@@ -678,24 +691,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     return set;
   }, [draft]);
 
-  // The bar is held beneath the site header, and an open section's row
-  // beneath the bar. Both offsets are measured rather than assumed, as the
-  // memo reader's are: they change with the width of the window and the
-  // length of the signed-in address.
-  const [pinTop, setPinTop] = useState(0);
-  useLayoutEffect(() => {
-    const header = document.querySelector(".shell header");
-    if (!header) return;
-    const measure = () => setPinTop(header.getBoundingClientRect().height);
-    measure();
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", measure);
-      return () => window.removeEventListener("resize", measure);
-    }
-    const watch = new ResizeObserver(measure);
-    watch.observe(header);
-    return () => watch.disconnect();
-  }, []);
+  // The bar is held beneath the site header and the Back strip, and an open
+  // section's row beneath the bar. Both offsets are measured rather than
+  // assumed: they change with the width of the window.
+  const pinTop = usePinTop();
 
   const bar = useRef<HTMLDivElement | null>(null);
   const [barHeight, setBarHeight] = useState(0);
@@ -742,7 +741,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   if (proposing) {
     return (
       <ProposeView
-        onCancel={() => setProposing(false)}
+        resume={resumeKey}
+        onCancel={leaveProposer}
         onDone={(templateKey) => {
           setProposing(false);
           setTemplate(templateKey);
@@ -759,7 +759,6 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
 
     return (
       <div>
-        <a onClick={onBack} className="back">Back</a>
         <h2>Configure a Report</h2>
         <p className="muted">
           You start with our list of facts and the documents they are found
@@ -830,7 +829,6 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   if (!state.draft) {
     return (
       <div>
-        <a onClick={onBack} className="back">Back</a>
         <h2>Configure a Report</h2>
         <p className="muted">
           Revision {state.active_revision} is in use. Memos are written against
@@ -879,7 +877,6 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           publish without scrolling back up to find them (UX-02). */}
       <div className={"config-bar" + (stuck ? " covered" : "")}
            ref={bar} style={{ top: pinTop }}>
-        <a onClick={onBack} className="back-pill">Back</a>
         <select aria-label="Memorandum" value={current?.key ?? ""}
                 onChange={(e) => {
                   setTemplate(e.target.value);
@@ -895,8 +892,21 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                onClick={() => setPart(key)}>{label}</a>
           ))}
         </nav>
-        <a className="secondary" onClick={() =>
-          act("Discarding", api.discardDraft)}>Discard</a>
+        {/* What Publish covers, beside it (UX-05). The whole configuration,
+            not the report on screen. */}
+        <span className="live muted small">
+          Live: revision {state.active_revision} &middot; Publish applies to
+          all memoranda
+        </span>
+        {/* Asked every time. Nothing here can tell whether the draft differs
+            from the live revision, so it cannot say more than this. */}
+        <a className="secondary" onClick={() => {
+          if (!window.confirm(
+            `Discard this draft? Every change made since revision `
+            + `${state.active_revision} is lost, in every memorandum. `
+            + `Revision ${state.active_revision} stays in use.`)) return;
+          act("Discarding", api.discardDraft);
+        }}>Discard</a>
         <button
           disabled={!!busy || (validation ? !validation.may_publish : false)}
           onClick={() => setPublishing(true)}>
@@ -1487,9 +1497,12 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             )}
 
             <p className="muted small">
-              Publishing makes this the configuration new work is filed against.
-              Everything already filed keeps resolving against the revision it
-              was filed under, so memos already written still reproduce.
+              Revision {state.active_revision} is live. Publishing makes this
+              draft the configuration new work is filed against, and applies
+              every change in it across all memoranda at once &mdash; not just
+              the report on screen. Everything already filed keeps resolving
+              against the revision it was filed under, so memos already written
+              still reproduce.
             </p>
 
             <div className="inline">
