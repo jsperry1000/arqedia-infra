@@ -1049,7 +1049,7 @@ def _tenant(tenant_id):
     result = _sql(
         """
         SELECT name, plan, brand_logo_key, brand_deep, brand_mid,
-               brand_highlight
+               brand_highlight, brand_light
         FROM tenant WHERE tenant_id = :t
         """,
         [_p("t", tenant_id)],
@@ -1065,6 +1065,7 @@ def _tenant(tenant_id):
         "brand_deep": _col(r, 3),
         "brand_mid": _col(r, 4),
         "brand_highlight": _col(r, 5),
+        "brand_light": _col(r, 6),
     }
 
 
