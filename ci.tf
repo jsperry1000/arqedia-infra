@@ -46,6 +46,9 @@ resource "aws_iam_role" "github_deploy" {
   tags = { Name = "${local.name_prefix}-github-deploy" }
 }
 
+# Two surfaces, one role: the application in frontend.tf and the marketing
+# site in site.tf. Both deploy from the same repository through the same OIDC
+# trust, so they share a role rather than duplicating the federation.
 data "aws_iam_policy_document" "github_deploy" {
   statement {
     effect = "Allow"
@@ -57,13 +60,18 @@ data "aws_iam_policy_document" "github_deploy" {
     resources = [
       aws_s3_bucket.frontend.arn,
       "${aws_s3_bucket.frontend.arn}/*",
+      aws_s3_bucket.site.arn,
+      "${aws_s3_bucket.site.arn}/*",
     ]
   }
 
   statement {
-    effect    = "Allow"
-    actions   = ["cloudfront:CreateInvalidation"]
-    resources = [aws_cloudfront_distribution.frontend.arn]
+    effect  = "Allow"
+    actions = ["cloudfront:CreateInvalidation"]
+    resources = [
+      aws_cloudfront_distribution.frontend.arn,
+      aws_cloudfront_distribution.site.arn,
+    ]
   }
 }
 
@@ -80,4 +88,3 @@ output "github_deploy_role_arn" {
 output "cloudfront_distribution_id" {
   value = aws_cloudfront_distribution.frontend.id
 }
-

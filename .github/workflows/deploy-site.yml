@@ -1,0 +1,70 @@
+name: Deploy marketing site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/deploy-site.yml"
+  workflow_dispatch:
+    inputs:
+      bucket:
+        description: Target S3 bucket
+        required: false
+        default: arqedia-dev-site-667523685221
+      distribution:
+        description: Target CloudFront distribution id
+        required: false
+        default: E1YMVKWCRM62E6
+      role:
+        description: Deploy role to assume
+        required: false
+        default: arn:aws:iam::667523685221:role/arqedia-dev-github-deploy
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-2
+  BUCKET: ${{ inputs.bucket || 'arqedia-dev-site-667523685221' }}
+  DISTRIBUTION: ${{ inputs.distribution || 'E1YMVKWCRM62E6' }}
+  DEPLOY_ROLE: ${{ inputs.role || 'arn:aws:iam::667523685221:role/arqedia-dev-github-deploy' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # The build is the type check. tsc -b runs first, so a type error stops
+      # this before anything is published.
+      - name: Build
+        working-directory: site
+        run: |
+          npm install
+          npm run build
+
+      - name: Assume AWS role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Hashed assets are immutable; the HTML is not.
+      - name: Upload assets
+        run: |
+          aws s3 sync site/dist "s3://${BUCKET}/" --delete \
+            --exclude "*.html" --cache-control "public,max-age=31536000,immutable"
+
+      - name: Upload pages
+        run: |
+          aws s3 sync site/dist "s3://${BUCKET}/" --delete \
+            --exclude "*" --include "*.html" --cache-control "public,max-age=0,must-revalidate"
+
+      - name: Clear CloudFront cache
+        run: aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" --paths "/*"

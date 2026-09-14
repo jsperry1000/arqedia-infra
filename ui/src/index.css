@@ -1,21 +1,6 @@
-:root {
-  --deep:   #002561;
-  --medium: #278ACA;
-  --light:  #C7E4F8;
-  --gold:   #FFDD00;
-  --green:  #9ACA3C;
-
-  --ink:    #0d1b2a;
-  --muted:  #64748b;
-  --line:   #e2e8f0;
-  --paper:  #ffffff;
-  --wash:   #f7fafd;
-
-  /* Section rows, cards and their pills (UX-06). */
-  --pill-radius: 8px;
-  /* The fully round pill, which Back alone wears. */
-  --pill-round: 999px;
-}
+/* Every token lives in one file, imported here and by the marketing site.
+   Change a colour, a typeface or a radius there and both surfaces follow. */
+@import "./tokens.css";
 
 * { box-sizing: border-box; }
 
