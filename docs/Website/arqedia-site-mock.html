@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARQEDIA — site mock (placeholder palette)</title>
+<style>
+:root{
+  --paper:#ffffff;
+  --shade:#f4f4f2;
+  --shade-2:#e9e9e6;
+  --rule:#d6d6d1;
+  --rule-strong:#b8b8b2;
+  --ink:#17171a;
+  --ink-2:#4a4a4d;
+  --ink-3:#78787c;
+  --brand:#8e8e88;          /* PLACEHOLDER — brand colour not set */
+  --brand-pale:#e4e4e0;     /* PLACEHOLDER */
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --gutter: clamp(20px, 5vw, 64px);
+  --max: 1180px;
+}
+
+*{box-sizing:border-box;}
+html{-webkit-text-size-adjust:100%;}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--sans);
+  font-size:17px;
+  line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:inherit;}
+:focus-visible{outline:2px solid var(--ink); outline-offset:3px;}
+
+.wrap{max-width:var(--max); margin:0 auto; padding-left:var(--gutter); padding-right:var(--gutter);}
+
+/* ---------- header ---------- */
+header{
+  position:sticky; top:0; z-index:50;
+  background:rgba(255,255,255,.92);
+  backdrop-filter:saturate(150%) blur(8px);
+  border-bottom:1px solid var(--rule);
+}
+.bar{display:flex; align-items:center; gap:28px; height:64px;}
+.wordmark{
+  font-family:var(--serif); font-size:22px; letter-spacing:.06em;
+  font-weight:600; margin-right:auto; cursor:default;
+}
+nav{display:flex; gap:24px; align-items:center;}
+nav button.link{
+  background:none; border:0; padding:6px 0; font:inherit; font-size:15px;
+  color:var(--ink-2); cursor:pointer; border-bottom:1px solid transparent;
+}
+nav button.link[aria-current="page"]{color:var(--ink); border-bottom-color:var(--ink);}
+.btn{
+  display:inline-block; font:inherit; font-size:15px; line-height:1;
+  padding:11px 18px; border-radius:2px; border:1px solid var(--ink);
+  background:var(--ink); color:var(--paper); cursor:pointer; text-decoration:none;
+}
+.btn.ghost{background:transparent; color:var(--ink);}
+.btn.small{padding:9px 14px; font-size:14px;}
+
+/* ---------- type ---------- */
+h1{
+  font-family:var(--serif); font-weight:400;
+  font-size:clamp(38px, 5.6vw, 68px); line-height:1.06;
+  letter-spacing:-.015em; margin:0 0 22px; max-width:16ch;
+}
+h2{
+  font-family:var(--serif); font-weight:400;
+  font-size:clamp(27px, 3.2vw, 38px); line-height:1.15;
+  letter-spacing:-.01em; margin:0 0 16px; max-width:22ch;
+}
+h3{font-size:18px; font-weight:600; margin:0 0 8px; letter-spacing:-.005em;}
+p{margin:0 0 16px; max-width:62ch; color:var(--ink-2);}
+.lede{font-size:19px; color:var(--ink-2); max-width:52ch;}
+.fine{font-size:14px; color:var(--ink-3); max-width:60ch;}
+
+section{padding:clamp(56px,8vw,110px) 0;}
+.hair{border-top:1px solid var(--rule);}
+
+/* ---------- hero ---------- */
+.hero{padding-top:clamp(56px,9vw,120px); padding-bottom:clamp(40px,5vw,60px);}
+.hero .actions{display:flex; gap:12px; flex-wrap:wrap; margin-top:30px;}
+.hero .terms{margin-top:16px; font-size:14px; color:var(--ink-3);}
+
+/* ---------- citation surface ---------- */
+.surface{
+  border:1px solid var(--rule); background:var(--shade);
+  display:grid; grid-template-columns:1.15fr 1fr; min-height:430px;
+}
+.pane{padding:26px 28px; min-width:0;}
+.pane + .pane{border-left:1px solid var(--rule); background:var(--shade-2);}
+.pane-head{
+  display:flex; justify-content:space-between; align-items:baseline;
+  font-size:13px; color:var(--ink-3); padding-bottom:10px;
+  border-bottom:1px solid var(--rule); margin-bottom:18px;
+}
+.memo-h{font-family:var(--serif); font-size:15px; color:var(--ink); margin:0 0 10px;}
+.claim{
+  font-family:var(--serif); font-size:16px; line-height:1.6; color:var(--ink);
+  padding:7px 10px; margin:0 -10px 6px; border-radius:2px;
+  transition:background 380ms ease-out;
+}
+.claim.lit{background:var(--brand-pale);}
+.cite{
+  display:inline-block; font-family:var(--mono); font-size:11.5px;
+  color:var(--ink-3); border-bottom:1px dotted var(--rule-strong);
+  margin-left:6px; white-space:nowrap;
+}
+.doc{
+  font-family:var(--mono); font-size:11.5px; line-height:1.9; color:var(--ink-3);
+  background:var(--paper); border:1px solid var(--rule); padding:16px 18px;
+  height:300px; overflow:hidden; position:relative;
+}
+.doc .row{display:block; height:11px; background:var(--shade-2); border-radius:1px; margin:0 0 10px;}
+.doc .row.s{width:62%;} .doc .row.m{width:88%;} .doc .row.l{width:100%;}
+.doc .span{
+  display:block; padding:3px 6px; margin:0 -6px 10px; color:var(--ink);
+  background:transparent; transition:background 380ms ease-out;
+}
+.doc .span.lit{background:var(--brand-pale);}
+.doc-foot{margin-top:12px; font-size:12.5px; color:var(--ink-3);}
+.surface-caption{margin-top:14px; font-size:13.5px; color:var(--ink-3);}
+
+/* ---------- bento ---------- */
+.bento{display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--rule); border:1px solid var(--rule);}
+.tile{background:var(--paper); padding:28px;}
+.tile.wide{grid-column:span 2;}
+.tile p{font-size:15.5px; margin-bottom:0;}
+.chip{
+  display:inline-flex; align-items:center; gap:8px; font-size:12.5px;
+  color:var(--ink-2); border:1px solid var(--rule); background:var(--shade);
+  padding:5px 9px; border-radius:2px; margin:16px 6px 0 0; font-family:var(--mono);
+}
+.dot{width:6px; height:6px; border-radius:50%; background:var(--brand);}
+
+/* ---------- sequence ---------- */
+ol.seq{list-style:none; counter-reset:s; margin:0; padding:0; display:grid; grid-template-columns:repeat(5,1fr); gap:0;}
+ol.seq li{counter-increment:s; padding:20px 18px 20px 0; border-top:2px solid var(--ink);}
+ol.seq li::before{
+  content:counter(s); display:block; font-family:var(--mono); font-size:12px;
+  color:var(--ink-3); margin-bottom:10px;
+}
+ol.seq h3{font-size:16px;}
+ol.seq p{font-size:14.5px; margin:0;}
+
+/* ---------- pricing ---------- */
+.trial{border:1px solid var(--ink); padding:22px 24px; display:flex; gap:28px; align-items:center; flex-wrap:wrap;}
+.trial strong{font-weight:600; color:var(--ink);}
+.trial p{margin:0; font-size:15.5px;}
+
+table{width:100%; border-collapse:collapse; margin:0 0 10px;}
+caption{text-align:left; font-size:13px; color:var(--ink-3); padding-bottom:10px;}
+th,td{text-align:left; padding:13px 16px; border-bottom:1px solid var(--rule); font-size:15px; vertical-align:top;}
+thead th{border-bottom:1px solid var(--ink); font-size:13.5px; color:var(--ink-3); font-weight:500;}
+tbody th{font-weight:400; color:var(--ink-2); width:34%;}
+td{color:var(--ink);}
+td.num{font-family:var(--mono); font-size:14px;}
+.plan-name{font-family:var(--serif); font-size:19px; color:var(--ink); display:block;}
+.plan-price{font-family:var(--mono); font-size:13px; color:var(--ink-3); display:block; margin-top:3px;}
+.tbl-scroll{overflow-x:auto; -webkit-overflow-scrolling:touch;}
+
+.example{background:var(--shade); border:1px solid var(--rule); padding:24px 26px;}
+.example dl{margin:0; display:grid; grid-template-columns:1fr auto; gap:9px 24px; max-width:480px;}
+.example dt{color:var(--ink-2); font-size:15px;}
+.example dd{margin:0; font-family:var(--mono); font-size:14px; text-align:right;}
+.example .total{border-top:1px solid var(--rule-strong); padding-top:11px; margin-top:5px; color:var(--ink); font-weight:600;}
+
+ul.free{list-style:none; padding:0; margin:0; columns:2; column-gap:40px;}
+ul.free li{padding:9px 0 9px 20px; border-bottom:1px solid var(--rule); font-size:15px; color:var(--ink-2); position:relative; break-inside:avoid;}
+ul.free li::before{content:""; position:absolute; left:0; top:17px; width:8px; height:1px; background:var(--rule-strong);}
+
+.tbd{font-family:var(--mono); font-size:12px; color:var(--ink-3); border:1px solid var(--rule); padding:2px 6px; border-radius:2px;}
+
+/* ---------- footer ---------- */
+footer{border-top:1px solid var(--rule); background:var(--shade); padding:40px 0 52px;}
+.foot-grid{display:flex; gap:40px; flex-wrap:wrap; justify-content:space-between; align-items:flex-start;}
+footer p{font-size:14px; color:var(--ink-3); margin:0;}
+.swatches{display:flex; gap:0; margin-top:14px; border:1px solid var(--rule);}
+.sw{width:44px; height:26px;}
+.note{
+  margin-top:26px; padding:14px 16px; border:1px dashed var(--rule-strong);
+  background:var(--paper); font-size:13.5px; color:var(--ink-2); max-width:74ch;
+}
+
+/* ---------- views ---------- */
+.view{display:none;}
+.view.on{display:block;}
+
+@media (max-width:900px){
+  .surface{grid-template-columns:1fr;}
+  .pane + .pane{border-left:0; border-top:1px solid var(--rule);}
+  .bento{grid-template-columns:1fr;}
+  .tile.wide{grid-column:span 1;}
+  ol.seq{grid-template-columns:1fr 1fr;}
+  ul.free{columns:1;}
+  nav{gap:16px;}
+  nav button.link{font-size:14px;}
+}
+@media (max-width:620px){
+  .bar{height:auto; padding:12px 0; flex-wrap:wrap; gap:14px;}
+  .wordmark{margin-right:0; width:100%;}
+  ol.seq{grid-template-columns:1fr;}
+  tbody th{width:auto;}
+}
+@media (prefers-reduced-motion: reduce){
+  *{transition:none !important; animation:none !important;}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <span class="wordmark">ARQEDIA</span>
+    <nav>
+      <button class="link" data-go="home" aria-current="page">Product</button>
+      <button class="link" data-go="pricing">Pricing</button>
+      <button class="link" data-go="home">Security</button>
+      <button class="link" data-go="home">Sign in</button>
+    </nav>
+    <button class="btn small" data-go="pricing">Start a trial</button>
+  </div>
+</header>
+
+<!-- ============================ HOME ============================ -->
+<main id="home" class="view on">
+
+  <section class="hero">
+    <div class="wrap">
+      <h1>Every figure in the memorandum knows where it came from.</h1>
+      <p class="lede">ARQEDIA reads a counterparty file once, against the configuration you set, and writes the memoranda your credit, KYC and vendor teams already write — with each claim bound to the document and page it came from.</p>
+      <div class="actions">
+        <button class="btn" data-go="pricing">Start a trial</button>
+        <button class="btn ghost" data-go="home">Read a sample memorandum</button>
+      </div>
+      <p class="terms">30 days, full use. No card.</p>
+    </div>
+  </section>
+
+  <section style="padding-top:0;">
+    <div class="wrap">
+      <div class="surface" id="surface">
+        <div class="pane">
+          <div class="pane-head"><span>Credit Memorandum — Meridian Trading Ltd</span><span>Template 3, revision 7</span></div>
+          <p class="memo-h">IV. Existing Indebtedness</p>
+          <p class="claim" data-claim="0">The borrower reports senior facilities of USD 24.6m drawn against a committed line of USD 30.0m.<span class="cite">Audited Accounts FY2025, p.14</span></p>
+          <p class="claim" data-claim="1">Net leverage stands at 2.8× on trailing twelve-month EBITDA of USD 8.8m.<span class="cite">Audited Accounts FY2025, p.31</span></p>
+          <p class="claim" data-claim="2">No financial maintenance covenant ratio is stated in the facility agreement provided.<span class="cite">Facility Agreement, cl. 18.2</span></p>
+        </div>
+        <div class="pane">
+          <div class="pane-head"><span>Audited Accounts FY2025.pdf</span><span>page 14</span></div>
+          <div class="doc">
+            <span class="row l"></span><span class="row m"></span>
+            <span class="span" data-span="0">Senior facilities drawn at year end: USD 24,600,000 of a committed USD 30,000,000.</span>
+            <span class="row l"></span><span class="row s"></span>
+            <span class="span" data-span="1">EBITDA (trailing twelve months): USD 8,800,000.</span>
+            <span class="row m"></span>
+            <span class="span" data-span="2">The facility agreement is filed at Appendix C.</span>
+            <span class="row l"></span><span class="row s"></span>
+          </div>
+          <p class="doc-foot">Filed 4 March 2026 · read once, under revision 7 · never re-read.</p>
+        </div>
+      </div>
+      <p class="surface-caption">Select a claim to open the page it was taken from.</p>
+    </div>
+  </section>
+
+  <section class="hair">
+    <div class="wrap">
+      <h2>What you configure, and what you can change afterwards.</h2>
+      <div class="bento" style="margin-top:34px;">
+        <div class="tile wide">
+          <h3>Get the configuration right before you upload</h3>
+          <p>A document is read once, at the moment you file it, against the configuration live at that moment. The list of facts sought and the wording that defines them are fixed for that document. Everything downstream is not.</p>
+          <span class="chip"><span class="dot"></span>Editing a draft. Revision 7 stays in use until you publish.</span>
+        </div>
+        <div class="tile">
+          <h3>One fact, read three ways</h3>
+          <p>Define a fact once. A credit memorandum, a KYC memorandum and a lender memorandum each read it differently. You do not define it three times and you are not charged three times.</p>
+        </div>
+        <div class="tile">
+          <h3>Rearrange without re-reading</h3>
+          <p>Add a section, retitle it, reorder it, bind a different set of facts to it. The change reaches memoranda built from documents filed months ago, at no charge.</p>
+        </div>
+        <div class="tile wide">
+          <h3>A memorandum names the revision that wrote it</h3>
+          <p>Two memoranda generated a fortnight apart under different revisions are not the same document, and they say so. A revision is an integer on an append-only series and cannot change, which is why an old memorandum still reproduces.</p>
+          <span class="chip"><span class="dot"></span>Template 3 · revision 7 · published 2 March 2026</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="hair">
+    <div class="wrap">
+      <h2>What happens to a file you upload.</h2>
+      <ol class="seq" style="margin-top:34px;">
+        <li><h3>Upload</h3><p>Drop a folder of scans, statements and correspondence.</p></li>
+        <li><h3>Classify</h3><p>The file is split into parts and each part proposed as a document type.</p></li>
+        <li><h3>Review</h3><p>You see the parts and the price before anything is filed.</p></li>
+        <li><h3>Extract</h3><p>Facts are read against your live revision and pinned to it.</p></li>
+        <li><h3>Compose</h3><p>Sections render the facts bound to them, and nothing else.</p></li>
+      </ol>
+      <p class="fine" style="margin-top:26px;">Nothing is charged before the review step. A part with no text layer is blocked, not billed — you are told to OCR it and resubmit.</p>
+    </div>
+  </section>
+
+  <section class="hair">
+    <div class="wrap">
+      <h2>Start on a pack, not an empty editor.</h2>
+      <p>Three starter packs ship configured: KYC and AML, vendor onboarding, and trade credit. You fork one into your own workspace on the first screen after signup and edit from there. Most teams rename a few labels and run what they forked for years.</p>
+      <div class="actions" style="margin-top:24px;">
+        <button class="btn" data-go="pricing">See what it costs</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============================ PRICING ============================ -->
+<main id="pricing" class="view">
+
+  <section class="hero">
+    <div class="wrap">
+      <h1>A subscription, and a price per document.</h1>
+      <p class="lede">The plan buys seats, an allowance and a monthly credit. Beyond the credit you pay for what you file and what you generate, one click at a time. Nothing is ever charged without a click.</p>
+    </div>
+  </section>
+
+  <section style="padding-top:0;">
+    <div class="wrap">
+      <div class="trial">
+        <p><strong>30 days, full use, no card.</strong></p>
+        <p>Seats are free during the trial and $5.00 of metered credit is granted. Memoranda generated in the trial stay downloadable afterwards.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="hair">
+    <div class="wrap">
+      <h2>Plans</h2>
+      <div class="tbl-scroll">
+        <table>
+          <caption>Seats are a fixed plan attribute. Adding a seat is a plan change, not a proration.</caption>
+          <thead>
+            <tr>
+              <th scope="col"></th>
+              <th scope="col"><span class="plan-name">Base</span><span class="plan-price">$25 / month</span></th>
+              <th scope="col"><span class="plan-name">Small Business</span><span class="plan-price">$65 / month</span></th>
+              <th scope="col"><span class="plan-name">Enterprise</span><span class="plan-price">negotiated</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Seats</th><td class="num">2</td><td class="num">5</td><td class="num">as contracted</td></tr>
+            <tr><th scope="row">Monthly credit toward metered use</th><td class="num">$5.00</td><td class="num">$15.00</td><td class="num">as contracted</td></tr>
+            <tr><th scope="row">Shared memoranda per month</th><td class="num">5</td><td class="num">unlimited</td><td class="num">as contracted</td></tr>
+            <tr><th scope="row">Field sets per document type</th><td class="num">3</td><td class="num">5</td><td class="num">10 by default</td></tr>
+            <tr><th scope="row">Sections per template</th><td class="num">12</td><td class="num">25</td><td class="num">50 by default</td></tr>
+            <tr><th scope="row">Daily classification allowance</th><td class="num">$5.00</td><td class="num">$15.00</td><td class="num">negotiated</td></tr>
+            <tr><th scope="row">Top-up increment</th><td class="num">$10</td><td class="num">$25</td><td class="num">$5 × seats</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="fine">Monthly credit expires at your billing anniversary and does not roll over. Purchased credit expires 30 days from the date you buy it.</p>
+    </div>
+  </section>
+
+  <section class="hair">
+    <div class="wrap">
+      <h2>What is metered</h2>
+      <div class="tbl-scroll">
+        <table>
+          <thead>
+            <tr><th scope="col">Event</th><th scope="col">Price</th><th scope="col">Charged when</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Document filed</th>
+              <td class="num">$0.25</td>
+              <td>Once per part, at the moment you accept the proposal. A twelve-page scan split into three documents is three charges.</td>
+            </tr>
+            <tr>
+              <th scope="row">Memorandum generated</th>
+              <td class="num">$1.00</td>
+              <td>Once per generated memorandum, whatever its length and however many documents it draws on.</td>
+            </tr>
+            <tr>
+              <th scope="row">Screening and market data</th>
+              <td><span class="tbd">not yet priced</span></td>
+              <td>Third-party lookups. Not available at launch, and never called without a further explicit action.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="hair">
+    <div class="wrap">
+      <h2>A worked file</h2>
+      <p>One counterparty, a folder of scans that splits into eighteen documents, and one credit memorandum.</p>
+      <div class="example" style="margin-top:24px;">
+        <dl>
+          <dt>18 documents filed, at $0.25</dt><dd>$4.50</dd>
+          <dt>1 credit memorandum</dt><dd>$1.00</dd>
+          <dt>Base plan monthly credit applied</dt><dd>−$5.00</dd>
+          <dt class="total">Metered charge this file</dt><dd class="total">$0.50</dd>
+        </dl>
+      </div>
+      <p class="fine" style="margin-top:18px;">The same eighteen documents then support a KYC memorandum and a vendor memorandum at $1.00 each. They are not re-read and not re-charged.</p>
+    </div>
+  </section>
+
+  <section class="hair">
+    <div class="wrap">
+      <h2>What is not charged</h2>
+      <ul class="free" style="margin-top:26px;">
+        <li>Editing your configuration, at any time</li>
+        <li>Publishing a new revision</li>
+        <li>Adding, retitling or reordering a section</li>
+        <li>Binding a different set of facts to a section</li>
+        <li>Renaming a fact, including on memoranda already written</li>
+        <li>Reading or downloading anything already generated</li>
+        <li>Opening a new file on an entity named in a memorandum</li>
+        <li>Sharing, within your plan allowance</li>
+        <li>A recipient reading a memorandum you shared</li>
+        <li>Parts blocked for having no text layer</li>
+      </ul>
+      <p class="fine" style="margin-top:26px;">When your balance runs out, filing and generation stop. Reading, downloading and editing your configuration continue.</p>
+      <div class="actions" style="margin-top:30px; display:flex; gap:12px;">
+        <button class="btn" data-go="pricing">Start a trial</button>
+        <button class="btn ghost" data-go="pricing">Talk about an Enterprise plan</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <span class="wordmark">ARQEDIA</span>
+        <p style="margin-top:8px;">Structured access to documents you already hold.</p>
+      </div>
+      <div>
+        <p>Placeholder palette — no brand colour committed.</p>
+        <div class="swatches">
+          <span class="sw" style="background:#ffffff"></span>
+          <span class="sw" style="background:#f4f4f2"></span>
+          <span class="sw" style="background:#e9e9e6"></span>
+          <span class="sw" style="background:#d6d6d1"></span>
+          <span class="sw" style="background:#8e8e88"></span>
+          <span class="sw" style="background:#4a4a4d"></span>
+          <span class="sw" style="background:#17171a"></span>
+        </div>
+      </div>
+    </div>
+    <p class="note">Mock, not a build. Plan prices, seats, credits, allowances and the $0.25 / $1.00 metered rates are taken from the settled tables in the plans and wallet specifications. Provider-call pricing is unset in the specification and is shown as unpriced. Typefaces, colour and the wordmark are placeholders and are not proposed.</p>
+  </div>
+</footer>
+
+<script>
+(function(){
+  // --- view switching -------------------------------------------------
+  var views = { home: document.getElementById('home'), pricing: document.getElementById('pricing') };
+  function go(name){
+    Object.keys(views).forEach(function(k){ views[k].classList.toggle('on', k === name); });
+    document.querySelectorAll('nav button.link').forEach(function(b){
+      if (b.dataset.go === name && (b.textContent === 'Product' || b.textContent === 'Pricing')) {
+        b.setAttribute('aria-current','page');
+      } else { b.removeAttribute('aria-current'); }
+    });
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+  document.querySelectorAll('[data-go]').forEach(function(el){
+    el.addEventListener('click', function(){ go(el.dataset.go); });
+  });
+
+  // --- the one animated moment: claim -> source span ------------------
+  var claims = Array.prototype.slice.call(document.querySelectorAll('.claim'));
+  var spans  = Array.prototype.slice.call(document.querySelectorAll('.doc .span'));
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var timer = null, idx = 0, auto = true;
+
+  function light(i){
+    claims.forEach(function(c,n){ c.classList.toggle('lit', n === i); });
+    spans.forEach(function(s,n){ s.classList.toggle('lit', n === i); });
+  }
+
+  claims.forEach(function(c, i){
+    c.setAttribute('tabindex','0');
+    function pick(){ auto = false; if (timer) clearInterval(timer); light(i); }
+    c.addEventListener('click', pick);
+    c.addEventListener('focus', pick);
+  });
+
+  function start(){
+    if (!auto || reduce) { light(0); return; }
+    light(0);
+    timer = setInterval(function(){
+      if (!auto) { clearInterval(timer); return; }
+      idx = (idx + 1) % claims.length;
+      light(idx);
+    }, 2800);
+  }
+
+  var surface = document.getElementById('surface');
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting) { start(); io.disconnect(); }
+      });
+    }, { threshold: 0.35 });
+    io.observe(surface);
+  } else { start(); }
+})();
+</script>
+</body>
+</html>

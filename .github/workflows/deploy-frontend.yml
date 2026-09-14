@@ -7,15 +7,32 @@ on:
       - "web/**"
       - ".github/workflows/deploy-frontend.yml"
   workflow_dispatch:
+    inputs:
+      bucket:
+        description: Target S3 bucket
+        required: false
+        default: arqedia-dev-frontend-667523685221
+      distribution:
+        description: Target CloudFront distribution id
+        required: false
+        default: E34TKKQEJQ5B4
+      role:
+        description: Deploy role to assume
+        required: false
+        default: arn:aws:iam::667523685221:role/arqedia-dev-github-deploy
 
 permissions:
   id-token: write
   contents: read
 
+# ENV-01: these were literals. A push supplies no inputs, so the defaults are
+# the dev stack and nothing about the existing behaviour changes. A prod deploy
+# becomes a dispatch with three values rather than a second workflow file.
 env:
   AWS_REGION: us-east-2
-  BUCKET: arqedia-dev-frontend-667523685221
-  DISTRIBUTION: E34TKKQEJQ5B4
+  BUCKET: ${{ inputs.bucket || 'arqedia-dev-frontend-667523685221' }}
+  DISTRIBUTION: ${{ inputs.distribution || 'E34TKKQEJQ5B4' }}
+  DEPLOY_ROLE: ${{ inputs.role || 'arn:aws:iam::667523685221:role/arqedia-dev-github-deploy' }}
 
 jobs:
   deploy:
@@ -26,7 +43,7 @@ jobs:
       - name: Assume AWS role
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::667523685221:role/arqedia-dev-github-deploy
+          role-to-assume: ${{ env.DEPLOY_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Upload site

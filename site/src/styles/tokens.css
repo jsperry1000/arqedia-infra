@@ -1,0 +1,4 @@
+/* The marketing site draws every token from the application's file. One
+   source, two surfaces. Nothing is redeclared here — if a value is needed and
+   is missing, it is added to ui/src/tokens.css, not to this file. */
+@import "../../../ui/src/tokens.css";

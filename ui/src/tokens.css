@@ -1,0 +1,46 @@
+/* tokens.css
+ *
+ * THE SINGLE SOURCE. Change a value here and both surfaces follow: the
+ * application, which imports this from index.css, and the marketing site,
+ * which imports it from site/src/styles/tokens.css.
+ *
+ * Nothing else in either codebase may declare a colour, a typeface or a
+ * radius. If a value is needed and is not here, it is added here.
+ *
+ * Tenant brand colours are NOT in this file. brand_deep, brand_mid,
+ * brand_highlight and brand_light belong to a tenant, are read at render time
+ * by style.palette_for, and appear only on a rendered memorandum.
+ */
+
+:root {
+  /* --- ARQEDIA brand ---------------------------------------------------- */
+  --deep:   #002561;
+  --medium: #278ACA;
+  --light:  #C7E4F8;
+  --gold:   #FFDD00;
+  --green:  #9ACA3C;
+
+  /* --- neutrals ---------------------------------------------------------- */
+  --paper:  #ffffff;
+  --wash:   #f7fafd;
+  --shade:  #eef4fa;   /* one step below wash; the site's second ground */
+  --line:   #e2e8f0;
+  --rule:   #c3d0de;   /* a rule meant to be seen, not merely to separate */
+  --ink:    #0d1b2a;
+  --ink-2:  #3c4a5c;   /* body prose */
+  --muted:  #64748b;
+
+  /* --- type -------------------------------------------------------------- */
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --sans:  "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Helvetica, Arial, sans-serif;
+  --mono:  ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  /* --- shape ------------------------------------------------------------- */
+  --radius:      3px;
+  --pill-radius: 8px;    /* section rows, cards and their pills (UX-06) */
+  --pill-round:  999px;  /* the fully round pill, which Back alone wears */
+
+  /* --- measure ----------------------------------------------------------- */
+  --gutter: clamp(20px, 5vw, 64px);
+  --max:    1180px;
+}
