@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ARQEDIA — evidence-backed memoranda from the documents you already hold</title>
-<meta name="description" content="ARQEDIA reads a counterparty file once, against the configuration you set, and writes the credit, KYC and vendor memoranda your team already writes — each claim bound to the document it came from.">
+<title>ARQEDIA — enterprise document management and auditable report generation</title>
+<meta name="description" content="ARQEDIA is fully configurable and brandable. Files are read, facts are extracted and classified, and reporting is configurable to fact content with footnotes back to the original documents.">
 <link rel="icon" href="../brand/logo-deep.svg" type="image/svg+xml">
 <script type="module" src="/src/main.ts"></script>
 </head>
@@ -22,11 +22,16 @@
 
 <section class="hero"><div class="wrap">
   <div class="flock">
-    <canvas data-flock role="img" aria-label="Documents dissolving into facts, settling into a store, and reassembling as a memorandum."></canvas>
-    <div class="stages"><span>Documents</span><span>Facts</span><span>Filed</span><span>Retrieved</span></div>
+    <canvas data-flock role="img" aria-label="Documents dissolving into facts, settling into a store, and reassembling as a report."></canvas>
+    <div class="stages">
+      <span><b>Documents</b><i>Upload your files</i></span>
+      <span><b>Facts</b><i>ARQEDIA extracts relevant facts</i></span>
+      <span><b>Filed</b><i>Facts are categorised and filed in the database</i></span>
+      <span><b>Report</b><i>Your reports are built from structured facts</i></span>
+    </div>
   </div>
-  <h1>Every figure in the memorandum knows where it came from.</h1>
-  <p class="lede">ARQEDIA reads a counterparty file once, against the configuration you set, and writes the memoranda your credit, KYC and vendor teams already write — with each claim bound to the document it came from.</p>
+  <h1>Enterprise grade document management and auditable report generation.</h1>
+  <p class="lede">ARQEDIA is fully configurable and brandable, letting you tailor a best-in-class document-to-report system to your business. Files are read, and facts are extracted and classified. Reporting is configurable to fact content, with footnotes back to the original documents.</p>
   <div class="actions">
     <a class="btn" href="https://app.arqedia.com">Start a trial</a>
     <a class="btn ghost" href="/pricing/">See what it costs</a>
@@ -35,77 +40,85 @@
 </div></section>
 
 <section style="padding-top:0"><div class="wrap">
-  <div class="surface" data-cites>
-    <div class="pane">
-      <div class="pane-head"><span>Credit Memorandum — Meridian Trading Ltd</span><span>Template 3, revision 7</span></div>
+  <div class="surface">
+    <div class="pane" id="memo-pane">
+      <div class="pane-head"><span>Credit Memorandum — Meridian Trading Ltd</span><span>Template 3, revision 36</span></div>
       <p class="memo-h">IV. Existing Indebtedness</p>
-      <p class="claim">The borrower reports senior facilities of USD 24.6m drawn against a committed line of USD 30.0m.<span class="cite">Audited Accounts FY2025</span></p>
-      <p class="claim">Net leverage stands at 2.8&times; on trailing twelve-month EBITDA of USD 8.8m.<span class="cite">Audited Accounts FY2025</span></p>
-      <p class="claim">No financial maintenance covenant ratio is stated in the facility agreement provided.<span class="cite">Facility Agreement</span></p>
+      <div id="claims"></div>
+      <p class="pane-foot">Select a sentence to see the facts it was built from.</p>
     </div>
     <div class="pane">
-      <div class="pane-head"><span>Audited Accounts FY2025.pdf</span><span>source</span></div>
-      <div class="doc">
-        <span class="row l"></span><span class="row m"></span>
-        <span class="span">Senior facilities drawn at year end: USD 24,600,000 of a committed USD 30,000,000.</span>
-        <span class="row l"></span><span class="row s"></span>
-        <span class="span">EBITDA (trailing twelve months): USD 8,800,000.</span>
-        <span class="row m"></span>
-        <span class="span">The facility agreement is filed at Appendix C.</span>
-        <span class="row l"></span><span class="row s"></span>
-      </div>
-      <p class="doc-foot">Filed 4 March 2026 · read once, under revision 7 · never re-read.</p>
+      <div class="pane-head"><span id="fact-head">Facts behind this sentence</span><span id="fact-count"></span></div>
+      <div id="facts"></div>
+      <p class="pane-foot">Select a fact to open the document it was read from.</p>
     </div>
   </div>
-  <p class="surface-caption">Select a claim to open the passage it was taken from.</p>
 </div></section>
 
 <section class="hair"><div class="wrap">
   <h2>What you configure, and what you can change afterwards.</h2>
-  <div class="bento" style="margin-top:34px">
+  <div class="bento">
     <div class="tile wide">
-      <h3>Get the configuration right before you upload</h3>
-      <p>A document is read once, at the moment you file it, against the configuration live at that moment. The list of facts sought and the wording that defines them are fixed for that document. Everything downstream is not.</p>
-      <span class="chip"><span class="dot"></span>Editing a draft. Revision 7 stays in use until you publish.</span>
+      <h3>Get the configuration right upfront</h3>
+      <p>You configure the document types your business expects, and the facts each of those documents should carry. Design your reporting from the reports you already write: upload one, and ARQEDIA reads it and sets up the base configuration for you.</p>
     </div>
     <div class="tile">
-      <h3>One fact, read three ways</h3>
-      <p>Define a fact once. A credit memorandum, a KYC memorandum and a lender memorandum each read it differently. You do not define it three times and you are not charged three times.</p>
+      <h3>Single source of facts</h3>
+      <p>Facts are extracted against your definitions and cannot wander from report to report. Composition can only use the facts your definitions produced.</p>
     </div>
     <div class="tile">
       <h3>Rearrange without re-reading</h3>
-      <p>Add a section, retitle it, reorder it, bind a different set of facts to it. The change reaches memoranda built from documents filed months ago, at no charge.</p>
+      <p>Add a section, retitle it, reorder it, include new facts. The change reaches newly generated reports without disturbing the fact structures you have already configured.</p>
     </div>
     <div class="tile wide">
-      <h3>A memorandum names the revision that wrote it</h3>
-      <p>Two memoranda generated a fortnight apart under different revisions are not the same document, and they say so. A revision is an integer on an append-only series and cannot change, which is why an old memorandum still reproduces.</p>
-      <span class="chip"><span class="dot"></span>Template 3 · revision 7 · published 2 March 2026</span>
+      <h3>Version control</h3>
+      <p>Configurations are tracked, and so are earlier versions of every report. Source documents can be updated, replaced or deprecated, and the record says which version of which configuration produced what.</p>
     </div>
   </div>
 </div></section>
 
 <section class="hair"><div class="wrap">
   <h2>What happens to a file you upload.</h2>
-  <ol class="seq" style="margin-top:34px">
+  <ol class="seq">
     <li><h3>Upload</h3><p>Drop a folder of scans, statements and correspondence.</p></li>
-    <li><h3>Classify</h3><p>The file is split into parts and each part proposed as a document type.</p></li>
-    <li><h3>Review</h3><p>You see the parts and the price before anything is filed.</p></li>
-    <li><h3>Extract</h3><p>Facts are read against your live revision and pinned to it.</p></li>
-    <li><h3>Compose</h3><p>Sections render the facts bound to them, and nothing else.</p></li>
+    <li><h3>Classify</h3><p>The file is classified into a document type based on your configuration.</p></li>
+    <li><h3>Review</h3><p>You see the classified file and can revise its treatment before anything is filed.</p></li>
+    <li><h3>Extract</h3><p>Facts are extracted from the file according to its classification, which you configure.</p></li>
+    <li><h3>Compose</h3><p>Sections are configurable to carry specific facts, and you set the tone and content of each section as it drafts.</p></li>
   </ol>
-  <p class="fine" style="margin-top:26px">Nothing is charged before the review step. A part with no text layer is blocked, not billed — you are told to OCR it and resubmit.</p>
 </div></section>
 
 <section class="hair"><div class="wrap">
   <h2>Start on a pack, not an empty editor.</h2>
-  <p>Three starter packs ship configured: KYC and AML, vendor onboarding, and trade credit. You fork one into your own workspace on the first screen after signup and edit from there.</p>
-  <div class="actions" style="margin-top:24px"><a class="btn" href="/pricing/">See what it costs</a></div>
+  <p>Pick one or more starter packs — preconfigurations you can modify later to suit your business.</p>
+
+  <div class="packs">
+    <button class="pack-trigger" id="pack-trigger" aria-haspopup="listbox" aria-expanded="false">
+      <span id="pack-name">KYC and AML</span>
+      <span class="chev" aria-hidden="true"></span>
+    </button>
+    <ul class="pack-list" id="pack-list" role="listbox" hidden></ul>
+    <p class="pack-note" id="pack-note"></p>
+  </div>
+
+  <div class="actions"><a class="btn" href="https://app.arqedia.com">Start a trial</a></div>
 </div></section>
 
 <footer><div class="wrap"><div class="foot-grid">
   <div><span class="wordmark">ARQEDIA</span><p style="margin-top:8px">Structured access to documents you already hold.</p></div>
   <div><p><a href="/pricing/">Pricing</a> · <a href="https://app.arqedia.com">Sign in</a></p></div>
 </div></div></footer>
+
+<div class="doc-modal" id="doc-modal" hidden>
+  <div class="doc-card" role="dialog" aria-modal="true" aria-labelledby="doc-title">
+    <div class="doc-card-head">
+      <span id="doc-title"><b>Source Documents</b>Drill directly into the source of a fact.</span>
+      <button class="doc-close" id="doc-close" aria-label="Close">Close</button>
+    </div>
+    <div class="doc-card-sub" id="doc-sub"></div>
+    <div class="doc-body" id="doc-body"></div>
+  </div>
+</div>
 
 </body>
 </html>
