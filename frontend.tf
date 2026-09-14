@@ -38,9 +38,13 @@ resource "aws_cloudfront_origin_access_control" "frontend" {
 
 resource "aws_cloudfront_distribution" "frontend" {
   enabled             = true
+  is_ipv6_enabled     = true
   default_root_object = "index.html"
   comment             = "${local.name_prefix} front end"
   price_class         = "PriceClass_100"
+
+  # The CloudFront hostname keeps working alongside this.
+  aliases = [local.app_host]
 
   origin {
     domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
@@ -78,8 +82,12 @@ resource "aws_cloudfront_distribution" "frontend" {
     }
   }
 
+  # app.arqedia.com. Replaces the default certificate — the two arguments are
+  # mutually exclusive, so this block is swapped rather than extended.
   viewer_certificate {
-    cloudfront_default_certificate = true
+    acm_certificate_arn      = aws_acm_certificate_validation.web.certificate_arn
+    ssl_support_method       = "sni-only"
+    minimum_protocol_version = "TLSv1.2_2021"
   }
 
   tags = { Name = "${local.name_prefix}-frontend" }
@@ -110,4 +118,8 @@ output "frontend_bucket" {
 
 output "frontend_url" {
   value = "https://${aws_cloudfront_distribution.frontend.domain_name}"
+}
+
+output "app_url" {
+  value = "https://${local.app_host}"
 }
