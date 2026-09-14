@@ -29,3 +29,6 @@ memo-result.json
 __pycache__/
 *.pyc
 *.pdf
+
+site/dist/
+site/node_modules/
