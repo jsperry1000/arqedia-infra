@@ -176,3 +176,31 @@ export const INVOICES = [
   { date: "28 Jul 2026", what: "Small Business, monthly", amount: "$65.00", status: "Paid" },
   { date: "28 Jun 2026", what: "Base, monthly", amount: "$25.00", status: "Paid" },
 ];
+
+// --- signing up ------------------------------------------------------------
+
+/** The starter packs offered at signup. The same six the marketing site
+ *  lists. They are two lists in two projects today; when the packs endpoint
+ *  serves them, both read it and this goes. */
+export const SIGNUP_PACKS = [
+  { name: "KYC and AML", note: "Corporate identity, ownership and control, individuals, regulatory and screening, and the associated entities a counterparty banks, audits and insures with." },
+  { name: "Trade Credit", note: "Borrower overview, financial performance, working capital, existing indebtedness, security, trade flows and concentration." },
+  { name: "Asset Based Loan Memo", note: "Collateral schedules, valuation basis, advance rates, eligibility tests, and the borrowing base as reported." },
+  { name: "Real Estate Loan Memo", note: "Property and title, tenancy and income, valuation and basis, debt service, and the sponsor behind the transaction." },
+  { name: "Lender Marketing Memo", note: "The transaction as presented to a lender: the opportunity, the structure, the security, and what the borrower is asking for." },
+  { name: "Anonymous Project \u201cX\u201d Memo", note: "The same file with identities withheld, for circulation before a counterparty is named." },
+];
+
+/** Where a tenant's data lives. Confirmed once at signup and immutable
+ *  afterwards, so it is asked plainly rather than assumed. */
+export const REGIONS = [
+  { code: "us-east-2", label: "United States \u00b7 Ohio" },
+  { code: "eu-west-1", label: "European Union \u00b7 Ireland" },
+  { code: "ap-southeast-1", label: "Asia Pacific \u00b7 Singapore" },
+];
+
+export const JURISDICTIONS = [
+  "United Kingdom", "United States", "Ireland", "Germany", "France",
+  "Netherlands", "Switzerland", "United Arab Emirates", "Singapore",
+  "Hong Kong SAR", "Australia", "Canada", "Other",
+];

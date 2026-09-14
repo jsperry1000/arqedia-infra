@@ -8,6 +8,7 @@ import { WelcomeView } from "./Welcome";
 import { AccountView } from "./Account";
 import { ShareView } from "./Share";
 import { ViewerView } from "./Viewer";
+import { SignUp } from "./SignUp";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Amplify } from "aws-amplify";
 import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
@@ -30,7 +31,7 @@ Amplify.configure({
 
 // --- sign in ---------------------------------------------------------------
 
-function SignIn({ onDone }: { onDone: () => void }) {
+function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -82,6 +83,11 @@ function SignIn({ onDone }: { onDone: () => void }) {
         )}
         {error && <p className="error">{error}</p>}
         <button disabled={busy}>{busy ? "..." : "Sign in"}</button>
+        {/* Somebody arriving from the site has no account yet. Until this
+            existed the sign-in card was the end of the road for them. */}
+        <p className="muted small" style={{ textAlign: "center", margin: 0 }}>
+          No account? <a onClick={onCreate}>Start a 30-day trial</a>
+        </p>
       </form>
     </div>
   );
@@ -438,7 +444,18 @@ export default function App() {
   // Signing in lands on the introduction, before any editor (UX-14). A
   // session already open on load keeps the address it was opened at.
   if (!signedIn) {
-    return <SignIn onDone={() => { navigate("/welcome"); check(); }} />;
+    const done = () => { navigate("/welcome"); check(); };
+    return (
+      <Routes>
+        <Route path="/signup"
+               element={<SignUp onSignIn={() => navigate("/")} />} />
+        {/* Anything else signed out is the sign-in card, whatever was asked
+            for. The address is kept, so a link followed into the product
+            lands where it meant to once signed in. */}
+        <Route path="*"
+               element={<SignIn onDone={done} onCreate={() => navigate("/signup")} />} />
+      </Routes>
+    );
   }
 
   const shellVars = {
