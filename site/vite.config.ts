@@ -5,7 +5,8 @@ import { resolve } from 'node:path'
 // so the site distribution needs no 403/404 rewrite and a genuine 404 stays a
 // 404. See site.tf.
 export default defineConfig({
-  // tokens.css imports ui/src/tokens.css, which sits above this project root.
+  // tokens.css imports ui/src/tokens.css and the pages reference /brand,
+  // both of which sit above this project root.
   server: { fs: { allow: ['..'] } },
   build: {
     outDir: 'dist',

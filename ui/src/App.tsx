@@ -10,6 +10,11 @@ import { Amplify } from "aws-amplify";
 import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
 import { config } from "./config";
 import { api, type Engagement } from "./api";
+// The mark lives in one place, /brand, and both the application and the
+// marketing site reference it from there. Replace those two files and both
+// surfaces change in the same commit.
+import logoDeep from "../../brand/logo-deep.svg";
+import logoWhite from "../../brand/logo-white.svg";
 
 Amplify.configure({
   Auth: {
@@ -56,7 +61,7 @@ function SignIn({ onDone }: { onDone: () => void }) {
   return (
     <div className="centre">
       <form onSubmit={submit} className="card">
-        <img src="/icon-deep.png" alt="" width="44" height="44" />
+        <img src={logoDeep} alt="" width="44" height="44" />
         <h1>ARQEDIA</h1>
         {needsNew ? (
           <>
@@ -120,17 +125,6 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
       </form>
     </div>
   );
-}
-
-// --- the tenant's colours --------------------------------------------------
-
-/** The tenant's light where it has set none: its mid taken most of the way to
- *  white, as the rendered memorandum does (style.palette_for, LIGHT_MIX). */
-function towardsWhite(hex: string) {
-  const n = parseInt(hex.slice(1), 16);
-  const mix = (c: number) =>
-    Math.round(c + (255 - c) * 0.7).toString(16).padStart(2, "0");
-  return "#" + mix(n >> 16) + mix((n >> 8) & 255) + mix(n & 255);
 }
 
 // --- choosing a report -----------------------------------------------------
@@ -333,18 +327,10 @@ export default function App() {
 
   useEffect(() => { check(); }, []);
 
-  // The tenant's own colours, for the controls that wear them: Back in its
-  // deep, a pill in its light, a rule in its mid. The platform's where the
-  // tenant has set none, or the settings cannot be read.
-  const [brand, setBrand] = useState<{ deep?: string; mid?: string; light?: string }>({});
-  useEffect(() => {
-    if (!signedIn) return;
-    api.settings().then((s) => setBrand({
-      deep: s.deep ?? undefined,
-      mid: s.mid ?? undefined,
-      light: s.light ?? (s.mid ? towardsWhite(s.mid) : undefined),
-    })).catch(() => setBrand({}));
-  }, [signedIn]);
+  // A tenant's colours are NOT read here. They belong to what the tenant
+  // produces - a rendered memorandum and anything they share - and are applied
+  // at render time. Inside this application everyone sees ARQEDIA, so the
+  // chrome takes the platform tokens and nothing is fetched for it.
 
   // The rail sits beneath the header and runs to the foot of the window, so it
   // needs the header's height. Measured, as Memo.tsx does, because it changes
@@ -411,9 +397,6 @@ export default function App() {
 
   const shellVars = {
     "--header-h": headerHeight + "px",
-    ...(brand.deep ? { "--tenant-deep": brand.deep } : {}),
-    ...(brand.mid ? { "--tenant-mid": brand.mid } : {}),
-    ...(brand.light ? { "--tenant-light": brand.light } : {}),
   } as React.CSSProperties;
 
   const opened = (to: string, state?: unknown) => {
@@ -425,7 +408,7 @@ export default function App() {
   return (
     <div className="shell" style={shellVars}>
       <header ref={header}>
-        <img src="/icon-white.png" alt="" width="22" height="22" />
+        <img src={logoWhite} alt="" width="22" height="22" />
         <strong>ARQEDIA</strong>
         <span className="account" ref={account}>
           <a aria-expanded={accountOpen}
@@ -479,7 +462,3 @@ export default function App() {
     </div>
   );
 }
-
-
-
-

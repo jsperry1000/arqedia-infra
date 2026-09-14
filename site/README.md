@@ -35,7 +35,10 @@ real files at real paths, so the site distribution carries no 403/404 rewrite
 and a genuine 404 stays a 404 — unlike `frontend.tf`, where the app router owns
 its paths.
 
-## The logo
+## The mark
 
-`public/mark.svg` is a placeholder and says so in its own source. One file,
-referenced by the header and the favicon on both pages.
+One location: `/brand` at the repository root. `index.html` and
+`pricing/index.html` reference `logo-deep.svg` from there by relative path and
+Vite rewrites it at build. There is no copy in this project and no `public/`
+folder — replacing the two files in `/brand` changes the application and the
+site together.

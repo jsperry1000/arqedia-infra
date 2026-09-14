@@ -122,12 +122,13 @@ main:has(.wide-page) { max-width: 1560px; }
   background: var(--wash);
 }
 
-/* Back, in the tenant's own deep colour with the text reversed out.
-   --tenant-deep is set on .shell by App.tsx; the platform's deep otherwise. */
+/* Back, in ARQEDIA's deep with the text reversed out. NOT the tenant's.
+   A tenant's colours belong to what they produce - a rendered memorandum and
+   anything they share. Inside this application everyone sees ARQEDIA. */
 .back-pill, .start-pill {
   display: inline-block; white-space: nowrap;
   padding: 9px 16px; border-radius: var(--pill-round);
-  background: var(--tenant-deep, var(--deep)); color: #fff;
+  background: var(--deep); color: #fff;
   font-size: 13px; font-weight: 500;
 }
 .back-pill:hover, .start-pill:hover { text-decoration: none; }
@@ -916,13 +917,13 @@ a.add:hover { background: var(--paper); text-decoration: none; }
    class, so the proposer's cards, which share .review, are unchanged. */
 .review.section-row { border-radius: var(--pill-radius); }
 
-/* A pill: the tenant's light colour with its deep text. Sized as the memo
-   reader's block tools are. */
+/* A pill: ARQEDIA's light with its deep text. Sized as the memo reader's
+   block tools are. Not the tenant's - this is the product, not their output. */
 .pill {
   display: inline-block; white-space: nowrap;
   padding: 3px 7px; border-radius: var(--pill-radius);
-  background: var(--tenant-light, var(--light));
-  color: var(--tenant-deep, var(--deep));
+  background: var(--light);
+  color: var(--deep);
   font-size: 12px; font-weight: 500;
 }
 .pill:hover { text-decoration: none; }
@@ -959,7 +960,7 @@ a.add:hover { background: var(--paper); text-decoration: none; }
 
 /* What a section already renders, above what it could (UX-08). */
 .bound-rule {
-  border: 0; border-top: 1px solid var(--tenant-mid, var(--medium));
+  border: 0; border-top: 1px solid var(--medium);
   margin: 12px 0;
 }
 
@@ -981,7 +982,7 @@ a.add:hover { background: var(--paper); text-decoration: none; }
 }
 .working-bar::after {
   content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 30%;
-  background: var(--tenant-mid, var(--medium));
+  background: var(--medium);
   animation: working-sweep 1.2s ease-in-out infinite;
 }
 @keyframes working-sweep {
