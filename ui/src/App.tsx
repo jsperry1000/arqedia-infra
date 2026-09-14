@@ -5,6 +5,9 @@ import { EngagementView } from "./Review";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BackContext, BackPill } from "./shell";
 import { WelcomeView } from "./Welcome";
+import { AccountView } from "./Account";
+import { ShareView } from "./Share";
+import { ViewerView } from "./Viewer";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Amplify } from "aws-amplify";
 import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
@@ -306,12 +309,34 @@ function SettingsRoute() {
   return <SettingsView onBack={useBack()} />;
 }
 
+// --- not connected yet -----------------------------------------------------
+//
+// Account management, Sharing and the Viewer have no endpoints behind them.
+// They are routed and navigable so the flow can be walked and judged; every
+// figure in them comes from mock.tsx and every control is inert. Sharing will
+// open from a memorandum's own head rather than from the rail once it is real,
+// and the Viewer will be served outside this shell entirely.
+
+function AccountRoute() {
+  return <AccountView onBack={useBack()} />;
+}
+
+function ShareRoute() {
+  const navigate = useNavigate();
+  return <ShareView onBack={useBack()} onViewer={() => navigate("/viewer")} />;
+}
+
+function ViewerRoute() {
+  return <ViewerView onBack={useBack()} />;
+}
+
 // --- shell -----------------------------------------------------------------
 
 export default function App() {
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [who, setWho] = useState("");
   const navigate = useNavigate();
+  const location = useLocation();
 
   async function check() {
     try {
@@ -357,6 +382,27 @@ export default function App() {
   const [configEpoch, setConfigEpoch] = useState(0);
   const closeChooser = useCallback(() => setChoosing(false), []);
 
+  // The Settings choice. Closes on a click elsewhere or Escape, as every other
+  // panel on the screen does.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsPanel = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const away = (e: MouseEvent) => {
+      const item = settingsPanel.current?.parentElement;
+      if (item && !item.contains(e.target as Node)) setSettingsOpen(false);
+    };
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSettingsOpen(false);
+    };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [settingsOpen]);
+
   // The one Back. A screen hands up its own leave action; with none, Back
   // goes to the previous page.
   const leave = useRef<(() => void) | null>(null);
@@ -399,6 +445,13 @@ export default function App() {
     "--header-h": headerHeight + "px",
   } as React.CSSProperties;
 
+  // Which rail destination is open, so it can come forward to the page's own
+  // colour. Configure is matched on its prefix: the chooser navigates to
+  // /configure with a query, and the rail should still read as open.
+  const here = location.pathname;
+  const railClass = (path: string) =>
+    (path === "/" ? here === "/" : here.startsWith(path)) ? "on" : undefined;
+
   const opened = (to: string, state?: unknown) => {
     setChoosing(false);
     setConfigEpoch((n) => n + 1);
@@ -415,12 +468,24 @@ export default function App() {
              onClick={() => setAccountOpen(!accountOpen)}>
             {who} {accountOpen ? "▴" : "▾"}
           </a>
+          {/* A panel beneath the name, not three more links strung along the
+              header - in a row of white text on navy they read as part of the
+              masthead and are lost. */}
           {accountOpen && (
-            <a onClick={async () => {
-              setAccountOpen(false);
-              await signOut();
-              setSignedIn(false);
-            }}>Sign out</a>
+            <div className="account-menu">
+              <a onClick={() => { setAccountOpen(false); navigate("/settings/brand"); }}>
+                Brand settings
+              </a>
+              <a onClick={() => { setAccountOpen(false); navigate("/account"); }}>
+                Account management
+              </a>
+              <span className="sep" />
+              <a onClick={async () => {
+                setAccountOpen(false);
+                await signOut();
+                setSignedIn(false);
+              }}>Sign out</a>
+            </div>
           )}
         </span>
       </header>
@@ -428,14 +493,35 @@ export default function App() {
           a working screen is free for that screen's controls (UX-03). Home
           is first: every other screen is reached from it. */}
       <nav className="rail">
-        <a onClick={() => navigate("/")}>Engagements</a>
+        <a className={railClass("/")} onClick={() => navigate("/")}>Engagements</a>
         {/* A choice rather than a screen (UX-04): which report, or how to
             start a new one. */}
         <div className="rail-item">
-          <a onClick={() => setChoosing(!choosing)}>Configure a report</a>
+          <a className={railClass("/configure")} onClick={() => setChoosing(!choosing)}>Configure a report</a>
           {choosing && <ReportChooser onClose={closeChooser} onOpened={opened} />}
         </div>
-        <a onClick={() => navigate("/settings")}>Settings</a>
+        <a className={railClass("/shares")} onClick={() => navigate("/shares")}>Sharing</a>
+        {/* Settings opens a choice, as Configure does. Two things live under
+            it and they are not alike: how memoranda look, and who pays for
+            them. The balance belongs to the second - it is an account matter,
+            not a destination of its own. */}
+        <div className="rail-item">
+          <a className={here.startsWith("/settings") || here.startsWith("/account")
+                        ? "on" : undefined}
+             onClick={() => setSettingsOpen(!settingsOpen)}>Settings</a>
+          {settingsOpen && (
+            <div className="chooser" ref={settingsPanel}>
+              <a onClick={() => { setSettingsOpen(false); navigate("/settings/brand"); }}>
+                Brand settings
+              </a>
+              <p className="muted small">Your logo and the four colours a memorandum wears.</p>
+              <a onClick={() => { setSettingsOpen(false); navigate("/account"); }}>
+                Account management
+              </a>
+              <p className="muted small">Subscription, balance, and who holds a seat.</p>
+            </div>
+          )}
+        </div>
       </nav>
       {/* The working column. Back is drawn once, here, in the same place on
           every screen and held there while the page scrolls (UX-16). */}
@@ -451,6 +537,10 @@ export default function App() {
               <Route path="/memos/:id" element={<MemoRoute />} />
               <Route path="/configure" element={<ConfigureRoute epoch={configEpoch} />} />
               <Route path="/settings" element={<SettingsRoute />} />
+              <Route path="/settings/brand" element={<SettingsRoute />} />
+              <Route path="/account" element={<AccountRoute />} />
+              <Route path="/shares" element={<ShareRoute />} />
+              <Route path="/viewer" element={<ViewerRoute />} />
               <Route path="/welcome"
                      element={<WelcomeView onStart={() => setChoosing(true)} />} />
               {/* Anything else would render an empty page. */}

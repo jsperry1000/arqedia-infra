@@ -8,13 +8,13 @@ a{color:inherit}
 :focus-visible{outline:2px solid var(--deep);outline-offset:3px}
 .wrap{max-width:var(--max);margin:0 auto;padding-left:var(--gutter);padding-right:var(--gutter)}
 
-h1{font-family:var(--serif);font-weight:400;font-size:clamp(38px,5.6vw,68px);
-  line-height:1.06;letter-spacing:-.015em;margin:0 0 22px;max-width:16ch;color:var(--deep)}
+h1{font-family:var(--serif);font-weight:400;font-size:clamp(32px,4.2vw,52px);
+  line-height:1.1;letter-spacing:-.012em;margin:0 0 20px;max-width:24ch;color:var(--deep)}
 h2{font-family:var(--serif);font-weight:400;font-size:clamp(27px,3.2vw,38px);
   line-height:1.15;letter-spacing:-.01em;margin:0 0 16px;max-width:22ch;color:var(--deep)}
 h3{font-size:18px;font-weight:600;margin:0 0 8px;letter-spacing:-.005em}
 p{margin:0 0 16px;max-width:62ch;color:var(--ink-2)}
-.lede{font-size:19px;color:var(--ink-2);max-width:52ch}
+.lede{font-size:18px;color:var(--ink-2);max-width:62ch;line-height:1.6}
 .fine{font-size:14px;color:var(--muted);max-width:66ch}
 section{padding:clamp(56px,8vw,110px) 0}
 .hair{border-top:1px solid var(--line)}
@@ -38,50 +38,120 @@ nav.top a[aria-current="page"]{color:var(--ink);border-bottom-color:var(--ink)}
 
 .flock{border:1px solid var(--line);background:var(--paper);margin-bottom:clamp(32px,5vw,54px)}
 .flock canvas{display:block;width:100%;height:clamp(230px,32vw,380px)}
-.stages{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line)}
-.stages span{font-family:var(--mono);font-size:12px;color:var(--muted);padding:11px 14px;
-  border-left:1px solid var(--line);transition:color 500ms ease-out,background 500ms ease-out}
+/* The phase indicator. The live phase takes 30% more width, goes dark and
+   lights its text, over 0.6s; the one it took over from returns over the same
+   0.6s. The last phase is never taken over from, so it stays expanded. */
+.stages{display:flex;border-top:1px solid var(--line);overflow:hidden}
+.stages span{
+  flex:1 1 0; min-width:0;
+  display:flex; flex-direction:column; gap:3px;
+  padding:12px 16px; border-left:1px solid var(--line);
+  background:var(--paper); color:var(--muted);
+  transition:flex-grow 600ms ease-out, background 600ms ease-out, color 600ms ease-out;
+}
 .stages span:first-child{border-left:0}
-.stages span.on{color:var(--ink);background:var(--wash)}
+.stages span b{font-family:var(--mono);font-size:12px;font-weight:500;letter-spacing:.02em}
+.stages span i{
+  font-style:normal; font-size:12.5px; line-height:1.35; color:var(--muted);
+  opacity:0; transition:opacity 600ms ease-out, color 600ms ease-out;
+}
+.stages span.on{flex-grow:1.45;background:var(--deep);color:var(--paper)}
+.stages span.on b{color:var(--paper)}
+.stages span.on i{opacity:1;color:var(--light)}
+@media (max-width:760px){
+  .stages{flex-direction:column}
+  .stages span{border-left:0;border-top:1px solid var(--line)}
+  .stages span:first-child{border-top:0}
+  .stages span i{opacity:1}
+}
 .hero{padding-top:clamp(40px,6vw,72px);padding-bottom:clamp(40px,5vw,60px)}
 .hero .actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:30px}
 .hero .terms{margin-top:16px;font-size:14px;color:var(--muted)}
 
 .surface{border:1px solid var(--line);background:var(--wash);
-  display:grid;grid-template-columns:1.15fr 1fr;min-height:430px}
-.pane{padding:26px 28px;min-width:0}
+  display:grid;grid-template-columns:1.15fr 1fr;min-height:470px}
+.pane{padding:24px 26px;min-width:0;display:flex;flex-direction:column}
 .pane+.pane{border-left:1px solid var(--line);background:var(--shade)}
 .pane-head{display:flex;justify-content:space-between;align-items:baseline;gap:16px;
-  font-size:13px;color:var(--muted);padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:18px}
-.memo-h{font-family:var(--serif);font-size:15px;color:var(--ink);margin:0 0 10px}
-.claim{font-family:var(--serif);font-size:16px;line-height:1.6;color:var(--ink);cursor:pointer;
-  padding:7px 10px;margin:0 -10px 6px;border-radius:var(--radius);transition:background 380ms ease-out}
-.claim.lit{background:var(--light)}
-.cite{display:inline-block;font-family:var(--mono);font-size:11.5px;color:var(--muted);
-  border-bottom:1px dotted var(--rule);margin-left:6px;white-space:nowrap}
-.doc{font-family:var(--mono);font-size:11.5px;line-height:1.9;color:var(--muted);
-  background:var(--paper);border:1px solid var(--line);padding:16px 18px;height:300px;overflow:hidden}
-.doc .row{display:block;height:11px;background:var(--shade);border-radius:1px;margin:0 0 10px}
-.doc .row.s{width:62%}.doc .row.m{width:88%}.doc .row.l{width:100%}
-.doc .span{display:block;padding:3px 6px;margin:0 -6px 10px;color:var(--ink);
-  background:transparent;transition:background 380ms ease-out}
-.doc .span.lit{background:var(--light)}
-.doc-foot{margin-top:12px;font-size:12.5px;color:var(--muted)}
-.surface-caption{margin-top:14px;font-size:13.5px;color:var(--muted)}
+  font-size:12.5px;color:var(--muted);padding-bottom:10px;
+  border-bottom:1px solid var(--line);margin-bottom:16px}
+.pane-foot{margin:auto 0 0;padding-top:14px;font-size:12.5px;color:var(--muted)}
+.memo-h{font-family:var(--serif);font-size:15px;color:var(--deep);margin:0 0 12px}
 
-.bento{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}
-.tile{background:var(--paper);padding:28px}
+/* A sentence in the memorandum. Its footnote marker is part of it. */
+.claim{font-family:var(--serif);font-size:16px;line-height:1.62;color:var(--ink);
+  cursor:pointer;padding:8px 10px;margin:0 -10px 4px;border-radius:var(--radius);
+  border-left:2px solid transparent;
+  transition:background 260ms ease-out,border-color 260ms ease-out}
+.claim:hover{background:var(--paper)}
+.claim.lit{background:var(--light);border-left-color:var(--deep)}
+.claim sup{font-family:var(--sans);font-size:10px;font-weight:600;color:var(--medium);
+  background:var(--paper);border:1px solid var(--light);border-radius:8px;
+  padding:1px 5px;margin-left:5px;vertical-align:super}
+.claim.lit sup{background:var(--deep);color:var(--paper);border-color:var(--deep)}
+
+/* The facts read for the selected sentence. */
+.fact{display:flex;gap:12px;align-items:flex-start;width:100%;text-align:left;
+  font:inherit;font-size:14px;cursor:pointer;
+  background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);
+  padding:10px 12px;margin:0 0 8px;
+  transition:border-color 200ms ease-out,box-shadow 200ms ease-out}
+.fact:hover{border-color:var(--medium);box-shadow:0 1px 6px rgba(0,37,97,.08)}
+.fact .lab{color:var(--muted);font-size:12.5px;display:block}
+.fact .val{color:var(--ink);font-family:var(--mono);font-size:13.5px}
+.fact .grow{flex:1;min-width:0}
+.fact .src{font-size:11.5px;color:var(--medium);white-space:nowrap}
+
+/* The document behind a fact. */
+.doc-modal{position:fixed;inset:0;z-index:100;background:rgba(13,27,42,.42);
+  display:flex;align-items:center;justify-content:center;padding:24px}
+/* A class carrying display beats the hidden attribute's own display:none.
+   Without this the modal is open on load, empty, over everything. */
+.doc-modal[hidden]{display:none}
+.doc-card{background:var(--paper);border:1px solid var(--line);
+  width:min(760px,96vw);max-height:86vh;display:flex;flex-direction:column}
+.doc-card-head{display:flex;align-items:center;gap:16px;padding:15px 22px;
+  background:var(--deep);color:var(--paper);font-size:13px}
+.doc-card-head span{flex:1;color:var(--light)}
+.doc-card-head span b{display:block;font-family:var(--serif);font-weight:400;
+  font-size:19px;color:var(--paper);margin-bottom:2px}
+.doc-close{font:inherit;font-size:13px;background:transparent;color:var(--light);
+  border:1px solid rgba(255,255,255,.35);border-radius:var(--radius);
+  padding:5px 12px;cursor:pointer}
+.doc-card-sub{padding:12px 22px;border-bottom:1px solid var(--line);
+  font-size:12.5px;color:var(--muted)}
+.doc-body{padding:20px 22px;overflow:auto;
+  font-family:var(--mono);font-size:12.5px;line-height:1.95;color:var(--muted)}
+.doc-body .row{display:block;height:10px;background:var(--shade);border-radius:1px;margin:0 0 11px}
+.doc-body .row.s{width:58%}.doc-body .row.m{width:86%}.doc-body .row.l{width:100%}
+.doc-body mark{background:var(--light);color:var(--ink);padding:2px 4px}
+
+.bento{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+  border:1px solid var(--line);margin-top:34px;isolation:isolate}
+.tile{background:var(--paper);padding:28px;position:relative;
+  opacity:.82;transform:scale(1);
+  transition:opacity 260ms ease-out,transform 260ms ease-out,box-shadow 260ms ease-out}
+.tile:hover{opacity:1;transform:scale(1.1);z-index:3;
+  box-shadow:0 8px 30px rgba(0,37,97,.16)}
 .tile.wide{grid-column:span 2}
 .tile p{font-size:15.5px;margin-bottom:0}
 .chip{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);
   border:1px solid var(--line);background:var(--wash);padding:5px 9px;
   border-radius:var(--radius);margin:16px 6px 0 0;font-family:var(--mono)}
 .dot{width:6px;height:6px;border-radius:50%;background:var(--medium)}
-ol.seq{list-style:none;counter-reset:s;margin:0;padding:0;display:grid;grid-template-columns:repeat(5,1fr)}
-ol.seq li{counter-increment:s;padding:20px 18px 20px 0;border-top:2px solid var(--deep)}
+/* The same behaviour as the tiles above: a shade off at rest, white and
+   lifted on hover, so the five steps read as things rather than as a list. */
+ol.seq{list-style:none;counter-reset:s;margin:34px 0 0;padding:0;
+  display:grid;grid-template-columns:repeat(5,1fr);gap:1px;
+  background:var(--line);border:1px solid var(--line);isolation:isolate}
+ol.seq li{counter-increment:s;position:relative;padding:22px 20px;
+  background:var(--wash);border-top:2px solid var(--deep);
+  transition:background 260ms ease-out,transform 260ms ease-out,box-shadow 260ms ease-out}
+ol.seq li:hover{background:var(--paper);transform:scale(1.1);z-index:3;
+  box-shadow:0 8px 30px rgba(0,37,97,.16)}
 ol.seq li::before{content:counter(s);display:block;font-family:var(--mono);font-size:12px;
-  color:var(--muted);margin-bottom:10px}
-ol.seq h3{font-size:16px}
+  color:var(--medium);margin-bottom:10px}
+ol.seq h3{font-size:16px;color:var(--deep)}
 ol.seq p{font-size:14.5px;margin:0}
 
 .trial{border:1px solid var(--ink);padding:22px 24px;display:flex;gap:28px;align-items:center;flex-wrap:wrap}
@@ -128,3 +198,37 @@ footer p{font-size:14px;color:var(--muted);margin:0}
   tbody th{width:auto}
 }
 @media (prefers-reduced-motion: reduce){*{transition:none !important;animation:none !important}}
+
+
+/* --- starter packs -------------------------------------------------------- */
+
+.packs{position:relative;max-width:520px;margin:26px 0 30px}
+.pack-trigger{
+  width:100%;display:flex;align-items:center;gap:14px;
+  font:inherit;font-size:17px;font-family:var(--serif);color:var(--deep);
+  background:var(--paper);border:1px solid var(--rule);border-radius:var(--radius);
+  padding:15px 18px;cursor:pointer;text-align:left;
+  transition:border-color 200ms ease-out,box-shadow 200ms ease-out}
+.pack-trigger:hover{border-color:var(--medium)}
+.pack-trigger[aria-expanded="true"]{border-color:var(--deep);box-shadow:0 2px 14px rgba(0,37,97,.1)}
+.pack-trigger span:first-child{flex:1}
+.chev{width:9px;height:9px;border-right:1.6px solid var(--medium);
+  border-bottom:1.6px solid var(--medium);transform:rotate(45deg) translate(-2px,-2px);
+  transition:transform 220ms ease-out}
+.pack-trigger[aria-expanded="true"] .chev{transform:rotate(225deg) translate(-3px,-3px)}
+
+.pack-list{
+  position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:20;
+  list-style:none;margin:0;padding:6px;
+  background:var(--paper);border:1px solid var(--rule);border-radius:var(--radius);
+  box-shadow:0 10px 34px rgba(0,37,97,.14);max-height:330px;overflow:auto}
+.pack-list li{padding:0}
+.pack-list button{
+  width:100%;text-align:left;font:inherit;font-size:15px;color:var(--ink);
+  background:transparent;border:0;border-radius:var(--radius);
+  padding:11px 13px;cursor:pointer;display:block}
+.pack-list button:hover,.pack-list button:focus-visible{background:var(--wash)}
+.pack-list button[aria-selected="true"]{background:var(--light);color:var(--deep)}
+.pack-list button b{display:block;font-family:var(--serif);font-size:16px;font-weight:400;color:var(--deep)}
+.pack-list button small{display:block;font-size:12.5px;color:var(--muted);margin-top:2px}
+.pack-note{margin:14px 0 0;font-size:14.5px;color:var(--ink-2);min-height:3em}

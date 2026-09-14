@@ -33,15 +33,23 @@ resource "aws_cloudfront_function" "www_to_apex" {
   runtime = "cloudfront-js-2.0"
   publish = true
 
-  code = <<-JS
+    code = <<-JS
     function handler(event) {
-      var host = event.request.headers.host.value;
-      if (host !== "${local.www_host}") { return event.request; }
-      return {
-        statusCode: 301,
-        statusDescription: "Moved Permanently",
-        headers: { "location": { "value": "https://${local.site_host}" + event.request.uri } }
-      };
+      var req  = event.request;
+      var host = req.headers.host.value;
+
+      if (host === "www.arqedia.com") {
+        return {
+          statusCode: 301,
+          statusDescription: "Moved Permanently",
+          headers: { "location": { "value": "https://arqedia.com" + req.uri } }
+        };
+      }
+
+      if (req.uri.endsWith("/")) { req.uri += "index.html"; }
+      else if (req.uri.indexOf(".") === -1) { req.uri += "/index.html"; }
+
+      return req;
     }
   JS
 }
