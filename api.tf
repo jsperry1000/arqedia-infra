@@ -140,9 +140,20 @@ resource "aws_apigatewayv2_api" "main" {
   name          = "${local.name_prefix}-api"
   protocol_type = "HTTP"
 
+  # Both hostnames the application answers on. The CloudFront name alone was
+  # correct until app.arqedia.com was added; a browser on the new name was
+  # making cross-origin calls the gateway refused. Both are kept, because the
+  # CloudFront name still works and the test accounts use it.
+  #
+  # arqedia.com is here for signup only - the two unauthenticated routes in
+  # signup.tf. Nothing else on this API is reachable from the marketing site.
   cors_configuration {
-    allow_origins = ["https://${aws_cloudfront_distribution.frontend.domain_name}",
-                     "http://localhost:5173"]
+    allow_origins = [
+      "https://${aws_cloudfront_distribution.frontend.domain_name}",
+      "https://${local.app_host}",
+      "https://${local.site_host}",
+      "http://localhost:5173",
+    ]
     allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
     allow_headers = ["authorization", "content-type"]
     max_age       = 3600
@@ -276,15 +287,3 @@ resource "aws_lambda_permission" "api_gateway" {
 output "api_url" {
   value = aws_apigatewayv2_stage.default.invoke_url
 }
-
-
-
-
-
-
-
-
-
-
-
-

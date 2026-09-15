@@ -1,0 +1,7 @@
+{"Changes":[
+{"Action":"UPSERT","ResourceRecordSet":{"Name":"domzkxzqs725vm2fivauch756wltuo6s._domainkey.arqedia.com","Type":"CNAME","TTL":600,"ResourceRecords":[{"Value":"domzkxzqs725vm2fivauch756wltuo6s.dkim.amazonses.com"}]}},
+{"Action":"UPSERT","ResourceRecordSet":{"Name":"zqdhekxqpksim4xoge6ipfphclwnrpe7._domainkey.arqedia.com","Type":"CNAME","TTL":600,"ResourceRecords":[{"Value":"zqdhekxqpksim4xoge6ipfphclwnrpe7.dkim.amazonses.com"}]}},
+{"Action":"UPSERT","ResourceRecordSet":{"Name":"buhsemmxplvtaagq7yjfvpgdzc2lblan._domainkey.arqedia.com","Type":"CNAME","TTL":600,"ResourceRecords":[{"Value":"buhsemmxplvtaagq7yjfvpgdzc2lblan.dkim.amazonses.com"}]}},
+{"Action":"UPSERT","ResourceRecordSet":{"Name":"arqedia.com","Type":"TXT","TTL":600,"ResourceRecords":[{"Value":"\"v=spf1 include:amazonses.com ~all\""}]}},
+{"Action":"UPSERT","ResourceRecordSet":{"Name":"_dmarc.arqedia.com","Type":"TXT","TTL":600,"ResourceRecords":[{"Value":"\"v=DMARC1; p=none;\""}]}}
+]}

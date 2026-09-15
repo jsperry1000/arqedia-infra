@@ -100,7 +100,9 @@ nav.top a[aria-current="page"]{color:var(--ink);border-bottom-color:var(--ink)}
 .fact .lab{color:var(--muted);font-size:12.5px;display:block}
 .fact .val{color:var(--ink);font-family:var(--mono);font-size:13.5px}
 .fact .grow{flex:1;min-width:0}
-.fact .src{font-size:11.5px;color:var(--medium);white-space:nowrap}
+.fact .src{font-size:11.5px;color:var(--medium);white-space:nowrap;text-align:right}
+.fact .src i{display:block;font-style:normal;font-family:var(--mono);
+  font-size:11px;color:var(--ink-2);margin-top:2px}
 
 /* The document behind a fact. */
 .doc-modal{position:fixed;inset:0;z-index:100;background:rgba(13,27,42,.42);

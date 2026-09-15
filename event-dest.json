@@ -1,0 +1,1 @@
+{"Enabled":true,"MatchingEventTypes":["BOUNCE","COMPLAINT","REJECT","DELIVERY_DELAY"],"SnsDestination":{"TopicArn":"arn:aws:sns:us-east-2:667523685221:ses-events"}}

@@ -38,21 +38,21 @@ const CLAIMS: Claim[] = [
     facts: [
       {
         label: 'Total Debt', value: 'USD 24,600,000',
-        source: 'Audited-Accounts-FY2025.pdf', page: 'Note 14 — Borrowings',
+        source: 'Audited-Accounts-FY2025.pdf', page: 'p. 14',
         before: ['l', 'm'],
         passage: 'Senior facilities drawn at year end: USD 24,600,000.',
         after: ['l', 's', 'm'],
       },
       {
         label: 'Facility Limit', value: 'USD 30,000,000',
-        source: 'Facility-Agreement-2024.pdf', page: 'Clause 2.1 — The Facility',
+        source: 'Facility-Agreement-2024.pdf', page: 'p. 3, cl. 2.1',
         before: ['m', 'l'],
         passage: 'The Lenders make available a committed revolving facility in an aggregate amount of USD 30,000,000.',
         after: ['s', 'l'],
       },
       {
         label: 'Undrawn Headroom', value: 'USD 5,400,000',
-        source: 'Audited-Accounts-FY2025.pdf', page: 'Note 14 — Borrowings',
+        source: 'Audited-Accounts-FY2025.pdf', page: 'p. 14',
         before: ['l'],
         passage: 'Undrawn and available at year end: USD 5,400,000.',
         after: ['m', 's', 'l'],
@@ -65,21 +65,21 @@ const CLAIMS: Claim[] = [
     facts: [
       {
         label: 'EBITDA (trailing twelve months)', value: 'USD 8,800,000',
-        source: 'Management-Accounts-Q1.xlsx', page: 'Sheet “Summary”, cells B12:B24',
+        source: 'Management-Accounts-Q1.xlsx', page: 'Summary, B12:B24',
         before: ['m'],
         passage: 'EBITDA, trailing twelve months to 31 December 2025: USD 8,800,000.',
         after: ['l', 's'],
       },
       {
         label: 'Net Debt', value: 'USD 24,600,000',
-        source: 'Audited-Accounts-FY2025.pdf', page: 'Note 14 — Borrowings',
+        source: 'Audited-Accounts-FY2025.pdf', page: 'p. 31',
         before: ['l', 'l'],
         passage: 'Net debt, being total borrowings less cash and cash equivalents: USD 24,600,000.',
         after: ['s'],
       },
       {
         label: 'Net Leverage', value: '2.8×',
-        source: 'Audited-Accounts-FY2025.pdf', page: 'Note 14 — Borrowings',
+        source: 'Audited-Accounts-FY2025.pdf', page: 'p. 31',
         before: ['m', 's'],
         passage: 'Net debt to EBITDA at the reporting date: 2.8 times.',
         after: ['l', 'm'],
@@ -92,21 +92,21 @@ const CLAIMS: Claim[] = [
     facts: [
       {
         label: 'Covenant Ratio', value: 'Not disclosed',
-        source: 'Facility-Agreement-2024.pdf', page: 'Clause 18 — Financial Covenants',
+        source: 'Facility-Agreement-2024.pdf', page: 'p. 41, cl. 18',
         before: ['l', 'm'],
         passage: 'The Borrower shall comply with the financial covenants set out in Schedule 4, which was not provided.',
         after: ['s', 'l'],
       },
       {
         label: 'Lender Name', value: 'Northbank Commercial plc',
-        source: 'Facility-Agreement-2024.pdf', page: 'Parties',
+        source: 'Facility-Agreement-2024.pdf', page: 'p. 1',
         before: ['m'],
         passage: 'NORTHBANK COMMERCIAL PLC, as Agent and Original Lender.',
         after: ['l', 'l', 's'],
       },
       {
         label: 'Agreement Date', value: '17 June 2024',
-        source: 'Facility-Agreement-2024.pdf', page: 'Cover',
+        source: 'Facility-Agreement-2024.pdf', page: 'cover',
         before: ['s'],
         passage: 'Dated 17 June 2024.',
         after: ['m', 'l'],
@@ -155,7 +155,7 @@ function showFacts(i: number): void {
     b.innerHTML =
       `<span class="grow"><span class="lab">${fact.label}</span>` +
       `<span class="val">${fact.value}</span></span>` +
-      `<span class="src">${fact.source}</span>`
+      `<span class="src">${fact.source}<i>${fact.page}</i></span>`
     b.addEventListener('click', () => openDoc(fact))
     factsEl.appendChild(b)
   })
