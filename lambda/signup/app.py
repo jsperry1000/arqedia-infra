@@ -13,13 +13,19 @@ And this function holds Cognito administrative permissions. The API does not
 and must not: a defect in any of its fifty routes would otherwise be a defect
 that can create users.
 
-Routes, both unauthenticated:
+Routes, all unauthenticated:
 
-  POST /signup          run the checks, send a code, create nothing
-  POST /signup/verify   check the code, create the tenant and the user
+  POST /signup             run the checks, send a code, create nothing
+  POST /signup/verify      check the code, create the tenant and the user
+  POST /invitations/accept take a seat on a tenant somebody else owns
 
 Nothing exists until the code comes back. That is what stops a throwaway
 address taking a trial.
+
+Accepting an invitation is here rather than in the API for the same reason
+signing up is: the person has no token, because they have no account. It is
+also the only other thing in the product that creates a Cognito user, and
+those permissions live in exactly one function.
 """
 
 import hashlib
@@ -390,6 +396,108 @@ def verify(event, body):
     })
 
 
+# --- POST /invitations/accept ---------------------------------------------
+
+def accept(event, body):
+    """Turn a valid invitation into a seat and an account.
+
+    The seat is counted at this moment, not when the invitation was sent. An
+    invitation issued while a seat was free can still fail because somebody
+    else accepted first - which is the correct answer, and the message says
+    so rather than failing obscurely.
+
+    Seat first, then the Cognito user, and the seat is given back if the user
+    cannot be made. The reverse order leaves somebody able to sign in to a
+    workspace that does not list them.
+    """
+    email = (body.get("email") or "").strip().lower()
+    token = (body.get("token") or "").strip()
+    password = body.get("password") or ""
+    ip = _client_ip(event)
+
+    if not email or not token:
+        return _reply(400, {"error": "That invitation link is incomplete."})
+    domain = email.split("@", 1)[1] if "@" in email else ""
+
+    rows = _sql(
+        """
+        SELECT invitation_id, tenant_id, role, token_hash, expires_at,
+               invited_by
+        FROM seat_invitation
+        WHERE email = :e AND revoked_at IS NULL
+        """,
+        [_p("e", email)],
+    ).get("records", [])
+    if not rows:
+        return _reply(400, {"error": "That invitation is no longer open."})
+
+    r = rows[0]
+    invitation_id, tenant_id, role = _col(r, 0), _col(r, 1), _col(r, 2)
+
+    if _sha(token) != _col(r, 3):
+        return _reply(400, {"error": "That invitation link is not valid."})
+    if str(_col(r, 4)) < datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"):
+        return _reply(400, {"error": "That invitation has expired. Ask the "
+                                     "person who sent it for another."})
+
+    # How many the plan buys, and how many are taken. Kept in step with
+    # lambda/api/seats.py: "business" is what tenant.plan holds for the Small
+    # Business plan, whatever the specification calls it.
+    plan_rows = _sql("SELECT plan FROM tenant WHERE tenant_id = :t",
+                     [_p("t", tenant_id)]).get("records", [])
+    plan = ((_col(plan_rows[0], 0) if plan_rows else "base") or "base").strip().lower()
+    bought = {"base": 2, "business": 5, "small_business": 5}.get(plan, 2)
+
+    taken = _col(_sql("SELECT COUNT(*) FROM seat WHERE tenant_id = :t",
+                      [_p("t", tenant_id)])["records"][0], 0)
+    if taken >= bought:
+        return _reply(409, {"error": "Every seat in that workspace is taken. "
+                                     "Ask an administrator to free one, then "
+                                     "open this link again."})
+
+    _sql(
+        "INSERT INTO seat (tenant_id, email, role, invited_by) "
+        "VALUES (:t, :e, :r, :by)",
+        [_p("t", tenant_id), _p("e", email), _p("r", role),
+         _p("by", _col(r, 5))],
+    )
+
+    try:
+        _idp.admin_create_user(
+            UserPoolId=USER_POOL_ID,
+            Username=email,
+            MessageAction="SUPPRESS",
+            UserAttributes=[
+                {"Name": "email", "Value": email},
+                {"Name": "email_verified", "Value": "true"},
+                {"Name": "name", "Value": body.get("person_name") or email},
+                {"Name": "custom:tenant_id", "Value": str(tenant_id)},
+                {"Name": "custom:role", "Value": role},
+            ],
+        )
+        _idp.admin_set_user_password(
+            UserPoolId=USER_POOL_ID, Username=email,
+            Password=password, Permanent=True,
+        )
+    except Exception as exc:
+        _sql("DELETE FROM seat WHERE tenant_id = :t AND email = :e",
+             [_p("t", tenant_id), _p("e", email)])
+        try:
+            _idp.admin_delete_user(UserPoolId=USER_POOL_ID, Username=email)
+        except Exception:
+            pass
+        _record(domain, email, ip, "invite_failed", str(exc)[:200])
+        return _reply(500, {"error": "The account could not be created. "
+                                     "Nothing was kept, and the invitation is "
+                                     "still open."})
+
+    _sql("DELETE FROM seat_invitation WHERE invitation_id = :i",
+         [_p("i", invitation_id)])
+    _record(domain, email, ip, "seat_taken", f"tenant {tenant_id}")
+
+    return _reply(200, {"tenant_id": tenant_id, "role": role, "email": email})
+
+
 def lambda_handler(event, context):
     route = event.get("routeKey", "")
     try:
@@ -402,6 +510,8 @@ def lambda_handler(event, context):
             return begin(event, body)
         if route == "POST /signup/verify":
             return verify(event, body)
+        if route == "POST /invitations/accept":
+            return accept(event, body)
         return _reply(404, {"error": "No such route."})
     except Exception as exc:  # noqa: BLE001 - nothing may escape to the client
         print("signup failed:", repr(exc))
