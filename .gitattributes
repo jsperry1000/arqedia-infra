@@ -1,1 +1,2 @@
 *.tf text eol=lf
+*.py text eol=lf
