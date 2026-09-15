@@ -45,6 +45,17 @@ async function open_(path: string, body: unknown) {
   return parsed;
 }
 
+/** A key for one chargeable act, minted where the act begins.
+ *
+ *  It has to be stable across a retry of the same click and different for the
+ *  next one, which rules out both a timestamp alone and a hash of the
+ *  request. A fresh random value held for as long as the screen intends one
+ *  charge is exactly right. */
+export function chargeKey(): string {
+  return (crypto.randomUUID?.() ??
+    Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 64);
+}
+
 export type WalletBucket = {
   bucket_id: number;
   kind: string;
@@ -620,10 +631,16 @@ export const api = {
   pending: (id: string): Promise<{ pending: Pending[] }> =>
     call(`/engagements/${encodeURIComponent(id)}/pending`),
 
-  file: (id: string, decisions: Decision[]) =>
+  /** Confirm types and file. THIS CHARGES, once, for the documents included.
+   *
+   *  The key is minted by the caller and travels with the request, so a
+   *  retry, a double click or a stalled network is refused as a repeat rather
+   *  than charged again. Without one the server derives a weaker key from the
+   *  minute, which covers a double click and not much else. */
+  file: (id: string, decisions: Decision[], idempotencyKey?: string) =>
     call(`/engagements/${encodeURIComponent(id)}/file`, {
       method: "POST",
-      body: JSON.stringify({ decisions }),
+      body: JSON.stringify({ decisions, idempotency_key: idempotencyKey }),
     }),
 
   documents: (id: string): Promise<{ documents: Doc[] }> =>
@@ -651,10 +668,16 @@ export const api = {
 
   // Which memorandum to write. Omitted where a tenant holds only one, which
   // the API resolves to that one.
-  generate: (id: string, templateKey?: string) =>
+  /** Start composing. THIS CHARGES for one memorandum, on the click, after
+   *  the template is checked - a bad key does not take a dollar on its way to
+   *  failing. */
+  generate: (id: string, templateKey?: string, idempotencyKey?: string) =>
     call(`/engagements/${encodeURIComponent(id)}/generate`, {
       method: "POST",
-      body: JSON.stringify(templateKey ? { template_key: templateKey } : {}),
+      body: JSON.stringify({
+        ...(templateKey ? { template_key: templateKey } : {}),
+        idempotency_key: idempotencyKey,
+      }),
     }),
 
   memo: (memoId: number): Promise<Memo> => call(`/memos/${memoId}`),
