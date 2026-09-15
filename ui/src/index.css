@@ -1182,3 +1182,30 @@ table.docs tr.chosen td:first-child { box-shadow: inset 3px 0 0 var(--deep); }
 .pack-row input { width: auto; margin-top: 3px; }
 .pack-row strong { display: block; color: var(--deep); font-weight: 500; }
 .pack-row .small { display: block; margin-top: 2px; }
+
+/* --- what a thing costs, before it costs it -------------------------------- */
+
+/* The quote block on the review screen. Monospaced and aligned, because the
+   figures have to reconcile against a ledger line somebody may read months
+   later, and prose does not reconcile. */
+.quote {
+  margin: 14px 0;
+  padding: 12px 16px;
+  background: var(--wash);
+  border: 1px solid var(--line);
+  border-radius: var(--pill-radius);
+  max-width: 420px;
+}
+.quote div {
+  display: flex; justify-content: space-between; gap: 24px;
+  padding: 4px 0; font-size: 14px; color: var(--ink-2);
+}
+.quote b {
+  font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--ink);
+}
+/* Short of the whole proposal. Not an error - the money simply does not reach
+   that far, and the number that matters is how many it does reach. */
+.quote .short {
+  border-top: 1px solid var(--line); margin-top: 4px; padding-top: 8px;
+}
+.quote .short b { color: var(--deep); }

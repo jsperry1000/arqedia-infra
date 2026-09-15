@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
+  chargeKey,
   type Pending,
   type DocType,
   type Decision,
@@ -9,6 +10,7 @@ import {
   type DocumentDetail,
   type Passage,
   type Template,
+  type Quote,
 } from "./api";
 import { useBackAction, Working } from "./shell";
 
@@ -22,6 +24,11 @@ function stored(name: string) {
     .replace(/-{2,}/g, "-")
     .replace(/^[-.]+|[-.]+$/g, "")
     .slice(0, 120);
+}
+
+function money(cents: number) {
+  return "$" + (cents / 100).toLocaleString(undefined, {
+    minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 // How long nothing may change before the screen stops asking. A step that
@@ -58,6 +65,14 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [choices, setChoices] = useState<Record<number, Choice>>({});
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+
+  // What filing this proposal would cost, and what the memo would.
+  //
+  // FETCHED, NOT CALCULATED. Multiplying a count by a price the screen
+  // happens to know is how a client and a server come to disagree about a
+  // bill. The server prices it; the screen shows what came back.
+  const [fileQuote, setFileQuote] = useState<Quote | null>(null);
+  const [memoQuote, setMemoQuote] = useState<Quote | null>(null);
 
   // Files sent and not yet seen as a row. The row exists only once the file
   // has been read, so between an upload finishing and its row appearing the
@@ -115,6 +130,19 @@ export function EngagementView({ id, onBack, onMemo }: {
   }
 
   useEffect(() => { api.documentTypes().then((r) => setTypes(r.types)); }, []);
+
+  // Re-priced whenever the proposal changes and after anything is charged, so
+  // the figure on screen is never one charge out of date.
+  useEffect(() => {
+    if (pending.length === 0) { setFileQuote(null); return; }
+    api.walletQuote("document_filed", pending.length)
+      .then(setFileQuote).catch(() => setFileQuote(null));
+  }, [pending.length, docs.length, memos.length]);
+
+  useEffect(() => {
+    api.walletQuote("memo_generated", 1)
+      .then(setMemoQuote).catch(() => setMemoQuote(null));
+  }, [docs.length, memos.length, pending.length]);
 
   // Which memoranda this tenant can write. One is the ordinary case and needs
   // no choosing; the selector appears only when there is a choice to make.
@@ -254,11 +282,36 @@ export function EngagementView({ id, onBack, onMemo }: {
       include: true,
     }));
     setBusy("Filing");
+    setError("");
     setGaveUp(false);
-    await api.file(id, decisions);
-    setChoices({});
-    setBusy("");
-    refresh();
+    try {
+      // One key for one click. A retry of this click is refused as a repeat;
+      // filing again tomorrow is a different act and gets its own.
+      await api.file(id, decisions, chargeKey());
+      setChoices({});
+    } catch (err) {
+      setError(charged(err));
+    } finally {
+      setBusy("");
+      refresh();
+    }
+  }
+
+  /** A refusal for want of money, said as a sentence rather than as a status.
+   *
+   *  Nothing was debited: the charge rolls back before it refuses, so a
+   *  person reading this has lost nothing and needs to be told so. */
+  function charged(err: unknown) {
+    const text = String((err as Error)?.message ?? err);
+    try {
+      const body = JSON.parse(text);
+      if (body.needed_cents !== undefined) {
+        return `${money(body.needed_cents)} needed and ${money(body.available_cents)} `
+             + "available. Nothing was filed and nothing was charged. "
+             + "Top up under Settings, Account management.";
+      }
+      return body.error ?? text;
+    } catch { return text; }
   }
 
   async function toggleActive(d: Doc) {
@@ -275,7 +328,7 @@ export function EngagementView({ id, onBack, onMemo }: {
     setBusy("Starting a memo");
     setError("");
     try {
-      await api.generate(id, template || undefined);
+      await api.generate(id, template || undefined, chargeKey());
       setGaveUp(false);
       setGenerating({ before: memos.length });
       setShut((prev) => {
@@ -284,7 +337,7 @@ export function EngagementView({ id, onBack, onMemo }: {
         return next;
       });
     } catch (err) {
-      setError(String((err as Error)?.message ?? err));
+      setError(charged(err));
     } finally {
       setBusy("");
     }
@@ -484,9 +537,48 @@ export function EngagementView({ id, onBack, onMemo }: {
             );
           })}
 
-          <button onClick={fileAll} disabled={!!busy || pending.length === 0}>
+          {/* What this costs, before the click that costs it. The wallet
+              specification writes this block; it is reproduced rather than
+              reinvented, because the figures have to reconcile with a ledger
+              line a person may read months later. */}
+          {fileQuote && (
+            <div className="quote">
+              <div>
+                <span>{fileQuote.quantity}{" "}
+                  {fileQuote.quantity === 1 ? "document" : "documents"} proposed</span>
+                <b>{money(fileQuote.total_cents)}</b>
+              </div>
+              <div>
+                <span>Available</span>
+                <b>{money(fileQuote.available_cents)}</b>
+              </div>
+              {!fileQuote.affordable && (
+                <div className="short">
+                  <span>Fileable now</span>
+                  <b>{fileQuote.affordable_count}</b>
+                </div>
+              )}
+            </div>
+          )}
+
+          {fileQuote && !fileQuote.affordable && (
+            <p className="why warn">
+              {fileQuote.affordable_count === 0
+                ? "There is not enough balance to file any of these. Nothing "
+                + "has been charged, and the proposal keeps until there is."
+                : `There is enough for ${fileQuote.affordable_count} of `
+                + `${fileQuote.quantity}. Set the rest aside, or top up and `
+                + "file them together."}{" "}
+              Top up under Settings, Account management.
+            </p>
+          )}
+
+          <button onClick={fileAll}
+                  disabled={!!busy || pending.length === 0
+                            || (fileQuote ? !fileQuote.affordable : false)}>
             File {pending.length}{" "}
             {pending.length === 1 ? "document" : "documents"}
+            {fileQuote ? ` \u00b7 ${money(fileQuote.total_cents)}` : ""}
           </button>
         </>
       )}
@@ -631,14 +723,26 @@ export function EngagementView({ id, onBack, onMemo }: {
         </div>
       )}
 
-      <button onClick={generate} disabled={blocked || activeCount === 0}>
+      {memoQuote && !memoQuote.affordable && activeCount > 0 && (
+        <p className="why warn">
+          A memorandum costs {money(memoQuote.total_cents)} and{" "}
+          {money(memoQuote.available_cents)} is available. Nothing has been
+          charged. Top up under Settings, Account management.
+        </p>
+      )}
+
+      <button onClick={generate}
+              disabled={blocked || activeCount === 0
+                        || (memoQuote ? !memoQuote.affordable : false)}>
         {reading > 0
           ? `Wait \u2014 reading ${reading} ${reading === 1 ? "document" : "documents"}`
           : unfiled > 0
             ? `Wait \u2014 ${unfiled} to file`
             : busy || generating
               ? "Wait\u2026"
-              : `Generate memo from ${activeCount} ${activeCount === 1 ? "document" : "documents"}`}
+              : `Generate memo from ${activeCount} `
+                + `${activeCount === 1 ? "document" : "documents"}`
+                + (memoQuote ? ` \u00b7 ${money(memoQuote.total_cents)}` : "")}
       </button>
 
       <table>
