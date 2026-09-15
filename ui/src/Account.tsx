@@ -1,9 +1,26 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useBackAction } from "./shell";
+import { api, type Wallet, type LedgerEntry } from "./api";
 import {
-  SUBSCRIPTION, PLANS, SEATS, INVOICES, BUCKETS, LEDGER, WALLET,
+  SUBSCRIPTION, PLANS, SEATS, INVOICES,
   Inert, NotConnected,
 } from "./mock";
+
+/** Cents, as money. One place, so a balance and a ledger row never disagree
+ *  about how many decimals a dollar has. */
+function money(cents: number) {
+  return "$" + (cents / 100).toLocaleString(undefined, {
+    minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** A bucket's kind, said in words. The database calls it monthly_credit
+ *  because a column should; a person should not have to. */
+const KINDS: Record<string, string> = {
+  trial: "Trial credit",
+  monthly_credit: "Monthly credit",
+  purchased: "Purchased",
+  daily_test: "Daily test allowance",
+};
 
 /**
  * Account management. Everything to do with money and with who may spend it.
@@ -19,8 +36,13 @@ import {
  * and putting it on its own rail entry asked people to know the difference
  * between a plan and a balance before they had one.
  *
- * NOT CONNECTED. There are no subscription, seat or wallet endpoints. Every
- * figure is from mock.tsx; the plan table in it is the settled one.
+ * BALANCE IS LIVE. It reads /wallet and /wallet/ledger, which are real: the
+ * figures on that tab are this tenant's actual money.
+ *
+ * SUBSCRIPTION AND SEATS ARE NOT. There is no subscription endpoint and no
+ * seat model, so those two read mock.tsx and every control on them is inert.
+ * They say so on the tab rather than at the top, now that not everything here
+ * is mocked.
  */
 
 type Tab = "subscription" | "balance" | "seats";
@@ -32,7 +54,6 @@ export function AccountView({ onBack }: { onBack: () => void }) {
   return (
     <div>
       <h2>Account management</h2>
-      <NotConnected what="Account management" />
 
       <nav className="tabs">
         <button className={tab === "subscription" ? "on" : undefined}
@@ -60,6 +81,8 @@ function Subscription() {
 
   return (
     <>
+      <NotConnected what="Subscription" />
+
       {onTrial && (
         <p className="revision-note">
           <strong>Trial &mdash; {SUBSCRIPTION.trialDaysLeft} days left.</strong>{" "}
@@ -175,37 +198,66 @@ function Subscription() {
 // --- balance ---------------------------------------------------------------
 
 function Balance() {
+  const [wallet, setWallet] = useState<Wallet | null>(null);
+  const [entries, setEntries] = useState<LedgerEntry[] | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api.wallet().then(setWallet).catch((e) => setError(String(e.message ?? e)));
+    api.walletLedger(50).then((r) => setEntries(r.ledger)).catch(() => setEntries([]));
+  }, []);
+
+  if (error) return <p className="error">{error}</p>;
+  if (!wallet) return <p className="muted">Loading&hellip;</p>;
+
+  const live = wallet.buckets.filter((b) => !b.expired);
+  const gone = wallet.buckets.filter((b) => b.expired);
+  const filing = wallet.prices.document_filed;
+  const memo = wallet.prices.memo_generated;
+
+  // Said in work rather than in money. "$2.00" is a number; "eight documents
+  // or two memoranda" is the thing a person is actually deciding about.
+  const inWork = [
+    filing ? `${Math.floor(wallet.available_cents / filing)} documents` : null,
+    memo ? `${Math.floor(wallet.available_cents / memo)} memoranda` : null,
+  ].filter(Boolean).join(", or ");
+
+  const low = memo ? wallet.available_cents < memo * 3 : false;
+
   return (
     <>
       <div className="stat-cards">
         <div className="stat">
           <span className="lbl">Available</span>
-          <span className="big">{WALLET.available}</span>
-          <span className="muted small">8 documents, or 2 memoranda</span>
+          <span className="big">{wallet.available}</span>
+          <span className="muted small">{inWork || "\u00a0"}</span>
         </div>
         <div className="stat">
           <span className="lbl">Each document filed</span>
-          <span className="big">$0.25</span>
+          <span className="big">{filing ? money(filing) : "\u2014"}</span>
           <span className="muted small">Charged when you accept the proposal</span>
         </div>
         <div className="stat">
           <span className="lbl">Each memorandum</span>
-          <span className="big">$1.00</span>
+          <span className="big">{memo ? money(memo) : "\u2014"}</span>
           <span className="muted small">Whatever its length, however many documents</span>
         </div>
       </div>
 
-      <p className="revision-note">
-        <strong>Running low.</strong> {WALLET.available} left, which is two
-        memoranda. Filing and generating stop at zero; reading, downloading and
-        editing your configuration do not.
-      </p>
+      {low && (
+        <p className="revision-note">
+          <strong>Running low.</strong> {wallet.available} left
+          {inWork ? `, which is ${inWork}` : ""}. Filing and generating stop at
+          zero; reading, downloading and editing your configuration do not.
+        </p>
+      )}
 
       <div className="form-actions">
-        <Inert what="Top-up">{`Top up ${WALLET.topUp}`}</Inert>
+        <Inert what="Top-up">Top up</Inert>
         <span className="muted small">
-          One click buys one increment. There is no standing mandate and nothing
-          is ever charged unprompted.
+          No payment provider is connected yet. When one is, a click will buy
+          one increment &mdash; there is no standing mandate and nothing is ever
+          charged unprompted.
         </span>
       </div>
 
@@ -215,47 +267,96 @@ function Balance() {
         cash, but a cash tranche maturing sooner is burned first rather than
         stranded.
       </p>
-      <table className="docs">
-        <thead>
-          <tr><th>Bucket</th><th>Granted</th><th>Spent</th><th>Remaining</th><th>Expires</th></tr>
-        </thead>
-        <tbody>
-          {BUCKETS.map((b) => (
-            <tr key={b.label}>
-              <td>{b.label}</td>
-              <td className="ref">{b.granted}</td>
-              <td className="ref">{b.spent}</td>
-              <td className="ref">{b.left}</td>
-              <td className="ref">{b.expires}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="muted small">
-        Test runs debit their own bucket at the normal $0.25 &mdash; four a day.
-        They never spill into your real balance, and your real balance can never
-        be spent on testing.
-      </p>
+
+      {live.length === 0 && (
+        <p className="muted">Nothing available. Every bucket has expired or been spent.</p>
+      )}
+
+      {live.length > 0 && (
+        <table className="docs">
+          <thead>
+            <tr><th>Bucket</th><th>Granted</th><th>Spent</th><th>Remaining</th><th>Expires</th></tr>
+          </thead>
+          <tbody>
+            {live.map((b) => (
+              <tr key={b.bucket_id}>
+                <td>
+                  {KINDS[b.kind] ?? b.kind}
+                  {b.reference && <div className="muted small">{b.reference}</div>}
+                </td>
+                <td className="ref">{money(b.granted_cents)}</td>
+                <td className="ref">{money(b.spent_cents)}</td>
+                <td className="ref">{money(b.remaining_cents)}</td>
+                <td className="ref">{b.expires_at}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {gone.length > 0 && (
+        <>
+          <h4>Expired</h4>
+          <p className="muted small">
+            Shown rather than hidden. Money that ran out on a date is easier to
+            understand than money that was simply never there.
+          </p>
+          <table className="docs">
+            <tbody>
+              {gone.map((b) => (
+                <tr key={b.bucket_id}>
+                  <td className="muted">{KINDS[b.kind] ?? b.kind}</td>
+                  <td className="ref">{money(b.granted_cents)} granted</td>
+                  <td className="ref">{money(b.spent_cents)} spent</td>
+                  <td className="ref">expired {b.expires_at}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
 
       <h3>Ledger</h3>
-      <table className="docs">
-        <thead>
-          <tr><th>When</th><th>Event</th><th>Reference</th><th>Amount</th></tr>
-        </thead>
-        <tbody>
-          {LEDGER.map((row, i) => (
-            <tr key={i}>
-              <td className="ref">{row.at}</td>
-              <td>{row.event}</td>
-              <td className="muted small">{row.ref}</td>
-              <td className="ref">{row.amount}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {entries === null && <p className="muted">Loading&hellip;</p>}
+      {entries !== null && entries.length === 0 && (
+        <p className="muted">Nothing charged yet.</p>
+      )}
+      {entries !== null && entries.length > 0 && (
+        <table className="docs">
+          <thead>
+            <tr><th>When</th><th>Event</th><th>Reference</th><th>By</th><th>Amount</th></tr>
+          </thead>
+          <tbody>
+            {entries.map((e) => (
+              <tr key={e.entry_id}>
+                <td className="ref">{e.created_at}</td>
+                <td>
+                  {e.event_type === "document_filed"
+                    ? `${e.quantity} document${e.quantity === 1 ? "" : "s"} filed`
+                    : e.event_type === "memo_generated"
+                    ? "Memorandum generated"
+                    : e.event_type}
+                  <div className="muted small">
+                    {e.quantity} &times; {money(e.unit_cents)}
+                  </div>
+                </td>
+                <td className="muted small">{e.reference}</td>
+                <td className="muted small">{e.created_by}</td>
+                <td className="ref">{e.amount}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
       <p className="muted small">
         The ledger is append-only. There are no reversals, because unreadable
         material is blocked before filing rather than charged and refunded.
+      </p>
+
+      <p className="muted small">
+        The price on each line is the price as it stood that day, not as it
+        stands now.
       </p>
     </>
   );
@@ -271,6 +372,8 @@ function Seats() {
 
   return (
     <>
+      <NotConnected what="Seats" />
+
       <p className="muted">
         {SUBSCRIPTION.seatsUsed} of {SUBSCRIPTION.seatsIncluded} seats in use
         {free > 0 ? `, ${free} free` : ", none free"} &middot;{" "}

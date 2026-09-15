@@ -448,7 +448,8 @@ export default function App() {
     return (
       <Routes>
         <Route path="/signup"
-               element={<SignUp onSignIn={() => navigate("/")} />} />
+               element={<SignUp onSignIn={() => navigate("/")}
+                                onSignedUp={() => { navigate("/welcome"); check(); }} />} />
         {/* Anything else signed out is the sign-in card, whatever was asked
             for. The address is kept, so a link followed into the product
             lands where it meant to once signed in. */}

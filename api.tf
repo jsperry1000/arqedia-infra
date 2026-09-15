@@ -74,9 +74,17 @@ data "aws_iam_policy_document" "api" {
     resources = [aws_kms_key.data.arn]
   }
 
+  # Transactions are separate actions from ExecuteStatement. The wallet
+  # debits in one, so that a charge is all or nothing; without these three it
+  # would fail on the first begin_transaction.
   statement {
-    effect    = "Allow"
-    actions   = ["rds-data:ExecuteStatement"]
+    effect = "Allow"
+    actions = [
+      "rds-data:ExecuteStatement",
+      "rds-data:BeginTransaction",
+      "rds-data:CommitTransaction",
+      "rds-data:RollbackTransaction",
+    ]
     resources = [aws_rds_cluster.main.arn]
   }
 
@@ -152,7 +160,12 @@ resource "aws_apigatewayv2_api" "main" {
       "https://${aws_cloudfront_distribution.frontend.domain_name}",
       "https://${local.app_host}",
       "https://${local.site_host}",
+      # Vite takes the next free port when 5173 is busy, which it is whenever
+      # the marketing site is running too. Three, so a second dev server does
+      # not look like a CORS fault.
       "http://localhost:5173",
+      "http://localhost:5174",
+      "http://localhost:5175",
     ]
     allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
     allow_headers = ["authorization", "content-type"]
@@ -250,6 +263,13 @@ locals {
     "POST /documents/{document_id}/active",
     "GET /documents/{document_id}/values",
     "GET /documents/{document_id}/passage",
+
+    # The wallet. What is left, what went where, and what a thing would cost
+    # before anybody commits to it.
+    "GET /wallet",
+    "GET /wallet/ledger",
+    "GET /wallet/quote",
+    "POST /wallet/top-up",
   ]
 }
 

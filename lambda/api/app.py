@@ -68,6 +68,7 @@ import config
 import editor
 import registry
 import textract
+import wallet
 
 _s3 = boto3.client("s3")
 _rds = boto3.client("rds-data")
@@ -157,6 +158,23 @@ def caller(event):
     # members without any rule being rewritten.
     role = claims.get("custom:role") or "member"
     return int(raw), email, role
+
+
+def _key(body, kind, engagement):
+    """The idempotency key for a charge.
+
+    The client should send one, and the screens will. Where it did not, a key
+    is derived from what is being done so that an immediate retry is still
+    refused as a repeat. It changes every minute, which is long enough to
+    cover a double click and a stalled request and short enough that a
+    genuine second filing an hour later is not mistaken for one.
+    """
+    given = (body or {}).get("idempotency_key")
+    if given:
+        return str(given)[:64]
+    minute = datetime.datetime.utcnow().strftime("%Y%m%d%H%M")
+    seed = "%s|%s|%s" % (kind, engagement, minute)
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:64]
 
 
 def _reply(status, body):
@@ -269,14 +287,35 @@ def _start_ocr(registry, tenant_id, document_id, s3_key, document_type):
     return job_id, mode
 
 
-def file_documents(tenant_id, decisions):
-    """Confirm types and file. The deliberate act that starts extraction -
-    and, later, the point at which money changes hands.
+def file_documents(tenant_id, email, decisions, idempotency_key):
+    """Confirm types and file. The deliberate act that starts extraction, and
+    the point at which money changes hands.
 
     A document that could not be read goes to OCR instead, and reaches
     extraction when the OCR finishes. A rejected document is marked and kept,
-    never deleted."""
+    never deleted.
+
+    CHARGED BEFORE ANYTHING IS DONE, for the documents being included. The
+    price was shown and accepted on the screen before this call; somebody who
+    accepted it should not find the work ran and the money did not.
+
+    A rejected document costs nothing - it is not read. Neither does one sent
+    to OCR pay twice: it is charged here, once, as the document it will
+    become.
+
+    The key makes this safe to call from a click. Eighteen documents are one
+    click and one charge of eighteen; a retry or a double click must not
+    charge again, and wallet.charge refuses the repeat.
+    """
     registry = config.for_tenant(tenant_id)
+
+    chargeable = sum(1 for d in decisions if d.get("include", True))
+    if chargeable:
+        wallet.charge(
+            tenant_id, email, "document_filed", chargeable,
+            reference=str(chargeable) + " documents filed",
+            idempotency_key=idempotency_key)
+
     filed, rejected, reading = 0, 0, 0
 
     for d in decisions:
@@ -1293,7 +1332,8 @@ def templates(tenant_id):
     return config.for_tenant(tenant_id).template_list()
 
 
-def generate(tenant_id, email, engagement, template_key=None):
+def generate(tenant_id, email, engagement, template_key=None,
+             idempotency_key=None):
     """Composition takes over a minute, so this starts it and returns. The
     caller polls the memo list.
 
@@ -1306,6 +1346,14 @@ def generate(tenant_id, email, engagement, template_key=None):
 
     if not registry_now.has_template(template_key):
         raise ValueError("no such template: %s" % template_key)
+
+    # Charged before composition is invoked, and after the template is
+    # validated. A bad key must not take a dollar on its way to failing.
+    wallet.charge(
+        tenant_id, email, "memo_generated", 1,
+        reference=registry_now.label_for_template(template_key)
+                  + " - " + engagement,
+        idempotency_key=idempotency_key)
 
     _lambda.invoke(
         FunctionName=COMPOSITION_FUNCTION,
@@ -1612,8 +1660,9 @@ def lambda_handler(event, context):
 
         if route == "POST /engagements/{id}/file":
             body = json.loads(event.get("body") or "{}")
-            return _reply(200, file_documents(tenant_id,
-                                              body.get("decisions", [])))
+            return _reply(200, file_documents(
+                tenant_id, email, body.get("decisions", []),
+                _key(body, "file", engagement)))
 
         if route == "GET /engagements/{id}/documents":
             return _reply(200, {"documents": list_documents(tenant_id,
@@ -1643,8 +1692,30 @@ def lambda_handler(event, context):
 
         if route == "POST /engagements/{id}/generate":
             body = json.loads(event.get("body") or "{}")
-            return _reply(202, generate(tenant_id, email, engagement,
-                                        body.get("template_key")))
+            return _reply(202, generate(
+                tenant_id, email, engagement, body.get("template_key"),
+                _key(body, "generate", engagement)))
+
+        # --- the wallet ----------------------------------------------------
+
+        if route == "GET /wallet":
+            return _reply(200, wallet.balance(tenant_id))
+
+        if route == "GET /wallet/ledger":
+            return _reply(200, {"ledger": wallet.ledger(
+                tenant_id, int(query.get("limit") or 50))})
+
+        if route == "GET /wallet/quote":
+            return _reply(200, wallet.quote(
+                tenant_id,
+                query.get("event") or "document_filed",
+                int(query.get("n") or 1)))
+
+        if route == "POST /wallet/top-up":
+            _require_admin(role)
+            raise ValueError(
+                "No payment provider is connected yet, so a top-up cannot "
+                "be taken. Nothing has been charged.")
 
         if route == "POST /memos/{memo_id}/revise":
             body = json.loads(event.get("body") or "{}")
@@ -1875,6 +1946,20 @@ def lambda_handler(event, context):
 
         return _reply(404, {"error": "unknown route"})
 
+    except wallet.InsufficientFunds as exc:
+        # 402, which is what it is. Nothing was debited: wallet.charge rolls
+        # back before it raises, so a refusal here never costs anybody
+        # anything.
+        return _reply(402, {
+            "error": "Not enough balance. Top up to continue.",
+            "needed_cents": exc.needed_cents,
+            "available_cents": exc.available_cents,
+        })
+    except wallet.Unpriced as exc:
+        return _reply(409, {
+            "error": "That is not priced yet, so it cannot be charged for.",
+            "event_type": str(exc),
+        })
     except PermissionError as exc:
         return _reply(403, {"error": str(exc)})
     except ValueError as exc:

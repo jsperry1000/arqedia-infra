@@ -39,32 +39,12 @@ export function NotConnected({ what }: { what: string }) {
 }
 
 // --- wallet ----------------------------------------------------------------
-
-export const WALLET = {
-  plan: "Small Business",
-  price: "$65 / month",
-  seats: 5,
-  renews: "28 September 2026",
-  available: "$2.00",
-  availableCents: 200,
-  shares: "unlimited",
-  sharesUsed: 2,
-  topUp: "$25",
-};
-
-export const BUCKETS = [
-  { label: "Monthly credit", granted: "$15.00", spent: "$13.00", left: "$2.00", expires: "28 Sep" },
-  { label: "Cash, purchased 2 Sep", granted: "$25.00", spent: "$25.00", left: "$0.00", expires: "2 Oct" },
-  { label: "Daily test allowance", granted: "$1.00", spent: "$0.50", left: "$0.50", expires: "end of day" },
-];
-
-export const LEDGER = [
-  { at: "4 Mar 16:42", event: "Memorandum generated", ref: "Credit Memo - Meridian Trading", amount: "$1.00" },
-  { at: "4 Mar 16:10", event: "18 documents filed", ref: "Meridian Trading Ltd", amount: "$4.50" },
-  { at: "2 Mar 09:31", event: "Memorandum generated", ref: "KYC Memo - Ardmore Logistics", amount: "$1.00" },
-  { at: "2 Mar 09:02", event: "7 documents filed", ref: "Ardmore Logistics Ltd", amount: "$1.75" },
-  { at: "28 Feb 14:20", event: "Top-up", ref: "Card ending 4242", amount: "-$25.00" },
-];
+//
+// GONE. The wallet is live: Account reads /wallet and /wallet/ledger.
+//
+// WALLET, BUCKETS and LEDGER were removed rather than left unused, because an
+// exported fake balance is a trap - the next screen that needs a number finds
+// one here and never learns it was not real.
 
 // --- sharing ---------------------------------------------------------------
 

@@ -17,6 +17,91 @@ async function call(path: string, init: RequestInit = {}) {
   return res.json();
 }
 
+/** Signing up, and nothing else, goes without a token.
+ *
+ *  Somebody creating an account has none - that is the whole point of the two
+ *  routes below, and they are the only unauthenticated routes in the product.
+ *  They cannot use `call`, which fetches a session and throws when there is
+ *  not one.
+ *
+ *  The handler answers a refusal as `{"error": "..."}` with a 4xx, and those
+ *  sentences are written to be shown to a person as they stand. They are
+ *  unwrapped here so a screen does not have to.
+ */
+async function open_(path: string, body: unknown) {
+  const res = await fetch(config.apiUrl + path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const text = await res.text();
+  let parsed: any = null;
+  try { parsed = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+
+  if (!res.ok) {
+    throw new Error(parsed?.error ?? text ?? `Request failed (${res.status}).`);
+  }
+  return parsed;
+}
+
+export type WalletBucket = {
+  bucket_id: number;
+  kind: string;
+  granted_cents: number;
+  spent_cents: number;
+  remaining_cents: number;
+  expires_at: string;
+  created_at: string;
+  reference: string | null;
+  expired: boolean;
+};
+
+export type Wallet = {
+  available_cents: number;
+  available: string;
+  buckets: WalletBucket[];
+  /** Only the events that have a price. An unpriced one is absent, not zero. */
+  prices: Record<string, number>;
+};
+
+export type LedgerEntry = {
+  entry_id: number;
+  event_type: string;
+  quantity: number;
+  unit_cents: number;
+  amount_cents: number;
+  amount: string;
+  reference: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+export type Quote = {
+  event_type: string;
+  quantity: number;
+  unit_cents: number;
+  total_cents: number;
+  available_cents: number;
+  affordable: boolean;
+  /** How many can be done now. A proposal of eighteen with money for eight
+   *  should file eight rather than none. */
+  affordable_count: number;
+};
+
+export type SignupBegun = {
+  sent: boolean;
+  /** Seconds the code lasts, so a screen can say so rather than guess. */
+  expires_in: number;
+};
+
+export type SignupDone = {
+  tenant_id: number;
+  trial_ends_at: string;
+  /** Recorded on the tenant. First run forks it. */
+  pack: string | null;
+};
+
 export type Engagement = {
   engagement: string;
   documents: number;
@@ -650,4 +735,63 @@ export const api = {
         `${file.name} was refused by storage (${put.status}).`);
     }
   },
+
+  // --- the wallet ---------------------------------------------------------
+
+  /** What is left, and what it is made of. Expired buckets are included and
+   *  flagged: somebody whose credit ran out on the 28th should be able to see
+   *  that, not merely find themselves poorer than they remember. */
+  wallet: (): Promise<Wallet> => call("/wallet"),
+
+  walletLedger: (limit = 50): Promise<{ ledger: LedgerEntry[] }> =>
+    call(`/wallet/ledger?limit=${limit}`),
+
+  /** What something would cost, and whether it can be afforded. Charges
+   *  nothing. This is what a review screen shows before anybody commits. */
+  walletQuote: (event: string, n = 1): Promise<Quote> =>
+    call(`/wallet/quote?event=${encodeURIComponent(event)}&n=${n}`),
+
+  /** Refuses today: there is no payment provider connected, so it says so
+   *  rather than granting money nobody paid for. */
+  topUp: (cents: number) =>
+    call("/wallet/top-up", {
+      method: "POST",
+      body: JSON.stringify({ cents }),
+    }),
+
+  // --- signing up ---------------------------------------------------------
+  //
+  // The only two calls in this file that carry no token.
+
+  /** Run the checks and send a code. Creates nothing.
+   *
+   *  Refuses, with a sentence to show the person, when the domain is
+   *  disposable, when the firm already has a workspace, when too many
+   *  attempts have come from the address or the connection, or when that
+   *  address already has an account.
+   *
+   *  Calling it again sends a new code and voids the old one.
+   */
+  signup: (body: {
+    email: string;
+    org_name?: string;
+    jurisdiction?: string;
+    region?: string;
+    pack?: string;
+    second_admin?: string;
+  }): Promise<SignupBegun> => open_("/signup", body),
+
+  /** The code is right, so make the tenant and the account.
+   *
+   *  THE PASSWORD TRAVELS HERE, not at the first step. Nothing on our side
+   *  stores it, not even for the minutes between the two calls - the browser
+   *  holds what the person typed and hands it over once, when there is
+   *  something to set it on.
+   */
+  signupVerify: (body: {
+    email: string;
+    code: string;
+    password: string;
+    person_name?: string;
+  }): Promise<SignupDone> => open_("/signup/verify", body),
 };

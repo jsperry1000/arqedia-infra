@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { SIGNUP_PACKS, REGIONS, JURISDICTIONS, Inert } from "./mock";
+import { signIn } from "aws-amplify/auth";
+import { api } from "./api";
+import { SIGNUP_PACKS, REGIONS, JURISDICTIONS } from "./mock";
 
 /**
  * Signing up. Unattended: no queue, no manual approval, no card.
@@ -8,39 +10,48 @@ import { SIGNUP_PACKS, REGIONS, JURISDICTIONS, Inert } from "./mock";
  * for a reason rather than for completeness:
  *
  *   1  email and password      one trial per email domain
- *   2  verify the address      nothing is created until the address answers
- *   3  organisation            the declared jurisdiction binds, not the IP
- *   4  region                  suggested, confirmed, and then immutable
- *   5  a starter pack          first run is a fork, never an empty editor
- *   6  a second administrator  the cheapest account recovery is the one
+ *   2  organisation            the declared jurisdiction binds, not the IP
+ *   3  region                  suggested, confirmed, and then immutable
+ *   4  a starter pack          first run is a fork, never an empty editor
+ *   5  a second administrator  the cheapest account recovery is the one
  *                              nobody ever has to invoke
+ *   6  the code                nothing is created until the address answers
  *
- * NOT CONNECTED. Nothing here creates anything. There is no signup endpoint
- * and no tenant-creation call; the pool does not offer self-registration
- * today. What this establishes is the shape, the order and the wording.
+ * THE CODE MOVED TO THE END. It was second, which meant a person waited for
+ * an email before they had told us anything - and every refusal we could have
+ * given them cheaply arrived after that wait instead of before it. Now every
+ * check runs on the last click, and the code is asked for once there is
+ * something to create.
  *
- * Three things must exist on the server before it is real:
- *   - self-registration enabled on the user pool, with the email verified
- *   - a create-tenant call that mints the tenant and the custom:tenant_id
- *     claim, declares the jurisdiction and pins the region
- *   - the abuse controls: disposable-domain blocking, one trial per domain,
- *     and a rate limit per address at the edge
+ * The password never leaves this component until the final call. It is held
+ * in React state and sent with the code, because there is nothing to set it
+ * on before then and nowhere we would want it stored in the meantime.
+ *
+ * SIGNING UP IS REAL. Both routes are live. Sending the code needs SES
+ * production access, which is pending - until it is granted, the last step
+ * fails at the send and nothing is created.
  */
 
 const STEPS = [
   "Your details",
-  "Verify",
   "Organisation",
   "Region",
   "Starter pack",
   "Second administrator",
+  "Verify",
 ];
 
-export function SignUp({ onSignIn }: { onSignIn: () => void }) {
+export function SignUp({ onSignIn, onSignedUp }: {
+  onSignIn: () => void;
+  onSignedUp: () => void;
+}) {
   const [step, setStep] = useState(0);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [personName, setPersonName] = useState("");
   const [code, setCode] = useState("");
   const [org, setOrg] = useState("");
   const [jurisdiction, setJurisdiction] = useState(JURISDICTIONS[0]);
@@ -49,8 +60,72 @@ export function SignUp({ onSignIn }: { onSignIn: () => void }) {
   const [second, setSecond] = useState("");
 
   const domain = email.includes("@") ? email.split("@")[1] : "";
-  const back = () => setStep((n) => Math.max(0, n - 1));
-  const on = () => setStep((n) => Math.min(STEPS.length - 1, n + 1));
+
+  const ready =
+    step === 0 ? /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) && password.length >= 12 :
+    step === 1 ? org.trim().length > 0 :
+    step === 5 ? code.trim().length === 6 :
+    true;
+
+  function message(err: unknown) {
+    const text = String((err as Error)?.message ?? err);
+    try { return JSON.parse(text).error ?? text; } catch { return text; }
+  }
+
+  /** Leaving the details behind runs every check and sends the code. A person
+   *  who is going to be refused learns it here, before they fill in four more
+   *  screens. */
+  async function begin() {
+    setBusy("Checking");
+    setError("");
+    try {
+      await api.signup({
+        email, org_name: org, jurisdiction, region,
+        pack: SIGNUP_PACKS[pack].name,
+        second_admin: second || undefined,
+      });
+      setStep(5);
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function finish() {
+    setBusy("Creating your workspace");
+    setError("");
+    try {
+      await api.signupVerify({ email, code, password, person_name: personName });
+      // Straight in. Asking somebody to type the password they set ninety
+      // seconds ago, on the screen where they set it, is a checkpoint with
+      // nothing behind it.
+      await signIn({ username: email, password });
+      onSignedUp();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function resend() {
+    setBusy("Sending another code");
+    setError("");
+    try {
+      await api.signup({
+        email, org_name: org, jurisdiction, region,
+        pack: SIGNUP_PACKS[pack].name,
+        second_admin: second || undefined,
+      });
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  const next = () => (step === 4 ? begin() : setStep((n) => n + 1));
 
   return (
     <div className="signup">
@@ -72,11 +147,8 @@ export function SignUp({ onSignIn }: { onSignIn: () => void }) {
       </ol>
 
       <div className="signup-card">
-        <p className="revision-note mock-flag">
-          <strong>Mock.</strong> Nothing here creates an account. There is no
-          signup endpoint yet and the user pool does not offer
-          self-registration. The order and the wording are the thing to judge.
-        </p>
+        {error && <p className="error">{error}</p>}
+        {busy && <p className="busy">{busy}&hellip;</p>}
 
         {step === 0 && (
           <>
@@ -87,8 +159,8 @@ export function SignUp({ onSignIn }: { onSignIn: () => void }) {
             </p>
             <label className="row">
               <span>Email</span>
-              <input placeholder="name@yourfirm.com" value={email}
-                     onChange={(e) => setEmail(e.target.value)} autoFocus />
+              <input placeholder="name@yourfirm.com" value={email} autoFocus
+                     onChange={(e) => setEmail(e.target.value)} />
             </label>
             {domain && (
               <p className="muted small">
@@ -96,41 +168,29 @@ export function SignUp({ onSignIn }: { onSignIn: () => void }) {
               </p>
             )}
             <label className="row">
+              <span>Your name</span>
+              <input value={personName} placeholder="Susan Perry"
+                     onChange={(e) => setPersonName(e.target.value)} />
+            </label>
+            <label className="row">
               <span>Password</span>
               <input type="password" value={password}
                      onChange={(e) => setPassword(e.target.value)} />
+              <span className="muted small">
+                Twelve characters or more. You set it now and are not asked to
+                change it on first sign-in.
+              </span>
             </label>
-            <p className="muted small">
-              Twelve characters or more. You set it now and are not asked to
-              change it on first sign-in.
-            </p>
           </>
         )}
 
         {step === 1 && (
           <>
-            <h3>Verify your address</h3>
-            <p className="muted small">
-              A six-figure code has gone to {email || "your address"}. Nothing
-              is created until it answers &mdash; which is also what stops a
-              throwaway address taking a trial.
-            </p>
-            <label className="row">
-              <span>Code</span>
-              <input value={code} onChange={(e) => setCode(e.target.value)}
-                     placeholder="000000" style={{ maxWidth: 160 }} />
-            </label>
-            <a className="small">Send it again</a>
-          </>
-        )}
-
-        {step === 2 && (
-          <>
             <h3>Your organisation</h3>
             <label className="row">
               <span>Name</span>
-              <input placeholder="Vantage Mercantile" value={org}
-                     onChange={(e) => setOrg(e.target.value)} autoFocus />
+              <input placeholder="Vantage Mercantile" value={org} autoFocus
+                     onChange={(e) => setOrg(e.target.value)} />
               <span className="muted small">
                 This is what a recipient sees on a memorandum you share.
               </span>
@@ -149,22 +209,20 @@ export function SignUp({ onSignIn }: { onSignIn: () => void }) {
           </>
         )}
 
-        {step === 3 && (
+        {step === 2 && (
           <>
             <h3>Where your documents live</h3>
             <p className="muted small">
-              Suggested from where you are. Confirm it: a region cannot be
-              changed afterwards, because the documents and everything read
-              from them stay where they were first written.
+              Confirm it. A region cannot be changed afterwards, because the
+              documents and everything read from them stay where they were
+              first written.
             </p>
-            {REGIONS.map((r) => (
+            {REGIONS.map((r, i) => (
               <label className="bind" key={r.code}>
                 <input type="radio" name="region" checked={region === r.code}
                        onChange={() => setRegion(r.code)} />
                 {r.label}
-                {r.code === REGIONS[0].code && (
-                  <span className="in-use" style={{ marginLeft: 8 }}>suggested</span>
-                )}
+                {i === 0 && <span className="in-use" style={{ marginLeft: 8 }}>suggested</span>}
               </label>
             ))}
             <p className="revision-note" style={{ marginTop: 14 }}>
@@ -176,7 +234,7 @@ export function SignUp({ onSignIn }: { onSignIn: () => void }) {
           </>
         )}
 
-        {step === 4 && (
+        {step === 3 && (
           <>
             <h3>Start on a pack</h3>
             <p className="muted small">
@@ -197,7 +255,7 @@ export function SignUp({ onSignIn }: { onSignIn: () => void }) {
           </>
         )}
 
-        {step === 5 && (
+        {step === 4 && (
           <>
             <h3>A second administrator</h3>
             <p className="muted small">
@@ -209,11 +267,11 @@ export function SignUp({ onSignIn }: { onSignIn: () => void }) {
               <span>Their email</span>
               <input placeholder="colleague@yourfirm.com" value={second}
                      onChange={(e) => setSecond(e.target.value)} />
+              <span className="muted small">
+                They will be invited as an administrator. The seat is not taken
+                until they accept.
+              </span>
             </label>
-            <p className="muted small">
-              They will be invited as an administrator. The seat is not taken
-              until they accept.
-            </p>
 
             <h4>What begins when you finish</h4>
             <table className="docs">
@@ -230,15 +288,40 @@ export function SignUp({ onSignIn }: { onSignIn: () => void }) {
           </>
         )}
 
+        {step === 5 && (
+          <>
+            <h3>Verify your address</h3>
+            <p className="muted small">
+              A six-figure code has gone to <strong>{email}</strong>. Nothing is
+              created until it answers &mdash; which is also what stops a
+              throwaway address taking a trial.
+            </p>
+            <label className="row">
+              <span>Code</span>
+              <input value={code} autoFocus placeholder="000000"
+                     style={{ maxWidth: 180, fontFamily: "var(--mono)",
+                              fontSize: 18, letterSpacing: "0.25em" }}
+                     onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} />
+            </label>
+            <a className="small" onClick={resend}>Send it again</a>
+            <p className="muted small">
+              It lasts fifteen minutes. Asking for another voids the first.
+            </p>
+          </>
+        )}
+
         <div className="form-actions">
-          {step > 0 && <a className="secondary" onClick={back}>Back</a>}
-          {step < STEPS.length - 1 ? (
-            <button onClick={on}>Continue</button>
-          ) : (
-            <Inert what="Creating the account">Start the trial</Inert>
+          {step > 0 && step < 5 && (
+            <a className="secondary" onClick={() => setStep((n) => n - 1)}>Back</a>
           )}
-          {step === 5 && second === "" && (
-            <a className="small" onClick={() => undefined}>Skip for now</a>
+          {step < 5 ? (
+            <button onClick={next} disabled={!ready || !!busy}>
+              {step === 4 ? "Send my code" : "Continue"}
+            </button>
+          ) : (
+            <button onClick={finish} disabled={!ready || !!busy}>
+              Start the trial
+            </button>
           )}
         </div>
       </div>
