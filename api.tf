@@ -134,6 +134,7 @@ resource "aws_lambda_function" "api" {
       BRAND_BUCKET         = aws_s3_bucket.brand.id
       REVIEW_BUCKET        = aws_s3_bucket.data["review"].id
       COMPOSITION_FUNCTION = aws_lambda_function.composition.function_name
+      APP_URL              = "https://${local.app_host}"
       TEXTRACT_TOPIC_ARN   = aws_sns_topic.textract.arn
       TEXTRACT_ROLE_ARN    = aws_iam_role.textract_publish.arn
       RENDER_FUNCTION      = aws_lambda_function.render.function_name
@@ -270,6 +271,14 @@ locals {
     "GET /wallet/ledger",
     "GET /wallet/quote",
     "POST /wallet/top-up",
+
+    # Seats. Reading is open to anybody with one; changing is not, and the
+    # handler refuses a member rather than the gateway - the message matters.
+    "GET /seats",
+    "POST /seats/invitations",
+    "DELETE /seats/invitations/{invitation_id}",
+    "PUT /seats/{seat_id}",
+    "DELETE /seats/{seat_id}",
   ]
 }
 

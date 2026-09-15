@@ -144,11 +144,12 @@ export const PLANS = [
   },
 ];
 
-export const SEATS = [
-  { email: "sperry@vmac.com", role: "Administrator", status: "active", you: true },
-  { email: "d.okafor@vmac.com", role: "Administrator", status: "active", you: false },
-  { email: "r.villalobos@vmac.com", role: "Member", status: "invited", you: false },
-];
+// SEATS is gone. The Seats tab is live: it reads /seats and writes through
+// the four routes beside it.
+//
+// Removed rather than left unused, for the same reason the fake balance was -
+// an exported list of make-believe colleagues is a trap, and the next screen
+// that needs one finds it here and never learns it was not real.
 
 export const INVOICES = [
   { date: "28 Aug 2026", what: "Small Business, monthly", amount: "$65.00", status: "Paid" },

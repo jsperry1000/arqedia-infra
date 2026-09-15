@@ -67,6 +67,7 @@ from botocore.exceptions import ClientError
 import config
 import editor
 import registry
+import seats
 import textract
 import wallet
 
@@ -86,6 +87,10 @@ TEXTRACT_TOPIC_ARN = os.environ["TEXTRACT_TOPIC_ARN"]
 TEXTRACT_ROLE_ARN = os.environ["TEXTRACT_ROLE_ARN"]
 RENDER_FUNCTION = os.environ["RENDER_FUNCTION"]
 PROPOSER_FUNCTION = os.environ["PROPOSER_FUNCTION"]
+# Where an invitation link sends somebody. Configured rather than built from
+# the request: the request arrives at the API's own hostname, and the person
+# has to land on the application.
+APP_URL = os.environ.get("APP_URL", "https://app.arqedia.com")
 
 
 def _clean(name):
@@ -153,9 +158,12 @@ def caller(event):
         raise PermissionError("no tenant on token")
     email = claims.get("email") or claims.get("cognito:username") or "unknown"
     # Role is signed into the token and excluded from the client's writable
-    # attributes, so a user cannot promote themselves. Every user is an admin
-    # today; the check is here so Component 9's seat model can begin creating
-    # members without any rule being rewritten.
+    # attributes, so a user cannot promote themselves. Members exist now: an
+    # invitation names the role, and the token carries it from that moment.
+    #
+    # A role changed after somebody signed in does not take effect until their
+    # token refreshes. That is a property of tokens rather than a defect, and
+    # it is why demotion is not a security control - removing the seat is.
     role = claims.get("custom:role") or "member"
     return int(raw), email, role
 
@@ -1386,6 +1394,15 @@ def _require_admin(role):
                               "configuration")
 
 
+def _require_seats_admin(role):
+    """Separate from _require_admin only so the message names what was
+    refused. Being told "only an administrator may change the configuration"
+    after trying to invite somebody is worse than no message at all."""
+    if role != "admin":
+        raise PermissionError(
+            "only an administrator may change seats, the plan or the card")
+
+
 def config_state(tenant_id):
     """Where this tenant stands: what is published, whether a draft is open,
     and what publishing it would flag."""
@@ -1712,10 +1729,52 @@ def lambda_handler(event, context):
                 int(query.get("n") or 1)))
 
         if route == "POST /wallet/top-up":
-            _require_admin(role)
+            _require_seats_admin(role)
             raise ValueError(
                 "No payment provider is connected yet, so a top-up cannot "
                 "be taken. Nothing has been charged.")
+
+        # --- seats ---------------------------------------------------------
+        #
+        # Reading is open to anybody holding a seat. Who else is in the
+        # workspace is not privileged, and a member who cannot see the
+        # administrators cannot work out whom to ask.
+        #
+        # Changing is not. Seats decide who may spend money and who may alter
+        # what every future memorandum says.
+
+        if route == "GET /seats":
+            return _reply(200, seats.listing(tenant_id, email))
+
+        if route == "POST /seats/invitations":
+            _require_seats_admin(role)
+            body = json.loads(event.get("body") or "{}")
+            invited = seats.invite(tenant_id, email,
+                                   body.get("email", ""),
+                                   body.get("role", "member"))
+            # The token is returned once, in clear, and never again. There is
+            # no way to send it until SES is granted, so the screen offers a
+            # link to copy - which is also the fallback when an invitation
+            # email is lost.
+            invited["accept_url"] = "%s/invitation?email=%s&token=%s" % (
+                APP_URL, urllib.parse.quote(invited["email"]),
+                urllib.parse.quote(invited["token"]))
+            return _reply(201, invited)
+
+        if route == "DELETE /seats/invitations/{invitation_id}":
+            _require_seats_admin(role)
+            return _reply(200, seats.revoke_invitation(
+                tenant_id, params.get("invitation_id")))
+
+        if route == "PUT /seats/{seat_id}":
+            _require_seats_admin(role)
+            body = json.loads(event.get("body") or "{}")
+            return _reply(200, seats.set_role(
+                tenant_id, params.get("seat_id"), body.get("role", "member")))
+
+        if route == "DELETE /seats/{seat_id}":
+            _require_seats_admin(role)
+            return _reply(200, seats.remove(tenant_id, params.get("seat_id")))
 
         if route == "POST /memos/{memo_id}/revise":
             body = json.loads(event.get("body") or "{}")
@@ -1955,6 +2014,11 @@ def lambda_handler(event, context):
             "needed_cents": exc.needed_cents,
             "available_cents": exc.available_cents,
         })
+    except seats.SeatsFull as exc:
+        # 409: nothing is wrong with the request - there is simply no room.
+        return _reply(409, {"error": str(exc)})
+    except seats.LastAdmin as exc:
+        return _reply(409, {"error": str(exc)})
     except wallet.Unpriced as exc:
         return _reply(409, {
             "error": "That is not priced yet, so it cannot be charged for.",

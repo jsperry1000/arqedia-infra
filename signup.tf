@@ -118,7 +118,13 @@ resource "aws_apigatewayv2_integration" "signup" {
 # API is JWT. These two are the only routes in the product a person without a
 # token may reach.
 resource "aws_apigatewayv2_route" "signup" {
-  for_each = toset(["POST /signup", "POST /signup/verify"])
+  for_each = toset([
+    "POST /signup",
+    "POST /signup/verify",
+    # Accepting an invitation, for the same reason as the other two: the
+    # person has no token because they have no account.
+    "POST /invitations/accept",
+  ])
 
   api_id             = aws_apigatewayv2_api.main.id
   route_key          = each.value

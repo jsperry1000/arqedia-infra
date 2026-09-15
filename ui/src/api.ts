@@ -56,6 +56,55 @@ export function chargeKey(): string {
     Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 64);
 }
 
+export type Seat = {
+  seat_id: number;
+  email: string;
+  role: "admin" | "member";
+  invited_by: string | null;
+  accepted_at: string;
+  you: boolean;
+  /** Outside the tenant's own domain. Allowed, and marked. */
+  external: boolean;
+};
+
+export type SeatInvitation = {
+  invitation_id: number;
+  email: string;
+  role: "admin" | "member";
+  invited_by: string;
+  created_at: string;
+  expires_at: string;
+  external: boolean;
+};
+
+export type Seats = {
+  seats: Seat[];
+  /** Listed beside the seats, because an administrator counting who has
+   *  access has to count both - a reserved seat is as unavailable as a taken
+   *  one. */
+  invitations: SeatInvitation[];
+  bought: number;
+  taken: number;
+  reserved: number;
+  free: number;
+  admins: number;
+  /** The domain the tenant signed up on, or null for one created before
+   *  tenant_domain existed. With none, nothing is marked external. */
+  home_domain: string | null;
+  external: number;
+};
+
+export type Invited = {
+  email: string;
+  role: "admin" | "member";
+  expires_at: string;
+  /** Returned once and never again, like a password reset. Shown so it can be
+   *  copied - which is both the fallback for a lost invitation email and the
+   *  only way to deliver one until SES is granted. */
+  token: string;
+  accept_url: string;
+};
+
 export type WalletBucket = {
   bucket_id: number;
   kind: string;
@@ -758,6 +807,37 @@ export const api = {
         `${file.name} was refused by storage (${put.status}).`);
     }
   },
+
+  // --- seats --------------------------------------------------------------
+
+  /** Who holds a seat, who has been invited, and how many are left. Open to
+   *  anybody with a seat: a member who cannot see the administrators cannot
+   *  work out whom to ask. */
+  seats: (): Promise<Seats> => call("/seats"),
+
+  /** Reserve a seat and mint an invitation. Administrator only.
+   *
+   *  Refuses with 409 when every seat is taken or reserved. */
+  invite: (email: string, role: "admin" | "member"): Promise<Invited> =>
+    call("/seats/invitations", {
+      method: "POST",
+      body: JSON.stringify({ email, role }),
+    }),
+
+  revokeInvitation: (invitationId: number) =>
+    call(`/seats/invitations/${invitationId}`, { method: "DELETE" }),
+
+  /** Refuses with 409 on the last administrator: a tenant with none cannot
+   *  change its own plan, brand or seats, and the way back is a support
+   *  request that takes days. */
+  setSeatRole: (seatId: number, role: "admin" | "member") =>
+    call(`/seats/${seatId}`, {
+      method: "PUT",
+      body: JSON.stringify({ role }),
+    }),
+
+  removeSeat: (seatId: number) =>
+    call(`/seats/${seatId}`, { method: "DELETE" }),
 
   // --- the wallet ---------------------------------------------------------
 

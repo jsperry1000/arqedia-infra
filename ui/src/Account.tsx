@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react";
 import { useBackAction } from "./shell";
-import { api, type Wallet, type LedgerEntry } from "./api";
-import {
-  SUBSCRIPTION, PLANS, SEATS, INVOICES,
-  Inert, NotConnected,
-} from "./mock";
+import { api, type Wallet, type LedgerEntry, type Seats as SeatState,
+         type Invited } from "./api";
+import { SUBSCRIPTION, PLANS, INVOICES, Inert, NotConnected } from "./mock";
 
 /** Cents, as money. One place, so a balance and a ledger row never disagree
  *  about how many decimals a dollar has. */
@@ -39,10 +37,12 @@ const KINDS: Record<string, string> = {
  * BALANCE IS LIVE. It reads /wallet and /wallet/ledger, which are real: the
  * figures on that tab are this tenant's actual money.
  *
- * SUBSCRIPTION AND SEATS ARE NOT. There is no subscription endpoint and no
- * seat model, so those two read mock.tsx and every control on them is inert.
- * They say so on the tab rather than at the top, now that not everything here
- * is mocked.
+ * SEATS IS LIVE. It reads /seats and writes through the four routes beside
+ * it. Inviting somebody genuinely reserves a seat.
+ *
+ * SUBSCRIPTION IS NOT. There is no subscription endpoint, so that tab reads
+ * mock.tsx and every control on it is inert. It says so on the tab rather
+ * than at the top, now that two of the three are real.
  */
 
 type Tab = "subscription" | "balance" | "seats";
@@ -365,65 +365,159 @@ function Balance() {
 // --- seats -----------------------------------------------------------------
 
 function Seats() {
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState("Member");
+  const [state, setState] = useState<SeatState | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
 
-  const free = SUBSCRIPTION.seatsIncluded - SUBSCRIPTION.seatsUsed;
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<"admin" | "member">("member");
+  const [invited, setInvited] = useState<Invited | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const load = () =>
+    api.seats().then(setState).catch((e) => setError(message(e)));
+
+  useEffect(() => { load(); }, []);
+
+  function message(err: unknown) {
+    const text = String((err as Error)?.message ?? err);
+    try { return JSON.parse(text).error ?? text; } catch { return text; }
+  }
+
+  /** Every write reloads. The seat count, the free count and what the last
+   *  administrator may do all move together, and a screen that updates one of
+   *  them from a local guess will eventually disagree with the server. */
+  async function act(what: string, run: () => Promise<unknown>) {
+    setBusy(what);
+    setError("");
+    try {
+      await run();
+      await load();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function sendInvite() {
+    setBusy("Inviting");
+    setError("");
+    setInvited(null);
+    setCopied(false);
+    try {
+      const result = await api.invite(email, role);
+      setInvited(result);
+      setEmail("");
+      await load();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  if (error && !state) return <p className="error">{error}</p>;
+  if (!state) return <p className="muted">Loading&hellip;</p>;
+
+  const onlyAdmin = state.admins <= 1;
 
   return (
     <>
-      <NotConnected what="Seats" />
+      {error && <p className="error">{error}</p>}
+      {busy && <p className="busy">{busy}&hellip;</p>}
 
       <p className="muted">
-        {SUBSCRIPTION.seatsUsed} of {SUBSCRIPTION.seatsIncluded} seats in use
-        {free > 0 ? `, ${free} free` : ", none free"} &middot;{" "}
-        {SUBSCRIPTION.plan} plan
+        {state.taken} of {state.bought} seats taken
+        {state.reserved > 0 && `, ${state.reserved} reserved`}
+        {state.free > 0 ? `, ${state.free} free` : ", none free"}
+        {state.external > 0 && state.home_domain &&
+          ` \u00b7 ${state.external} outside ${state.home_domain}`}
       </p>
 
       <table className="docs">
         <thead>
-          <tr><th>Person</th><th>Rights</th><th>Status</th><th></th></tr>
+          <tr><th>Person</th><th>Rights</th><th>Since</th><th></th></tr>
         </thead>
         <tbody>
-          {SEATS.map((s) => (
-            <tr key={s.email}>
+          {state.seats.map((s) => (
+            <tr key={s.seat_id}>
               <td>
                 {s.email}
                 {s.you && <div className="in-use">you</div>}
-              </td>
-              <td>
-                <select defaultValue={s.role} disabled={s.you}>
-                  <option>Administrator</option>
-                  <option>Member</option>
-                </select>
-              </td>
-              <td className="ref">
-                {s.status}
-                {s.status === "invited" && (
-                  <div className="muted small">invitation sent, not yet accepted</div>
+                {s.external && !s.you && (
+                  <div className="muted small">outside {state.home_domain}</div>
                 )}
               </td>
               <td>
-                {!s.you && <Inert what="Removing a seat">Remove</Inert>}
+                <select value={s.role} disabled={!!busy}
+                        onChange={(e) => act("Changing rights", () =>
+                          api.setSeatRole(s.seat_id,
+                            e.target.value as "admin" | "member"))}>
+                  <option value="admin">Administrator</option>
+                  <option value="member">Member</option>
+                </select>
+                {s.role === "admin" && onlyAdmin && (
+                  <div className="muted small">the only one</div>
+                )}
+              </td>
+              <td className="ref">{(s.accepted_at ?? "").slice(0, 10)}</td>
+              <td>
+                {!s.you && (
+                  <a className="small" onClick={() =>
+                    act("Removing", () => api.removeSeat(s.seat_id))}>
+                    Remove
+                  </a>
+                )}
               </td>
             </tr>
           ))}
-          {free > 0 && (
-            <tr>
-              <td className="muted">{free} seat{free > 1 ? "s" : ""} unused</td>
-              <td className="muted">&mdash;</td>
-              <td className="muted">&mdash;</td>
-              <td></td>
+
+          {state.invitations.map((i) => (
+            <tr key={"i" + i.invitation_id} className="aside">
+              <td>
+                {i.email}
+                <div className="muted small">
+                  invited by {i.invited_by} &middot; lapses{" "}
+                  {(i.expires_at ?? "").slice(0, 10)}
+                  {i.external && ` \u00b7 outside ${state.home_domain}`}
+                </div>
+              </td>
+              <td className="muted">
+                {i.role === "admin" ? "Administrator" : "Member"}
+              </td>
+              <td className="ref">reserved</td>
+              <td>
+                <a className="small" onClick={() =>
+                  act("Revoking", () =>
+                    api.revokeInvitation(i.invitation_id))}>
+                  Revoke
+                </a>
+              </td>
             </tr>
-          )}
+          ))}
         </tbody>
       </table>
 
+      {state.invitations.length > 0 && (
+        <p className="muted small">
+          A reserved seat is as unavailable as a taken one. An invitation
+          nobody accepts lapses after seven days and gives the seat back,
+          so nothing has to be chased.
+        </p>
+      )}
+
       <h3>Invite someone</h3>
       <p className="muted small">
-        An administrator names the address and the rights. We send an
-        invitation; the seat is not taken until it is accepted and a password
-        set. Nothing about the tenant is visible to the recipient before then.
+        You name the address and the rights. The seat is not taken until they
+        accept and set a password; nothing about this workspace is visible to
+        them before that.
+      </p>
+      <p className="muted small">
+        An address outside {state.home_domain ?? "your domain"} is allowed
+        &mdash; outside counsel, a consultant, somebody on the client side
+        &mdash; and is marked in the list above so you can see at a glance who
+        is not one of yours.
       </p>
 
       <div className="form">
@@ -434,20 +528,51 @@ function Seats() {
         </label>
         <label className="row">
           <span>Rights</span>
-          <select value={role} onChange={(e) => setRole(e.target.value)}>
-            <option>Member</option>
-            <option>Administrator</option>
+          <select value={role} disabled={!!busy}
+                  onChange={(e) => setRole(e.target.value as "admin" | "member")}>
+            <option value="member">Member</option>
+            <option value="admin">Administrator</option>
           </select>
         </label>
         <div className="form-actions">
-          <Inert what="Sending an invitation">
-            {free > 0 ? "Send the invitation" : "No seat free"}
-          </Inert>
+          <button onClick={sendInvite}
+                  disabled={!!busy || !email.includes("@") || state.free === 0}>
+            {state.free === 0 ? "No seat free" : "Invite"}
+          </button>
           <span className="muted small">
-            {email ? `${email} will be invited as ${role.toLowerCase()}.` : "\u00a0"}
+            {state.free === 0
+              ? "Remove a seat or revoke an invitation first."
+              : email.includes("@")
+                ? `${email} will be invited as ${role === "admin" ? "an administrator" : "a member"}.`
+                : "\u00a0"}
           </span>
         </div>
       </div>
+
+      {invited && (
+        <div className="panel" style={{ marginTop: 18, padding: "16px 18px" }}>
+          <h4 style={{ marginTop: 0 }}>Send {invited.email} this link</h4>
+          <p className="muted small">
+            No email has gone out &mdash; we cannot send one yet. This link is
+            shown once and cannot be recovered; if it is lost, invite them
+            again and a new one replaces it.
+          </p>
+          <pre className="passage" style={{ whiteSpace: "pre-wrap" }}>
+            {invited.accept_url}
+          </pre>
+          <div className="form-actions">
+            <button onClick={() => {
+              navigator.clipboard?.writeText(invited.accept_url);
+              setCopied(true);
+            }}>
+              {copied ? "Copied" : "Copy the link"}
+            </button>
+            <span className="muted small">
+              It lapses {(invited.expires_at ?? "").slice(0, 10)}.
+            </span>
+          </div>
+        </div>
+      )}
 
       <h3>What the two rights mean</h3>
       <table className="docs">
@@ -467,7 +592,14 @@ function Seats() {
 
       <p className="muted small">
         Keep a second administrator. It is the cheapest form of account
-        recovery, and the only one that never involves us.
+        recovery, and the only one that never involves us. The last one cannot
+        be removed or demoted.
+      </p>
+
+      <p className="muted small">
+        A change of rights reaches somebody already signed in when their
+        session next refreshes. Removing the seat takes effect at once, which
+        is why removal rather than demotion is what to reach for in a hurry.
       </p>
     </>
   );
