@@ -44,9 +44,18 @@ resource "aws_iam_role_policy_attachment" "signup_logs" {
 }
 
 data "aws_iam_policy_document" "signup" {
+  # A tenant is made in one transaction: the tenant row, its domain claim, the
+  # founding administrator's seat and the trial bucket commit together or not
+  # at all. The three transaction actions are separate from ExecuteStatement
+  # and all four are needed.
   statement {
-    effect    = "Allow"
-    actions   = ["rds-data:ExecuteStatement"]
+    effect = "Allow"
+    actions = [
+      "rds-data:ExecuteStatement",
+      "rds-data:BeginTransaction",
+      "rds-data:CommitTransaction",
+      "rds-data:RollbackTransaction",
+    ]
     resources = [aws_rds_cluster.main.arn]
   }
 

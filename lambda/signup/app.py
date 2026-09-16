@@ -53,6 +53,12 @@ SENDER = os.environ["SENDER"]
 # metered credit, no card.
 TRIAL_DAYS = 30
 
+# The $5.00, granted when the tenant is made. Not lazily, on the first look at
+# the balance: the signup screen promises it, so it must be true from the
+# moment the account exists, not from the moment somebody checks. Without it a
+# new tenant cannot file a single document.
+TRIAL_CENTS = 500
+
 # A code lives fifteen minutes and may be got wrong five times. Both are
 # deliberately short: a code that lives an hour is a code somebody else can
 # use, and unlimited attempts on six digits is not a control at all.
@@ -79,13 +85,11 @@ EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 # --- plumbing, matching lambda/api/app.py ----------------------------------
 
-def _sql(statement, params=None):
-    """Data API call, retrying while the cluster wakes from zero capacity."""
+def _retrying(call):
+    """Retry while the cluster wakes from zero capacity."""
     for _ in range(12):
         try:
-            return _rds.execute_statement(
-                resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
-                database=DATABASE, sql=statement, parameters=params or [])
+            return call()
         except ClientError as exc:
             if exc.response.get("Error", {}).get("Code") in (
                 "DatabaseResumingException", "ThrottlingException"
@@ -94,6 +98,30 @@ def _sql(statement, params=None):
                 continue
             raise
     raise RuntimeError("cluster did not resume")
+
+
+def _sql(statement, params=None, tx=None):
+    """Data API call. With tx, the statement joins that transaction."""
+    extra = {"transactionId": tx} if tx else {}
+    return _retrying(lambda: _rds.execute_statement(
+        resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
+        database=DATABASE, sql=statement, parameters=params or [], **extra))
+
+
+def _begin():
+    return _retrying(lambda: _rds.begin_transaction(
+        resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
+        database=DATABASE))["transactionId"]
+
+
+def _commit(tx):
+    _rds.commit_transaction(resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
+                            transactionId=tx)
+
+
+def _rollback(tx):
+    _rds.rollback_transaction(resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
+                              transactionId=tx)
 
 
 def _p(name, value):
@@ -274,12 +302,23 @@ def begin(event, body):
 
 def verify(event, body):
     """The code is right, so make everything - in an order that cannot leave
-    a Cognito user without a tenant.
+    a Cognito user without a tenant, or a tenant half made.
 
-    Tenant row first. If Cognito then refuses, the row is removed. The reverse
-    order would leave an account that can sign in to an application which
-    cannot answer a single request about it, and no way to tell from the
-    outside that anything is wrong.
+    ONE TRANSACTION. The tenant row, its domain claim, the founding
+    administrator's seat and the trial bucket are written inside it, then the
+    Cognito user is made, and only then does it commit. If Cognito refuses, the
+    transaction rolls back and there is nothing to delete. If the commit fails
+    after Cognito succeeded, the user this call created is deleted. Nothing is
+    ever deleted by an id read back from the database.
+
+    THE ID COMES FROM THE INSERT. It used to be a separate
+    `SELECT LAST_INSERT_ID()`, which is per connection; the Data API does not
+    promise the same connection between calls, so on dev it returned 0. The
+    domain claim, the Cognito user's custom:tenant_id and the rollback all
+    used that 0 - the pack tenant. generatedFields carries the id on the
+    insert's own response, as it already does in the API, the normalizer and
+    composition, and an id that is missing or not above zero stops everything
+    before another row is written.
     """
     email = (body.get("email") or "").strip().lower()
     code = (body.get("code") or "").strip()
@@ -342,22 +381,54 @@ def verify(event, body):
     # `pack` is still selected above and still accepted by begin(), which
     # stores it on pending_signup: the field is part of the request contract
     # and removing it from the SELECT would shift every index after it.
-    _sql(
-        """
-        INSERT INTO tenant
-          (name, region, jurisdiction, plan, trial_ends_at, signup_ip)
-        VALUES (:name, :region, :j, 'base', :trial, :ip)
-        """,
-        [_p("name", org), _p("region", region), _p("j", jurisdiction),
-         _p("trial", trial_ends), _p("ip", ip)],
-    )
-    tenant_id = _sql("SELECT LAST_INSERT_ID()")["records"][0]
-    tenant_id = _col(tenant_id, 0)
-
+    tx = _begin()
+    user_made = False
     try:
+        created = _sql(
+            """
+            INSERT INTO tenant
+              (name, region, jurisdiction, plan, trial_ends_at, signup_ip)
+            VALUES (:name, :region, :j, 'base', :trial, :ip)
+            """,
+            [_p("name", org), _p("region", region), _p("j", jurisdiction),
+             _p("trial", trial_ends), _p("ip", ip)],
+            tx=tx,
+        )
+        tenant_id = (created.get("generatedFields") or [{}])[0].get("longValue")
+        # Tenant 0 is the pack tenant. An id that is missing, zero or negative
+        # is refused here, before it can become a domain claim, a seat, a
+        # bucket or a Cognito attribute.
+        if not isinstance(tenant_id, int) or tenant_id <= 0:
+            raise RuntimeError(f"tenant insert returned no usable id: {tenant_id!r}")
+
         _sql(
             "INSERT INTO tenant_domain (domain, tenant_id) VALUES (:d, :t)",
             [_p("d", domain), _p("t", tenant_id)],
+            tx=tx,
+        )
+
+        # The founding administrator holds a seat like anybody else. Without
+        # one the seats screen counts nobody and the last-administrator rule
+        # has nobody to protect.
+        _sql(
+            "INSERT INTO seat (tenant_id, email, role, invited_by) "
+            "VALUES (:t, :e, 'admin', NULL)",
+            [_p("t", tenant_id), _p("e", email)],
+            tx=tx,
+        )
+
+        # The trial credit, expiring with the trial. Kept in step with
+        # wallet.grant in lambda/api/wallet.py, which this function cannot
+        # import: it has no layer. No ledger row, as grant writes none - the
+        # ledger records charges, and this is money put in.
+        _sql(
+            """
+            INSERT INTO wallet_bucket
+              (tenant_id, kind, granted_cents, expires_at, reference)
+            VALUES (:t, 'trial', :c, :exp, 'granted at signup')
+            """,
+            [_p("t", tenant_id), _p("c", TRIAL_CENTS), _p("exp", trial_ends)],
+            tx=tx,
         )
 
         # SUPPRESS: no invitation email. The person is standing in front of
@@ -375,19 +446,27 @@ def verify(event, body):
                 {"Name": "custom:role", "Value": "admin"},
             ],
         )
+        user_made = True
         _idp.admin_set_user_password(
             UserPoolId=USER_POOL_ID, Username=email,
             Password=password, Permanent=True,
         )
+
+        _commit(tx)
     except Exception as exc:
-        # Nothing half-made survives this handler.
-        _sql("DELETE FROM tenant_domain WHERE tenant_id = :t",
-             [_p("t", tenant_id)])
-        _sql("DELETE FROM tenant WHERE tenant_id = :t", [_p("t", tenant_id)])
+        # Nothing half-made survives this handler, and nothing is deleted by
+        # an id: the rows were never committed, so rolling back removes them.
         try:
-            _idp.admin_delete_user(UserPoolId=USER_POOL_ID, Username=email)
+            _rollback(tx)
         except Exception:
             pass
+        # Only a user this call made. begin() refuses an address that already
+        # has one, but a user made by somebody else in between is not ours.
+        if user_made:
+            try:
+                _idp.admin_delete_user(UserPoolId=USER_POOL_ID, Username=email)
+            except Exception:
+                pass
         _record(domain, email, ip, "failed", str(exc)[:200])
         return _reply(500, {"error": "The account could not be created. "
                                      "Nothing was charged and nothing was kept."})
