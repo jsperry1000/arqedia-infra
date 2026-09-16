@@ -1886,8 +1886,25 @@ def lambda_handler(event, context):
         if route == "POST /config/fork":
             _require_admin(role)
             body = json.loads(event.get("body") or "{}")
-            return _reply(201, registry.fork(
-                tenant_id, email, int(body.get("revision", 1))))
+            revision = body.get("revision")
+            return _reply(201, registry.fork_base(
+                tenant_id, email,
+                pack_revision=int(revision) if revision is not None else None))
+
+        # The memoranda we ship, and whether this tenant already holds each.
+        if route == "GET /config/templates/available":
+            _require_admin(role)
+            return _reply(200, {
+                "templates": registry.template_packs(tenant_id)})
+
+        # Adding one. It lands in the draft and says what it brought with it,
+        # so a fact that was deleted and is now back is explained rather than
+        # discovered.
+        if route == "POST /config/templates/fork":
+            _require_admin(role)
+            body = json.loads(event.get("body") or "{}")
+            return _reply(201, registry.fork_template(
+                tenant_id, email, body.get("pack_key") or ""))
 
         # --- configuring from the client's own memorandum ---------------
         if route == "POST /config/draft/sample":
