@@ -94,6 +94,14 @@ data "aws_iam_policy_document" "api" {
     resources = [aws_rds_cluster.main.master_user_secret[0].secret_arn]
   }
 
+  # Checkout and top-ups call Paddle. The API key only; the webhook secret
+  # belongs to the receiver alone.
+  statement {
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.paddle_api_key.arn]
+  }
+
   # Composition writes a memo; the proposer reads a sample memorandum and
   # proposes a configuration. Both take minutes, so both are started here and
   # polled for rather than waited on.
@@ -125,21 +133,23 @@ resource "aws_lambda_function" "api" {
   layers           = [aws_lambda_layer_version.docprocessing.arn]
 
   environment {
-    variables = {
-      CLUSTER_ARN          = aws_rds_cluster.main.arn
-      SECRET_ARN           = aws_rds_cluster.main.master_user_secret[0].secret_arn
-      DATABASE             = "arqedia"
-      DOCS_BUCKET          = aws_s3_bucket.data["docs"].id
-      CURATED_BUCKET       = aws_s3_bucket.data["curated"].id
-      BRAND_BUCKET         = aws_s3_bucket.brand.id
-      REVIEW_BUCKET        = aws_s3_bucket.data["review"].id
-      COMPOSITION_FUNCTION = aws_lambda_function.composition.function_name
-      APP_URL              = "https://${local.app_host}"
-      TEXTRACT_TOPIC_ARN   = aws_sns_topic.textract.arn
-      TEXTRACT_ROLE_ARN    = aws_iam_role.textract_publish.arn
-      RENDER_FUNCTION      = aws_lambda_function.render.function_name
-      PROPOSER_FUNCTION    = aws_lambda_function.proposer.function_name
-    }
+    variables = merge(local.paddle_price_env, {
+      CLUSTER_ARN               = aws_rds_cluster.main.arn
+      SECRET_ARN                = aws_rds_cluster.main.master_user_secret[0].secret_arn
+      DATABASE                  = "arqedia"
+      DOCS_BUCKET               = aws_s3_bucket.data["docs"].id
+      CURATED_BUCKET            = aws_s3_bucket.data["curated"].id
+      BRAND_BUCKET              = aws_s3_bucket.brand.id
+      REVIEW_BUCKET             = aws_s3_bucket.data["review"].id
+      COMPOSITION_FUNCTION      = aws_lambda_function.composition.function_name
+      APP_URL                   = "https://${local.app_host}"
+      TEXTRACT_TOPIC_ARN        = aws_sns_topic.textract.arn
+      TEXTRACT_ROLE_ARN         = aws_iam_role.textract_publish.arn
+      RENDER_FUNCTION           = aws_lambda_function.render.function_name
+      PROPOSER_FUNCTION         = aws_lambda_function.proposer.function_name
+      PADDLE_API_BASE           = local.paddle_api_base
+      PADDLE_API_KEY_SECRET_ARN = aws_secretsmanager_secret.paddle_api_key.arn
+    })
   }
 
   tags = { Name = "${local.name_prefix}-api" }
@@ -276,6 +286,11 @@ locals {
     "GET /wallet/ledger",
     "GET /wallet/quote",
     "POST /wallet/top-up",
+
+    # Paying for a plan. Reading is open to any seat; checkout is refused to
+    # a member in the handler, as seats are.
+    "GET /billing/subscription",
+    "POST /billing/checkout",
 
     # Seats. Reading is open to anybody with one; changing is not, and the
     # handler refuses a member rather than the gateway - the message matters.

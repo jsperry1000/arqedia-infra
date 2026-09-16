@@ -46,32 +46,14 @@ generate memos. Everything else follows `capped` in Wallet §8 as written. No ne
 top-ups: a cancelled subscription cannot be charged (item 10). Cash still expires
 30 days from purchase (Wallet §4).
 
+**12 is amended.** While a payment has failed (`past_due`), the tenant can still spend unexpired purchased (top-up) cash to file documents and generate memos, until it is used up or expires. Everything else follows `capped` in Wallet §8. No new top-ups while `past_due`: Paddle refuses the charge API in that state.
+
 ---
 
 ## 3. Open
-
----
-
-## 3. PROPOSED — awaiting explicit choice
-
-These were listed for approval but carry an open choice. Nothing below is built
-until each is confirmed.
-
-| # | Question | Proposed |
-|---|---|---|
-| P1 | Leftover trial credit at checkout | Kept until its own expiry; spend order (soonest expiry first) burns it first |
-| P2 | Top-up with no subscription | Refused: "Subscribe first". The charge API requires a subscription |
-| P3 | Subscription columns on `tenant` or a separate table | Separate `subscription` table, per Wallet §3 |
-| P4 | `past_due` | Gate treats as `capped` (read-only) until Paddle reports active |
-| P5 | `canceled` | `capped` from period end; `closed` only on account deletion |
-| P6 | Downgrade with more seats than the new plan allows | Downgrade refused until seats fit the target plan |
-| P7 | Paddle refund or chargeback | Event recorded; no bucket or ledger change (Wallet §4, append-only); flagged for manual review |
-
----
-
-## 4. Open
 
 - Sandbox test checkout not yet run: tax added on top unconfirmed.
 - API Gateway v2 body encoding: handler must hash exact raw bytes; unverified.
 - Front-end config holds a sandbox-only token; one bundle cannot serve both environments (ENV-01).
 - Live catalog and `config/paddle/live.json` do not exist.
+- Failure-queue alarm has no notification target; failed events are visible only in the CloudWatch console.
