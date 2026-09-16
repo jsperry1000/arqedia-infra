@@ -245,6 +245,8 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
 work to MVP. Its decisions are settled; its branch order is not to be
 rearranged. Work one branch at a time and stop at the end of each for review.
 
+`docs/specs/` holds the design specs. Where they differ, `docs/specs/paddle_subscription_decisions_2026-09-16.md` takes precedence.
+
 ---
 
 ## What is not automated
