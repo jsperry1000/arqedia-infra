@@ -242,6 +242,25 @@ revision.
    wrong rather than dangerous. Left alone deliberately in step 3: changing it
    is real work and belongs on its own branch.
 
+5. **The site's pack list has drifted, and signup no longer records one.**
+   `site/src/main.ts` declares its own six-entry `PACKS` array under a
+   "starter packs" heading. One template ships today — `due-diligence` — so
+   that list names five memoranda nobody can have, which is what item 1 above
+   forbids. Its wording had already diverged from the copy signup used:
+   "eligibility and ineligibility tests" against "eligibility tests", and
+   curly quotes in Project "X". Step 5 of the sequence above, and a separate
+   project. Recorded here so the divergence is not rediscovered a third time.
+
+   In the same week, signup stopped asking altogether. `SIGNUP_PACKS` is gone
+   from `mock.tsx`, `verify()` no longer writes `tenant.forked_pack`,
+   `GET /config` no longer returns it, and Get started no longer pre-ticks from
+   it. **This supersedes the note under "Where the choice is made" above**,
+   which has signup keeping the column as a record of interest: a column NULL
+   for every tenant from now on drives nothing, and a pre-tick that can never
+   fire is dead code wearing the face of live code. The column and the two rows
+   already in it stay — they record something that was once true. What drew
+   somebody in, if we want it, is lead capture on the site and not this column.
+
 ---
 
 ### Acceptance

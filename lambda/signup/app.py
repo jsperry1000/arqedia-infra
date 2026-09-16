@@ -328,19 +328,28 @@ def verify(event, body):
     org = _col(r, 4) or domain
     jurisdiction = _col(r, 5)
     region = _col(r, 6) or "us-east-2"
-    pack = _col(r, 7)
     trial_ends = (datetime.datetime.utcnow()
                   + datetime.timedelta(days=TRIAL_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
 
+    # forked_pack IS NO LONGER WRITTEN (TPL-02). Signup stopped asking which
+    # memorandum somebody wants - Get started asks it, against the memoranda
+    # that exist. Nobody chooses here, so there is nothing honest to record,
+    # and a column NULL for every new tenant would drive a pre-tick that never
+    # fires: dead code wearing the face of live code.
+    #
+    # The column stays. Dropping it is a destructive migration for no gain, and
+    # the rows already in it record something that was true when it was asked.
+    # `pack` is still selected above and still accepted by begin(), which
+    # stores it on pending_signup: the field is part of the request contract
+    # and removing it from the SELECT would shift every index after it.
     _sql(
         """
         INSERT INTO tenant
-          (name, region, jurisdiction, plan, trial_ends_at, forked_pack,
-           signup_ip)
-        VALUES (:name, :region, :j, 'base', :trial, :pack, :ip)
+          (name, region, jurisdiction, plan, trial_ends_at, signup_ip)
+        VALUES (:name, :region, :j, 'base', :trial, :ip)
         """,
         [_p("name", org), _p("region", region), _p("j", jurisdiction),
-         _p("trial", trial_ends), _p("pack", pack), _p("ip", ip)],
+         _p("trial", trial_ends), _p("ip", ip)],
     )
     tenant_id = _sql("SELECT LAST_INSERT_ID()")["records"][0]
     tenant_id = _col(tenant_id, 0)
@@ -387,12 +396,12 @@ def verify(event, body):
          [_p("id", pending_id)])
     _record(domain, email, ip, "created", f"tenant {tenant_id}")
 
-    # The pack is recorded, not forked here. First run forks it, which is
-    # where a person can see what they are getting and change their mind.
+    # Nothing about memoranda comes back, because nothing was chosen here. Get
+    # started is where they are picked, and it reads what we ship rather than
+    # what an account once said it wanted.
     return _reply(200, {
         "tenant_id": tenant_id,
         "trial_ends_at": trial_ends,
-        "pack": pack,
     })
 
 

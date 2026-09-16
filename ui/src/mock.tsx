@@ -160,17 +160,18 @@ export const INVOICES = [
 
 // --- signing up ------------------------------------------------------------
 
-/** The starter packs offered at signup. The same six the marketing site
- *  lists. They are two lists in two projects today; when the packs endpoint
- *  serves them, both read it and this goes. */
-export const SIGNUP_PACKS = [
-  { name: "KYC and AML", note: "Corporate identity, ownership and control, individuals, regulatory and screening, and the associated entities a counterparty banks, audits and insures with." },
-  { name: "Trade Credit", note: "Borrower overview, financial performance, working capital, existing indebtedness, security, trade flows and concentration." },
-  { name: "Asset Based Loan Memo", note: "Collateral schedules, valuation basis, advance rates, eligibility tests, and the borrowing base as reported." },
-  { name: "Real Estate Loan Memo", note: "Property and title, tenancy and income, valuation and basis, debt service, and the sponsor behind the transaction." },
-  { name: "Lender Marketing Memo", note: "The transaction as presented to a lender: the opportunity, the structure, the security, and what the borrower is asking for." },
-  { name: "Anonymous Project \u201cX\u201d Memo", note: "The same file with identities withheld, for circulation before a counterparty is named." },
-];
+// SIGNUP_PACKS is gone. Signup no longer asks which memorandum somebody
+// wants: the choice is made on Get started, after signing in, against the
+// memoranda that actually ship and with each one's headings under its section
+// count (TPL-02).
+//
+// Removed rather than left unused, like the fake balance and the fake
+// colleagues before it - and this one was worse than either. It named six
+// memoranda of which one exists, so the next screen needing "the memoranda we
+// offer" would have found it here and offered five that cannot be had.
+//
+// The marketing site keeps its own copy of that list, in site/src/main.ts, and
+// the two had already drifted apart. Recorded in the TPL-02 specification.
 
 /** Where a tenant's data lives. Confirmed once at signup and immutable
  *  afterwards, so it is asked plainly rather than assumed. */
