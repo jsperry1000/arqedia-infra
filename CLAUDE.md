@@ -144,6 +144,10 @@ An unpriced event refuses; it never charges nothing.
 **A short proposal is a number, not an error.** Money for eight of eighteen
 shows "fileable now 8" and offers to set the rest aside.
 
+**`subscription.plan_id` is the plan.** `tenant.plan` is a copy written from it
+for readers that predate the subscription table: seats, settings and the
+renderer. Nothing decides on `tenant.plan` alone.
+
 ### Signing up and seats
 
 **One door.** The Cognito pool stays admin-create-only. `POST /signup` is the
