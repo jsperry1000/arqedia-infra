@@ -13,9 +13,38 @@ import {
   type Validation,
 } from "./api";
 import { ProposeView } from "./Propose";
+import type { Report as StartReport } from "./Welcome";
 import {
   slugKey, KeyLine, ColumnEditor, columnsReady, ReadModeControls,
 } from "./config-parts";
+
+// --- what Get started brought -----------------------------------------------
+
+/** "A", "A and B", "A, B and C". Written out because these are memoranda by
+ *  name and a person reads them as a sentence. */
+function list(names: string[]) {
+  if (names.length <= 1) return names[0] ?? "";
+  return names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
+}
+
+/** Six names, then a count. The long one here is facts, which can run to
+ *  thirty - all thirty would push the editor off the screen, and the editor is
+ *  where they can be looked at properly. */
+function some(names: string[]) {
+  if (names.length <= 6) return list(names);
+  return names.slice(0, 6).join(", ") + ` and ${names.length - 6} more`;
+}
+
+/** The kinds that brought something, in the order a person meets them. A
+ *  schema is the one word the configuration screen never uses, so it is not
+ *  reported either - it is machinery, and every fact it carries is listed. */
+function added(report: StartReport): [string, string[]][] {
+  return ([
+    ["facts", report.added.facts],
+    ["document types", report.added.document_types],
+    ["categories", report.added.categories],
+  ] as [string, string[]][]).filter(([, names]) => names.length > 0);
+}
 
 /**
  * Configure a Report.
@@ -481,8 +510,15 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // well as from inside the editor; the chooser says so in the location's
   // state, so the screen opens straight onto the proposer's upload.
   const location = useLocation();
-  const arrived = location.state as { propose?: boolean } | null;
+  const arrived = location.state as
+    { propose?: boolean; report?: StartReport } | null;
   const [proposing, setProposing] = useState(Boolean(arrived?.propose));
+  // What Get started just did, reported here rather than on the screen that
+  // did it: the person is sent straight on, and the account of what arrived
+  // belongs where they can see the things themselves. Held in state so it can
+  // be dismissed, and read once - a refresh is not a fresh arrival.
+  const [started, setStarted] = useState<StartReport | null>(
+    arrived?.report ?? null);
   // Leaving clears that state too, so a refresh does not reopen it.
   const leaveProposer = () => { setProposing(false); place({}); };
 
@@ -1010,6 +1046,37 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           </p>
         </div>
       </div>
+
+      {started && (
+        <div className="revision-note started">
+          <strong>
+            {list(started.templates)} {started.templates.length === 1
+              ? "is yours" : "are yours"}
+            {started.revision !== null
+              ? `, published as revision ${started.revision}.` : "."}
+          </strong>
+          {started.draft_was_open && (
+            <p>
+              It went into the draft you already had open, beside your own
+              changes, and publishing shipped both.
+            </p>
+          )}
+          {/* Named, not counted. Somebody who deleted a fact in March and
+              finds it back today needs to see which one. */}
+          {added(started).length > 0 ? (
+            <ul>
+              {added(started).map(([what, names]) => (
+                <li key={what}>
+                  <strong>{names.length} {what}:</strong> {some(names)}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>Nothing else was added: you already held everything it needs.</p>
+          )}
+          <a className="secondary" onClick={() => setStarted(null)}>Dismiss</a>
+        </div>
+      )}
 
       {error && <p className="error">{error}</p>}
       {busy && <Working what={busy} />}

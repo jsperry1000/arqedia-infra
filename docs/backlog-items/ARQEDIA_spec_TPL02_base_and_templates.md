@@ -232,6 +232,15 @@ revision.
 3. **Can a template be un-forked?** Deleting a memorandum already exists in the
    editor. Whether that should also offer to remove facts nothing else uses is
    a separate question and probably answered "no".
+4. **TPL-03 · Configure's first-run screen is now wrong.** `Configure.tsx`
+   carries its own first-run screen, separate from Get started: it reads
+   `GET /config/packs` and forks the revision a person picks from a select.
+   Since the split that list returns bases, while the screen still calls them
+   memoranda and offers "Draft your own from scratch" beside them. Forking
+   from it leaves a tenant with facts and no memorandum — the state Get
+   started exists to prevent. It does not depend on pack ordering, so it is
+   wrong rather than dangerous. Left alone deliberately in step 3: changing it
+   is real work and belongs on its own branch.
 
 ---
 

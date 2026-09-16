@@ -834,9 +834,30 @@ def template_packs(tenant_id, pack_tenant=PACK_TENANT):
         | _keys(tenant_id, DRAFT, "config_template", "template_key")
 
     for pack in packs_:
-        keys = _keys(pack_tenant, pack["revision"], "config_template",
-                     "template_key")
-        pack["template_keys"] = sorted(keys)
-        pack["held"] = bool(keys & held)
+        # The memorandum's own name and the headings it carries. pack_key is
+        # an identity and the note records where the pack came from; neither
+        # is a name to put in front of a customer choosing between them.
+        rows = _sql(
+            "SELECT template_key, label FROM config_template "
+            "WHERE tenant_id = :p AND revision = :r ORDER BY template_key",
+            [_p("p", pack_tenant), _p("r", pack["revision"])],
+        ).get("records", [])
+        pack["template_keys"] = [_col(r, 0) for r in rows]
+        pack["label"] = (_col(rows[0], 1) or _col(rows[0], 0)) if rows \
+            else pack["pack_key"]
+
+        headings = _sql(
+            "SELECT numeral, title FROM config_section "
+            "WHERE tenant_id = :p AND revision = :r "
+            "ORDER BY template_key, sort_order",
+            [_p("p", pack_tenant), _p("r", pack["revision"])],
+        ).get("records", [])
+        pack["section_titles"] = [
+            ("%s. %s" % (_col(r, 0), _col(r, 1))) if _col(r, 0)
+            else _col(r, 1)
+            for r in headings
+        ]
+
+        pack["held"] = bool(set(pack["template_keys"]) & held)
 
     return packs_

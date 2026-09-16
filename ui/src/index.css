@@ -709,6 +709,20 @@ p.warn { color: #b45309; }
 .revision-note.fatal ul { margin: 8px 0 0; padding-left: 18px; }
 .revision-note.fatal li { font-size: 13px; margin-bottom: 4px; }
 
+/* An arrival, not a refusal. Get started reports here, on the screen holding
+   the things it added, and in the brand green rather than the red a tenant
+   has learnt means something is wrong. */
+.revision-note.started {
+  border-left-color: var(--green); background: var(--wash); color: var(--ink);
+}
+.revision-note.started p { margin: 8px 0 0; font-size: 13px; }
+.revision-note.started ul { margin: 8px 0 0; padding-left: 18px; }
+.revision-note.started li { font-size: 13px; margin-bottom: 4px; }
+.revision-note.started .secondary {
+  display: inline-block; margin-top: 10px; font-size: 12px; color: var(--muted);
+}
+.revision-note.started .secondary:hover { color: var(--deep); }
+
 /* Column-wise, not row-wise. A grid fills across, so an alphabetical list
    read A B C along the first row and D E F along the second - which is
    unscannable when you are hunting for one name among eighty. Columns let the
@@ -1018,6 +1032,54 @@ a.add:hover { background: var(--paper); text-decoration: none; }
 
 /* How a section should read grows with what is written (UX-09). */
 .form textarea.grows { resize: none; }
+
+/* --- get started ---------------------------------------------------------- */
+
+/* Prose and a list of choices, not a working screen. Held to a readable
+   measure: across a wide window the rows would put a name at one edge and its
+   section count at the other, with a hand's width of nothing between. */
+.welcome { max-width: 760px; }
+
+/* One memorandum on offer: the tick, its name, how many sections it has, and
+   whether the tenant already holds it. */
+.template-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; margin-bottom: 6px;
+  border: 1px solid var(--line); border-radius: var(--pill-radius);
+  background: var(--paper); cursor: pointer;
+}
+.template-row:hover { border-color: var(--medium); }
+.template-row input { width: auto; }
+.template-name { flex: 1; font-weight: 500; }
+
+/* The count says how much there is. The headings say what it is, and they
+   are held under the count rather than listed down the page, which would
+   bury the choice this screen exists to put. */
+.template-sections { position: relative; }
+.template-sections .count {
+  font-size: 13px; color: var(--muted);
+  border-bottom: 1px dotted var(--medium);
+}
+.sections-pop {
+  display: none;
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 12;
+  min-width: 260px; padding: 8px 0;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  box-shadow: 0 10px 34px rgba(0, 37, 97, 0.14);
+}
+.sections-pop span {
+  display: block; padding: 5px 14px;
+  font-size: 13px; color: var(--ink-2); white-space: nowrap;
+}
+.template-sections:hover .sections-pop,
+.template-sections:focus-within .sections-pop { display: block; }
+
+/* Nothing ticked, nothing to do. The pill says so rather than going through
+   the motions and failing on an empty list. */
+.start-pill.off {
+  background: var(--line); color: var(--muted); cursor: default;
+}
 
 /* --- the working indicator ------------------------------------------------ */
 

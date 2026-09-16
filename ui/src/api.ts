@@ -387,6 +387,10 @@ export type ConfigState = {
   }[];
   draft: { revision: number; created_at: string; created_by: string } | null;
   validation?: Validation;
+  /** The memorandum named at signup, as it was typed there. It pre-ticks the
+   *  Get started chooser and decides nothing - null for a tenant who signed up
+   *  before the question was asked, or who skipped it. */
+  forked_pack: string | null;
 };
 
 export type Validation = {
@@ -403,6 +407,37 @@ export type Template = {
   key: string;
   label: string;
   sections: number;
+};
+
+// One of the memoranda we ship. A base carries the facts; a template carries
+// a memorandum laid out over them, and a tenant may take as many as they want.
+export type TemplatePack = {
+  pack_key: string;
+  label: string;
+  note: string | null;
+  sections: number;
+  facts: number;
+  section_titles: string[];
+  template_keys: string[];
+  held: boolean;
+};
+
+// What forking one added to the tenant's draft. Reported because somebody who
+// deleted a fact in March and finds it back in September must be told why.
+export type TemplateFork = {
+  forked: boolean;
+  pack_key: string;
+  revision: number;
+  templates: string[];
+  draft_was_open: boolean;
+  sections: number;
+  bindings: number;
+  added: {
+    categories: string[];
+    document_types: string[];
+    schemas: string[];
+    facts: string[];
+  };
 };
 
 export type Pack = {
@@ -486,6 +521,24 @@ export const api = {
     call("/config/fork", {
       method: "POST",
       body: JSON.stringify({ revision }),
+    }),
+
+  // The base, by key rather than by position. Nothing chooses a pack by
+  // where it happens to sit in a list any more.
+  forkBase: (): Promise<{ forked: boolean; revision: number }> =>
+    call("/config/fork", { method: "POST", body: "{}" }),
+
+  // The memoranda we ship, what each contains, and whether this tenant
+  // already holds it.
+  templatesAvailable: (): Promise<{ templates: TemplatePack[] }> =>
+    call("/config/templates/available"),
+
+  // Adding one. It lands in the draft and returns what it brought with it -
+  // facts, document types, schemas and categories the tenant lacked.
+  forkTemplate: (packKey: string): Promise<TemplateFork> =>
+    call("/config/templates/fork", {
+      method: "POST",
+      body: JSON.stringify({ pack_key: packKey }),
     }),
 
   // Two steps, as documents and logos use: ask for a signed link, then send

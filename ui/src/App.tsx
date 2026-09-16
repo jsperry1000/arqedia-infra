@@ -138,15 +138,17 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
 
 // --- choosing a report -----------------------------------------------------
 
-/** A draft to work in. A tenant with nothing configured starts from our pack,
- *  as the first-run screen does; one with only a published revision opens a
- *  copy of it. */
+/** A draft to work in. A tenant with nothing configured takes the base first;
+ *  one with only a published revision opens a copy of it.
+ *
+ *  THE BASE IS TAKEN BY KEY. This forked whatever packs() returned first, and
+ *  packs() sorted by revision descending - so adding a pack silently changed
+ *  what a new tenant got. Memoranda are not forked here at all: that is Get
+ *  started, where there is room to say what each one contains. */
 async function ensureDraft() {
   let state = await api.configState();
   if (!state.draft && state.revisions.length === 0) {
-    const { packs } = await api.packs();
-    if (!packs[0]) throw new Error("No starting points are available yet.");
-    await api.forkPack(packs[0].revision);
+    await api.forkBase();
     state = await api.configState();
   }
   if (!state.draft) await api.openDraft();
@@ -559,8 +561,12 @@ export default function App() {
               <Route path="/account" element={<AccountRoute />} />
               <Route path="/shares" element={<ShareRoute />} />
               <Route path="/viewer" element={<ViewerRoute />} />
+              {/* Get started forks and publishes, then hands what it added
+                  to the configuration screen, which says so at the top. */}
               <Route path="/welcome"
-                     element={<WelcomeView onStart={() => setChoosing(true)} />} />
+                     element={<WelcomeView
+                       onStarted={(report) =>
+                         opened("/configure?part=sections", { report })} />} />
               {/* Anything else would render an empty page. */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

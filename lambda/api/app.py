@@ -1409,6 +1409,13 @@ def config_state(tenant_id):
     revisions = registry.revisions(tenant_id)
     draft = next((r for r in revisions if r["is_draft"]), None)
 
+    # What they said at signup. It pre-ticks the Get started chooser and
+    # decides nothing: the choice is made on that screen, where there is room
+    # to say what each memorandum contains. Signup asked the question, and
+    # throwing the answer away means asking it twice.
+    chosen = _sql("SELECT forked_pack FROM tenant WHERE tenant_id = :t",
+                  [_p("t", tenant_id)]).get("records", [])
+
     state = {
         "active_revision": config.active_revision(tenant_id),
         "revisions": [r for r in revisions if not r["is_draft"]],
@@ -1416,6 +1423,7 @@ def config_state(tenant_id):
         # Which memoranda exist, so a screen can name the one being edited
         # rather than leaving a person to infer it.
         "templates": config.for_tenant(tenant_id).template_list(),
+        "forked_pack": _col(chosen[0], 0) if chosen else None,
     }
     if draft:
         state["validation"] = registry.validate(tenant_id, registry.DRAFT)
