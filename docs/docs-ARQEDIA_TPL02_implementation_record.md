@@ -149,6 +149,161 @@ Exercised on a scratch tenant, 9001, then every row removed.
 
 ---
 
+## Step 3 — the Get started chooser
+
+`tpl-chooser`, 0d1ef8a.
+
+### What the code said
+
+**`Welcome.tsx` was inert.** A static page whose only prop was `onStart`,
+wired to `setChoosing(true)` — Get started merely opened the rail's flyout. It
+fetched nothing and knew nothing about packs.
+
+**`ensureDraft` had exactly three callers**, all inside `ReportChooser` in
+`App.tsx`: `open()`, `scratch()` and `fromReport()`. So the rail chooser was the
+only path through it, and all three changed together.
+
+**Nothing exposed `tenant.forked_pack`.** `signup/app.py` writes it and no code
+reads it. `GET /config` returned `active_revision`, `revisions`, `draft` and
+`templates`; `GET /settings` the name, plan, flags, logo and colours. The answer
+somebody gave at signup was being discarded and the question asked twice.
+
+**A second forking path exists that is not `ensureDraft`.** `Configure.tsx` has
+its own first-run screen calling `api.packs()` and `api.forkPack()`. It does not
+depend on ordering — a person picks from a list — but since the split that list
+returns bases only while the screen still calls them memoranda, and forking from
+it leaves a tenant with facts and no memorandum.
+
+**Which partial states are recoverable**, read from the merged code rather than
+assumed:
+
+| Call | Repeatable |
+|---|---|
+| `fork_base` | **No.** Raises where a published revision exists |
+| `fork_template` | Yes. Every write is `INSERT IGNORE` |
+| `publish` | Yes. Returns `{published: false, validation}` rather than throwing; the draft is untouched |
+
+### What was decided
+
+| | |
+|---|---|
+| `forked_pack` on `GET /config` | Yes. One field. Signup asked the question; discarding the answer means asking it twice |
+| `Configure.tsx`'s first-run screen | Left alone, recorded as **TPL-03**. It is wrong rather than dangerous, and changing it is its own branch |
+| The base fork | **Conditional, always.** Re-read `GET /config` and fork only where `revisions` is empty. That is what makes every partial state recoverable by pressing again |
+| The publish warning | **In front of the button, not only in the report.** `publish` ships the whole draft and cannot be selective. Somebody about to press Get started with their own edits open needs to know before, not after. No warning where there is no draft — a first-run tenant has nothing of their own to ship, and a warning there is noise |
+
+### What was built
+
+- **`Welcome.tsx` is the chooser.** Each memorandum with its name, its section
+  count and whether it is already held; the count reveals that memorandum's
+  headings. Signup's answer pre-ticks and decides nothing.
+- **Get started** re-reads the configuration, forks the base only where there is
+  no published revision, then each ticked memorandum, then publishes once. A
+  refused publish is reported as a refusal rather than thrown.
+- **First run shows the introduction**; a tenant who already holds a base and
+  memoranda gets "Add a memorandum" instead.
+- **The report lands on Configure** — a note above the editor naming the
+  memoranda, the revision they published as, and the facts, document types and
+  categories they brought. Named rather than counted: six, then "and N more".
+- **Ordering is gone.** `ensureDraft` calls `forkBase()`, and nothing picks a
+  pack by position.
+- **`template_packs()` returns each pack's label and headings.** `pack_key` is
+  an identity and the note is provenance; neither belongs in front of a
+  customer.
+
+### Two things the render caught that reasoning had not
+
+Both found by looking, which is the rule.
+
+- A row carrying "already yours" pushed its count 80px left of the others, so
+  the column of numbers could not be compared. The marker now reads before the
+  count and they align.
+- The count was mouse-only. It takes focus now. The popover was measured to
+  overlay the rows beneath rather than displace them, and to stay inside the
+  viewport on both edges.
+
+### Verified
+
+Routes confirmed by call rather than by assertion, and discriminated against a
+sibling path because something answers every `/config/*` GET with 401:
+`GET /config/templates/available` → 401 where `GET /config/templates/nope` →
+404; `POST /config/templates/fork` → 401 where an unknown POST → 404.
+
+`tsc -b && vite build` clean, 635 modules. Both Lambda files compile.
+
+---
+
+## Step 4 — the starter-pack step comes out of sign-up
+
+`signup-no-pack`, b0203ef.
+
+### Why
+
+TPL-02 moved the choice of memoranda to Get started, where there is room to
+show what each contains. Sign-up still asked it — step 4 of six, single-select
+radios over a list including templates that do not exist. **A person was asked
+the same question twice, and first in the worse place.**
+
+Found by walking the live flow rather than reading the code: the screen at
+`/signup` looked nothing like what TPL-02 had built, because it was not the
+screen TPL-02 built.
+
+### What the code said
+
+**`pack` is optional the whole way down.** `api.signup` types it `pack?:
+string`; `begin()` binds `None` to an `isNull` parameter; `pending_signup.pack`
+and `tenant.forked_pack` are both `VARCHAR(64) NULL` with no default.
+
+**The only reader was `config_state` → `Welcome.tsx`**, and both are null-safe
+as written — `(chosen ?? "").split(",").filter(Boolean)` returns an empty set.
+
+**`SIGNUP_PACKS` was used nowhere but `SignUp.tsx`.**
+
+**The six-assumption was not in the CSS.** `.stepper` is flex with `flex: 1`
+and a percentage connector; no `nth-child`, no fixed widths. **The real
+six-assumption was five hard-coded step indices in `SignUp.tsx`** — exactly
+where an off-by-one lands.
+
+### What was decided
+
+| | |
+|---|---|
+| What sign-up sends as `pack` | Nothing. Omitted from the body. A display-shaped string matching no memorandum is a lie in a field whose whole job is matching |
+| `forked_pack` | **Go further than the brief.** If it is uniformly null from now on, the pre-tick it drives never fires again — so it is not inert, it is dead, and dead code that looks live is worse than either. `verify()` stops writing it, `config_state` stops returning it, `Welcome.tsx` stops pre-ticking from it |
+| The column itself | Stays. Dropping it is a destructive migration for no gain, and the two existing rows record something that was once true |
+| Knowing what drew somebody in | Lead capture on the site, not this column |
+| The site's own `PACKS` array | Flagged, not touched. Step 5 of the specification's sequence and a separate project |
+
+### What was built
+
+- Five steps: details, organisation, region, second administrator, verify.
+- **The five hard-coded indices became two named constants**, so they cannot
+  drift apart.
+- The summary drops the starter-pack row.
+- `SIGNUP_PACKS` removed from `mock.tsx`.
+- `forked_pack` and `pack` out of the TypeScript types. `begin()` still accepts
+  `pack` and `verify()` still selects it, so no column position moves.
+
+### Verified
+
+`tsc -b && vite build` clean; both Lambda files compile. The flow walked in a
+headless browser: five evenly spaced steps, "Continue" on 1 to 3 and "Send my
+code" only on 4, one request out with no `pack` in its body, step 5 asking for
+the code with "Start the trial" disabled until one is typed.
+
+### Found on the way
+
+- **The marketing site's `PACKS` array lists six memoranda where one ships**,
+  and its wording has drifted from `mock.tsx` — "eligibility and ineligibility
+  tests" against "eligibility tests", curly quotes in Project "X". Recorded in
+  the specification as open item 5.
+- **A stray `configure_screen.tsx` at the repository root**, carrying a
+  "Starter pack" fallback label. Not under `ui/src` and not part of the build.
+- **`CLAUDE.md` is out of date** on two counts: "Forking the chosen packs at
+  first run" is done, and `forked_pack` no longer records the choice.
+
+---
+
 ## Two behaviours to reconsider
 
 **Re-forking restores bindings the tenant deliberately removed.** Unbinding nine
@@ -163,8 +318,27 @@ deliberate.
 
 ---
 
-## State at the end of step 2
+## Still open
 
-`tpl-fork`, off `main` at 3f72c93. The routes and the Lambda change do not exist
-in API Gateway until `terraform apply` runs. No front end — that is step 3, the
-Get started chooser.
+**TPL-03 · `Configure.tsx`'s first-run screen is now wrong.** Since the split it
+offers bases while calling them memoranda, and forking from it leaves a tenant
+with facts and no memorandum. It does not depend on ordering, so it is wrong
+rather than dangerous. Its own branch.
+
+**The two behaviours above** — restored bindings, and unrestored document
+types.
+
+**`CLAUDE.md`** needs both TPL-02 lines corrected once step 4 merges.
+
+**The stray `configure_screen.tsx`** at the repository root.
+
+---
+
+## State
+
+Steps 1 to 3 merged. Step 4 on `signup-no-pack`, b0203ef, pushed and not
+merged.
+
+First run now works end to end: a tenant signing up, reaching Get started,
+ticking memoranda and pressing the button ends on a published revision holding
+one set of facts and the memoranda they chose over it.
