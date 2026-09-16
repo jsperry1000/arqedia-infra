@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { signIn } from "aws-amplify/auth";
 import { api } from "./api";
-import { SIGNUP_PACKS, REGIONS, JURISDICTIONS } from "./mock";
+import { REGIONS, JURISDICTIONS } from "./mock";
 
 /**
  * Signing up. Unattended: no queue, no manual approval, no card.
@@ -12,16 +12,26 @@ import { SIGNUP_PACKS, REGIONS, JURISDICTIONS } from "./mock";
  *   1  email and password      one trial per email domain
  *   2  organisation            the declared jurisdiction binds, not the IP
  *   3  region                  suggested, confirmed, and then immutable
- *   4  a starter pack          first run is a fork, never an empty editor
- *   5  a second administrator  the cheapest account recovery is the one
+ *   4  a second administrator  the cheapest account recovery is the one
  *                              nobody ever has to invoke
- *   6  the code                nothing is created until the address answers
+ *   5  the code                nothing is created until the address answers
  *
  * THE CODE MOVED TO THE END. It was second, which meant a person waited for
  * an email before they had told us anything - and every refusal we could have
  * given them cheaply arrived after that wait instead of before it. Now every
  * check runs on the last click, and the code is asked for once there is
  * something to create.
+ *
+ * THE STARTER PACK STEP IS GONE (TPL-02). It asked which memorandum somebody
+ * wanted, from six of which one ships, before they had seen what any of them
+ * contains and in a place with no room to show them. Get started asks it after
+ * signing in, against the memoranda that actually exist, with each one's
+ * headings under its section count. Asking here as well was asking twice, and
+ * asking first in the worse place.
+ *
+ * NOTHING IS SENT AS `pack`. Nobody chooses one here any more, so there is
+ * nothing honest to record. The handler still accepts the field and the column
+ * still exists; see the note in signup/app.py.
  *
  * The password never leaves this component until the final call. It is held
  * in React state and sent with the code, because there is nothing to set it
@@ -36,10 +46,15 @@ const STEPS = [
   "Your details",
   "Organisation",
   "Region",
-  "Starter pack",
   "Second administrator",
   "Verify",
 ];
+
+// The last step, and the one before it. Named because the flow turns on them
+// in five places - the guard, the two buttons, the panel and where `begin`
+// lands - and five bare integers shifted by one is where an off-by-one lives.
+const VERIFY = 4;
+const LAST_BEFORE_VERIFY = VERIFY - 1;
 
 export function SignUp({ onSignIn, onSignedUp }: {
   onSignIn: () => void;
@@ -56,7 +71,6 @@ export function SignUp({ onSignIn, onSignedUp }: {
   const [org, setOrg] = useState("");
   const [jurisdiction, setJurisdiction] = useState(JURISDICTIONS[0]);
   const [region, setRegion] = useState(REGIONS[0].code);
-  const [pack, setPack] = useState(0);
   const [second, setSecond] = useState("");
 
   const domain = email.includes("@") ? email.split("@")[1] : "";
@@ -64,7 +78,7 @@ export function SignUp({ onSignIn, onSignedUp }: {
   const ready =
     step === 0 ? /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) && password.length >= 12 :
     step === 1 ? org.trim().length > 0 :
-    step === 5 ? code.trim().length === 6 :
+    step === VERIFY ? code.trim().length === 6 :
     true;
 
   function message(err: unknown) {
@@ -73,7 +87,7 @@ export function SignUp({ onSignIn, onSignedUp }: {
   }
 
   /** Leaving the details behind runs every check and sends the code. A person
-   *  who is going to be refused learns it here, before they fill in four more
+   *  who is going to be refused learns it here, before they fill in three more
    *  screens. */
   async function begin() {
     setBusy("Checking");
@@ -81,10 +95,9 @@ export function SignUp({ onSignIn, onSignedUp }: {
     try {
       await api.signup({
         email, org_name: org, jurisdiction, region,
-        pack: SIGNUP_PACKS[pack].name,
         second_admin: second || undefined,
       });
-      setStep(5);
+      setStep(VERIFY);
     } catch (err) {
       setError(message(err));
     } finally {
@@ -115,7 +128,6 @@ export function SignUp({ onSignIn, onSignedUp }: {
     try {
       await api.signup({
         email, org_name: org, jurisdiction, region,
-        pack: SIGNUP_PACKS[pack].name,
         second_admin: second || undefined,
       });
     } catch (err) {
@@ -125,7 +137,8 @@ export function SignUp({ onSignIn, onSignedUp }: {
     }
   }
 
-  const next = () => (step === 4 ? begin() : setStep((n) => n + 1));
+  const next = () =>
+    (step === LAST_BEFORE_VERIFY ? begin() : setStep((n) => n + 1));
 
   return (
     <div className="signup">
@@ -236,27 +249,6 @@ export function SignUp({ onSignIn, onSignedUp }: {
 
         {step === 3 && (
           <>
-            <h3>Start on a pack</h3>
-            <p className="muted small">
-              A preconfiguration you can change afterwards: document types, the
-              facts each carries, and a memorandum laid out to use them. You can
-              fork more than one later. Nobody starts in an empty editor.
-            </p>
-            {SIGNUP_PACKS.map((p, i) => (
-              <label className={`pack-row${i === pack ? " on" : ""}`} key={p.name}>
-                <input type="radio" name="pack" checked={i === pack}
-                       onChange={() => setPack(i)} />
-                <span>
-                  <strong>{p.name}</strong>
-                  <span className="muted small">{p.note}</span>
-                </span>
-              </label>
-            ))}
-          </>
-        )}
-
-        {step === 4 && (
-          <>
             <h3>A second administrator</h3>
             <p className="muted small">
               Optional, and worth the thirty seconds. An administrator can
@@ -282,13 +274,15 @@ export function SignUp({ onSignIn, onSignedUp }: {
                 <tr><td>Organisation</td><td className="ref">{org || "not set"}</td></tr>
                 <tr><td>Jurisdiction</td><td className="ref">{jurisdiction}</td></tr>
                 <tr><td>Region</td><td className="ref">{region}</td></tr>
-                <tr><td>Starter pack</td><td className="ref">{SIGNUP_PACKS[pack].name}</td></tr>
               </tbody>
             </table>
+            {/* No memorandum row. Which memoranda a tenant gets is chosen on
+                Get started, after signing in, and saying anything about it
+                here would be promising something this screen does not do. */}
           </>
         )}
 
-        {step === 5 && (
+        {step === VERIFY && (
           <>
             <h3>Verify your address</h3>
             <p className="muted small">
@@ -311,12 +305,12 @@ export function SignUp({ onSignIn, onSignedUp }: {
         )}
 
         <div className="form-actions">
-          {step > 0 && step < 5 && (
+          {step > 0 && step < VERIFY && (
             <a className="secondary" onClick={() => setStep((n) => n - 1)}>Back</a>
           )}
-          {step < 5 ? (
+          {step < VERIFY ? (
             <button onClick={next} disabled={!ready || !!busy}>
-              {step === 4 ? "Send my code" : "Continue"}
+              {step === LAST_BEFORE_VERIFY ? "Send my code" : "Continue"}
             </button>
           ) : (
             <button onClick={finish} disabled={!ready || !!busy}>

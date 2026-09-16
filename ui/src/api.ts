@@ -158,8 +158,6 @@ export type SignupBegun = {
 export type SignupDone = {
   tenant_id: number;
   trial_ends_at: string;
-  /** Recorded on the tenant. First run forks it. */
-  pack: string | null;
 };
 
 export type Engagement = {
@@ -387,10 +385,6 @@ export type ConfigState = {
   }[];
   draft: { revision: number; created_at: string; created_by: string } | null;
   validation?: Validation;
-  /** The memorandum named at signup, as it was typed there. It pre-ticks the
-   *  Get started chooser and decides nothing - null for a tenant who signed up
-   *  before the question was asked, or who skipped it. */
-  forked_pack: string | null;
 };
 
 export type Validation = {
@@ -933,7 +927,6 @@ export const api = {
     org_name?: string;
     jurisdiction?: string;
     region?: string;
-    pack?: string;
     second_admin?: string;
   }): Promise<SignupBegun> => open_("/signup", body),
 

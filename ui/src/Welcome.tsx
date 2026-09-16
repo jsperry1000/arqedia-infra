@@ -42,19 +42,12 @@ export type Report = {
   revision: number | null;
 };
 
-/** What signup recorded, matched to what we ship. One or two names, written
- *  as they appeared on the signup screen, so they are matched loosely - a
- *  display label is not a key, which is why the key exists. */
-function preTicked(chosen: string | null, packs: TemplatePack[]) {
-  const flat = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const wanted = (chosen ?? "").split(",").map(flat).filter(Boolean);
-  if (wanted.length === 0) return new Set<string>();
-  return new Set(packs
-    .filter((p) => wanted.some((w) =>
-      w === flat(p.pack_key) || w === flat(p.label)
-      || flat(p.label).includes(w) || w.includes(flat(p.pack_key))))
-    .map((p) => p.pack_key));
-}
+// NOTHING IS PRE-TICKED. This matched signup's answer against what we ship,
+// loosely, because a display label is not a key. Signup stopped asking (see
+// SignUp.tsx), so forked_pack is NULL for every tenant from now on and the
+// match would never fire - dead code wearing the face of live code, which is
+// worse than either. The list starts empty and the person chooses here, which
+// is the whole point of the screen.
 
 export function WelcomeView({ onStarted }: {
   onStarted: (report: Report) => void;
@@ -71,7 +64,6 @@ export function WelcomeView({ onStarted }: {
       .then(([s, t]) => {
         setState(s);
         setPacks(t.templates);
-        setTicked(preTicked(s.forked_pack, t.templates));
       })
       .catch((err) => setError(message(err)));
   }, []);
@@ -217,12 +209,6 @@ export function WelcomeView({ onStarted }: {
       )}
 
       <h3>{firstRun ? "Choose your memoranda" : "Which memorandum"}</h3>
-      {state?.forked_pack && firstRun && (
-        <p className="muted small">
-          Ticked from what you chose when you signed up. Change it freely
-          &mdash; nothing was decided then.
-        </p>
-      )}
 
       {error && <p className="error">{error}</p>}
 
