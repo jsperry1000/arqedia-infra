@@ -443,10 +443,13 @@ export default function App() {
   }, [accountOpen]);
 
   if (signedIn === null) return <div className="centre"><p className="muted">...</p></div>;
-  // Signing in lands on the introduction, before any editor (UX-14). A
-  // session already open on load keeps the address it was opened at.
+  // Two entries, and they are not the same thing. Signing in goes home, to
+  // Engagements: somebody with an account has work to get back to. Starting a
+  // trial goes to Get started, because a new tenant has nothing yet and that
+  // is where memoranda are chosen. A session already open on load keeps the
+  // address it was opened at.
   if (!signedIn) {
-    const done = () => { navigate("/welcome"); check(); };
+    const done = () => { navigate("/"); check(); };
     return (
       <Routes>
         <Route path="/signup"
@@ -567,6 +570,15 @@ export default function App() {
                      element={<WelcomeView
                        onStarted={(report) =>
                          opened("/configure?part=sections", { report })} />} />
+              {/* Signing up ends here. onSignedUp navigates to /welcome and
+                  then check() flips signedIn, but react-router applies the new
+                  location inside a transition while setSignedIn is urgent - so
+                  the shell can mount while the location still reads /signup.
+                  Without this route the catch-all below took it, replaced the
+                  /welcome entry with /, and a new tenant landed on Engagements
+                  and never saw Get started. Holding /signup here makes both
+                  orders land in the same place. */}
+              <Route path="/signup" element={<Navigate to="/welcome" replace />} />
               {/* Anything else would render an empty page. */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
