@@ -221,9 +221,9 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
   works.
 - **Forking the chosen packs at first run.** `tenant.forked_pack` records one or
   two; first run still forks whatever is first in the list.
-- **Paddle**: does it support one-off charges against a stored card with no
-  standing mandate, and will it underwrite a sanctions-screening product. The
-  subscription screen stays mocked until both are answered.
+- **Paddle** (16 Sep 2026): one-off charges against a stored card are supported
+  through the subscription charge API. The subscription screen is being
+  connected to Paddle sandbox on `feature/paddle-subscription`.
 - **Trial vetting**, `frontend_onboarding_spec_v1.md` §11. Self-serve sanctions
   tooling at $25 with no check on the buyer. Probably needs counsel.
 - **Starter packs** validated by somebody who writes these memoranda.
