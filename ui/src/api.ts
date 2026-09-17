@@ -593,6 +593,14 @@ export const api = {
   openDraft: () =>
     call("/config/draft", { method: "POST", body: "{}" }),
 
+  // Which published revision new work is written against. Publishing makes a
+  // revision available; this is what puts one in use.
+  selectRevision: (revision: number) =>
+    call("/config/active", {
+      method: "PUT",
+      body: JSON.stringify({ revision }),
+    }),
+
   discardDraft: () => call("/config/draft", { method: "DELETE" }),
 
   draft: (): Promise<Draft> => call("/config/draft"),

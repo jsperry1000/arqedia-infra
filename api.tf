@@ -236,6 +236,7 @@ locals {
     "DELETE /documents/{document_id}",
     "GET /config",
     "GET /config/{revision}",
+    "PUT /config/active",
     "POST /config/draft",
     "DELETE /config/draft",
     "GET /config/draft/validate",
