@@ -60,6 +60,8 @@ check `build_index.md` before citing a number.
 - Allowances sealed from real balance: test $1/day, classification per plan.
 - Trial: 30 days, seats free, $5 metered cap, expires to read-only.
 - Top-up: $5 × seats, on explicit consent. Soft prompt at $5, hard stop at $0.
+  - **16 Sep 2026:** a top-up is a flat $5 increment per tenant, not tied to
+    seats.
 - Cash expires 30 days per tranche; monthly credit forfeits at anniversary;
   spend order is soonest-expiry-first.
 
@@ -150,6 +152,9 @@ is roughly fifty cents per tenant.
 one-off charges against a stored card with no standing mandate — the
 consent-per-top-up model depends on it — and that they will accept a
 sanctions-screening product, since a merchant of record approves what it sells.
+
+**16 Sep 2026:** one-off charge question answered (supported); sanctions
+underwriting question dropped.
 
 ---
 

@@ -1,0 +1,32 @@
+{
+  "environment": "sandbox",
+  "products": [
+    {
+      "name": "ARQEDIA Base",
+      "product_id": "pro_01m2nqvjk8cxpj67ypjvedwhfj",
+      "price_id": "pri_01m2nqvjr30had25yf55t1ppka",
+      "amount": "2500",
+      "currency": "USD",
+      "billing": "month",
+      "quantity": { "min": 1, "max": 1 }
+    },
+    {
+      "name": "ARQEDIA Small Business",
+      "product_id": "pro_01m2nqvjy33j92p1vvfbdc0xy8",
+      "price_id": "pri_01m2nqvk2dcyp4z9qcc9sz31sh",
+      "amount": "6500",
+      "currency": "USD",
+      "billing": "month",
+      "quantity": { "min": 1, "max": 1 }
+    },
+    {
+      "name": "ARQEDIA Top-up",
+      "product_id": "pro_01m2nqvk7wxfw3d2cxtssvjv3b",
+      "price_id": "pri_01m2nqvknfsmfjtw09ahxkx761",
+      "amount": "500",
+      "currency": "USD",
+      "billing": "one_time",
+      "quantity": { "min": 1, "max": 50, "description": "number of $5 increments" }
+    }
+  ]
+}

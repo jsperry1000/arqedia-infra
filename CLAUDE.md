@@ -185,6 +185,10 @@ An unpriced event refuses; it never charges nothing.
 **A short proposal is a number, not an error.** Money for eight of eighteen
 shows "fileable now 8" and offers to set the rest aside.
 
+**`subscription.plan_id` is the plan.** `tenant.plan` is a copy written from it
+for readers that predate the subscription table: seats, settings and the
+renderer. Nothing decides on `tenant.plan` alone.
+
 ### Signing up and seats
 
 **One door.** The Cognito pool stays admin-create-only. `POST /signup` is the
@@ -269,9 +273,9 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
   and that domain is refused at signup for ever. Account deletion is meant to
   scrub everything; `tenant_domain` is not on its list. Found when a tenant
   deleted by hand on dev left `ebl-finance.com` claimed.
-- **Paddle**: does it support one-off charges against a stored card with no
-  standing mandate, and will it underwrite a sanctions-screening product. The
-  subscription screen stays mocked until both are answered.
+- **Paddle** (16 Sep 2026): one-off charges against a stored card are supported
+  through the subscription charge API. The subscription screen is being
+  connected to Paddle sandbox on `feature/paddle-subscription`.
 - **Trial vetting**, `frontend_onboarding_spec_v1.md` §11. Self-serve sanctions
   tooling at $25 with no check on the buyer. Probably needs counsel.
 - **Starter packs** validated by somebody who writes these memoranda.
@@ -292,6 +296,8 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
 `docs/ARQEDIA_backlog_UX01_mvp_ui_worklist.md` is the specification for the UI
 work to MVP. Its decisions are settled; its branch order is not to be
 rearranged. Work one branch at a time and stop at the end of each for review.
+
+`docs/specs/` holds the design specs. Where they differ, `docs/specs/paddle_subscription_decisions_2026-09-16.md` takes precedence.
 
 ---
 
