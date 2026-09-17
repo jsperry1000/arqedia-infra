@@ -36,9 +36,12 @@ DATABASE = os.environ["DATABASE"]
 class InsufficientFunds(Exception):
     """Not enough to cover the whole charge. Nothing was debited."""
 
-    def __init__(self, needed_cents, available_cents):
+    def __init__(self, needed_cents, available_cents, purchased_only=False):
         self.needed_cents = needed_cents
         self.available_cents = available_cents
+        # True when only purchased cash could be spent (decision record items
+        # 12 and 13, as amended), so the refusal can say why.
+        self.purchased_only = purchased_only
         super().__init__(
             f"needs {needed_cents} cents, has {available_cents}")
 
@@ -91,6 +94,56 @@ def _money(cents):
     return f"${cents / 100:,.2f}"
 
 
+# --- standing --------------------------------------------------------------
+#
+# Derived on every charge, never stored (Wallet section 4).
+#
+#   trial           no subscription row - the tenant has not checked out
+#   active          a subscription in good standing
+#   purchased_only  payment has failed (past_due), or the subscription was
+#                   cancelled and its paid period is over. Filing and
+#                   generating may spend unexpired purchased cash and nothing
+#                   else - not monthly credit, not trial credit (decision
+#                   record items 12 and 13, as amended). Every other action
+#                   follows capped.
+#
+# capped is not a fourth answer: it is available = 0, which charge refuses as
+# InsufficientFunds in every standing.
+
+TRIAL = "trial"
+ACTIVE = "active"
+PURCHASED_ONLY = "purchased_only"
+
+
+def classify_standing(has_subscription, paddle_status, period_over):
+    if not has_subscription:
+        return TRIAL
+    if paddle_status == "past_due":
+        return PURCHASED_ONLY
+    if paddle_status == "canceled" and period_over:
+        return PURCHASED_ONLY
+    # Paused is treated as past_due (decision record, amendment of 17
+    # September 2026, PROPOSED).
+    if paddle_status == "paused":
+        return PURCHASED_ONLY
+    return ACTIVE
+
+
+def standing(tenant_id):
+    # PROPOSED: a cancelled subscription with no period end is over.
+    rows = _sql(
+        """
+        SELECT paddle_status,
+               current_period_ends_at IS NULL OR current_period_ends_at <= NOW()
+        FROM subscription WHERE tenant_id = :t
+        """,
+        [_p("t", tenant_id)],
+    ).get("records", [])
+    if not rows:
+        return TRIAL
+    return classify_standing(True, _col(rows[0], 0), bool(_col(rows[0], 1)))
+
+
 # --- what things cost ------------------------------------------------------
 
 def unit_price(tenant_id, event_type):
@@ -117,7 +170,8 @@ def quote(tenant_id, event_type, quantity=1):
     This is what the review screen shows before anybody commits to filing."""
     unit = unit_price(tenant_id, event_type)
     total = unit * quantity
-    have = available(tenant_id)
+    only = standing(tenant_id) == PURCHASED_ONLY
+    have = available(tenant_id, purchased_only=only)
     return {
         "event_type": event_type,
         "quantity": quantity,
@@ -128,38 +182,45 @@ def quote(tenant_id, event_type, quantity=1):
         # What the person can do now, rather than only what they cannot. A
         # proposal of eighteen with money for eight should file eight.
         "affordable_count": min(quantity, have // unit) if unit else 0,
+        # PROPOSED: returned so a screen can say only purchased credit counts.
+        "purchased_only": only,
     }
 
 
 # --- what is left ----------------------------------------------------------
 
-def _live_buckets(tenant_id, tx=None):
+def _live_buckets(tenant_id, tx=None, purchased_only=False):
     """Unexpired buckets with something left, in spend order.
 
     Soonest expiry first, then oldest. "Credit before cash, unless a cash
     tranche matures sooner" is not a rule in code - it falls out of this
     ordering, which is why it is the only ordering.
+
+    purchased_only narrows it to purchased cash, for a tenant whose payment
+    has failed or whose cancelled subscription has run out.
     """
+    only = " AND kind = 'purchased'" if purchased_only else ""
     return _sql(
         """
         SELECT bucket_id, granted_cents - spent_cents AS remaining
         FROM wallet_bucket
         WHERE tenant_id = :t
           AND expires_at > NOW()
-          AND granted_cents > spent_cents
+          AND granted_cents > spent_cents%s
         ORDER BY expires_at ASC, created_at ASC
-        """,
+        """ % only,
         [_p("t", tenant_id)], tx=tx,
     ).get("records", [])
 
 
-def available(tenant_id):
+def available(tenant_id, purchased_only=False):
+    only = " AND kind = 'purchased'" if purchased_only else ""
     rows = _sql(
         """
         SELECT COALESCE(SUM(granted_cents - spent_cents), 0)
         FROM wallet_bucket
-        WHERE tenant_id = :t AND expires_at > NOW()
-        """,
+        WHERE tenant_id = :t AND expires_at > NOW()%s
+        """ % only,
         [_p("t", tenant_id)],
     )["records"][0]
     return int(_col(rows, 0) or 0)
@@ -260,9 +321,15 @@ def charge(tenant_id, email, event_type, quantity, reference, idempotency_key):
     be refused reliably is the unique index on the ledger.
 
     Raises InsufficientFunds without debiting anything.
+
+    What may be spent depends on standing: a tenant whose payment failed, or
+    whose cancelled subscription has run out, spends purchased cash only.
+    PROPOSED: standing is read before the transaction opens; a webhook landing
+    in between changes the next charge, not this one.
     """
     unit = unit_price(tenant_id, event_type)
     total = unit * int(quantity)
+    only = standing(tenant_id) == PURCHASED_ONLY
 
     # Already done. Return what was recorded rather than doing it again.
     seen = _sql(
@@ -276,19 +343,19 @@ def charge(tenant_id, email, event_type, quantity, reference, idempotency_key):
         return {"entry_id": _col(seen[0], 0),
                 "amount_cents": _col(seen[0], 1),
                 "repeated": True,
-                "available_cents": available(tenant_id)}
+                "available_cents": available(tenant_id, purchased_only=only)}
 
     tx = _rds.begin_transaction(
         resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
         database=DATABASE)["transactionId"]
 
     try:
-        buckets = _live_buckets(tenant_id, tx=tx)
+        buckets = _live_buckets(tenant_id, tx=tx, purchased_only=only)
         have = sum(_col(b, 1) for b in buckets)
         if have < total:
             _rds.rollback_transaction(resourceArn=CLUSTER_ARN,
                                       secretArn=SECRET_ARN, transactionId=tx)
-            raise InsufficientFunds(total, have)
+            raise InsufficientFunds(total, have, only)
 
         _sql(
             """
@@ -334,7 +401,7 @@ def charge(tenant_id, email, event_type, quantity, reference, idempotency_key):
         if owing > 0:
             _rds.rollback_transaction(resourceArn=CLUSTER_ARN,
                                       secretArn=SECRET_ARN, transactionId=tx)
-            raise InsufficientFunds(total, total - owing)
+            raise InsufficientFunds(total, total - owing, only)
 
         _rds.commit_transaction(resourceArn=CLUSTER_ARN,
                                 secretArn=SECRET_ARN, transactionId=tx)
@@ -349,4 +416,5 @@ def charge(tenant_id, email, event_type, quantity, reference, idempotency_key):
         raise
 
     return {"entry_id": entry_id, "amount_cents": total,
-            "repeated": False, "available_cents": available(tenant_id)}
+            "repeated": False,
+            "available_cents": available(tenant_id, purchased_only=only)}

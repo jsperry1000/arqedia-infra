@@ -287,10 +287,11 @@ locals {
     "GET /wallet/quote",
     "POST /wallet/top-up",
 
-    # Paying for a plan. Reading is open to any seat; checkout is refused to
-    # a member in the handler, as seats are.
+    # Paying for a plan. Reading is open to any seat; checkout and a plan
+    # change are refused to a member in the handler, as seats are.
     "GET /billing/subscription",
     "POST /billing/checkout",
+    "POST /billing/plan",
 
     # Seats. Reading is open to anybody with one; changing is not, and the
     # handler refuses a member rather than the gateway - the message matters.

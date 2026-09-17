@@ -111,6 +111,16 @@ DEFAULT_SEATS = 2
 
 
 def seats_bought(tenant_id):
+    """subscription.plan_id is the plan (CLAUDE.md, Money): its seat_count
+    decides. tenant.plan and PLAN_SEATS are read only when there is no
+    subscription row - a trial."""
+    rows = _sql(
+        "SELECT p.seat_count FROM subscription s "
+        "JOIN plan p ON p.plan_id = s.plan_id WHERE s.tenant_id = :t",
+        [_p("t", tenant_id)]).get("records", [])
+    if rows:
+        return int(_col(rows[0], 0))
+
     rows = _sql("SELECT plan FROM tenant WHERE tenant_id = :t",
                 [_p("t", tenant_id)]).get("records", [])
     plan = (_col(rows[0], 0) if rows else "base") or "base"
