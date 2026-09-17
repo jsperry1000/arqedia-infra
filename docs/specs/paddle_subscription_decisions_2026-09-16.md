@@ -57,3 +57,4 @@ top-ups: a cancelled subscription cannot be charged (item 10). Cash still expire
 - Front-end config holds a sandbox-only token; one bundle cannot serve both environments (ENV-01).
 - Live catalog and `config/paddle/live.json` do not exist.
 - Failure-queue alarm has no notification target; failed events are visible only in the CloudWatch console.
+- Mid-cycle upgrade proration (origin subscription_update) grants no monthly credit; decision pending.
