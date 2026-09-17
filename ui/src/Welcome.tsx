@@ -19,6 +19,14 @@ import { Working } from "./shell";
  * failure is recoverable by pressing the button again - fork_template skips
  * what is already there, and publish refuses rather than throws.
  *
+ * EXCEPT WITH stopAtDraft. Reached from the rail's panel or the first-run
+ * screen, the publish is not made and the screen says so. Publish is not
+ * selective - it ships the whole draft - so taking a memorandum would ship
+ * whatever else that person had in there, unfinished, without them choosing
+ * to. Signing up still arrives here without the flag and still publishes,
+ * which is what makes a new tenant's first run one press: their draft holds
+ * nothing but what they just ticked.
+ *
  * NOTHING IS CHOSEN BY POSITION. Templates are taken by pack_key. What was
  * chosen at signup pre-ticks the list and decides nothing: that question was
  * asked with one line of description beside it, and this screen has room to
@@ -49,7 +57,8 @@ export type Report = {
 // worse than either. The list starts empty and the person chooses here, which
 // is the whole point of the screen.
 
-export function WelcomeView({ onStarted }: {
+export function WelcomeView({ stopAtDraft = false, onStarted }: {
+  stopAtDraft?: boolean;
   onStarted: (report: Report) => void;
 }) {
   const [state, setState] = useState<ConfigState | null>(null);
@@ -78,7 +87,8 @@ export function WelcomeView({ onStarted }: {
   const draftOpen = !!state?.draft;
 
   /**
-   * The base where there is none, then each ticked template, then one publish.
+   * The base where there is none, then each ticked template, then one publish
+   * unless stopAtDraft says not to.
    *
    * Read again at the start rather than trusting what the screen loaded with:
    * a tenant who forked in another tab must not have the base forked twice,
@@ -117,21 +127,28 @@ export function WelcomeView({ onStarted }: {
         added.facts.push(...result.added.facts);
       }
 
-      setBusy("Publishing");
-      // publish answers a refusal rather than throwing, so its shape is
-      // spelled out here: a validation that failed is a thing to show, not an
-      // error to swallow.
-      const published: {
-        published?: boolean; revision?: number; validation?: Validation;
-      } = await api.publish(
-        "Get started: " + wanted.map((p) => p.label).join(", "));
+      // Null where nothing was published, which the configuration screen
+      // already reads: it reports "are yours" without a revision number.
+      let revision: number | null = null;
 
-      // A refused publish is not an error and does not throw: the memoranda
-      // are in the draft, and saying so beats a screen that looks broken.
-      if (published && published.published === false) {
-        setRefused((published.validation?.fatal ?? []).map((f) => f.detail));
-        setBusy("");
-        return;
+      if (!stopAtDraft) {
+        setBusy("Publishing");
+        // publish answers a refusal rather than throwing, so its shape is
+        // spelled out here: a validation that failed is a thing to show, not
+        // an error to swallow.
+        const published: {
+          published?: boolean; revision?: number; validation?: Validation;
+        } = await api.publish(
+          "Get started: " + wanted.map((p) => p.label).join(", "));
+
+        // A refused publish is not an error and does not throw: the memoranda
+        // are in the draft, and saying so beats a screen that looks broken.
+        if (published && published.published === false) {
+          setRefused((published.validation?.fatal ?? []).map((f) => f.detail));
+          setBusy("");
+          return;
+        }
+        revision = published?.revision ?? null;
       }
 
       onStarted({
@@ -143,7 +160,7 @@ export function WelcomeView({ onStarted }: {
           facts: Array.from(new Set(added.facts)),
         },
         draft_was_open: wasOpen,
-        revision: published?.revision ?? null,
+        revision,
       });
     } catch (err) {
       setError(message(err));
@@ -178,8 +195,10 @@ export function WelcomeView({ onStarted }: {
             </li>
             <li>
               <strong>Publish.</strong> A draft reaches nothing. Publishing
-              makes it the configuration documents are read against, and
-              pressing Get started publishes for you.
+              makes it the configuration documents are read against.
+              {stopAtDraft
+                ? " It is a separate step, and you take it when you are ready."
+                : " Pressing Get started publishes for you."}
             </li>
             <li>
               <strong>Upload.</strong> Now, and not before. Each document is
@@ -260,10 +279,20 @@ export function WelcomeView({ onStarted }: {
           their own unpublished work in it needs to know that before they
           press the button, not afterwards. A first-run tenant has nothing of
           their own to ship, so there is nothing to say. */}
-      {draftOpen && !firstRun && (
+      {draftOpen && !firstRun && !stopAtDraft && (
         <p className="working-note">
           You have an open draft. Get started publishes it &mdash; the
           memoranda you tick here and any changes already in it, together.
+        </p>
+      )}
+
+      {/* Said before the button, and said plainly. Somebody who has just
+          picked two memoranda will otherwise expect them to be in use. */}
+      {stopAtDraft && (
+        <p className="working-note">
+          What you tick goes into your draft. Nothing is published:
+          publishing is a separate step, on the configuration screen, when
+          the draft says what you want it to say.
         </p>
       )}
 
@@ -272,7 +301,7 @@ export function WelcomeView({ onStarted }: {
       <div className="form-actions">
         <a className={"start-pill" + (busy || ticked.size === 0 ? " off" : "")}
            onClick={busy || ticked.size === 0 ? undefined : start}>
-          Get started
+          {stopAtDraft ? "Add to my draft" : "Get started"}
         </a>
         {firstRun && (
           <a href="https://arqedia.com" target="_blank" rel="noreferrer">

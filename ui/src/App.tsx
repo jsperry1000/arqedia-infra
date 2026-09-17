@@ -226,6 +226,13 @@ function ReportChooser({ onClose, onOpened }: {
     onOpened(`/configure?report=${encodeURIComponent(key)}`);
   });
 
+  // Ours, rather than theirs. What is on offer is already shown by the Get
+  // started chooser - the same list, the same headings, the same "already
+  // yours" marker - so this sends a person there rather than building a
+  // second list that drifts from it. stopAtDraft: taking one from here adds
+  // it to the draft and publishes nothing.
+  const ours = () => onOpened("/welcome", { stopAtDraft: true });
+
   // An empty report with one untitled section. Numbered where an untitled
   // report already exists, because saving the same key again would rename
   // that one rather than add another.
@@ -258,6 +265,9 @@ function ReportChooser({ onClose, onOpened }: {
           <a onClick={fromReport}>
             Create from a report you already write
           </a>
+          {/* A rule between what they have and what we offer. */}
+          <span className="sep" />
+          <a onClick={ours}>Select an ARQEDIA Template</a>
         </>
       ) : (
         <>
@@ -315,6 +325,23 @@ function ConfigureRoute({ epoch }: { epoch: number }) {
 
 function SettingsRoute() {
   return <SettingsView onBack={useBack()} />;
+}
+
+/** Get started, and the same screen reached to take a memorandum.
+ *
+ *  Signing up lands here with no state and publishes at the end, which is
+ *  what makes a new tenant's first run one press. The rail's panel and the
+ *  first-run screen arrive with stopAtDraft, and then nothing is published:
+ *  their draft is their own, and shipping it is their decision. */
+function WelcomeRoute({ onOpened }: {
+  onOpened: (to: string, state?: unknown) => void;
+}) {
+  const location = useLocation();
+  const stopAtDraft = Boolean(
+    (location.state as { stopAtDraft?: boolean } | null)?.stopAtDraft);
+  return <WelcomeView stopAtDraft={stopAtDraft}
+                      onStarted={(report) =>
+                        onOpened("/configure?part=sections", { report })} />;
 }
 
 // --- not connected yet -----------------------------------------------------
@@ -565,11 +592,12 @@ export default function App() {
               <Route path="/shares" element={<ShareRoute />} />
               <Route path="/viewer" element={<ViewerRoute />} />
               {/* Get started forks and publishes, then hands what it added
-                  to the configuration screen, which says so at the top. */}
-              <Route path="/welcome"
-                     element={<WelcomeView
-                       onStarted={(report) =>
-                         opened("/configure?part=sections", { report })} />} />
+                  to the configuration screen, which says so at the top.
+                  Reached from the rail's panel or the first-run screen it
+                  stops at the draft instead, and says so: taking a
+                  memorandum is not the moment to ship somebody's own
+                  unpublished work. */}
+              <Route path="/welcome" element={<WelcomeRoute onOpened={opened} />} />
               {/* Signing up ends here. onSignedUp navigates to /welcome and
                   then check() flips signedIn, but react-router applies the new
                   location inside a transition while setSignedIn is urgent - so
