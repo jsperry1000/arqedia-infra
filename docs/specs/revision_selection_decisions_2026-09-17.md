@@ -58,6 +58,17 @@ record differs, this record applies from this date.
 10. **Publishing keeps numbering from the highest revision**, whichever is
     selected. The series is append-only; selection does not renumber it.
 
+### Amendment — 17 September 2026
+
+**Selecting a revision is refused while a draft is open.** The refusal names
+the revision the draft was opened from, and says it must be published or
+discarded first. PROPOSED.
+
+A draft is a copy of the revision it was opened from, and publishing numbers
+from the highest revision (item 10). Selecting another revision underneath an
+open draft would leave a person editing one configuration while new work filed
+against another, and their publish would ship the first over the second.
+
 ---
 
 ## 3. Open

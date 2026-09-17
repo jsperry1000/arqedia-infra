@@ -199,10 +199,16 @@ def _clear(tenant_id, revision):
 def open_draft(tenant_id, email, from_revision=None):
     """Start editing.
 
-    A draft opens as a copy of a published revision - by default the latest -
-    so a person edits from where they are rather than from nothing. Opening a
-    draft when one exists returns it untouched: an unfinished edit is not
-    something to discard because somebody clicked twice."""
+    A draft opens as a copy of a published revision - by default the one in
+    use - so a person edits from where they are rather than from nothing.
+    Opening a draft when one exists returns it untouched: an unfinished edit
+    is not something to discard because somebody clicked twice.
+
+    THE ONE IN USE, NOT THE NEWEST (revision selection decision record, item
+    9). A tenant who selected an earlier revision is working against that one,
+    and opening the newest would silently reopen work they had stepped back
+    from. Falls back to the newest where nothing is selected: a tenant that
+    has never published has nothing to select."""
     existing = _sql(
         "SELECT revision FROM config_revision "
         "WHERE tenant_id = :t AND revision = :d",
@@ -211,7 +217,7 @@ def open_draft(tenant_id, email, from_revision=None):
         return {"revision": DRAFT, "created": False}
 
     source = from_revision if from_revision is not None \
-        else _latest_published(tenant_id)
+        else (_active_revision(tenant_id) or _latest_published(tenant_id))
 
     _sql(
         """
@@ -461,6 +467,67 @@ def _active_revision(tenant_id):
     if not records:
         return 0
     return int(_col(records[0], 0) or 0)
+
+
+def select_revision(tenant_id, revision):
+    """Choose which published revision new work is written against.
+
+    Publishing makes a revision available; this is what puts one in use, and
+    reverting is selecting an earlier one (revision selection decision record,
+    items 1, 2 and 4). Nothing is retired and nothing is deleted.
+
+    WHAT IS ALREADY FILED OR GENERATED DOES NOT MOVE. A document pins
+    document.config_revision at filing and a memorandum pins
+    memo.config_revision; both keep resolving against the revision they name.
+
+    REFUSED WHILE A DRAFT IS OPEN (amendment of 17 September 2026, PROPOSED).
+    A draft is a copy of the revision it was opened from, and publishing it
+    numbers from the highest revision - so selecting another revision
+    underneath it would leave a person editing one configuration and filing
+    against a different one, and their publish would ship the first over the
+    second.
+
+    The draft is refused as a selection too: it is mutable, and composition
+    would be reading a configuration that changes under it. A revision
+    belonging to another tenant cannot be reached - the lookup is scoped by
+    tenant_id, which comes from the token."""
+    if revision is None or isinstance(revision, bool):
+        raise ValueError("choose a revision to use")
+    try:
+        revision = int(revision)
+    except (TypeError, ValueError):
+        raise ValueError("choose a revision to use")
+    if revision == DRAFT:
+        raise ValueError(
+            "the draft is not a published revision. Publish it first, then "
+            "it can be put in use.")
+
+    # forked_from records what the draft was opened from, as "tenant:revision"
+    # (open_draft). Named in the refusal so a person knows which work is at
+    # stake rather than being told only that something is in the way.
+    draft = _sql(
+        "SELECT forked_from FROM config_revision "
+        "WHERE tenant_id = :t AND revision = :d",
+        [_p("t", tenant_id), _p("d", DRAFT)]).get("records", [])
+    if draft:
+        opened_from = (_col(draft[0], 0) or "").rsplit(":", 1)[-1]
+        raise ValueError(
+            "a draft is open, taken from revision %s. Publish it or discard "
+            "it before putting another revision in use."
+            % (opened_from or "an earlier one"))
+
+    rows = _sql(
+        "SELECT status FROM config_revision "
+        "WHERE tenant_id = :t AND revision = :r",
+        [_p("t", tenant_id), _p("r", revision)]).get("records", [])
+    if not rows:
+        raise ValueError("this workspace has no revision %d" % revision)
+    if _col(rows[0], 0) != "published":
+        raise ValueError("revision %d is not published" % revision)
+
+    _sql("UPDATE tenant SET active_revision = :r WHERE tenant_id = :t",
+         [_p("r", revision), _p("t", tenant_id)])
+    return {"active_revision": revision}
 
 
 def _pack_revision(pack_key, kind, pack_tenant=PACK_TENANT):

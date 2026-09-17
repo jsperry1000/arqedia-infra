@@ -51,6 +51,7 @@ charged for.
   GET  /config/draft/proposals           proposals read and not yet accepted
   GET  /config/draft/working             what has been decided about one
   PUT  /config/draft/working             keep what has been decided
+  PUT  /config/active                    which published revision is in use
 
 Paying for a plan. Nothing here grants money; Paddle's webhooks do.
   GET  /billing/subscription             standing, plan, periods, plan rows
@@ -1892,6 +1893,16 @@ def lambda_handler(event, context):
             body = json.loads(event.get("body") or "{}")
             return _reply(201, registry.open_draft(
                 tenant_id, email, body.get("from_revision")))
+
+        # Which published revision new work is written against. Publishing
+        # makes a revision available; this puts one in use, and reverting is
+        # choosing an earlier one. An administrator act, like publishing: it
+        # changes what every future memorandum in the tenant says.
+        if route == "PUT /config/active":
+            _require_admin(role)
+            body = json.loads(event.get("body") or "{}")
+            return _reply(200, registry.select_revision(
+                tenant_id, body.get("revision")))
 
         if route == "DELETE /config/draft":
             _require_admin(role)

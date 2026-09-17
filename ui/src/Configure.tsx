@@ -942,6 +942,12 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </button>
 
         <h3>History</h3>
+        <p className="muted small">
+          Every revision that has been published. The one in use is what new
+          memoranda are written against; putting an earlier one back is how a
+          change is undone. Nothing already filed or generated moves &mdash;
+          each names the revision it was read or written under.
+        </p>
         <table className="docs">
           <tbody>
             {state.revisions.map((r) => (
@@ -953,8 +959,22 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                   {r.published_by ? " \u00b7 " + r.published_by : ""}
                 </td>
                 <td>
-                  {r.revision === state.active_revision && (
+                  {r.revision === state.active_revision ? (
                     <span className="in-use">in use</span>
+                  ) : (
+                    <a className="small" onClick={() => {
+                      if (!window.confirm(
+                        `Use revision ${r.revision}? Memoranda generated from `
+                        + `now on are written against it, and documents filed `
+                        + `from now on are read against it. Nothing already `
+                        + `filed or generated changes — each keeps the `
+                        + `revision it names, so every memorandum still `
+                        + `reproduces. Revision ${state.active_revision} `
+                        + `stays, and can be put back the same way.`)) return;
+                      act("Selecting", () => api.selectRevision(r.revision));
+                    }}>
+                      Use this revision
+                    </a>
                   )}
                 </td>
               </tr>
