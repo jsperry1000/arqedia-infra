@@ -36,6 +36,16 @@ every response and every commit, without being restated.
 
 ## Working practices earned the hard way
 
+**`terraform apply` does not deploy `lambda/shared/`. Run `build-layer.ps1`
+first, or the layer is whatever it was in September.** Shared modules reach the
+Lambdas only through the `docprocessing` layer, built by `build-layer.ps1` into
+the git-ignored `build/`. Terraform hashes that zip and never rebuilds it. Every
+apply from 9 to 16 September redeployed layer version 31, so TPL-02's
+`fork_base`, `fork_template` and `template_packs` merged, reported themselves
+verified, and never ran — until a person walking Get started hit
+`AttributeError`. After any change under `lambda/shared/`, rebuild the layer and
+confirm the deployed layer's version and contents, not the local file's.
+
 **Never write CSS from reasoning.** Four attempts at one grouped layout, each
 worse than the last, until the rule was supplied. What worked was letting the
 label set the column — `max-content`, `nowrap` — and having the OUTER box
@@ -57,6 +67,15 @@ code.
 **A CSS class carrying `display` beats the `hidden` attribute.** A modal styled
 `display: flex` is open on load unless `[hidden]` is given its own rule.
 
+**Verify the journey, not only the unit.** Walk the whole path a person takes,
+signed out, on the real domain, before calling a component done. Sign-up
+reached `main` landing on the wrong page through three branches that each
+reported themselves verified.
+
+**An untested boundary is a gap, not a note.** Where something cannot be
+exercised, say so as loudly as a failure and name what is therefore
+unverified.
+
 **Specificity inside the header.** `.shell header a` sets the pale blue that
 suits navy. A panel inside the header must be selected through `.shell header`
 or its text renders light on white.
@@ -64,6 +83,28 @@ or its text renders light on white.
 **Verify by querying, never by the absence of an error.** A migration that
 printed no error had not run. A build whose hash did not change may or may not
 contain the new source. Ask the database or grep the bundle.
+
+---
+
+## Paddle integration
+
+When writing or modifying code that integrates with Paddle:
+
+- Always check current Paddle documentation via the `paddle-docs` MCP server before suggesting code. The Paddle API and SDKs evolve frequently — do not rely on training data alone.
+- Use the official Paddle SDK for the language in use:
+  - Node.js → `@paddle/paddle-node-sdk`
+  - Python → no SDK: webhook verification uses the standard library (decision record item 5)
+  - Go → `github.com/PaddleHQ/paddle-go-sdk/v5`
+  - PHP → `paddlehq/paddle-php-sdk`
+- All development uses the sandbox environment. Sandbox API keys contain `_sdbx`; sandbox client-side tokens are prefixed with `test_`.
+- Always verify webhook signatures before acting on the payload:
+  - Node: `paddle.webhooks.unmarshal()`
+  - Python: HMAC-SHA256 of `ts:rawBody` with the standard library (`hmac`, `hashlib`), constant-time compare; no Paddle SDK (decision record item 5)
+  - Go: `paddle.NewWebhookVerifier()` with `Middleware`
+  - PHP: `(new Verifier())->verify($request, $secret)`
+- For destructive account changes (updating prices, archiving products, canceling subscriptions), ask for explicit confirmation before calling the `paddle-sandbox` or `paddle-live` MCP server.
+- Use `paddle-sandbox` by default. Only call `paddle-live` when the prompt explicitly mentions live, production, or real customer data.
+- API keys and webhook secrets live in AWS Secrets Manager, values set outside Terraform and read by the Lambda at start-up — never in environment variables, never inline in code (decision record item 1).
 
 ---
 
@@ -223,8 +264,15 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
 - **SES production access** in `us-east-2`, and a verified sender. It gates the
   signup code and the invitation email. Everything either side of the send
   works.
-- **Forking the chosen packs at first run.** `tenant.forked_pack` records one or
-  two; first run still forks whatever is first in the list.
+- **TPL-03** — `Configure.tsx`'s first-run screen offers bases while calling
+  them memoranda.
+- **The marketing site's `PACKS` array** lists six memoranda where one ships.
+- **A stray `configure_screen.tsx`** at the repository root, not in the build.
+- **Deleting a tenant leaves its domain claim behind.** `tenant_domain` has no
+  foreign key, so removing a `tenant` row leaves `domain → tenant_id` in place
+  and that domain is refused at signup for ever. Account deletion is meant to
+  scrub everything; `tenant_domain` is not on its list. Found when a tenant
+  deleted by hand on dev left `ebl-finance.com` claimed.
 - **Paddle** (16 Sep 2026): one-off charges against a stored card are supported
   through the subscription charge API. The subscription screen is being
   connected to Paddle sandbox on `feature/paddle-subscription`.
