@@ -37,6 +37,7 @@ The sanctions-underwriting question to Paddle is dropped.
 13. **Cancelled.** Read-only (`capped`) from the end of the paid period; `closed` only on account deletion.
 14. **Downgrade with more seats than the target plan.** Refused until seats fit the target plan.
 15. **Refund or chargeback.** Event recorded; no bucket or ledger change (Wallet §4, append-only); flagged for manual review.
+16. **Mid-cycle upgrade.** On transaction.completed with origin subscription_update to a higher plan, grant monthly_credit = new plan monthly_credit_cents minus old plan monthly_credit_cents, expiring at the current billing period end, reference = transaction ID. Downgrade grants nothing and reclaims nothing (Wallet §4, append-only).
 
 ### Amendment — 16 September 2026
 
@@ -46,32 +47,22 @@ generate memos. Everything else follows `capped` in Wallet §8 as written. No ne
 top-ups: a cancelled subscription cannot be charged (item 10). Cash still expires
 30 days from purchase (Wallet §4).
 
+**12 is amended.** While a payment has failed (`past_due`), the tenant can still spend unexpired purchased (top-up) cash to file documents and generate memos, until it is used up or expires. Everything else follows `capped` in Wallet §8. No new top-ups while `past_due`: Paddle refuses the charge API in that state.
+
+### Amendment — 17 September 2026
+
+- **Trial length.** Trial is 14 days in all cases (was 30, Wallet §2). $5 metered cap unchanged.
+- **Subscribe is always available.** Pricing page (Start 14-day trial and Subscribe per plan) and in-app in every state. During `past_due` the button is "Update card". PROPOSED.
+- **Subscribe from the pricing page.** Runs signup with the chosen plan, then opens checkout after sign-in; tenant reference stays server-side (item 7). PROPOSED.
+- **The chosen plan survives a cross-device verify.** It is stored server-side on `pending_signup` at begin and copied to the tenant at verify. On first sign-in, if `signup_intent` = subscribe, no subscription row exists and `checkout_offered_at` is NULL, the app opens checkout for `signup_plan`. `checkout_offered_at` is set when that checkout transaction is created, so it opens once. PROPOSED.
+- **Conversion tracking.** `tenant.signup_intent` (trial / subscribe) distinguishes direct subscribers from trial conversions. PROPOSED.
+
 ---
 
 ## 3. Open
-
----
-
-## 3. PROPOSED — awaiting explicit choice
-
-These were listed for approval but carry an open choice. Nothing below is built
-until each is confirmed.
-
-| # | Question | Proposed |
-|---|---|---|
-| P1 | Leftover trial credit at checkout | Kept until its own expiry; spend order (soonest expiry first) burns it first |
-| P2 | Top-up with no subscription | Refused: "Subscribe first". The charge API requires a subscription |
-| P3 | Subscription columns on `tenant` or a separate table | Separate `subscription` table, per Wallet §3 |
-| P4 | `past_due` | Gate treats as `capped` (read-only) until Paddle reports active |
-| P5 | `canceled` | `capped` from period end; `closed` only on account deletion |
-| P6 | Downgrade with more seats than the new plan allows | Downgrade refused until seats fit the target plan |
-| P7 | Paddle refund or chargeback | Event recorded; no bucket or ledger change (Wallet §4, append-only); flagged for manual review |
-
----
-
-## 4. Open
 
 - Sandbox test checkout not yet run: tax added on top unconfirmed.
 - API Gateway v2 body encoding: handler must hash exact raw bytes; unverified.
 - Front-end config holds a sandbox-only token; one bundle cannot serve both environments (ENV-01).
 - Live catalog and `config/paddle/live.json` do not exist.
+- Failure-queue alarm has no notification target; failed events are visible only in the CloudWatch console.

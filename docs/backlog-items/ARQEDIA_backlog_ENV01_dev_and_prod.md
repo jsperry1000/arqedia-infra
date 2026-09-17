@@ -61,3 +61,18 @@ It costs nothing now and is expensive to reconstruct later.
 
 The stack itself, which is working. This item separates environments; it changes
 no resource.
+
+---
+
+### Note — 16 September 2026: bytecode in Lambda zips
+
+`archive_file` zips everything under `source_dir`, including `__pycache__`.
+The blocks for `signup`, `api`, `composition`, `extraction`, `normalizer`,
+`proposer`, `render` and `collector` set no `excludes`. The deployed
+`arqedia-dev-signup` zip carried `__pycache__/app.cpython-314.pyc` beside
+`app.py`. Fix: `excludes = ["__pycache__"]` on each block. The two Paddle blocks
+already have it.
+
+`lambda/shared` is not an `archive_file`: it reaches the Lambdas through the
+`docprocessing` layer built by `build-layer.ps1`. Whether that script zips
+`__pycache__` has not been read.
