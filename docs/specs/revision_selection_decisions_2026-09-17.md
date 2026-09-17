@@ -77,8 +77,51 @@ newest revision. Nothing in the app sets or clears a mark: putting a
 memorandum on offer, moving it to another revision or taking it off all mean
 another migration until a screen exists for it.
 
-**The curator identity remains open** (section 3), and no route writes
-`pack_offer`, so nothing reachable by a tenant can change what is offered.
+**No route writes `pack_offer`**, so nothing reachable by a tenant can change
+what is offered.
+
+**The curator is `admin@arqedia.com`, an administrator of tenant 0.** Created
+by hand in the Cognito pool; `custom:tenant_id` is immutable, so no other
+account can be moved to tenant 0. What stops a tenant token reaching tenant 0
+is still that no such token is issued: `caller()` accepts whatever tenant the
+token carries, and the control is that only this account carries 0.
+
+### Note — 17 September 2026, what tenant 0 is refused
+
+**Refused deliberately.** `lambda/api/app.py` names five routes in
+`CURATOR_REFUSED_ROUTES` and refuses them for tenant 0 with one sentence: the
+ARQEDIA workspace curates the catalogue and does not file documents, generate
+memoranda or subscribe.
+
+    POST /config/templates/fork    it would copy a memorandum into tenant 0's
+                                   own draft, beside the original
+    POST /uploads
+    POST /engagements/{id}/file
+    POST /engagements/{id}/generate
+    POST /billing/checkout
+
+**Also refused deliberately, at the two ends of an invitation.**
+`seats.invite` refuses to invite into tenant 0, and `signup.accept` refuses an
+invitation that names it. A seat there is created by hand.
+
+**Refused incidentally, and NOT to be mistaken for controls.** Each of these
+refuses today for a reason that can change tomorrow:
+
+    POST /config/fork          refused because tenant 0 has published
+                               revisions, not because it is tenant 0
+    POST /settings, /settings/logo, /settings/logo/confirm
+                               refused because branding wants Business or
+                               Enterprise and tenant 0 is on 'base'
+    POST /wallet/top-up        refused because there is no subscription
+    POST /billing/plan         refused because there is no active subscription
+    filing and generating      would also fail for want of funds, which is
+                               why they are named above as well
+
+Funding a wallet, changing a plan or publishing nothing would remove any of
+those refusals without anybody deciding to.
+
+**This answers the first item in section 3 below**, which was written before
+the curator existed.
 
 ---
 
