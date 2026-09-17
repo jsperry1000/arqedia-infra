@@ -10,6 +10,13 @@ from unittest import mock
 
 from api_modules import load_billing, rows
 
+# The Data API's answer to a second topup_request under one key, as dev
+# returned it on 17 September 2026.
+DUPLICATE_CODE = "DatabaseErrorException"
+DUPLICATE_MESSAGE = ("Duplicate entry '7-k' for key "
+                     "'topup_request.uq_idempotency'; Error code: 1062; "
+                     "SQLState: 23000")
+
 PLANS = rows(("base", "Base", 2, 2500, 500, 5),
              ("business", "Small Business", 5, 6500, 1500, None))
 
@@ -96,9 +103,8 @@ class BillingTest(unittest.TestCase):
     def test_top_up_duplicate_key_is_repeated_and_never_charges(self):
         db = FakeBillingDb(("sub_1", "active", None, "base"))
         db.keys.add("k")
-        db.duplicate_error = self.client_error(
-            "BadRequestException",
-            "Duplicate entry '7-k' for key 'topup_request.uq_idempotency'")
+        db.duplicate_error = self.client_error(DUPLICATE_CODE,
+                                               DUPLICATE_MESSAGE)
         with self.use(db):
             result = self.billing.top_up(
                 7, "a@firm.com", "admin",
@@ -110,9 +116,8 @@ class BillingTest(unittest.TestCase):
 
     def test_top_up_twice_with_one_key_charges_once(self):
         db = FakeBillingDb(("sub_1", "active", None, "base"))
-        db.duplicate_error = self.client_error(
-            "BadRequestException",
-            "Duplicate entry '7-k' for key 'topup_request.uq_idempotency'")
+        db.duplicate_error = self.client_error(DUPLICATE_CODE,
+                                               DUPLICATE_MESSAGE)
         body = {"increments": 2, "idempotency_key": "k"}
         with self.use(db):
             first = self.billing.top_up(7, "a@firm.com", "admin", body)
@@ -125,7 +130,7 @@ class BillingTest(unittest.TestCase):
         db = FakeBillingDb(("sub_1", "active", None, "base"))
         db.keys.add("k")
         db.duplicate_error = self.client_error(
-            "BadRequestException", "Communications link failure")
+            DUPLICATE_CODE, "Communications link failure; Error code: 0")
         with self.use(db):
             with self.assertRaises(self.billing.ClientError):
                 self.billing.top_up(7, "a@firm.com", "admin",

@@ -214,14 +214,14 @@ def change_plan(tenant_id, email, role, body):
 def _duplicate_idempotency_key(exc):
     """The Data API's refusal of a second topup_request for one key.
 
-    It arrives as BadRequestException carrying MySQL's own message, "Duplicate
-    entry '...' for key 'topup_request.uq_idempotency'". Matched on the index
-    name, so a duplicate on any other key is not mistaken for a repeat.
-    PROPOSED: the message text is unverified until it is seen on dev."""
+    Seen on dev, 17 September 2026: DatabaseErrorException, "Duplicate entry
+    '4-...' for key 'topup_request.uq_idempotency'; Error code: 1062;
+    SQLState: 23000". Matched on MySQL's error number and the index name, so
+    a duplicate on any other key is not mistaken for a repeat."""
     error = getattr(exc, "response", {}).get("Error", {})
     message = error.get("Message") or ""
-    return (error.get("Code") == "BadRequestException"
-            and "Duplicate entry" in message and "uq_idempotency" in message)
+    return (error.get("Code") == "DatabaseErrorException"
+            and "Error code: 1062" in message and "uq_idempotency" in message)
 
 
 def top_up(tenant_id, email, role, body):
