@@ -51,6 +51,12 @@ charged for.
   GET  /config/draft/proposals           proposals read and not yet accepted
   GET  /config/draft/working             what has been decided about one
   PUT  /config/draft/working             keep what has been decided
+
+Paying for a plan. Nothing here grants money; Paddle's webhooks do.
+  GET  /billing/subscription             standing, plan, periods, plan rows
+  POST /billing/checkout                 a Paddle transaction to open
+  POST /billing/plan                     upgrade or downgrade
+  POST /wallet/top-up                    buy $5 increments on the stored card
 """
 
 import datetime
@@ -64,8 +70,10 @@ import urllib.parse
 import boto3
 from botocore.exceptions import ClientError
 
+import billing
 import config
 import editor
+import paddle_api
 import registry
 import seats
 import textract
@@ -1734,10 +1742,25 @@ def lambda_handler(event, context):
                 int(query.get("n") or 1)))
 
         if route == "POST /wallet/top-up":
-            _require_seats_admin(role)
-            raise ValueError(
-                "No payment provider is connected yet, so a top-up cannot "
-                "be taken. Nothing has been charged.")
+            body = json.loads(event.get("body") or "{}")
+            return _reply(202, billing.top_up(tenant_id, email, role, body))
+
+        # --- paying for a plan ---------------------------------------------
+        #
+        # Reading is open to any seat. Checkout, a plan change and a top-up
+        # are refused to a member in billing, as seats are.
+
+        if route == "GET /billing/subscription":
+            return _reply(200, billing.subscription_view(tenant_id))
+
+        if route == "POST /billing/checkout":
+            body = json.loads(event.get("body") or "{}")
+            return _reply(201, billing.checkout(tenant_id, role, body))
+
+        if route == "POST /billing/plan":
+            body = json.loads(event.get("body") or "{}")
+            return _reply(202, billing.change_plan(tenant_id, email, role,
+                                                   body))
 
         # --- seats ---------------------------------------------------------
         #
@@ -2031,11 +2054,25 @@ def lambda_handler(event, context):
         # 402, which is what it is. Nothing was debited: wallet.charge rolls
         # back before it raises, so a refusal here never costs anybody
         # anything.
+        # PROPOSED wording for a tenant spending purchased cash only.
         return _reply(402, {
-            "error": "Not enough balance. Top up to continue.",
+            "error": ("Payment has failed or the subscription has ended, so "
+                      "only purchased credit can be spent, and there is not "
+                      "enough." if exc.purchased_only
+                      else "Not enough balance. Top up to continue."),
             "needed_cents": exc.needed_cents,
             "available_cents": exc.available_cents,
+            "purchased_only": exc.purchased_only,
         })
+    except billing.Refused as exc:
+        return _reply(409, {"error": str(exc)})
+    except paddle_api.PaddleError as exc:
+        # PROPOSED: 502. Paddle's own error code is returned; nothing else of
+        # its response is.
+        print("[paddle-error] route=%s tenant=%s status=%s code=%s"
+              % (route, tenant_id, exc.status, exc.code))
+        return _reply(502, {"error": "Paddle did not accept the request.",
+                            "paddle_code": exc.code})
     except seats.SeatsFull as exc:
         # 409: nothing is wrong with the request - there is simply no room.
         return _reply(409, {"error": str(exc)})

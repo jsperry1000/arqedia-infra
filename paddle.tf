@@ -199,6 +199,13 @@ resource "aws_lambda_function" "paddle_processor" {
   timeout     = 90
   memory_size = 256
 
+  # PROPOSED. Events are applied one at a time, so no two grants race: the
+  # upgrade cap reads the monthly credit already granted, and the bucket
+  # reference checks read whether a transaction was already granted, and
+  # neither read is locked. Asynchronous invocations throttled by this are
+  # queued and retried by Lambda, within maximum_event_age_in_seconds below.
+  reserved_concurrent_executions = 1
+
   environment {
     variables = merge(local.paddle_price_env, {
       CLUSTER_ARN = aws_rds_cluster.main.arn

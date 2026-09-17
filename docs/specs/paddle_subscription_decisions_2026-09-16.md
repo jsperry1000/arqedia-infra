@@ -56,6 +56,8 @@ top-ups: a cancelled subscription cannot be charged (item 10). Cash still expire
 - **Subscribe from the pricing page.** Runs signup with the chosen plan, then opens checkout after sign-in; tenant reference stays server-side (item 7). PROPOSED.
 - **The chosen plan survives a cross-device verify.** It is stored server-side on `pending_signup` at begin and copied to the tenant at verify. On first sign-in, if `signup_intent` = subscribe, no subscription row exists and `checkout_offered_at` is NULL, the app opens checkout for `signup_plan`. `checkout_offered_at` is set when that checkout transaction is created, so it opens once. PROPOSED.
 - **Conversion tracking.** `tenant.signup_intent` (trial / subscribe) distinguishes direct subscribers from trial conversions. PROPOSED.
+- **16 is amended.** Monthly credit granted in one billing period never exceeds the current plan's monthly credit.
+- **Paused.** A `paused` subscription is treated as `past_due`: filing and generating spend unexpired purchased cash only (item 12, as amended). PROPOSED.
 
 ---
 

@@ -49,9 +49,10 @@ DATABASE = os.environ["DATABASE"]
 USER_POOL_ID = os.environ["USER_POOL_ID"]
 SENDER = os.environ["SENDER"]
 
-# The trial, from the wallet specification. Thirty days, full use, $5.00 of
-# metered credit, no card.
-TRIAL_DAYS = 30
+# The trial. Fourteen days in all cases, full use, $5.00 of metered credit, no
+# card (decision record, amendment of 17 September 2026; was thirty, Wallet
+# section 2).
+TRIAL_DAYS = 14
 
 # The $5.00, granted when the tenant is made. Not lazily, on the first look at
 # the balance: the signup screen promises it, so it must be true from the
@@ -69,6 +70,9 @@ MAX_ATTEMPTS = 5
 # script rather than a person.
 MAX_PER_IP_HOUR = 5
 MAX_PER_DOMAIN_HOUR = 3
+
+# What somebody came to do (decision record, amendment of 17 September 2026).
+INTENTS = {"trial", "subscribe"}
 
 # Addresses that exist to be thrown away. A short list held here and a longer
 # one behind a service are both defensible; a stale list is worse than none,
@@ -233,10 +237,40 @@ def _checks(email, domain, ip):
 
 # --- POST /signup ----------------------------------------------------------
 
+def _plan_and_intent(body):
+    """The plan and intent the pricing page sent, checked, or a sentence
+    saying what is wrong with them.
+
+    PROPOSED: both absent is allowed and stored as NULL. That is a signup from
+    a screen that does not ask - today's - and NULL says exactly that. Present
+    and wrong is refused."""
+    plan = body.get("plan")
+    intent = body.get("intent")
+    if intent is not None and (not isinstance(intent, str)
+                               or intent not in INTENTS):
+        return None, None, "Choose a trial or a subscription."
+    # Against the plan rows, not a list held here: a plan is a row (Plans
+    # section 1), and one made inactive stops being offered.
+    if plan is not None and (not isinstance(plan, str) or not _sql(
+            "SELECT 1 FROM plan WHERE plan_key = :k AND active = 1",
+            [_p("k", plan)]).get("records")):
+        return None, None, "Choose Base or Small Business."
+    # PROPOSED: subscribing needs a plan to subscribe to.
+    if intent == "subscribe" and plan is None:
+        return None, None, "Choose a plan to subscribe to."
+    return plan, intent, None
+
+
 def begin(event, body):
     email = (body.get("email") or "").strip().lower()
     if not EMAIL.match(email):
         return _reply(400, {"error": "That does not look like an email address."})
+
+    # Refused before the checks, and not recorded as an attempt, as a
+    # malformed address is not. PROPOSED.
+    plan, intent, problem = _plan_and_intent(body)
+    if problem:
+        return _reply(400, {"error": problem})
 
     domain = email.split("@", 1)[1]
     ip = _client_ip(event)
@@ -262,22 +296,30 @@ def begin(event, body):
 
     # One row per address, replaced on a second attempt: asking for the code
     # again should send a new one rather than leave two valid.
+    #
+    # The plan and intent are held here, server-side, so a code opened on
+    # another device still knows what was chosen on the pricing page
+    # (amendment of 17 September 2026). The verifying browser is not trusted
+    # to remember them.
     _sql(
         """
         INSERT INTO pending_signup
           (email, email_domain, code_hash, org_name, jurisdiction, region,
-           pack, second_admin, ip, expires_at)
-        VALUES (:e, :d, :c, :org, :j, :r, :pack, :second, :ip, :exp)
+           pack, plan, intent, second_admin, ip, expires_at)
+        VALUES (:e, :d, :c, :org, :j, :r, :pack, :plan, :intent, :second, :ip,
+                :exp)
         ON DUPLICATE KEY UPDATE
           code_hash = VALUES(code_hash), attempts = 0,
           org_name = VALUES(org_name), jurisdiction = VALUES(jurisdiction),
           region = VALUES(region), pack = VALUES(pack),
+          plan = VALUES(plan), intent = VALUES(intent),
           second_admin = VALUES(second_admin), ip = VALUES(ip),
           expires_at = VALUES(expires_at)
         """,
         [_p("e", email), _p("d", domain), _p("c", _sha(code)),
          _p("org", body.get("org_name")), _p("j", body.get("jurisdiction")),
          _p("r", body.get("region")), _p("pack", body.get("pack")),
+         _p("plan", plan), _p("intent", intent),
          _p("second", body.get("second_admin")), _p("ip", ip),
          _p("exp", expires)],
     )
@@ -328,7 +370,8 @@ def verify(event, body):
     rows = _sql(
         """
         SELECT pending_id, email_domain, code_hash, attempts, org_name,
-               jurisdiction, region, pack, second_admin, expires_at
+               jurisdiction, region, pack, second_admin, expires_at,
+               plan, intent
         FROM pending_signup WHERE email = :e
         """,
         [_p("e", email)],
@@ -367,6 +410,11 @@ def verify(event, body):
     org = _col(r, 4) or domain
     jurisdiction = _col(r, 5)
     region = _col(r, 6) or "us-east-2"
+    # Appended after expires_at so no earlier index moves. What was asked for,
+    # not the plan: tenant.plan stays 'base' and subscription.plan_id decides
+    # once Paddle reports a payment (CLAUDE.md, Money).
+    signup_plan = _col(r, 10)
+    signup_intent = _col(r, 11)
     trial_ends = (datetime.datetime.utcnow()
                   + datetime.timedelta(days=TRIAL_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -387,11 +435,13 @@ def verify(event, body):
         created = _sql(
             """
             INSERT INTO tenant
-              (name, region, jurisdiction, plan, trial_ends_at, signup_ip)
-            VALUES (:name, :region, :j, 'base', :trial, :ip)
+              (name, region, jurisdiction, plan, trial_ends_at, signup_ip,
+               signup_plan, signup_intent)
+            VALUES (:name, :region, :j, 'base', :trial, :ip, :sp, :si)
             """,
             [_p("name", org), _p("region", region), _p("j", jurisdiction),
-             _p("trial", trial_ends), _p("ip", ip)],
+             _p("trial", trial_ends), _p("ip", ip),
+             _p("sp", signup_plan), _p("si", signup_intent)],
             tx=tx,
         )
         tenant_id = (created.get("generatedFields") or [{}])[0].get("longValue")

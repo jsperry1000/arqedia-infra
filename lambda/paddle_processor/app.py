@@ -16,6 +16,7 @@ What an event does - docs/specs/paddle_subscription_decisions_2026-09-16.md:
 
   subscription.created / .updated      the subscription row; tenant.plan as a copy
   transaction.completed, a plan price  a monthly_credit bucket
+  transaction.completed, a plan change the monthly_credit difference, on an upgrade (item 16)
   transaction.completed, a top-up      a purchased bucket
   adjustment, refund or chargeback     recorded for review, nothing else (item 15)
   anything else                        recorded only
@@ -52,9 +53,9 @@ TOPUP_PRICE = os.environ["PADDLE_PRICE_TOPUP"]
 TOPUP_INCREMENT_CENTS = 500
 TOPUP_EXPIRY_DAYS = 30
 
-# PROPOSED. The origins that pay for a period of a plan. A proration from a
-# plan change (subscription_update) or a payment method change is not a new
-# period, and granting credit for one would pay out twice in a month.
+# PROPOSED. The origins that pay for a whole period of a plan. A plan change
+# (subscription_update) is not a new period: it grants only the difference,
+# on an upgrade (item 16). A payment method change grants nothing.
 PLAN_GRANT_ORIGINS = {"api", "web", "subscription_recurring"}
 
 # PROPOSED. chargeback_warning is included: Paddle creates it ahead of a
@@ -139,7 +140,30 @@ def apply(event, store):
     increments = (topup_quantity(data.get("items"))
                   if is_transaction and data.get("origin") == "subscription_charge"
                   else 0)
-    changes_something = is_subscription or grants_credit or increments > 0
+
+    # Item 16. A plan change pays the difference in monthly credit. The new
+    # plan is the one the transaction is for. The old plan is read from the
+    # subscription row, which may already have moved: Paddle does not deliver
+    # in order, so subscription.updated can land before this transaction. So,
+    # in this order (PROPOSED):
+    #   the row already shows the new plan  previous_plan_id (migration 020)
+    #   otherwise                           the row's plan_id
+    #
+    # Read without a lock: subscription events lock paddle_event then
+    # subscription, and taking them in the other order here could deadlock
+    # the two.
+    is_plan_change = is_transaction and data.get("origin") == "subscription_update"
+    new_plan = plan if is_plan_change else None
+    old_plan = change_expires = None
+    if is_plan_change and tenant_id is not None:
+        row_plan, previous_plan, row_period_end = store.current_plan(tenant_id)
+        old_plan = previous_plan if row_plan == new_plan else row_plan
+        # PROPOSED: the transaction's own period, else the subscription's.
+        change_expires = (db_time(period["ends_at"]) if period.get("ends_at")
+                          else row_period_end)
+
+    changes_something = (is_subscription or grants_credit or increments > 0
+                         or is_plan_change)
 
     # Decided before anything is written, so the event is recorded once with
     # the flag it deserves.
@@ -151,6 +175,16 @@ def apply(event, store):
         # PROPOSED: a plan transaction with no period cannot say when its
         # credit expires.
         or (grants_credit and not period.get("ends_at"))
+        # PROPOSED: a plan change whose plans cannot be placed. The items name
+        # no single plan; or neither the previous plan nor the current one
+        # gives a plan other than the new one - no subscription row, or a row
+        # already showing the new plan with no previous plan recorded. A known
+        # old plan that is higher is a downgrade, not a review: it grants
+        # nothing (item 16).
+        or (is_plan_change and (new_plan is None or old_plan is None
+                                or old_plan == new_plan))
+        # PROPOSED: no period to expire the upgrade credit at.
+        or (is_plan_change and change_expires is None)
     )
 
     if not store.insert_event(event_id, event_type, occurred_at, tenant_id,
@@ -169,6 +203,9 @@ def apply(event, store):
     if increments > 0:
         outcomes.append(_grant_topup(store, event_id, tenant_id, data["id"],
                                      increments, occurred_at))
+    if is_plan_change:
+        outcomes.append(_grant_upgrade(store, tenant_id, old_plan, new_plan,
+                                       data["id"], change_expires))
     return ",".join(outcomes) or "recorded"
 
 
@@ -207,6 +244,36 @@ def _grant_credit(store, tenant_id, plan, transaction_id, expires_at):
     store.grant(tenant_id, "monthly_credit", store.monthly_credit_cents(plan),
                 expires_at, transaction_id)
     return "credit-granted"
+
+
+def _grant_upgrade(store, tenant_id, old_plan, new_plan, transaction_id,
+                   expires_at):
+    """Item 16, as amended 17 September 2026. On an upgrade only. A downgrade
+    grants nothing and takes nothing back: the ledger is append-only (Wallet
+    section 4). The transaction id is the reference, so the same transaction
+    delivered twice - once before and once after subscription.updated -
+    grants once.
+
+    Capped: monthly credit granted in one billing period never exceeds the
+    current plan's monthly credit. The grant is the new plan's monthly credit
+    less every unexpired monthly_credit bucket - the period's own grant and
+    any earlier upgrade - so upgrade, downgrade, upgrade again pays the
+    difference once. Unexpired stands for "this period": monthly credit
+    expires at the period end, so an earlier period's has gone. expires_at
+    is only where the new bucket expires; it does not choose what is
+    counted, so a period end that differs by a second still counts."""
+    if (store.monthly_credit_cents(new_plan)
+            <= store.monthly_credit_cents(old_plan)):
+        return "downgrade-no-grant"
+    if store.bucket_exists(tenant_id, "monthly_credit", transaction_id):
+        return "upgrade-reference-exists"
+    grant = (store.monthly_credit_cents(new_plan)
+             - store.monthly_credit_granted(tenant_id))
+    if grant <= 0:
+        return "upgrade-capped"
+    store.grant(tenant_id, "monthly_credit", grant, expires_at,
+                transaction_id)
+    return "upgrade-credit-granted"
 
 
 def _grant_topup(store, event_id, tenant_id, transaction_id, increments,
@@ -336,13 +403,49 @@ class DataApiStore:
     def monthly_credit_cents(self, plan_key):
         return self._plan(plan_key)[1]
 
+    def current_plan(self, tenant_id):
+        """The plan key, the previous plan key and the period end the
+        subscription row holds now, or (None, None, None) when there is no
+        row."""
+        rows = self._sql(
+            "SELECT p.plan_key, pp.plan_key, s.current_period_ends_at "
+            "FROM subscription s "
+            "JOIN plan p ON p.plan_id = s.plan_id "
+            "LEFT JOIN plan pp ON pp.plan_id = s.previous_plan_id "
+            "WHERE s.tenant_id = :t",
+            [_p("t", tenant_id)])
+        if not rows:
+            return None, None, None
+        ends = _col(rows[0], 2)
+        return (_col(rows[0], 0), _col(rows[0], 1),
+                db_time(ends) if ends else None)
+
+    def monthly_credit_granted(self, tenant_id):
+        """Unexpired monthly credit granted to the tenant, spent or not.
+        Granted is what the cap counts: spending credit does not make room
+        for more. NOW() is the database's clock at apply time, not the
+        event's: a failed event replayed after the period has ended counts
+        the next period's buckets."""
+        rows = self._sql(
+            "SELECT COALESCE(SUM(granted_cents), 0) FROM wallet_bucket "
+            "WHERE tenant_id = :t AND kind = 'monthly_credit' "
+            "AND expires_at > NOW()",
+            [_p("t", tenant_id)])
+        return int(_col(rows[0], 0) or 0)
+
     def upsert_subscription(self, tenant_id, plan_key, paddle_subscription_id,
                             paddle_customer_id, paddle_status,
                             current_period_ends_at, billing_anchor_day,
                             paddle_event_at):
         """status is set to active on the first write and never changed here.
         payment_method_ref and trial_ends_at are not written. A NULL from Paddle
-        keeps what the row had."""
+        keeps what the row had.
+
+        previous_plan_id (migration 020) is the plan the row had before this
+        write changed plan_id, and is kept when the plan does not change. It
+        is assigned BEFORE plan_id: MySQL evaluates the assignments left to
+        right, so subscription.plan_id still reads the old value there.
+        PROPOSED, and unverified until it runs against dev."""
         plan_id = self._plan(plan_key)[0]
         self._sql(
             """
@@ -354,6 +457,9 @@ class DataApiStore:
               (:t, :plan, 'active', :anchor, :customer, :sub, :pstatus, :ends, :at)
             AS new
             ON DUPLICATE KEY UPDATE
+              previous_plan_id       = IF(new.plan_id <> subscription.plan_id,
+                                          subscription.plan_id,
+                                          subscription.previous_plan_id),
               plan_id                = new.plan_id,
               billing_anchor_day     = COALESCE(new.billing_anchor_day, subscription.billing_anchor_day),
               paddle_customer_id     = COALESCE(new.paddle_customer_id, subscription.paddle_customer_id),
