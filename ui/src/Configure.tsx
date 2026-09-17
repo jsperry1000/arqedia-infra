@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useBackAction, usePinTop, Working } from "./shell";
 import {
   api,
@@ -490,9 +490,6 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [validation, setValidation] = useState<Validation | null>(null);
 
-  // How the person is starting. One of our memoranda, an empty one of their
-  // own, or one read from a report they already write.
-  const [start, setStart] = useState("");
   // What is being typed into a position box, until it is left. Saving on
   // every keystroke would move the row out from under the cursor as soon as
   // the first digit of "10" was typed.
@@ -510,6 +507,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // well as from inside the editor; the chooser says so in the location's
   // state, so the screen opens straight onto the proposer's upload.
   const location = useLocation();
+  const navigate = useNavigate();
   const arrived = location.state as
     { propose?: boolean; report?: StartReport } | null;
   const [proposing, setProposing] = useState(Boolean(arrived?.propose));
@@ -855,47 +853,50 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // --- nothing configured yet: choose a starting point --------------------
 
   if (!state.draft && state.revisions.length === 0) {
-    const pack = packs[0];
+    const base = packs[0];
+
+    // TPL-03. This screen used to list the bases in a dropdown labelled
+    // "Memorandum" and fork one whole. A base is not a memorandum: it is the
+    // facts, the document types and the routing between them, and it carries
+    // no sections at all. So the base is no longer something to choose - it
+    // comes with all three routes, silently, because all three need it - and
+    // the choice on offer is what is written OVER it.
+    //
+    // The memoranda themselves are not listed here either. The Get started
+    // chooser already lists them with their sections and an "already yours"
+    // marker, and a second list would drift from it.
+
+    // No fork here: Get started forks the base itself where the tenant has no
+    // published revision, and forking it twice is what fork_base refuses. One
+    // path, and it is the chooser's.
+    const ours = () => navigate("/welcome", { state: { stopAtDraft: true } });
+
+    const scratch = () => act("Setting up", async () => {
+      await api.forkBase();
+      await api.openDraft();
+    });
+
+    const fromReport = () => act("Setting up", async () => {
+      await api.forkBase();
+      await api.openDraft();
+      setProposing(true);
+    });
 
     return (
       <div>
         <h2>Configure a Report</h2>
         <p className="muted">
           You start with our list of facts and the documents they are found
-          in. What you choose here is the memorandum written from them.
-          Everything is copied into your own configuration, so later changes
-          we make to it will not reach you.
+          in. What you choose here is what is written over them. Everything is
+          copied into your own configuration, so later changes we make to it
+          will not reach you.
         </p>
         {error && <p className="error">{error}</p>}
 
-        <label className="row">
-          <span>Memorandum</span>
-          <select value={start} onChange={(e) => setStart(e.target.value)}>
-            <option value="">Choose&hellip;</option>
-            {packs.map((p) => (
-              <option key={p.revision} value={"pack:" + p.revision}>
-                {p.note || "ARQEDIA memorandum"}
-              </option>
-            ))}
-            <option value="scratch">Draft your own from scratch</option>
-            <option value="report">
-              Create your own from a report (.pdf, .docx)
-            </option>
-          </select>
-        </label>
-
-        {pack && (
+        {base && (
           <p className="muted small">
-            {pack.document_types} document types &middot; {pack.fields} facts,
+            {base.document_types} document types &middot; {base.fields} facts,
             whichever you choose.
-          </p>
-        )}
-
-        {start === "report" && (
-          <p className="muted small">
-            Give us a report you already write. We read its shape and put a
-            configuration to you to correct &mdash; the file itself is read
-            once and deleted.
           </p>
         )}
 
@@ -903,23 +904,38 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           <p className="muted">No starting points are available yet.</p>
         )}
 
-        {/* Both of the build-your-own routes still need the facts and the
-            documents, so they take the pack too. Our memorandum comes with
-            it and can be deleted; removing it unasked would be the one
-            destructive thing on this screen. */}
-        <button disabled={!start || !!busy || !pack}
-                onClick={() => act("Setting up", async () => {
-                  const revision = start.startsWith("pack:")
-                    ? Number(start.slice(5)) : pack.revision;
-                  await api.forkPack(revision);
-                  if (start === "report") {
-                    const now = await api.configState();
-                    if (!now.draft) await api.openDraft();
-                    setProposing(true);
-                  }
-                })}>
-          {busy ? busy + "\u2026" : "Get to work"}
-        </button>
+        <p>
+          <a onClick={busy || !base ? undefined : ours}>
+            Select an ARQEDIA Template
+          </a>
+        </p>
+        <p className="muted small">
+          One of the memoranda we write, laid out over those facts. Take as
+          many as you want, now or later.
+        </p>
+
+        <p>
+          <a onClick={busy || !base ? undefined : scratch}>
+            Draft your own from scratch
+          </a>
+        </p>
+        <p className="muted small">
+          An empty memorandum. You write the sections and say what each one
+          renders.
+        </p>
+
+        <p>
+          <a onClick={busy || !base ? undefined : fromReport}>
+            Create your own from a report (.pdf, .docx)
+          </a>
+        </p>
+        <p className="muted small">
+          Give us a report you already write. We read its shape and put a
+          configuration to you to correct &mdash; the file itself is read
+          once and deleted.
+        </p>
+
+        {busy && <Working what={busy} />}
       </div>
     );
   }
@@ -1075,10 +1091,21 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             {started.revision !== null
               ? `, published as revision ${started.revision}.` : "."}
           </strong>
-          {started.draft_was_open && (
+          {started.draft_was_open && started.revision !== null && (
             <p>
               It went into the draft you already had open, beside your own
               changes, and publishing shipped both.
+            </p>
+          )}
+          {/* Nothing was published: say where it is and what is left to do,
+              rather than leaving somebody to assume it is in use. */}
+          {started.revision === null && (
+            <p>
+              {started.draft_was_open
+                ? "It is in the draft you already had open, beside your own changes. "
+                : "It is in your draft. "}
+              Publishing is a separate step: press Publish when the draft says
+              what you want it to say.
             </p>
           )}
           {/* Named, not counted. Somebody who deleted a fact in March and
