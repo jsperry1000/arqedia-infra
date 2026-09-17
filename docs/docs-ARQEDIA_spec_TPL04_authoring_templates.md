@@ -8,6 +8,13 @@
 | Depends on | TPL-02 steps 1 to 3, merged |
 | Raised | 16 September 2026 |
 
+> **Superseded in part, 17 September 2026.** Authoring happens directly in
+> tenant 0, and the export command is not built. Open item 2 below is
+> answered. See `docs/specs/revision_selection_decisions_2026-09-17.md`, which
+> takes precedence; the missing-facts refusal and "only the memorandum" carry
+> over to the on-offer mark. Nothing here is deleted: the reasoning for both
+> is why those two rules survive.
+
 ---
 
 ### The problem
