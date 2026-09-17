@@ -69,6 +69,17 @@ from the highest revision (item 10). Selecting another revision underneath an
 open draft would leave a person editing one configuration while new work filed
 against another, and their publish would ship the first over the second.
 
+### Note — 17 September 2026
+
+**`pack_offer` is written only by migration 024.** The table holds the marks
+and `registry` reads them, so what is on offer is no longer derived from the
+newest revision. Nothing in the app sets or clears a mark: putting a
+memorandum on offer, moving it to another revision or taking it off all mean
+another migration until a screen exists for it.
+
+**The curator identity remains open** (section 3), and no route writes
+`pack_offer`, so nothing reachable by a tenant can change what is offered.
+
 ---
 
 ## 3. Open
