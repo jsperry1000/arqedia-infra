@@ -147,6 +147,12 @@ Exercised on a scratch tenant, 9001, then every row removed.
 - Live tenants identical before and after, drafts untouched, `active_revision`
   still the latest published for both. No scratch rows left anywhere.
 
+### State at the end of step 2
+
+`tpl-fork`, off `main` at 3f72c93. The routes and the Lambda change do not exist
+in API Gateway until `terraform apply` runs. No front end — that is step 3, the
+Get started chooser.
+
 ---
 
 ## Step 3 — the Get started chooser
