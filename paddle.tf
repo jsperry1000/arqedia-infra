@@ -130,6 +130,8 @@ data "archive_file" "paddle_processor" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/paddle_processor"
   output_path = "${path.module}/build/paddle_processor.zip"
+  # Running the tests writes bytecode here; it must not change the zip.
+  excludes = ["__pycache__"]
 }
 
 resource "aws_iam_role" "paddle_processor" {
@@ -227,6 +229,8 @@ data "archive_file" "paddle_webhook" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/paddle_webhook"
   output_path = "${path.module}/build/paddle_webhook.zip"
+  # Running the tests writes bytecode here; it must not change the zip.
+  excludes = ["__pycache__"]
 }
 
 resource "aws_iam_role" "paddle_webhook" {
