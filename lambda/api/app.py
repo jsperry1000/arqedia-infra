@@ -202,6 +202,42 @@ def _reply(status, body):
     }
 
 
+# --- what the ARQEDIA workspace may not do ---------------------------------
+#
+# Tenant 0 curates the catalogue: the base and the memoranda every tenant
+# forks from. It is not a client workspace, and these five acts belong to one.
+#
+# NAMED IN ONE PLACE, not checked in five. A guard repeated at each route is a
+# guard somebody forgets at the sixth.
+#
+# Three of them are refused today by something else - filing and generating by
+# a wallet with no money, checkout by nothing at all until a card is entered -
+# and one, a template fork, would quietly copy a memorandum into tenant 0's
+# own draft beside the original it was taken from. None of those is a control:
+# a wallet can be funded and a subscription can be bought. This is the control.
+CURATOR_REFUSED_ROUTES = frozenset({
+    "POST /config/templates/fork",
+    "POST /uploads",
+    "POST /engagements/{id}/file",
+    "POST /engagements/{id}/generate",
+    "POST /billing/checkout",
+})
+
+CURATOR_REFUSAL = ("The ARQEDIA workspace curates the catalogue. It does not "
+                   "file documents, generate memoranda or subscribe.")
+
+
+def _curation_only(tenant_id, route):
+    """The refusal to send, or None where the route is allowed.
+
+    Returned rather than raised so the dispatcher stays one line, and so this
+    can be asked the question directly - the repo has no test that dispatches
+    a route."""
+    if tenant_id == registry.PACK_TENANT and route in CURATOR_REFUSED_ROUTES:
+        return _reply(403, {"error": CURATOR_REFUSAL})
+    return None
+
+
 def _label_for(registry, field_id):
     if "." in field_id:
         group = field_id.split(".", 1)[0]
@@ -1667,6 +1703,10 @@ def lambda_handler(event, context):
         return _reply(403, {"error": "no tenant on token"})
 
     route = event.get("routeKey", "")
+    refused = _curation_only(tenant_id, route)
+    if refused:
+        return refused
+
     params = event.get("pathParameters") or {}
     query = event.get("queryStringParameters") or {}
     engagement = urllib.parse.unquote(params.get("id", "")) \

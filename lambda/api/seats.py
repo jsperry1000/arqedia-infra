@@ -232,6 +232,14 @@ def invite(tenant_id, email, invitee, role):
     invitee = (invitee or "").strip().lower()
     role = role if role in ROLES else "member"
 
+    # ARQEDIA's own workspace hands out no invitations. A seat there decides
+    # what every tenant is offered, so it is created by hand and never by a
+    # link somebody was sent. signup.accept refuses the other end of this.
+    if not isinstance(tenant_id, int) or tenant_id <= 0:
+        raise ValueError(
+            "Seats in the ARQEDIA workspace are not invited. They are "
+            "created by hand.")
+
     if not invitee or "@" not in invitee:
         raise ValueError("That does not look like an email address.")
 

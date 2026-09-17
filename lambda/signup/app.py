@@ -572,6 +572,20 @@ def accept(event, body):
     r = rows[0]
     invitation_id, tenant_id, role = _col(r, 0), _col(r, 1), _col(r, 2)
 
+    # Tenant 0 is ARQEDIA's own workspace: it holds what every tenant forks
+    # from, and a seat there decides what all of them are offered. An
+    # invitation is how a customer's colleague joins, and it is not the way
+    # somebody gets in here. The seat is made by hand instead.
+    #
+    # Checked before the token, because a token that matches does not make
+    # the destination right, and refused as an invitation that is not open -
+    # which is what it is.
+    if not isinstance(tenant_id, int) or tenant_id <= 0:
+        return _refuse(domain, email, ip, "invite_refused",
+                       "That invitation names the ARQEDIA workspace, which "
+                       "nobody joins by invitation. Ask for a seat to be "
+                       "created.")
+
     if _sha(token) != _col(r, 3):
         return _reply(400, {"error": "That invitation link is not valid."})
     if str(_col(r, 4)) < datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"):
