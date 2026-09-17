@@ -88,6 +88,13 @@ TABLES = [
      ["template_key", "section_key", "field_key", "sort_order"]),
 ]
 
+# A whole revision is both. A base is the vocabulary - what can be found and
+# where it is looked for; a memorandum is the layout over it. A tenant 0
+# revision now holds both at once (migration 023), so a fork takes one part of
+# it rather than the whole thing.
+BASE_TABLES = TABLES[:5]
+TEMPLATE_TABLES = TABLES[5:]
+
 _KEY = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 
@@ -172,13 +179,17 @@ def _latest_published(tenant_id):
     return int(_col(records[0], 0) or 0) if records else 0
 
 
-def _copy(from_tenant, from_revision, to_tenant, to_revision):
+def _copy(from_tenant, from_revision, to_tenant, to_revision, tables=None):
     """Deep-copy one revision to another. Never a reference.
 
     A starter pack forked into a tenant must not change under them when we
     edit the pack. And a draft opened from revision 4 must not alter revision
-    4 as it is edited."""
-    for table, columns in TABLES:
+    4 as it is edited.
+
+    tables narrows what travels. A draft copies everything; a base fork copies
+    the vocabulary and leaves our memoranda behind, which matters now that one
+    revision holds both."""
+    for table, columns in (tables or TABLES):
         names = ", ".join(columns)
         _sql(
             "INSERT INTO {t} (tenant_id, revision, {c}) "
@@ -530,22 +541,43 @@ def select_revision(tenant_id, revision):
     return {"active_revision": revision}
 
 
-def _pack_revision(pack_key, kind, pack_tenant=PACK_TENANT):
-    """The pack tenant's revision holding one pack, by key and kind.
+def _offer(pack_key, kind):
+    """What is on offer under one key: the tenant, the revision, and for a
+    memorandum the template_key inside it.
 
-    NEVER BY ORDERING. packs() sorted by revision descending and the caller
-    took the first, so adding a pack silently changed what a new tenant got.
-    A key is stable; a position is not, and neither is a note."""
+    THE MARK, NOT THE NEWEST (revision selection decision record, items 6 and
+    7). This read MAX(revision) for a pack_key, so publishing a revision
+    changed what every new tenant got, with nothing said and no way to put it
+    back. Now a row in pack_offer says it, and the revision it names must
+    still be published - a mark on a revision somebody withdrew offers
+    nothing.
+
+    None where no mark exists, which is how a pack taken off offer stops
+    being forkable."""
     records = _sql(
         """
-        SELECT revision FROM config_revision
-        WHERE tenant_id = :p AND status = 'published'
-          AND kind = :k AND pack_key = :key
-        ORDER BY revision DESC
+        SELECT o.tenant_id, o.revision, o.template_key
+        FROM pack_offer o
+        JOIN config_revision r ON r.tenant_id = o.tenant_id
+         AND r.revision = o.revision AND r.status = 'published'
+        WHERE o.pack_key = :key AND o.kind = :k
         """,
-        [_p("p", pack_tenant), _p("k", kind), _p("key", pack_key)],
+        [_p("key", pack_key), _p("k", kind)],
     ).get("records", [])
-    return _col(records[0], 0) if records else None
+    if not records:
+        return None
+    return {"tenant_id": _col(records[0], 0), "revision": _col(records[0], 1),
+            "template_key": _col(records[0], 2)}
+
+
+def _holds_facts(tenant_id, revision):
+    """Whether a revision holds a vocabulary. A memorandum-only revision does
+    not, and forking one as a base would give a tenant a configuration that
+    cannot extract anything."""
+    records = _sql(
+        "SELECT COUNT(*) FROM config_field WHERE tenant_id = :t AND revision = :r",
+        [_p("t", tenant_id), _p("r", revision)]).get("records", [])
+    return bool(records and int(_col(records[0], 0) or 0))
 
 
 def _revision_kind(tenant_id, revision):
@@ -592,19 +624,22 @@ def fork_base(tenant_id, email, pack_revision=None, pack_key="base",
             "this tenant already has a published configuration; open a draft "
             "and edit it instead")
 
-    revision = pack_revision if pack_revision is not None \
-        else _pack_revision(pack_key, "base", pack_tenant)
-    if revision is None:
-        raise ValueError("no base pack is published under '%s'" % pack_key)
+    if pack_revision is not None:
+        source_tenant, revision = pack_tenant, pack_revision
+    else:
+        offer = _offer(pack_key, "base")
+        if offer is None:
+            raise ValueError("no base is on offer under '%s'" % pack_key)
+        source_tenant, revision = offer["tenant_id"], offer["revision"]
 
-    # A template revision holds no facts, and the legacy whole-pack revision
-    # is not offered any more. Forking either as a base would give a tenant a
-    # configuration that cannot extract anything.
-    kind = _revision_kind(pack_tenant, revision)
-    if kind != "base":
+    # A memorandum-only revision holds no facts, and the legacy whole-pack
+    # revision is not offered any more. The test is what the revision HOLDS
+    # rather than what it is called: a marked revision is a whole tenant
+    # configuration (kind 'tenant'), and reading kind would refuse it.
+    if not _holds_facts(source_tenant, revision):
         raise ValueError(
-            "revision %s of the pack tenant is '%s', not a base"
-            % (revision, kind or "missing"))
+            "revision %s of tenant %s holds no facts, so it cannot be a base"
+            % (revision, source_tenant))
 
     _sql(
         """
@@ -615,17 +650,20 @@ def fork_base(tenant_id, email, pack_revision=None, pack_key="base",
                 'forked from a starter base', :who, UTC_TIMESTAMP(), :who)
         """,
         [_p("t", tenant_id),
-         _p("src", "pack:%d:%d" % (pack_tenant, revision)),
+         _p("src", "pack:%d:%d" % (source_tenant, revision)),
          _p("who", email)],
     )
 
-    _copy(pack_tenant, revision, tenant_id, 1)
+    # The vocabulary only. Our memoranda live in the same revision now, and a
+    # base fork must not bring them: which memoranda a tenant holds is their
+    # choice, made in Get started.
+    _copy(source_tenant, revision, tenant_id, 1, BASE_TABLES)
 
     _sql("UPDATE tenant SET active_revision = 1 WHERE tenant_id = :t",
          [_p("t", tenant_id)])
 
     return {"forked": True, "revision": 1, "pack_key": pack_key,
-            "from": "pack:%d:%d" % (pack_tenant, revision)}
+            "from": "pack:%d:%d" % (source_tenant, revision)}
 
 
 def fork(tenant_id, email, pack_revision=None, pack_tenant=PACK_TENANT):
@@ -656,20 +694,33 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
     and nothing that is already there.
 
     IT SAYS WHAT IT ADDED. Somebody who deleted a fact in March and finds it
-    back in September is told why, in the moment."""
+    back in September is told why, in the moment.
+
+    A SECOND TAKE MAKES A SECOND MEMORANDUM. Taking one already held used to
+    merge into it: their label and retitled sections survived, but sections
+    they had deleted and facts they had unbound came back, silently. Now it
+    arrives beside theirs, keyed <key>-2 and labelled "... (2)", so their own
+    work is never reached (decision record, the take rule)."""
     if not _latest_published(tenant_id):
         raise ValueError(
             "fork a base before a template: a memorandum binds facts, and "
             "sections with no facts behind them cannot be published")
 
-    source = _pack_revision(pack_key, "template", pack_tenant)
-    if source is None:
-        raise ValueError("no template pack is published under '%s'" % pack_key)
+    offer = _offer(pack_key, "template")
+    if offer is None:
+        raise ValueError("no memorandum is on offer under '%s'" % pack_key)
+    pack_tenant = offer["tenant_id"]
+    source = offer["revision"]
+    source_key = offer["template_key"]
+    if not source_key:
+        raise ValueError(
+            "the mark for '%s' names no memorandum" % pack_key)
 
-    base = _pack_revision("base", "base", pack_tenant)
-    if base is None:
-        raise ValueError("no base pack is published; a template's facts come "
+    base_offer = _offer("base", "base")
+    if base_offer is None:
+        raise ValueError("no base is on offer; a memorandum's facts come "
                          "from it")
+    base_tenant, base = base_offer["tenant_id"], base_offer["revision"]
 
     # The draft, over what is live. open_draft returns an existing draft
     # untouched, so an unfinished edit is never disturbed.
@@ -678,8 +729,8 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
 
     # --- what the template needs, worked out before anything is written ----
 
-    bound = _keys(tenant_id=pack_tenant, revision=source,
-                  table="config_section_field", column="field_key")
+    bound = _keys(pack_tenant, source, "config_section_field", "field_key",
+                  "AND template_key = :tk", [_p("tk", source_key)])
     held_fields = _keys(tenant_id, DRAFT, "config_field", "field_key")
     wanted = sorted(bound - held_fields)
 
@@ -687,7 +738,7 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
     # this, and writing a draft that cannot publish is worse than refusing.
     if wanted:
         names, params = _in(wanted)
-        in_base = _keys(pack_tenant, base, "config_field", "field_key",
+        in_base = _keys(base_tenant, base, "config_field", "field_key",
                         "AND field_key IN (%s)" % names, params)
         orphans = [k for k in wanted if k not in in_base]
         if orphans:
@@ -701,14 +752,14 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
     if wanted:
         names, params = _in(wanted)
         groups = sorted(_keys(
-            pack_tenant, base, "config_field", "field_key",
+            base_tenant, base, "config_field", "field_key",
             "AND group_key = field_key AND field_key IN (%s)" % names,
             params))
     columns = []
     if groups:
         names, params = _in(groups, "g")
         columns = sorted(_keys(
-            pack_tenant, base, "config_field", "field_key",
+            base_tenant, base, "config_field", "field_key",
             "AND group_key IN (%s) AND field_key <> group_key" % names,
             params))
 
@@ -717,14 +768,14 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
     schemas, types, categories = [], [], []
     if fields:
         names, params = _in(fields, "f")
-        needs_schema = _keys(pack_tenant, base, "config_field", "schema_key",
+        needs_schema = _keys(base_tenant, base, "config_field", "schema_key",
                              "AND field_key IN (%s)" % names, params)
         held_schemas = _keys(tenant_id, DRAFT, "config_schema", "schema_key")
         schemas = sorted(needs_schema - held_schemas)
 
         if needs_schema:
             names, params = _in(sorted(needs_schema), "s")
-            feeds = _keys(pack_tenant, base, "config_type_schema", "type_key",
+            feeds = _keys(base_tenant, base, "config_type_schema", "type_key",
                           "AND schema_key IN (%s)" % names, params)
             held_types = _keys(tenant_id, DRAFT, "config_document_type",
                                "type_key")
@@ -732,7 +783,7 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
 
         if types:
             names, params = _in(types, "t")
-            wants_category = _keys(pack_tenant, base, "config_document_type",
+            wants_category = _keys(base_tenant, base, "config_document_type",
                                    "category_key",
                                    "AND type_key IN (%s)" % names, params)
             held_categories = _keys(tenant_id, DRAFT, "config_category",
@@ -757,7 +808,7 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
                AND {col} IN ({keys}) {x}
             """.format(t=table, c=listed, col=column, keys=names, x=extra),
             [_p("to_t", tenant_id), _p("to_r", DRAFT),
-             _p("from_t", pack_tenant), _p("from_r", base)] + params,
+             _p("from_t", base_tenant), _p("from_r", base)] + params,
         )
 
     add("config_category", ["category_key", "label", "sort_order"],
@@ -785,33 +836,64 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
 
     before = _counts(tenant_id, DRAFT)
 
-    for table, listed in (
-        ("config_template", "template_key, label"),
-        ("config_section",
-         "template_key, section_key, numeral, title, kind, shape_key, "
-         "prompt, context_sections, sort_order"),
-        ("config_section_field",
-         "template_key, section_key, field_key, sort_order"),
-    ):
-        _sql(
-            """
-            INSERT IGNORE INTO {t} (tenant_id, revision, {c})
-            SELECT :to_t, :to_r, {c} FROM {t}
-             WHERE tenant_id = :from_t AND revision = :from_r
-            """.format(t=table, c=listed),
-            [_p("to_t", tenant_id), _p("to_r", DRAFT),
-             _p("from_t", pack_tenant), _p("from_r", source)],
-        )
+    # A key the draft does not already hold, and a label that says which copy
+    # this is. Keys are identity and never change, so the count is minted once
+    # and a rename afterwards leaves it alone - the same rule
+    # editor.duplicate_template follows.
+    held_templates = _keys(tenant_id, DRAFT, "config_template", "template_key")
+    new_key, suffix, copy_number = source_key, "", 1
+    if source_key in held_templates:
+        copy_number = 2
+        while ("%s-%d" % (source_key, copy_number))[:64] in held_templates:
+            copy_number += 1
+        new_key = ("%s-%d" % (source_key, copy_number))[:64]
+        suffix = " (%d)" % copy_number
+
+    where = (" WHERE tenant_id = :from_t AND revision = :from_r"
+             " AND template_key = :src_key")
+    params = [_p("to_t", tenant_id), _p("to_r", DRAFT),
+              _p("from_t", pack_tenant), _p("from_r", source),
+              _p("src_key", source_key), _p("new_key", new_key)]
+
+    _sql(
+        """
+        INSERT IGNORE INTO config_template (tenant_id, revision, template_key,
+               label)
+        SELECT :to_t, :to_r, :new_key, CONCAT(label, :suffix)
+          FROM config_template""" + where,
+        params + [_p("suffix", suffix)],
+    )
+    _sql(
+        """
+        INSERT IGNORE INTO config_section
+          (tenant_id, revision, template_key, section_key, numeral, title,
+           kind, shape_key, prompt, context_sections, sort_order)
+        SELECT :to_t, :to_r, :new_key, section_key, numeral, title,
+               kind, shape_key, prompt, context_sections, sort_order
+          FROM config_section""" + where,
+        params,
+    )
+    # context_sections names sections by key WITHIN this memorandum, and the
+    # section keys are unchanged, so nothing has to be remapped.
+    _sql(
+        """
+        INSERT IGNORE INTO config_section_field
+          (tenant_id, revision, template_key, section_key, field_key,
+           sort_order)
+        SELECT :to_t, :to_r, :new_key, section_key, field_key, sort_order
+          FROM config_section_field""" + where,
+        params,
+    )
 
     after = _counts(tenant_id, DRAFT)
-
-    templates = _keys(pack_tenant, source, "config_template", "template_key")
 
     return {
         "forked": True,
         "pack_key": pack_key,
         "revision": DRAFT,
-        "templates": sorted(templates),
+        "templates": [new_key],
+        "template_key": new_key,
+        "copy": copy_number,
         "draft_was_open": not opened.get("created", False),
         "sections": after["sections"] - before["sections"],
         "bindings": after["bindings"] - before["bindings"],
@@ -844,22 +926,24 @@ def _counts(tenant_id, revision):
 def packs(pack_tenant=PACK_TENANT):
     """The bases on offer.
 
-    Selected on kind, not on position, and the legacy whole-pack revision is
-    not among them: it holds a memorandum as well as the facts, which is the
-    model this replaced. Ordered by key so the list does not move when a pack
-    is added."""
+    THE MARKS, not a revision's kind and not the newest of them (decision
+    record item 7). pack_tenant is kept for callers that pass it and is no
+    longer read: each mark says which tenant's revision it names.
+
+    Ordered by key so the list does not move when a pack is added."""
     result = _sql(
         """
-        SELECT r.revision, r.pack_key, r.note,
+        SELECT o.revision, o.pack_key, r.note,
                (SELECT COUNT(*) FROM config_document_type t
-                 WHERE t.tenant_id = r.tenant_id AND t.revision = r.revision),
+                 WHERE t.tenant_id = o.tenant_id AND t.revision = o.revision),
                (SELECT COUNT(*) FROM config_field f
-                 WHERE f.tenant_id = r.tenant_id AND f.revision = r.revision)
-        FROM config_revision r
-        WHERE r.tenant_id = :p AND r.status = 'published' AND r.kind = 'base'
-        ORDER BY r.pack_key
+                 WHERE f.tenant_id = o.tenant_id AND f.revision = o.revision)
+        FROM pack_offer o
+        JOIN config_revision r ON r.tenant_id = o.tenant_id
+         AND r.revision = o.revision AND r.status = 'published'
+        WHERE o.kind = 'base'
+        ORDER BY o.pack_key
         """,
-        [_p("p", pack_tenant)],
     )
     return [
         {"revision": _col(r, 0), "pack_key": _col(r, 1), "note": _col(r, 2),
@@ -876,21 +960,24 @@ def template_packs(tenant_id, pack_tenant=PACK_TENANT):
     somebody wants another memorandum."""
     result = _sql(
         """
-        SELECT r.revision, r.pack_key, r.note,
+        SELECT o.revision, o.pack_key, r.note, o.tenant_id, o.template_key,
                (SELECT COUNT(*) FROM config_section s
-                 WHERE s.tenant_id = r.tenant_id AND s.revision = r.revision),
+                 WHERE s.tenant_id = o.tenant_id AND s.revision = o.revision
+                   AND s.template_key = o.template_key),
                (SELECT COUNT(*) FROM config_section_field f
-                 WHERE f.tenant_id = r.tenant_id AND f.revision = r.revision)
-        FROM config_revision r
-        WHERE r.tenant_id = :p AND r.status = 'published'
-          AND r.kind = 'template'
-        ORDER BY r.pack_key
+                 WHERE f.tenant_id = o.tenant_id AND f.revision = o.revision
+                   AND f.template_key = o.template_key)
+        FROM pack_offer o
+        JOIN config_revision r ON r.tenant_id = o.tenant_id
+         AND r.revision = o.revision AND r.status = 'published'
+        WHERE o.kind = 'template'
+        ORDER BY o.pack_key
         """,
-        [_p("p", pack_tenant)],
     )
     packs_ = [
         {"revision": _col(r, 0), "pack_key": _col(r, 1), "note": _col(r, 2),
-         "sections": _col(r, 3), "facts": _col(r, 4)}
+         "tenant_id": _col(r, 3), "template_key": _col(r, 4),
+         "sections": _col(r, 5), "facts": _col(r, 6)}
         for r in result.get("records", [])
     ]
 
@@ -904,10 +991,15 @@ def template_packs(tenant_id, pack_tenant=PACK_TENANT):
         # The memorandum's own name and the headings it carries. pack_key is
         # an identity and the note records where the pack came from; neither
         # is a name to put in front of a customer choosing between them.
+        #
+        # One memorandum per mark, so both reads name the template_key the
+        # mark carries. The revision holds three others.
+        where = [_p("p", pack["tenant_id"]), _p("r", pack["revision"]),
+                 _p("k", pack["template_key"])]
         rows = _sql(
             "SELECT template_key, label FROM config_template "
-            "WHERE tenant_id = :p AND revision = :r ORDER BY template_key",
-            [_p("p", pack_tenant), _p("r", pack["revision"])],
+            "WHERE tenant_id = :p AND revision = :r AND template_key = :k",
+            where,
         ).get("records", [])
         pack["template_keys"] = [_col(r, 0) for r in rows]
         pack["label"] = (_col(rows[0], 1) or _col(rows[0], 0)) if rows \
@@ -915,9 +1007,9 @@ def template_packs(tenant_id, pack_tenant=PACK_TENANT):
 
         headings = _sql(
             "SELECT numeral, title FROM config_section "
-            "WHERE tenant_id = :p AND revision = :r "
-            "ORDER BY template_key, sort_order",
-            [_p("p", pack_tenant), _p("r", pack["revision"])],
+            "WHERE tenant_id = :p AND revision = :r AND template_key = :k "
+            "ORDER BY sort_order",
+            where,
         ).get("records", [])
         pack["section_titles"] = [
             ("%s. %s" % (_col(r, 0), _col(r, 1))) if _col(r, 0)
@@ -925,6 +1017,11 @@ def template_packs(tenant_id, pack_tenant=PACK_TENANT):
             for r in headings
         ]
 
-        pack["held"] = bool(set(pack["template_keys"]) & held)
+        # Held, including a second copy taken under <key>-2. PROPOSED: a
+        # tenant who has taken it can take it again, and the chooser says so
+        # rather than hiding it.
+        pack["held"] = any(
+            k == pack["template_key"]
+            or k.startswith(pack["template_key"] + "-") for k in held)
 
     return packs_
