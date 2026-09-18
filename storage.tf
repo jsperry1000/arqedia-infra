@@ -131,8 +131,10 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
   bucket   = aws_s3_bucket.data[each.key].id
 
   cors_rule {
-    allowed_origins = ["https://${aws_cloudfront_distribution.frontend.domain_name}",
-    "http://localhost:5173"]
+    # local.browser_origins in dns.tf, the same list api.tf reads. This named
+    # only the CloudFront domain while api.tf named six, so a browser on
+    # app.arqedia.com could call the API and not the bucket.
+    allowed_origins = local.browser_origins
     allowed_methods = ["PUT"]
     allowed_headers = ["*"]
     expose_headers  = ["ETag"]

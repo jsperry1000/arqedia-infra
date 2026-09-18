@@ -72,8 +72,8 @@ resource "aws_s3_bucket_cors_configuration" "brand" {
   bucket = aws_s3_bucket.brand.id
 
   cors_rule {
-    allowed_origins = ["https://${aws_cloudfront_distribution.frontend.domain_name}",
-    "http://localhost:5173"]
+    # local.browser_origins in dns.tf, as the docs and review buckets use.
+    allowed_origins = local.browser_origins
     allowed_methods = ["PUT"]
     allowed_headers = ["*"]
     expose_headers  = ["ETag"]

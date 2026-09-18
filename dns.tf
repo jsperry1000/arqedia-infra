@@ -27,6 +27,37 @@ locals {
   cf_zone_id = "Z2FDTNDATAQYW2"
 }
 
+# Every origin a browser may call this deployment from. ONE LIST, read by the
+# API gateway's CORS and by all three bucket CORS rules.
+#
+# WHY IT IS ONE LIST. It used to be two. api.tf gained app.arqedia.com when
+# that hostname was introduced; the bucket rules in storage.tf and render.tf
+# were never updated and still named only the CloudFront domain. Somebody
+# added the missing origins to the buckets by hand, so uploads worked and
+# Terraform held a pending removal of four origins it did not know about. The
+# next apply - for an unrelated change - executed it, and every browser upload
+# from app.arqedia.com failed its preflight with no Access-Control-Allow-Origin
+# at all. A list maintained in two places is a list maintained in one.
+#
+# CORS GRANTS NOTHING. It says which pages a browser will permit to call the
+# bucket; the signed link is the control, and it is one key, PUT only, fifteen
+# minutes, inside the calling tenant's own prefix. The marketing site is on
+# this list for signup's two unauthenticated routes and has no signed link to
+# use, which is why one list costs nothing here.
+locals {
+  browser_origins = [
+    "https://${aws_cloudfront_distribution.frontend.domain_name}",
+    "https://${local.app_host}",
+    "https://${local.site_host}",
+    # Vite takes the next free port when 5173 is busy, which it is whenever
+    # the marketing site is running too. Three, so a second dev server does
+    # not look like a CORS fault.
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+  ]
+}
+
 resource "aws_route53_zone" "root" {
   name    = local.root_domain
   comment = "ARQEDIA — authoritative for all environments"

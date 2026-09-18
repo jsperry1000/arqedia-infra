@@ -159,25 +159,15 @@ resource "aws_apigatewayv2_api" "main" {
   name          = "${local.name_prefix}-api"
   protocol_type = "HTTP"
 
-  # Both hostnames the application answers on. The CloudFront name alone was
-  # correct until app.arqedia.com was added; a browser on the new name was
-  # making cross-origin calls the gateway refused. Both are kept, because the
-  # CloudFront name still works and the test accounts use it.
+  # Every hostname the application answers on, from local.browser_origins in
+  # dns.tf. The same list the three bucket CORS rules read: it was duplicated
+  # here and in storage.tf, only this copy was maintained, and browser uploads
+  # broke when an apply reconciled the other.
   #
-  # arqedia.com is here for signup only - the two unauthenticated routes in
+  # arqedia.com is on it for signup only - the two unauthenticated routes in
   # signup.tf. Nothing else on this API is reachable from the marketing site.
   cors_configuration {
-    allow_origins = [
-      "https://${aws_cloudfront_distribution.frontend.domain_name}",
-      "https://${local.app_host}",
-      "https://${local.site_host}",
-      # Vite takes the next free port when 5173 is busy, which it is whenever
-      # the marketing site is running too. Three, so a second dev server does
-      # not look like a CORS fault.
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "http://localhost:5175",
-    ]
+    allow_origins = local.browser_origins
     allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
     allow_headers = ["authorization", "content-type"]
     max_age       = 3600
