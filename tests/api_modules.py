@@ -10,7 +10,11 @@ import types
 from pathlib import Path
 from unittest import mock
 
-API = Path(__file__).resolve().parents[1] / "lambda" / "api"
+ROOT = Path(__file__).resolve().parents[1]
+API = ROOT / "lambda" / "api"
+# wallet.py moved to lambda/shared so the collector can import it from
+# the layer. billing still does `import wallet` and resolves it here.
+SHARED = ROOT / "lambda" / "shared"
 
 ENV = {
     "CLUSTER_ARN": "arn:cluster", "SECRET_ARN": "arn:secret",
@@ -37,6 +41,7 @@ def load_billing():
         for name in ("billing", "wallet", "seats", "paddle_api"):
             sys.modules.pop(name, None)
         sys.path.insert(0, str(API))
+        sys.path.insert(1, str(SHARED))
         try:
             return importlib.import_module("billing")
         finally:

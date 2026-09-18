@@ -6,11 +6,24 @@ importing helpers from app.py, because app.py imports this and the two would
 otherwise refer to each other. The duplication is thirty lines and the
 alternative is a circular import.
 
+IN THE LAYER, NOT IN lambda/api. The collector refunds a document whose OCR
+failed, and it is a different function; two copies of the money rules is how
+they come to disagree. Everything with the docprocessing layer can now import
+this, and IAM is what decides who may actually write - the api and collector
+roles hold the four rds-data actions, nothing else does.
+
 Three rules shape everything here.
 
 THE LEDGER IS APPEND-ONLY. Nothing is updated, nothing is deleted. A balance
-that can be edited is not a record of anything. There is no reversal because
-unreadable material is blocked before filing rather than charged and refunded.
+that can be edited is not a record of anything.
+
+There IS now a reversal, and the reason the rule gave for having none has
+gone. It read "unreadable material is blocked before filing rather than
+charged and refunded" - and unreadable material is no longer blocked before
+filing, which is the whole point of the unreadable-documents record of 18
+September. So refund() exists. It still adds a row rather than editing one:
+the charge and its reversal sit side by side, and nothing about the past
+changes.
 
 A CHARGE IS ALL OR NOTHING. Every charge runs in a transaction. A tenant is
 never left having paid for part of something, and a bucket is never debited
@@ -198,8 +211,14 @@ def _live_buckets(tenant_id, tx=None, purchased_only=False):
 
     purchased_only narrows it to purchased cash, for a tenant whose payment
     has failed or whose cancelled subscription has run out.
+
+    A REFUND COUNTS AS PURCHASED. It is not granted credit - it is money the
+    tenant already paid, coming back because we failed to deliver. Withholding
+    it would leave money on the Account screen that cannot be spent, from the
+    one tenant who has already had a payment problem (decision record, 18
+    September, item 15).
     """
-    only = " AND kind = 'purchased'" if purchased_only else ""
+    only = " AND kind IN ('purchased', 'refund')" if purchased_only else ""
     return _sql(
         """
         SELECT bucket_id, granted_cents - spent_cents AS remaining
@@ -214,7 +233,10 @@ def _live_buckets(tenant_id, tx=None, purchased_only=False):
 
 
 def available(tenant_id, purchased_only=False):
-    only = " AND kind = 'purchased'" if purchased_only else ""
+    # kind IN ('purchased', 'refund') for the same reason _live_buckets does:
+    # a refund is money coming back, not credit being granted. The two must
+    # agree, or the balance shown is not the balance that can be spent.
+    only = " AND kind IN ('purchased', 'refund')" if purchased_only else ""
     rows = _sql(
         """
         SELECT COALESCE(SUM(granted_cents - spent_cents), 0)
@@ -308,6 +330,135 @@ def grant(tenant_id, kind, cents, days, reference=None):
          _p("d", int(days)), _p("ref", reference)],
     )
     return balance(tenant_id)
+
+
+# --- giving it back --------------------------------------------------------
+
+REFUND_DAYS = 30
+
+
+def refund(tenant_id, document_id, charge_entry_id, email=None):
+    """Give back what one document cost, once.
+
+    WHY THIS EXISTS AT ALL. The ledger rule said there was nothing to refund
+    because unreadable material was blocked before filing. It is not any
+    more - a scan is accepted, charged and sent to OCR - so a read that fails
+    has taken money for nothing (decision record, 18 September, item 14).
+
+    ONCE, AND THE DATABASE IS WHAT SAYS SO. The key is
+    'refund:<document_id>', against uq_idempotency (tenant_id,
+    idempotency_key). Three different failures can call this for one document,
+    and a redelivered Textract notification can call it twice for the same
+    one; only the first writes. That is not a check anyone can forget.
+
+    THE LEDGER ROW GOES FIRST. It carries the unique key, so it is the gate:
+    if the bucket insert then fails, the transaction rolls back and a retry
+    finds nothing and is clean. The other order would grant money and then
+    discover it was a repeat.
+
+    WHAT WAS PAID, NOT WHAT IT COSTS TODAY. unit_cents comes from the entry
+    that charged for it, never from meter_price: a price changed in between
+    would return the wrong sum, and there is no meter_price row for a refund
+    for exactly that reason.
+
+    A NEW BUCKET, NOT THE OLD ONE. The bucket that paid may have expired, and
+    restoring spent_cents on an expired bucket restores nothing spendable. So
+    the money comes back with thirty days of its own, and a trial refund may
+    outlive the trial - accepted deliberately, because the alternative is
+    returning money that dies before it can be used (item 15).
+
+    Returns {"refunded": bool, "amount_cents": int, "repeated": bool}.
+    refunded is False only where there is nothing to give back: a document
+    that was never charged for, or whose charge cannot be traced.
+    """
+    if not charge_entry_id:
+        # Filed before migration 026, or never charged for. Nothing to give
+        # back and nothing to invent.
+        return {"refunded": False, "amount_cents": 0, "repeated": False,
+                "reason": "no charge recorded against this document"}
+
+    paid = _sql(
+        """
+        SELECT unit_cents, event_type FROM wallet_ledger
+        WHERE tenant_id = :t AND entry_id = :e
+        """,
+        [_p("t", tenant_id), _p("e", int(charge_entry_id))],
+    ).get("records", [])
+    if not paid:
+        return {"refunded": False, "amount_cents": 0, "repeated": False,
+                "reason": "the charge named by this document is not there"}
+
+    unit = int(_col(paid[0], 0) or 0)
+    if unit <= 0:
+        return {"refunded": False, "amount_cents": 0, "repeated": False,
+                "reason": "the charge was nothing"}
+
+    key = "refund:%d" % int(document_id)
+
+    tx = _rds.begin_transaction(
+        resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
+        database=DATABASE)["transactionId"]
+    try:
+        try:
+            _sql(
+                """
+                INSERT INTO wallet_ledger
+                  (tenant_id, event_type, quantity, unit_cents, amount_cents,
+                   reference, idempotency_key, created_by)
+                VALUES (:t, 'document_filed_refund', 1, :u, :a, :ref, :k, :by)
+                """,
+                # NEGATIVE. Nothing computes a balance from the ledger - that
+                # comes from the buckets - so this is what a person reading it
+                # months later sees, and they should see a reversal rather
+                # than a second charge.
+                [_p("t", tenant_id), _p("u", unit), _p("a", -unit),
+                 _p("ref", "refund of entry %d, document %d"
+                    % (int(charge_entry_id), int(document_id))),
+                 _p("k", key), _p("by", email)],
+                tx=tx,
+            )
+        except ClientError as exc:
+            if _duplicate_key(exc):
+                _rds.rollback_transaction(
+                    resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
+                    transactionId=tx)
+                return {"refunded": False, "amount_cents": unit,
+                        "repeated": True}
+            raise
+
+        _sql(
+            """
+            INSERT INTO wallet_bucket
+              (tenant_id, kind, granted_cents, expires_at, reference)
+            VALUES (:t, 'refund', :c, DATE_ADD(NOW(), INTERVAL :d DAY), :ref)
+            """,
+            [_p("t", tenant_id), _p("c", unit), _p("d", REFUND_DAYS),
+             _p("ref", str(int(charge_entry_id)))],
+            tx=tx,
+        )
+
+        _rds.commit_transaction(resourceArn=CLUSTER_ARN,
+                                secretArn=SECRET_ARN, transactionId=tx)
+    except Exception:
+        try:
+            _rds.rollback_transaction(resourceArn=CLUSTER_ARN,
+                                      secretArn=SECRET_ARN, transactionId=tx)
+        except Exception:  # noqa: BLE001 - the original error is what matters
+            pass
+        raise
+
+    return {"refunded": True, "amount_cents": unit, "repeated": False}
+
+
+def _duplicate_key(exc):
+    """A unique-key collision from the Data API, which reports it as a
+    DatabaseErrorException carrying MySQL's 1062 rather than as a typed error.
+
+    Matched on the constraint name as well as the code, so an unrelated
+    duplicate elsewhere in the statement is not read as 'already refunded'."""
+    text = str(exc)
+    return ("Error code: 1062" in text or "Duplicate entry" in text) \
+        and "uq_idempotency" in text
 
 
 # --- charging --------------------------------------------------------------

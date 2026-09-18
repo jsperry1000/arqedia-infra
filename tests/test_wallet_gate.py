@@ -21,9 +21,17 @@ class FakeDb:
         self.allocated = []
         self.ledger_written = False
 
+    # What the tenant may spend. Matched on the clause the SQL actually
+    # carries: when that clause changes, this fake stops narrowing and the
+    # gate tests fail loudly, rather than quietly passing against a filter
+    # that is no longer there.
+    SPENDABLE_WHEN_BEHIND = ("purchased", "refund")
+
     def _visible(self, statement):
-        only = "kind = 'purchased'" in statement
-        return [b for b in self.buckets if not only or b["kind"] == "purchased"]
+        if "kind IN ('purchased', 'refund')" not in statement:
+            return list(self.buckets)
+        return [b for b in self.buckets
+                if b["kind"] in self.SPENDABLE_WHEN_BEHIND]
 
     def sql(self, statement, params=None, tx=None):
         s = " ".join(statement.split())
@@ -53,6 +61,9 @@ class FakeDb:
 
 MONTHLY = {"bucket_id": 1, "kind": "monthly_credit", "remaining": 500}
 PURCHASED = {"bucket_id": 2, "kind": "purchased", "remaining": 500}
+# Money already paid, coming back because a read failed. Not granted credit,
+# so the gate lets it through (decision record, 18 September, item 15).
+REFUND = {"bucket_id": 3, "kind": "refund", "remaining": 25}
 
 
 class GateTest(unittest.TestCase):
@@ -93,6 +104,30 @@ class GateTest(unittest.TestCase):
 
     def test_canceled_after_period_refuses_monthly_credit(self):
         db = FakeDb("canceled", True, [MONTHLY])
+        with self.assertRaises(self.wallet.InsufficientFunds):
+            self.charge(db)
+        self.assertFalse(db.ledger_written)
+
+    def test_past_due_spends_a_refund(self):
+        # A refund is money already taken coming back. Withholding it would
+        # leave money on the Account screen that cannot be spent, from the one
+        # tenant who has already had a payment problem.
+        db = FakeDb("past_due", False, [MONTHLY, REFUND])
+        self.charge(db)
+        self.assertEqual(db.allocated, [3])
+
+    def test_past_due_prefers_neither_refund_nor_purchased_by_kind(self):
+        # Ordering is by expiry, not by kind. Both are spendable; which one
+        # goes first is _live_buckets' ORDER BY, which this fake preserves as
+        # the order it was given.
+        db = FakeDb("past_due", False, [REFUND, PURCHASED])
+        self.charge(db)
+        self.assertEqual(db.allocated, [3])
+
+    def test_a_refund_does_not_let_monthly_credit_through(self):
+        # The widening admits refunds and nothing else. Monthly credit is
+        # still refused in this standing.
+        db = FakeDb("past_due", False, [MONTHLY])
         with self.assertRaises(self.wallet.InsufficientFunds):
             self.charge(db)
         self.assertFalse(db.ledger_written)
