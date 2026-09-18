@@ -123,6 +123,85 @@ those refusals without anybody deciding to.
 **This answers the first item in section 3 below**, which was written before
 the curator existed.
 
+### Note — 18 September 2026, marking what is on offer
+
+**The mark is per memorandum within a revision.** That is what `pack_offer`
+already stores: one row per `pack_key`, naming a revision and a
+`template_key`.
+
+**Unticking takes a memorandum off offer.** The row is deleted. It stops
+appearing in Get started, and `fork_template` refuses it by name. No tenant
+who already took it is affected, and no revision is touched.
+
+**Every mark names the same revision, and the base is not marked separately.**
+The revision a memorandum is offered from is the revision its base comes from.
+This is forced rather than chosen: `fork_template` resolves a template's
+missing facts from the BASE mark, so a memorandum marked at one revision and a
+base at another refuses at the customer with "this template binds facts the
+base does not define" - the worst possible moment, and the one item 8 was
+written to move earlier.
+
+**Marks may not span revisions.** A tick at a revision other than the one the
+marks name is refused. Offering from a newer revision is a separate,
+deliberate act - MOVE THE OFFER - which re-points every mark, base and
+memoranda together, to that revision at once and reports what it moved. It
+refuses, naming them, where the new revision does not hold every memorandum
+currently marked.
+
+**One route, and it carries the whole offer.** `PUT /config/offer` takes a
+revision and the memoranda offered from it, and replaces every mark in one
+transaction. The rule above is then structural rather than policed: there is
+no way to express a mark at a second revision. Ticking is a name added,
+unticking a name left out, and moving the offer is the same call with a
+different revision. PROPOSED.
+
+**The curator never sets a pack key.** `pack_key` is never written into a
+tenant's configuration: a forked memorandum is keyed by `template_key`,
+`forked_from` records `pack:<tenant>:<revision>`, and the "already yours"
+marker reads `template_key`. Nothing downstream remembers it, and the one job
+a stable key could do - unifying a memorandum across two revisions offered at
+once - cannot arise while marks may not span revisions. A tick writes
+`pack_key = template_key`, and a migration rewrites the four hand-written keys
+so there is one convention rather than two. PROPOSED.
+
+### Note — 18 September 2026, the Catalogue screen
+
+**The rail's "Configure a report" becomes "Catalogue", and a page rather than
+a fly-out panel.** It carries:
+
+    the tenant's own memoranda   the body of the page, which is what "Open an
+                                 existing report" listed in the panel
+    three actions                Create from scratch; Create from a report you
+                                 already write; Select an ARQEDIA Template
+
+"Open an existing report" leaves the actions because the memoranda it listed
+are now the page itself.
+
+**In tenant 0 the same page carries the ticks.** Tenant 0's own memoranda are
+the catalogue, so a tick sits beside each one and means "offered". The page
+also says which revision the marks name, which is not necessarily the revision
+in use - tenant 0 today has marks at revision 9, revision 9 in use, and a
+draft open over it. MOVE THE OFFER lives there.
+
+**The screen reads the tenant from the token**, as `App.tsx` already does for
+the signed-in line: `custom:tenant_id` off the ID token payload. No field is
+added to `GET /config`.
+
+Three things follow, and one has teeth:
+
+    what the UI hides is not a control   the refusal lives in the dispatcher
+                                         beside CURATOR_REFUSED_ROUTES, which
+                                         is what the server trusts
+    the claim is a string                "0", not 0, and 0 is falsy: a
+                                         careless `if (tenantId)` makes tenant
+                                         0 the one tenant the check never
+                                         fires for
+    custom:tenant_id is immutable        nobody can move themselves to tenant
+                                         0; that is the real control, and it
+                                         is recorded above
+
+PROPOSED, all of it. No code is written.
+
 ---
 
 ## 3. Open
