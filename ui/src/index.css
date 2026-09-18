@@ -139,8 +139,9 @@ main:has(.wide-page) { max-width: 1560px; }
   border-left-color: var(--deep);
 }
 
-/* Configure a report opens a choice rather than a screen (UX-04), attached
-   to the rail's right edge level with its link. */
+/* Settings opens a choice rather than a screen, attached to the rail's right
+   edge level with its link. Configure a report used the same panel until it
+   became the Catalogue page; Settings is the only one left. */
 .rail-item { position: relative; display: flex; flex-direction: column; }
 .chooser {
   position: absolute; left: 100%; top: 0;
@@ -151,20 +152,6 @@ main:has(.wide-page) { max-width: 1560px; }
 }
 .chooser > a { display: block; padding: 8px 16px; font-size: 13px; }
 .chooser p { margin: 6px 16px 0; }
-/* A rule between what the tenant already writes and what we offer. The same
-   1px line the account menu uses, in the panel's own left margin. */
-.chooser .sep {
-  display: block; height: 1px; margin: 6px 0; background: var(--line);
-}
-/* Five rows, then the list scrolls. */
-.chooser-list {
-  max-height: calc(5 * 36px); overflow-y: auto;
-  border-block: 1px solid var(--line);
-}
-.chooser-list > * {
-  display: flex; align-items: center; height: 36px; padding: 0 28px;
-  font-size: 13px;
-}
 
 /* The one Back (UX-16), held beneath the header beside the rail on every
    screen. It sits in .work, the column holding it and the page, so it holds
