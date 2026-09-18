@@ -387,6 +387,28 @@ export type ConfigState = {
   validation?: Validation;
 };
 
+// What ARQEDIA offers every other tenant: one revision, and the memoranda
+// offered from it. Every mark names the same revision, so this is one thing
+// rather than a row per memorandum. revision is null where nothing is marked,
+// which is a broken catalogue rather than a quiet default.
+export type Offer = {
+  revision: number | null;
+  templates: string[];
+  marked_at: string | null;
+  marked_by: string | null;
+};
+
+// What setting it changed, so the screen can say so rather than just go
+// quiet. moved_from is the revision the offer was on, where this call moved
+// it.
+export type OfferSaved = {
+  revision: number;
+  templates: string[];
+  added: string[];
+  removed: string[];
+  moved_from: number | null;
+};
+
 export type Validation = {
   revision: number;
   may_publish: boolean;
@@ -533,6 +555,20 @@ export const api = {
     call("/config/templates/fork", {
       method: "POST",
       body: JSON.stringify({ pack_key: packKey }),
+    }),
+
+  // What the two above offer, and setting it. The ARQEDIA workspace only:
+  // every other tenant is refused these in the dispatcher, so a screen that
+  // asks for them anywhere else gets a 403 and says so.
+  offer: (): Promise<Offer> => call("/config/offer"),
+
+  // The whole catalogue at once - one revision, and the memoranda offered
+  // from it. Ticking, unticking and moving the offer to a newer revision are
+  // all this one call.
+  setOffer: (revision: number, templates: string[]): Promise<OfferSaved> =>
+    call("/config/offer", {
+      method: "PUT",
+      body: JSON.stringify({ revision, templates }),
     }),
 
   // Two steps, as documents and logos use: ask for a signed link, then send

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api";
+import { api, type Offer } from "./api";
 import { Working } from "./shell";
 
 /**
@@ -41,12 +41,24 @@ function errorText(err: unknown) {
   return text;
 }
 
-export function CatalogueView({ onOpened }: {
+type Row = { key: string; label: string };
+
+export function CatalogueView({ curator, onOpened }: {
+  curator: boolean;
   onOpened: (to: string, state?: unknown) => void;
 }) {
-  const [reports, setReports] = useState<{ key: string; label: string }[] | null>(null);
+  const [reports, setReports] = useState<Row[] | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+
+  // The curator's half. published is the memoranda of the revision in use -
+  // what can be offered, which is never the draft - and ticked is what the
+  // marks say today, edited here until it is saved.
+  const [offer, setOffer] = useState<Offer | null>(null);
+  const [active, setActive] = useState<number | null>(null);
+  const [published, setPublished] = useState<Row[]>([]);
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [saved, setSaved] = useState("");
 
   // The memoranda in the draft where one is open, since that is what will be
   // edited; otherwise the live revision's. Read once, when the page opens.
@@ -58,15 +70,29 @@ export function CatalogueView({ onOpened }: {
         const found = state.draft
           ? (await api.draft()).templates
           : state.revisions.length ? (await api.templates()).templates : [];
-        if (!gone) {
-          setReports(found.map((t) => ({ key: t.key, label: t.label || t.key })));
+        if (gone) return;
+        setReports(found.map((t) => ({ key: t.key, label: t.label || t.key })));
+        setActive(state.active_revision ?? null);
+
+        // The published revision's memoranda, read separately from the list
+        // above: that one follows the draft when there is one, and a draft is
+        // the one thing that cannot be offered.
+        if (curator) {
+          const [marks, live] = await Promise.all([
+            api.offer(), api.templates(),
+          ]);
+          if (gone) return;
+          setOffer(marks);
+          setPublished(live.templates.map(
+            (t) => ({ key: t.key, label: t.label || t.key })));
+          setTicked(new Set(marks.templates));
         }
       } catch (err) {
         if (!gone) { setError(errorText(err)); setReports([]); }
       }
     })();
     return () => { gone = true; };
-  }, []);
+  }, [curator]);
 
   async function run(what: string, fn: () => Promise<void>) {
     if (busy) return;
@@ -117,6 +143,37 @@ export function CatalogueView({ onOpened }: {
   });
 
   const off = (fn: () => void) => (busy ? undefined : fn);
+
+  // --- the curator's half ---------------------------------------------------
+
+  const toggle = (key: string) => {
+    const next = new Set(ticked);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    setTicked(next);
+  };
+
+  // Ticking, unticking and moving the offer to a newer revision are one call.
+  // The revision saved is the one in use, which is the revision the ticks
+  // above were read from - never the draft, which cannot be offered.
+  const save = () => run("Saving", async () => {
+    if (active === null) return;
+    setSaved("");
+    const result = await api.setOffer(active, Array.from(ticked));
+    setOffer(await api.offer());
+    const said = [
+      result.moved_from !== null
+        ? `Moved from revision ${result.moved_from} to ${result.revision}.` : "",
+      result.added.length ? `Added ${result.added.join(", ")}.` : "",
+      result.removed.length ? `Took off ${result.removed.join(", ")}.` : "",
+    ].filter(Boolean).join(" ");
+    setSaved(said || "Saved. Nothing changed.");
+  });
+
+  const marked = offer?.revision ?? null;
+  const moving = marked !== null && active !== null && marked !== active;
+  const sameAsMarks = offer !== null
+    && ticked.size === offer.templates.length
+    && offer.templates.every((k) => ticked.has(k));
 
   return (
     <div>
@@ -177,6 +234,85 @@ export function CatalogueView({ onOpened }: {
         configuration to you to correct &mdash; the file itself is read once
         and deleted.
       </p>
+
+      {/* The ARQEDIA workspace only. The server refuses these two calls to
+          everybody else; this decides what is drawn, which is not the same
+          thing and is not a control. */}
+      {curator && (
+        <>
+          <h3>What ARQEDIA offers</h3>
+
+          {offer === null ? (
+            <p className="muted">Loading&hellip;</p>
+          ) : (
+            <>
+              <p className="muted small">
+                {marked === null
+                  ? "Nothing is on offer. A new tenant has no base to fork "
+                    + "and no memorandum to take."
+                  : `Offered from revision ${marked}`
+                    + (offer.marked_by ? `, marked by ${offer.marked_by}` : "")
+                    + "."}
+              </p>
+
+              {/* The base is not ticked separately. It is this revision's
+                  base, always: a memorandum takes its missing facts from the
+                  base on offer, so one marked at another revision refuses at
+                  the customer rather than here. */}
+              <p className="muted small">
+                Ticking one offers it to every new tenant, from the revision
+                in use. The facts behind it go with it &mdash; the base is
+                this revision's base and is not a separate choice.
+              </p>
+
+              {moving && (
+                <p className="working-note">
+                  The offer is on revision {marked} and revision {active} is
+                  in use. Saving moves the whole catalogue to revision{" "}
+                  {active}, memoranda and base together. Marks cannot span two
+                  revisions.
+                </p>
+              )}
+
+              {published.length === 0 && (
+                <p className="muted">
+                  Revision {active} holds no memoranda to offer.
+                </p>
+              )}
+
+              {published.map((t) => (
+                <label className="template-row" key={t.key}>
+                  <input type="checkbox" checked={ticked.has(t.key)}
+                         onChange={() => toggle(t.key)} />
+                  <span className="template-name">{t.label}</span>
+                  {!offer.templates.includes(t.key) && ticked.has(t.key) && (
+                    <span className="muted small">new</span>
+                  )}
+                </label>
+              ))}
+
+              {saved && <p className="working-note">{saved}</p>}
+
+              <div className="form-actions">
+                <button
+                  disabled={!!busy || active === null || ticked.size === 0
+                            || (sameAsMarks && !moving)}
+                  onClick={save}>
+                  {moving
+                    ? `Move the offer to revision ${active}`
+                    : "Save the catalogue"}
+                </button>
+                {ticked.size === 0 && (
+                  <span className="muted small">
+                    Tick at least one. An empty catalogue leaves a new tenant
+                    with nothing to take.
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+        </>
+      )}
 
       {busy && <Working what={busy} />}
     </div>

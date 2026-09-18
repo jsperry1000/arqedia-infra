@@ -46,6 +46,13 @@ ALLOWED = [
     "POST /config/draft/sections",
 ]
 
+# The same guard the other way round: the catalogue is set in the ARQEDIA
+# workspace and read there, and refused to everybody else.
+CURATOR_ONLY = [
+    "GET /config/offer",
+    "PUT /config/offer",
+]
+
 
 def load_api():
     boto3 = types.ModuleType("boto3")
@@ -102,6 +109,44 @@ class CurationOnlyTest(unittest.TestCase):
     def test_the_list_is_exactly_those_five(self):
         self.assertEqual(sorted(self.app.CURATOR_REFUSED_ROUTES),
                          sorted(REFUSED))
+
+    def test_the_catalogue_routes_refuse_every_other_tenant(self):
+        for route in CURATOR_ONLY:
+            with self.subTest(route=route):
+                for tenant_id in (1, 5, 9101):
+                    reply = self.app._curation_only(tenant_id, route)
+                    self.assertIsNotNone(reply)
+                    self.assertEqual(reply["statusCode"], 403)
+                    body = json.loads(reply["body"])
+                    self.assertIn("ARQEDIA workspace", body["error"])
+
+    def test_the_catalogue_routes_allow_the_curator(self):
+        for route in CURATOR_ONLY:
+            with self.subTest(route=route):
+                self.assertIsNone(self.app._curation_only(0, route))
+
+    def test_the_curator_only_list_is_exactly_those_two(self):
+        self.assertEqual(sorted(self.app.CURATOR_ONLY_ROUTES),
+                         sorted(CURATOR_ONLY))
+
+    def test_no_route_is_on_both_lists(self):
+        # One would be refused to everybody, which is a route that exists on
+        # paper and nowhere else.
+        self.assertEqual(
+            self.app.CURATOR_REFUSED_ROUTES & self.app.CURATOR_ONLY_ROUTES,
+            frozenset())
+
+    def test_the_dispatcher_refuses_a_tenant_reaching_the_catalogue(self):
+        event = {
+            "routeKey": "PUT /config/offer",
+            "body": json.dumps({"revision": 9, "templates": ["x"]}),
+            "requestContext": {"authorizer": {"jwt": {"claims": {
+                "custom:tenant_id": "5", "custom:role": "admin",
+                "email": "someone@firm.com"}}}},
+        }
+        reply = self.app.lambda_handler(event, None)
+        self.assertEqual(reply["statusCode"], 403)
+        self.assertIn("ARQEDIA workspace", reply["body"])
 
     def test_the_dispatcher_refuses_before_anything_is_read(self):
         # A token for tenant 0 on a refused route, with a body that would
