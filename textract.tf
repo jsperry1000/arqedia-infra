@@ -97,9 +97,18 @@ data "aws_iam_policy_document" "collector" {
     resources = [aws_kms_key.data.arn]
   }
 
+  # A failed read refunds the charge, and the ledger row and the bucket are
+  # one act. The three transaction actions are separate from ExecuteStatement
+  # and all four are needed - with only the first, the collector can write the
+  # refusal and not the refund.
   statement {
-    effect    = "Allow"
-    actions   = ["rds-data:ExecuteStatement"]
+    effect = "Allow"
+    actions = [
+      "rds-data:ExecuteStatement",
+      "rds-data:BeginTransaction",
+      "rds-data:CommitTransaction",
+      "rds-data:RollbackTransaction",
+    ]
     resources = [aws_rds_cluster.main.arn]
   }
 
