@@ -1,3 +1,4 @@
+import { CatalogueView } from "./Catalogue";
 import { ConfigureView } from "./Configure";
 import { SettingsView } from "./Settings";
 import { MemoView } from "./Memo";
@@ -136,157 +137,6 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
   );
 }
 
-// --- choosing a report -----------------------------------------------------
-
-/** A draft to work in. A tenant with nothing configured takes the base first;
- *  one with only a published revision opens a copy of it.
- *
- *  THE BASE IS TAKEN BY KEY. This forked whatever packs() returned first, and
- *  packs() sorted by revision descending - so adding a pack silently changed
- *  what a new tenant got. Memoranda are not forked here at all: that is Get
- *  started, where there is room to say what each one contains. */
-async function ensureDraft() {
-  let state = await api.configState();
-  if (!state.draft && state.revisions.length === 0) {
-    await api.forkBase();
-    state = await api.configState();
-  }
-  if (!state.draft) await api.openDraft();
-}
-
-function errorText(err: unknown) {
-  let text = String((err as Error)?.message ?? err);
-  try { text = JSON.parse(text).error ?? text; } catch { /* as it came */ }
-  return text;
-}
-
-/** Configure a report, as a choice rather than a screen: open one, start from
- *  nothing, or start from a report the tenant already writes (UX-04). */
-function ReportChooser({ onClose, onOpened }: {
-  onClose: () => void;
-  onOpened: (to: string, state?: unknown) => void;
-}) {
-  const box = useRef<HTMLDivElement | null>(null);
-  // What the panel shows: the three options, or the reports to open. A choice
-  // replaces the options rather than opening a list beneath them (UX-17).
-  const [view, setView] = useState<"options" | "reports">("options");
-  const [reports, setReports] = useState<{ key: string; label: string }[] | null>(null);
-  const [busy, setBusy] = useState("");
-  const [error, setError] = useState("");
-
-  // A click elsewhere, or Escape, puts it away. The link that opened it is
-  // not elsewhere: it toggles the panel itself.
-  useEffect(() => {
-    const away = (e: MouseEvent) => {
-      const at = e.target as Node | null;
-      const item = box.current?.parentElement;
-      if (item && at && !item.contains(at)) onClose();
-    };
-    const escape = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("mousedown", away);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("mousedown", away);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [onClose]);
-
-  async function run(what: string, fn: () => Promise<void>) {
-    if (busy) return;
-    setBusy(what);
-    setError("");
-    try {
-      await fn();
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setBusy("");
-    }
-  }
-
-  // The memoranda in the draft where one is open, since that is what will be
-  // edited; otherwise the live revision's. One row each, read once.
-  async function list() {
-    setView("reports");
-    if (reports !== null) return;
-    try {
-      const state = await api.configState();
-      const found: { key: string; label: string }[] = state.draft
-        ? (await api.draft()).templates
-        : state.revisions.length ? (await api.templates()).templates : [];
-      setReports(found.map((t) => ({ key: t.key, label: t.label || t.key })));
-    } catch (err) {
-      setError(errorText(err));
-      setReports([]);
-    }
-  }
-
-  const open = (key: string) => run("Opening", async () => {
-    await ensureDraft();
-    onOpened(`/configure?report=${encodeURIComponent(key)}`);
-  });
-
-  // Ours, rather than theirs. What is on offer is already shown by the Get
-  // started chooser - the same list, the same headings, the same "already
-  // yours" marker - so this sends a person there rather than building a
-  // second list that drifts from it. stopAtDraft: taking one from here adds
-  // it to the draft and publishes nothing.
-  const ours = () => onOpened("/welcome", { stopAtDraft: true });
-
-  // An empty report with one untitled section. Numbered where an untitled
-  // report already exists, because saving the same key again would rename
-  // that one rather than add another.
-  const scratch = () => run("Creating", async () => {
-    await ensureDraft();
-    const taken = new Set((await api.draft()).templates.map((t) => t.key));
-    let n = 1;
-    while (taken.has(n === 1 ? "untitled-report" : `untitled-report-${n}`)) n++;
-    const key = n === 1 ? "untitled-report" : `untitled-report-${n}`;
-    await api.saveTemplate({ key, label: n === 1 ? "Untitled report" : `Untitled report ${n}` });
-    await api.saveSection({ template_key: key, key: "untitled-section", numeral: "I",
-                            title: "Untitled section", kind: "extract", prompt: "",
-                            sort_order: 1 });
-    onOpened(`/configure?report=${key}&part=sections`);
-  });
-
-  // A report of the person's own: the proposer page, which carries its own
-  // upload (UX-21). No file dialog fires from here.
-  const fromReport = () => run("Opening", async () => {
-    await ensureDraft();
-    onOpened("/configure", { propose: true });
-  });
-
-  return (
-    <div className="chooser" ref={box}>
-      {view === "options" ? (
-        <>
-          <a onClick={list}>Open an existing report</a>
-          <a onClick={scratch}>Create from scratch</a>
-          <a onClick={fromReport}>
-            Create from a report you already write
-          </a>
-          {/* A rule between what they have and what we offer. */}
-          <span className="sep" />
-          <a onClick={ours}>Select an ARQEDIA Template</a>
-        </>
-      ) : (
-        <>
-          <a onClick={() => setView("options")}>&lsaquo; All options</a>
-          <div className="chooser-list">
-            {reports === null && <span className="muted">Loading&hellip;</span>}
-            {reports?.length === 0 && <span className="muted">No reports yet.</span>}
-            {reports?.map((r) => (
-              <a key={r.key} onClick={() => open(r.key)}>{r.label}</a>
-            ))}
-          </div>
-        </>
-      )}
-      {busy && <p className="busy small">{busy}&hellip;</p>}
-      {error && <p className="error small">{error}</p>}
-    </div>
-  );
-}
-
 // --- routes ----------------------------------------------------------------
 
 // Back is the browser's back, so a view returns to wherever it was opened
@@ -317,10 +167,19 @@ function MemoRoute() {
   return <MemoView memoId={Number(id)} onBack={back} onOpen={(memoId) => navigate(`/memos/${memoId}`)} />;
 }
 
-// Keyed on the chooser's count: the screen reads the configuration when it
-// mounts, and a draft opened or a report added from the rail would not show.
+// Keyed on the count kept by the shell: the screen reads the configuration
+// when it mounts, and a draft opened or a report added from the Catalogue
+// would not show.
 function ConfigureRoute({ epoch }: { epoch: number }) {
   return <ConfigureView key={epoch} onBack={useBack()} />;
+}
+
+// Not keyed, unlike Configure. This route carries no query, so every arrival
+// at it is a route change and a fresh mount, and the list is read again.
+function CatalogueRoute({ onOpened }: {
+  onOpened: (to: string, state?: unknown) => void;
+}) {
+  return <CatalogueView onOpened={onOpened} />;
 }
 
 function SettingsRoute() {
@@ -411,11 +270,9 @@ export default function App() {
     return () => watch.disconnect();
   }, [signedIn]);
 
-  // Configure a report opens a choice. Whichever option is taken reloads the
-  // configuration screen, which counts here.
-  const [choosing, setChoosing] = useState(false);
+  // Opening a report from the Catalogue reloads the configuration screen,
+  // which counts here.
   const [configEpoch, setConfigEpoch] = useState(0);
-  const closeChooser = useCallback(() => setChoosing(false), []);
 
   // The Settings choice. Closes on a click elsewhere or Escape, as every other
   // panel on the screen does.
@@ -496,14 +353,18 @@ export default function App() {
   } as React.CSSProperties;
 
   // Which rail destination is open, so it can come forward to the page's own
-  // colour. Configure is matched on its prefix: the chooser navigates to
-  // /configure with a query, and the rail should still read as open.
+  // colour. Matched on the prefix: a screen reached with a query is still that
+  // destination, and the rail should still read as open.
   const here = location.pathname;
   const railClass = (path: string) =>
     (path === "/" ? here === "/" : here.startsWith(path)) ? "on" : undefined;
 
+  // The Catalogue is the destination; configuring a report and taking one of
+  // ours are both reached from it, so the entry stays lit through all three.
+  const catalogueClass = ["/catalogue", "/configure", "/welcome"]
+    .some((p) => here.startsWith(p)) ? "on" : undefined;
+
   const opened = (to: string, state?: unknown) => {
-    setChoosing(false);
     setConfigEpoch((n) => n + 1);
     navigate(to, { state });
   };
@@ -544,12 +405,10 @@ export default function App() {
           is first: every other screen is reached from it. */}
       <nav className="rail">
         <a className={railClass("/")} onClick={() => navigate("/")}>Engagements</a>
-        {/* A choice rather than a screen (UX-04): which report, or how to
-            start a new one. */}
-        <div className="rail-item">
-          <a className={railClass("/configure")} onClick={() => setChoosing(!choosing)}>Configure a report</a>
-          {choosing && <ReportChooser onClose={closeChooser} onOpened={opened} />}
-        </div>
+        {/* A screen rather than a choice. UX-04 made this a panel of options
+            with the tenant's own memoranda behind one of them; they are the
+            work and the reason for the screen, so they are the screen. */}
+        <a className={catalogueClass} onClick={() => navigate("/catalogue")}>Catalogue</a>
         <a className={railClass("/shares")} onClick={() => navigate("/shares")}>Sharing</a>
         {/* Settings opens a choice, as Configure does. Two things live under
             it and they are not alike: how memoranda look, and who pays for
@@ -585,6 +444,7 @@ export default function App() {
               <Route path="/" element={<EngagementsRoute />} />
               <Route path="/engagements/:id" element={<EngagementRoute />} />
               <Route path="/memos/:id" element={<MemoRoute />} />
+              <Route path="/catalogue" element={<CatalogueRoute onOpened={opened} />} />
               <Route path="/configure" element={<ConfigureRoute epoch={configEpoch} />} />
               <Route path="/settings" element={<SettingsRoute />} />
               <Route path="/settings/brand" element={<SettingsRoute />} />
