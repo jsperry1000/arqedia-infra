@@ -42,6 +42,7 @@ import re
 import time
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 import cleanup
@@ -49,7 +50,15 @@ import config
 
 _s3 = boto3.client("s3")
 _rds = boto3.client("rds-data")
-_bedrock = boto3.client("bedrock-runtime")
+# botocore defaults to a 60-second read timeout and legacy retries of up to 5
+# attempts, each re-sending and re-billing the call. On 18 September a memo
+# produced nothing for five minutes after its last logged section and died at
+# the 600-second function limit with nothing in the log.
+_bedrock = boto3.client(
+    "bedrock-runtime",
+    config=Config(read_timeout=300,
+                  retries={"mode": "standard", "max_attempts": 2}),
+)
 _lambda = boto3.client("lambda")
 
 CURATED_BUCKET = os.environ["CURATED_BUCKET"]
@@ -235,7 +244,27 @@ def _assemble_extract(registry, section, values):
 _MAX_TOKENS = 4096
 
 
-def _invoke(prompt, system=None):
+def _invoke(prompt, system=None, stage="?", section="?", chars_in=0):
+    """One model call, and a line about it either side.
+
+    The log said nothing about a model call except dropped citations, so when
+    a section produced nothing for five minutes the cause could not be read
+    from the log at all.
+
+    TWO LINES, NOT ONE. A call that never returns cannot log what it did, so
+    the section is named BEFORE the call as well as after it. Without the
+    first line a timeout is anonymous: the run simply stops, and nothing says
+    which section it stopped in.
+
+    A FAILURE IS LOGGED AND RE-RAISED, not swallowed. The line says what went
+    wrong and how long it took; the exception travels on unchanged, so
+    everything above this behaves exactly as it did.
+
+    chars_in is the caller's, measured BEFORE the slice: only the caller knows
+    what it cut. retries is read defensively - botocore sets
+    ResponseMetadata.RetryAttempts on a successful response (endpoint.py), but
+    this runs on the runtime's bundled botocore rather than one we ship, so an
+    absent field prints 0 rather than raising."""
     body = {
         "anthropic_version": "bedrock-2023-05-31",
         "max_tokens": _MAX_TOKENS,
@@ -245,13 +274,42 @@ def _invoke(prompt, system=None):
     if system:
         body["system"] = system
 
-    response = _bedrock.invoke_model(modelId=MODEL_ID, body=json.dumps(body))
-    payload = json.loads(response["body"].read())
+    # A rewrite refuses rather than truncates, so the 40,000-character cap is
+    # not its rule and reporting it as one would be a lie either way round.
+    truncated = "n/a" if stage == "rewrite" else (
+        "yes" if chars_in > _SECTION_INPUT_CHARS else "no")
+
+    print("[model-call-start] stage=%s section=%s chars_in=%d" % (
+        stage, section, chars_in))
+
+    started = time.time()
+    try:
+        response = _bedrock.invoke_model(
+            modelId=MODEL_ID, body=json.dumps(body))
+        payload = json.loads(response["body"].read())
+    except Exception as exc:  # noqa: BLE001 - logged, then re-raised unchanged
+        print("[model-call] stage=%s section=%s chars_in=%d seconds=%.1f "
+              "outcome=error error=%s" % (
+                  stage, section, chars_in, time.time() - started,
+                  type(exc).__name__))
+        raise
+    seconds = time.time() - started
+
+    usage = payload.get("usage", {})
+    tokens_out = usage.get("output_tokens", 0)
+    print("[model-call] stage=%s section=%s chars_in=%d truncated=%s "
+          "seconds=%.1f tokens_in=%s tokens_out=%s hit_max=%s retries=%s "
+          "outcome=ok" % (
+              stage, section, chars_in, truncated, seconds,
+              usage.get("input_tokens", 0), tokens_out,
+              "yes" if tokens_out >= _MAX_TOKENS else "no",
+              response.get("ResponseMetadata", {}).get("RetryAttempts", 0)))
+
     text = "".join(
         b.get("text", "") for b in payload.get("content", [])
         if b.get("type") == "text"
     )
-    return text.strip(), payload.get("usage", {})
+    return text.strip(), usage
 
 
 # --- stage 2: draft --------------------------------------------------------
@@ -277,8 +335,8 @@ def _compose(section, assembled):
     if not context_parts:
         return "", [], {}
 
-    masked, tokens = _mask_citations(
-        "\n\n".join(context_parts)[:_SECTION_INPUT_CHARS])
+    context = "\n\n".join(context_parts)
+    masked, tokens = _mask_citations(context[:_SECTION_INPUT_CHARS])
 
     prompt = (
         section["prompt"]
@@ -288,7 +346,8 @@ def _compose(section, assembled):
         + "\n--- CONTEXT END ---"
     )
 
-    text, usage = _invoke(prompt)
+    text, usage = _invoke(prompt, stage="draft", section=section["key"],
+                          chars_in=len(context))
     text, dropped = _restore_citations(text, tokens)
 
     if dropped:
@@ -399,7 +458,9 @@ def _consolidate(section, markdown):
         + "\n--- SECTION END ---"
     )
 
-    text, usage = _invoke(prompt, system=cleanup.CLEANUP_PREAMBLE)
+    text, usage = _invoke(prompt, system=cleanup.CLEANUP_PREAMBLE,
+                          stage="consolidate", section=section["key"],
+                          chars_in=len(markdown))
     text, dropped = _restore_citations(text, tokens)
 
     if dropped:
@@ -521,7 +582,9 @@ def _rewrite(event):
             + "\n--- SECTION END ---"
         )
 
-        text, usage = _invoke(prompt, system=cleanup.REWRITE_PREAMBLE)
+        text, usage = _invoke(prompt, system=cleanup.REWRITE_PREAMBLE,
+                              stage="rewrite", section=str(rewrite_id),
+                              chars_in=len(body))
         tokens_in = usage.get("input_tokens", 0)
         tokens_out = usage.get("output_tokens", 0)
 
