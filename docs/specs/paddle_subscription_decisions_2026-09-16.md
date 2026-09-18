@@ -59,6 +59,15 @@ top-ups: a cancelled subscription cannot be charged (item 10). Cash still expire
 - **16 is amended.** Monthly credit granted in one billing period never exceeds the current plan's monthly credit.
 - **Paused.** A `paused` subscription is treated as `past_due`: filing and generating spend unexpired purchased cash only (item 12, as amended). PROPOSED.
 
+### Amendment — 18 September 2026
+
+- **Update card.** Shown while the subscription is `active` or `past_due`. Inert
+  for now: it says "not connected yet" on click. Paddle provides
+  `GET /subscriptions/{id}/update-payment-method-transaction` for both states
+  (`past_due`: the overdue transaction, paid on update; `active`: a zero-value
+  transaction), opened with `Paddle.Checkout.open({transactionId})`. No route
+  calls it yet.
+
 ---
 
 ## 3. Open
@@ -68,3 +77,4 @@ top-ups: a cancelled subscription cannot be charged (item 10). Cash still expire
 - Front-end config holds a sandbox-only token; one bundle cannot serve both environments (ENV-01).
 - Live catalog and `config/paddle/live.json` do not exist.
 - Failure-queue alarm has no notification target; failed events are visible only in the CloudWatch console.
+- Paused: Paddle's update-payment-method transaction is not available for a `paused` subscription, so "Update card" cannot work there. What the button shows while paused is undecided.
