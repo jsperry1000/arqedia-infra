@@ -1,0 +1,54 @@
+-- 026_document_charge_entry.sql
+--
+-- Which ledger entry paid for this document.
+--
+-- Unreadable documents decision record, 18 September 2026, item 14: where OCR
+-- fails after filing, a compensating entry gives the money back. The refund
+-- names the original charge, and until now nothing could find it.
+--
+-- WHY THE LINK DID NOT EXIST. file_documents charges ONCE for a whole click:
+-- eighteen documents are one wallet_ledger row with quantity 18 and the
+-- reference '18 documents filed'. wallet_allocation joins that entry to the
+-- buckets it drew on, not to the documents it paid for. So given a
+-- document_id there was no way back to the entry - and guessing at the
+-- tenant's most recent document_filed entry is wrong the moment two filings
+-- overlap.
+--
+-- Written when the charge commits, read when a refund is due. The refund
+-- takes the amount from the entry this names - what was actually paid - and
+-- never from meter_price, because a price that changed between the charge and
+-- the failure would return the wrong sum.
+--
+-- Additive: one nullable column, no backfill, no constraint touched.
+--
+-- NOT A FOREIGN KEY. Nothing in this schema has one, and the ledger is
+-- append-only: an entry it names cannot be deleted or altered, so there is
+-- nothing for a constraint to protect against.
+--
+-- NULL means one of two things, and both are correct:
+--   a document filed before this migration - it cannot be auto-refunded, and
+--     no row written before today can be, because the money it paid is not
+--     traceable to it
+--   a document that was never charged for - one refused at upload, or
+--     rejected at filing, neither of which costs anything
+
+ALTER TABLE document
+  ADD COLUMN charge_entry_id BIGINT NULL AFTER config_revision;
+
+
+-- Verification
+--
+--   SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
+--     FROM information_schema.COLUMNS
+--    WHERE TABLE_SCHEMA = 'arqedia' AND TABLE_NAME = 'document'
+--      AND COLUMN_NAME = 'charge_entry_id'
+--
+-- Expect one row: charge_entry_id bigint YES.
+--
+--   SELECT COUNT(*) FROM document WHERE charge_entry_id IS NOT NULL
+--
+-- Expect 0 immediately after this runs. Nothing is backfilled.
+--
+--   SELECT filename FROM schema_migration WHERE filename = '026_document_charge_entry.sql'
+--
+-- Expect one row.

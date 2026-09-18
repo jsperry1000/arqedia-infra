@@ -168,6 +168,57 @@ worst. The input that most needs OCR is the only one that cannot reach it.
     `memo_generated` at 100 today, with `tenant_id IS NULL` as the standard
     price.
 
+    **Amended, 18 September 2026: no `meter_price` row.** It would be inert.
+    `wallet.charge` consults `meter_price`; a refund never calls `charge`, and
+    the amount must be what was actually paid rather than today's price - a
+    price that changed between the charge and the failure would otherwise
+    return the wrong sum. So the refund reads `unit_cents` from the original
+    ledger entry, found through `document.charge_entry_id` (migration 026).
+    A row nothing reads misleads the next person, and is not written.
+
+15. **A refund is not a grant.** `_live_buckets` and `available` narrow to
+    `kind = 'purchased'` for a tenant in `purchased_only` standing - payment
+    failed, or a cancelled subscription whose period is over. A `refund`
+    bucket would have been excluded by that whitelist, leaving money on the
+    Account screen that could not be spent.
+
+    Both now read `kind IN ('purchased', 'refund')`. **This amends items 12
+    and 13 of the Paddle record**, which withhold trial and monthly credit in
+    that standing, and it is recorded rather than slipped in.
+
+    The distinction that makes it right: those items withhold GRANTED CREDIT -
+    money given, which may expire unused. A refund is money already taken
+    coming back. Returning it in a form the tenant cannot spend is not a
+    refund, and the tenant it would fail is the one who has already had a
+    payment problem.
+
+    Consequently a refund carries its own thirty-day life rather than the
+    expiry of whatever paid the charge, and a trial refund may outlive the
+    trial. Accepted deliberately: the alternative is returning money that dies
+    before it can be used.
+
+16. **The refusal says the money came back.** An OCR failure is told in these
+    words, and the sentence about the charge is part of it rather than a
+    separate notice somebody has to find:
+
+        This file could not be read, even with OCR. It can't be used in its
+        current state. Please fix it on your side and upload it again. The
+        charge for it has been refunded.
+
+17. **Exactly one refund per document, enforced by the database.** The
+    compensating entry carries `idempotency_key = 'refund:<document_id>'`
+    against `uq_idempotency (tenant_id, idempotency_key)`, and the ledger row
+    is written FIRST inside the transaction. A repeated failure - a redelivered
+    Textract notification, a retried invocation - hits the unique key and is
+    answered as a repeat rather than paying twice. The same key covers all
+    three failure points, so a document cannot be refunded once by the API and
+    again by the collector.
+
+    `amount_cents` is NEGATIVE on the refund row. Nothing computes a balance
+    from the ledger - that comes from the buckets - so this is a record-keeping
+    choice, and a reader months later should see a reversal rather than a
+    second charge.
+
 ---
 
 ## 3. Open
