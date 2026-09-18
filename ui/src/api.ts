@@ -181,6 +181,10 @@ export type Pending = {
   part_index: number | null;
   page_from: number | null;
   page_to: number | null;
+  // Set only where state is "unreadable": why the document could not be read,
+  // and the sentence to show for it. Null on everything else.
+  refusal_code: string | null;
+  refusal_reason: string | null;
 };
 
 export type Doc = {

@@ -129,15 +129,23 @@ export function EngagementView({ id, onBack, onMemo }: {
     });
   }
 
+  // A document nobody could read is not fileable, and this screen must not
+  // offer it as though it were. It arrives on the pending list deliberately -
+  // the row is what stops the screen waiting for a file it will never see
+  // (decision record, 18 September, item 1) - but it belongs in a block of its
+  // own, out of the count, out of the quote, and out of what File sends.
+  const refused = pending.filter((p) => p.state === "unreadable");
+  const toFile = pending.filter((p) => p.state !== "unreadable");
+
   useEffect(() => { api.documentTypes().then((r) => setTypes(r.types)); }, []);
 
   // Re-priced whenever the proposal changes and after anything is charged, so
   // the figure on screen is never one charge out of date.
   useEffect(() => {
-    if (pending.length === 0) { setFileQuote(null); return; }
-    api.walletQuote("document_filed", pending.length)
+    if (toFile.length === 0) { setFileQuote(null); return; }
+    api.walletQuote("document_filed", toFile.length)
       .then(setFileQuote).catch(() => setFileQuote(null));
-  }, [pending.length, docs.length, memos.length]);
+  }, [toFile.length, docs.length, memos.length]);
 
   useEffect(() => {
     api.walletQuote("memo_generated", 1)
@@ -158,7 +166,7 @@ export function EngagementView({ id, onBack, onMemo }: {
   // produce a memo missing whatever it is about to say.
   const reading = docs.filter((d) => d.state === "reading").length
     + pending.filter((p) => p.state === "reading").length;
-  const unfiled = pending.length;
+  const unfiled = toFile.length;
   const extracting = docs.filter(
     (d) => d.state === "filed" && !d.extracted_at).length;
   const waitingFiles = expected?.names.length ?? 0;
@@ -276,7 +284,7 @@ export function EngagementView({ id, onBack, onMemo }: {
   }
 
   async function fileAll() {
-    const decisions: Decision[] = pending.map((p) => ({
+    const decisions: Decision[] = toFile.map((p) => ({
       document_id: p.document_id,
       document_type: choices[p.document_id]?.type ?? p.proposed_type,
       include: true,
@@ -461,10 +469,39 @@ export function EngagementView({ id, onBack, onMemo }: {
       )}
       {error && <p className="error">{error}</p>}
 
-      {pending.length > 0 && (
+      {/* First, because it is the thing needing a decision. A refusal is
+          terminal: nothing further will happen to these on its own, and the
+          only move is to remove them and upload something readable. Said
+          before the fileable ones so it is not lost under a list of twenty. */}
+      {refused.length > 0 && (
+        <>
+          <h3>Could not be read</h3>
+          {refused.map((p) => (
+            <div className="review" key={p.document_id}>
+              <div className="review-head">
+                <strong>{p.filename}</strong>
+                <span className="muted">
+                  {p.pages ? `${p.pages} pages` : "—"}
+                </span>
+                <button className="secondary" disabled={!!busy}
+                        onClick={() => remove(p)}
+                        title="Remove it. The file and its row both go.">
+                  Remove
+                </button>
+              </div>
+              <p className="why warn">{p.refusal_reason}</p>
+            </div>
+          ))}
+          <p className="muted small">
+            Nothing was charged for {refused.length === 1 ? "this" : "these"}.
+          </p>
+        </>
+      )}
+
+      {toFile.length > 0 && (
         <>
           <h3>Ready to file</h3>
-          {pending.map((p) => {
+          {toFile.map((p) => {
             const choice = choices[p.document_id] ??
               { type: p.proposed_type, include: true };
             const chosen = types.find((t) => t.key === choice.type);
@@ -574,10 +611,10 @@ export function EngagementView({ id, onBack, onMemo }: {
           )}
 
           <button onClick={fileAll}
-                  disabled={!!busy || pending.length === 0
+                  disabled={!!busy || toFile.length === 0
                             || (fileQuote ? !fileQuote.affordable : false)}>
-            File {pending.length}{" "}
-            {pending.length === 1 ? "document" : "documents"}
+            File {toFile.length}{" "}
+            {toFile.length === 1 ? "document" : "documents"}
             {fileQuote ? ` \u00b7 ${money(fileQuote.total_cents)}` : ""}
           </button>
         </>
