@@ -53,6 +53,10 @@ charged for.
   PUT  /config/draft/working             keep what has been decided
   PUT  /config/active                    which published revision is in use
 
+The catalogue, in the ARQEDIA workspace and nowhere else.
+  GET  /config/offer                     the revision and memoranda on offer
+  PUT  /config/offer                     set them, all at once
+
 Paying for a plan. Nothing here grants money; Paddle's webhooks do.
   GET  /billing/subscription             standing, plan, periods, plan rows
   POST /billing/checkout                 a Paddle transaction to open
@@ -226,6 +230,17 @@ CURATOR_REFUSED_ROUTES = frozenset({
 CURATOR_REFUSAL = ("The ARQEDIA workspace curates the catalogue. It does not "
                    "file documents, generate memoranda or subscribe.")
 
+# The same guard the other way round. These read and set what ARQEDIA offers
+# every other tenant, so they belong to the workspace that curates it and to
+# nobody else. What a screen hides is not a control; this is.
+CURATOR_ONLY_ROUTES = frozenset({
+    "GET /config/offer",
+    "PUT /config/offer",
+})
+
+CURATOR_ONLY_REFUSAL = ("What ARQEDIA offers is set in the ARQEDIA "
+                        "workspace.")
+
 
 def _curation_only(tenant_id, route):
     """The refusal to send, or None where the route is allowed.
@@ -233,8 +248,11 @@ def _curation_only(tenant_id, route):
     Returned rather than raised so the dispatcher stays one line, and so this
     can be asked the question directly - the repo has no test that dispatches
     a route."""
-    if tenant_id == registry.PACK_TENANT and route in CURATOR_REFUSED_ROUTES:
+    curator = tenant_id == registry.PACK_TENANT
+    if curator and route in CURATOR_REFUSED_ROUTES:
         return _reply(403, {"error": CURATOR_REFUSAL})
+    if not curator and route in CURATOR_ONLY_ROUTES:
+        return _reply(403, {"error": CURATOR_ONLY_REFUSAL})
     return None
 
 
@@ -1943,6 +1961,22 @@ def lambda_handler(event, context):
             body = json.loads(event.get("body") or "{}")
             return _reply(200, registry.select_revision(
                 tenant_id, body.get("revision")))
+
+        # What every other tenant is offered. The ARQEDIA workspace only -
+        # _curation_only refuses both of these to anybody else before the
+        # dispatcher reaches here.
+        if route == "GET /config/offer":
+            return _reply(200, registry.offer())
+
+        # The whole catalogue in one call: a revision, and the memoranda
+        # offered from it. Ticking, unticking and moving the offer to a newer
+        # revision are all this one act, which is what makes marks that span
+        # two revisions impossible to express.
+        if route == "PUT /config/offer":
+            _require_admin(role)
+            body = json.loads(event.get("body") or "{}")
+            return _reply(200, registry.set_offer(
+                body.get("revision"), body.get("templates"), email))
 
         if route == "DELETE /config/draft":
             _require_admin(role)

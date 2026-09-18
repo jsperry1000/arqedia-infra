@@ -176,10 +176,11 @@ function ConfigureRoute({ epoch }: { epoch: number }) {
 
 // Not keyed, unlike Configure. This route carries no query, so every arrival
 // at it is a route change and a fresh mount, and the list is read again.
-function CatalogueRoute({ onOpened }: {
+function CatalogueRoute({ curator, onOpened }: {
+  curator: boolean;
   onOpened: (to: string, state?: unknown) => void;
 }) {
-  return <CatalogueView onOpened={onOpened} />;
+  return <CatalogueView curator={curator} onOpened={onOpened} />;
 }
 
 function SettingsRoute() {
@@ -229,6 +230,14 @@ function ViewerRoute() {
 export default function App() {
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [who, setWho] = useState("");
+  // The ARQEDIA workspace, which curates what every other tenant is offered.
+  //
+  // COMPARED AS A STRING, DELIBERATELY. The claim arrives as "0", and 0 is
+  // falsy - a Number() here with a truthiness test anywhere downstream would
+  // make tenant 0 the one tenant the check never fires for, which is exactly
+  // backwards. The screen only decides what is DRAWN; the refusal itself
+  // lives in the API dispatcher, which is what the server trusts.
+  const [curator, setCurator] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -237,7 +246,9 @@ export default function App() {
       await getCurrentUser();
       const session = await fetchAuthSession();
       const claims: any = session.tokens?.idToken?.payload ?? {};
-      setWho(`${claims.email ?? ""} - tenant ${claims["custom:tenant_id"] ?? "?"}`);
+      const tenant = String(claims["custom:tenant_id"] ?? "");
+      setWho(`${claims.email ?? ""} - tenant ${tenant || "?"}`);
+      setCurator(tenant === "0");
       setSignedIn(true);
     } catch {
       setSignedIn(false);
@@ -444,7 +455,8 @@ export default function App() {
               <Route path="/" element={<EngagementsRoute />} />
               <Route path="/engagements/:id" element={<EngagementRoute />} />
               <Route path="/memos/:id" element={<MemoRoute />} />
-              <Route path="/catalogue" element={<CatalogueRoute onOpened={opened} />} />
+              <Route path="/catalogue"
+                     element={<CatalogueRoute curator={curator} onOpened={opened} />} />
               <Route path="/configure" element={<ConfigureRoute epoch={configEpoch} />} />
               <Route path="/settings" element={<SettingsRoute />} />
               <Route path="/settings/brand" element={<SettingsRoute />} />

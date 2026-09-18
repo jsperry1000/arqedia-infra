@@ -264,6 +264,12 @@ locals {
     "GET /config/templates/available",
     "POST /config/templates/fork",
 
+    # What those two offer. Refused to every tenant but the ARQEDIA workspace
+    # in the dispatcher, which is where the control lives - a route exists for
+    # everyone or for nobody.
+    "GET /config/offer",
+    "PUT /config/offer",
+
     # Configuring from the client's own memorandum. The sample goes to the
     # review bucket under proposals/, which nothing watches - a sample is
     # form, not substance, and must never be classified and filed.

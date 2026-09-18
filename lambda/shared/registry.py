@@ -98,12 +98,19 @@ TEMPLATE_TABLES = TABLES[5:]
 _KEY = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 
-def _sql(statement, params=None):
+def _sql(statement, params=None, tx=None):
+    """Data API call, retrying while the cluster wakes from zero capacity.
+
+    With tx, the statement joins that transaction. Sessions do not persist
+    between calls - every statement is its own call - so a transaction id is
+    the only thing that makes two statements one act."""
+    extra = {"transactionId": tx} if tx else {}
     for _ in range(12):
         try:
             return _rds.execute_statement(
                 resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
-                database=DATABASE, sql=statement, parameters=params or [])
+                database=DATABASE, sql=statement, parameters=params or [],
+                **extra)
         except ClientError as exc:
             if exc.response.get("Error", {}).get("Code") in (
                 "DatabaseResumingException", "ThrottlingException"
@@ -112,6 +119,22 @@ def _sql(statement, params=None):
                 continue
             raise
     raise RuntimeError("cluster did not resume")
+
+
+def _begin():
+    return _rds.begin_transaction(
+        resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
+        database=DATABASE)["transactionId"]
+
+
+def _commit(tx):
+    _rds.commit_transaction(resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
+                            transactionId=tx)
+
+
+def _rollback(tx):
+    _rds.rollback_transaction(resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
+                              transactionId=tx)
 
 
 def _p(name, value):
@@ -568,6 +591,153 @@ def _offer(pack_key, kind):
         return None
     return {"tenant_id": _col(records[0], 0), "revision": _col(records[0], 1),
             "template_key": _col(records[0], 2)}
+
+
+def offer():
+    """What is on offer: one revision, and the memoranda offered from it.
+
+    Every mark names the same revision, so this reads as one thing rather than
+    a row per pack. Empty where nothing is marked - which is a broken
+    catalogue, not a quiet default, and the screen says so."""
+    records = _sql(
+        """
+        SELECT revision, kind, template_key, marked_at, marked_by
+        FROM pack_offer ORDER BY kind, pack_key
+        """).get("records", [])
+    if not records:
+        return {"revision": None, "templates": [], "marked_at": None,
+                "marked_by": None}
+    return {
+        "revision": _col(records[0], 0),
+        "templates": sorted(
+            _col(r, 2) for r in records if _col(r, 1) == "template"),
+        "marked_at": _col(records[0], 3),
+        "marked_by": _col(records[0], 4),
+    }
+
+
+def set_offer(revision, template_keys, email, pack_tenant=PACK_TENANT):
+    """Set the whole catalogue at once: one revision, and what is offered
+    from it.
+
+    THE WHOLE OFFER, NOT ONE MARK. Ticking is a name in the list, unticking a
+    name left out, and moving the offer to a newer revision is the same call
+    with a different revision. The rule that marks may not span revisions is
+    then structural - there is no way to express a second one - rather than a
+    check somebody can forget (decision record, 18 September 2026).
+
+    THE BASE IS NOT SEPARATE. It is this revision's base, always.
+    fork_template resolves a memorandum's missing facts from the BASE mark, so
+    a memorandum marked at one revision and a base at another refuses at the
+    customer, at the worst possible moment. Marking them together is what
+    makes that impossible rather than unlikely.
+
+    EVERYTHING IS CHECKED BEFORE ANYTHING IS WRITTEN, and the writes are one
+    transaction. A half-written catalogue is worse than a refused one: the
+    delete alone would take every memorandum off offer and leave Get started
+    with nothing to show."""
+    if isinstance(revision, bool) or not isinstance(revision, int):
+        raise ValueError("a revision is a whole number")
+    if revision == DRAFT:
+        raise ValueError(
+            "a draft cannot be offered: publish it, then offer that revision")
+
+    if not isinstance(template_keys, (list, tuple)):
+        raise ValueError("name the memoranda to offer")
+    wanted = []
+    for key in template_keys:
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("a memorandum is named by its key")
+        if key not in wanted:
+            wanted.append(key)
+    if not wanted:
+        raise ValueError(
+            "offer at least one memorandum: an empty catalogue leaves Get "
+            "started with nothing to show and no base to fork")
+
+    rows = _sql(
+        "SELECT status FROM config_revision "
+        "WHERE tenant_id = :t AND revision = :r",
+        [_p("t", pack_tenant), _p("r", revision)]).get("records", [])
+    if not rows:
+        raise ValueError("the workspace has no revision %d" % revision)
+    if _col(rows[0], 0) != "published":
+        raise ValueError("revision %d is not published" % revision)
+
+    # The base comes with it, so the revision has to carry one. A
+    # memorandum-only revision would leave every new tenant with sections over
+    # a vocabulary that is not there.
+    if not _holds_facts(pack_tenant, revision):
+        raise ValueError(
+            "revision %d holds no facts, so it cannot carry the base"
+            % revision)
+
+    held = _keys(pack_tenant, revision, "config_template", "template_key")
+    missing = [k for k in wanted if k not in held]
+    if missing:
+        raise ValueError(
+            "revision %d does not hold %s"
+            % (revision, ", ".join(sorted(missing))))
+
+    # Item 8's refusal, landing on the curator instead of the customer. Until
+    # now the only thing that noticed a memorandum binding a fact the base does
+    # not define was fork_template, at the moment somebody took it.
+    defined = _keys(pack_tenant, revision, "config_field", "field_key")
+    for key in wanted:
+        bound = _keys(pack_tenant, revision, "config_section_field",
+                      "field_key", "AND template_key = :tk",
+                      [_p("tk", key)])
+        orphans = sorted(bound - defined)
+        if orphans:
+            raise ValueError(
+                "'%s' binds facts revision %d does not define: %s"
+                % (key, revision, ", ".join(orphans)))
+
+    was = offer()
+
+    tx = _begin()
+    try:
+        _sql("DELETE FROM pack_offer", tx=tx)
+        _sql(
+            """
+            INSERT INTO pack_offer
+              (pack_key, kind, tenant_id, revision, template_key, marked_by)
+            VALUES ('base', 'base', :t, :r, NULL, :who)
+            """,
+            [_p("t", pack_tenant), _p("r", revision), _p("who", email)],
+            tx=tx)
+        for key in wanted:
+            # pack_key IS the template key. Nothing downstream remembers a
+            # pack key - a forked memorandum is keyed by template_key,
+            # forked_from records pack:<tenant>:<revision>, and "already
+            # yours" reads template_key - so a second identity to invent and
+            # keep in step buys nothing (decision record, 18 September 2026).
+            _sql(
+                """
+                INSERT INTO pack_offer
+                  (pack_key, kind, tenant_id, revision, template_key,
+                   marked_by)
+                VALUES (:k, 'template', :t, :r, :k, :who)
+                """,
+                [_p("k", key), _p("t", pack_tenant), _p("r", revision),
+                 _p("who", email)],
+                tx=tx)
+        _commit(tx)
+    except Exception:
+        try:
+            _rollback(tx)
+        except Exception:  # noqa: BLE001 - the original error is what matters
+            pass
+        raise
+
+    before = set(was["templates"])
+    return {
+        "revision": revision,
+        "templates": wanted,
+        "added": sorted(set(wanted) - before),
+        "removed": sorted(before - set(wanted)),
+        "moved_from": was["revision"] if was["revision"] != revision else None,
+    }
 
 
 def _holds_facts(tenant_id, revision):
