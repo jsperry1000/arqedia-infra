@@ -24,6 +24,7 @@ import json
 import os
 import re
 import time
+import traceback
 import urllib.parse
 
 import boto3
@@ -188,6 +189,96 @@ def _write_envelope(key, envelope):
     return review_key
 
 
+# What a person is told, per reason. The remedy is the same sentence in three
+# of the four, because the remedy IS the same - only the diagnosis differs, and
+# the diagnosis is the part that matters. A scan is an ordinary document with a
+# fixable problem; a corrupt file may be junk.
+#
+# no_text_layer is INTERIM. Stage 4 converts it from a refusal into the OCR
+# route, and this entry goes with it (decision record, 18 September, item 3).
+_REFUSAL_TEXT = {
+    "no_text_layer":
+        "This file is a scan - its pages are images, with no text behind "
+        "them. Put it through an OCR process on your side and upload the "
+        "result.",
+    "pdf_parse_failed":
+        "This file carries nothing readable. Put it through an OCR process "
+        "on your side and upload the result.",
+    "no_pages":
+        "This file carries nothing readable. Put it through an OCR process "
+        "on your side and upload the result.",
+    "error":
+        "This file could not be processed. Nothing was charged. Remove it "
+        "and try again, or send it to us if it keeps happening.",
+}
+
+# The reasons extractors raises, mapped to ours. Theirs carry a colon and a
+# hyphen; a code that reaches a database column and a log filter should carry
+# neither. An unrecognised reason becomes 'error' rather than inventing a code.
+_REFUSAL_CODES = {
+    "no_text_layer": "no_text_layer",
+    "no-pages": "no_pages",
+}
+
+
+def _refusal_code(reason):
+    reason = str(reason or "")
+    if reason in _REFUSAL_CODES:
+        return _REFUSAL_CODES[reason]
+    if reason.startswith("pdf-parse-failed"):
+        return "pdf_parse_failed"
+    return "error"
+
+
+def _record_refusal(tenant_id, engagement, filename, src_bucket, src_key,
+                    version_id, sha, byte_size, uploaded_by, code):
+    """A document nobody could read, recorded so somebody can see it.
+
+    THE POINT OF STAGE 1. Every exit below the fetch used to return a dict to
+    EventBridge, which discards it - no row, no message, and a review screen
+    waiting ten minutes for something no process would ever create. A refusal
+    is now a row like any other, in a state of its own.
+
+    NO ENVELOPE. There is no text to put in one, and nothing downstream reads
+    it: extraction listens for .normalized.json, which only filing writes.
+    remove_document deletes a key that is not there without complaint, so
+    Remove works on these rows unchanged.
+
+    page_count, char_count and extraction_method stay NULL. The gate knows the
+    page count when it refuses a scan and throws it away; carrying it out means
+    editing extractors, which ships in the layer, and Stage 4 is where the OCR
+    route actually needs it. Until then the screen says "? pages", which is
+    true.
+
+    config_revision is NOT NULL and active_revision falls back to 1 for a
+    tenant that has none, so this cannot fail for want of a configuration."""
+    _sql(
+        """
+        INSERT INTO document
+          (tenant_id, engagement_id, s3_bucket, s3_key, s3_version_id,
+           sha256, filename, byte_size, state, refusal_code, refusal_reason,
+           uploaded_by, config_revision)
+        VALUES
+          (:tenant_id, NULL, :s3_bucket, :s3_key, :s3_version_id,
+           :sha256, :filename, :byte_size, 'unreadable', :code, :reason,
+           :uploaded_by, :config_revision)
+        """,
+        [
+            _p("tenant_id", tenant_id),
+            _p("s3_bucket", src_bucket),
+            _p("s3_key", src_key),
+            _p("s3_version_id", version_id),
+            _p("sha256", sha),
+            _p("filename", filename),
+            _p("byte_size", byte_size),
+            _p("code", code),
+            _p("reason", _REFUSAL_TEXT.get(code, _REFUSAL_TEXT["error"])),
+            _p("uploaded_by", uploaded_by),
+            _p("config_revision", config.active_revision(tenant_id)),
+        ],
+    )
+
+
 def _record_document(envelope):
     result = _sql(
         """
@@ -269,11 +360,46 @@ def lambda_handler(event, context):
     # this function does not, so the answer arrives with the object.
     uploaded_by = (obj.get("Metadata") or {}).get("uploaded-by")
 
+    def refuse(code, log_reason):
+        _record_refusal(tenant_id, engagement, filename, src_bucket, src_key,
+                        obj.get("VersionId"), sha, len(body), uploaded_by,
+                        code)
+        print("[unreadable] key=%s reason=%s code=%s" % (
+            src_key, log_reason, code))
+        return {"status": "unreadable", "reason": log_reason, "code": code,
+                "key": src_key}
+
     try:
-        raw_text, units, method = extractors.extract(src_key, body)
+        return _analyse(src_bucket, src_key, tenant_id, engagement, filename,
+                        obj, body, sha, uploaded_by)
     except extractors.UnreadableDocument as exc:
-        print("[unreadable] key=%s reason=%s" % (src_key, exc.reason))
-        return {"status": "unreadable", "reason": exc.reason, "key": src_key}
+        return refuse(_refusal_code(exc.reason), exc.reason)
+    except Exception as exc:  # noqa: BLE001 - the row is the record, not a raise
+        # NOT RE-RAISED, deliberately. Re-raising would have EventBridge retry
+        # twice and write three refusal rows for one file. The row and this
+        # line are the durable record; a crash BEFORE the row is written is
+        # what Stage 2's on-failure destination is for.
+        #
+        # [normalizer-error] is the prefix Stage 5 puts a metric filter on. It
+        # is the only place it appears, so a filter on it counts exactly this.
+        print("[normalizer-error] key=%s %r" % (src_key, exc))
+        traceback.print_exc()
+        try:
+            return refuse("error", type(exc).__name__)
+        except Exception:  # noqa: BLE001 - nothing left to do but say so
+            print("[normalizer-error] key=%s could not record the refusal"
+                  % src_key)
+            raise
+
+
+def _analyse(src_bucket, src_key, tenant_id, engagement, filename, obj, body,
+             sha, uploaded_by):
+    """Read the document and record what it is. Everything below the fetch.
+
+    Split out so lambda_handler can wrap the whole of it in one try: an exit
+    that writes nothing is the defect Stage 1 closes, and the only way to be
+    sure there is not a fifth one is to catch the lot."""
+    raw_text, units, method = extractors.extract(src_key, body)
 
     # The tenant's own type list, at whatever revision they are working
     # under. A firm doing shipping finance is offered shipping documents.

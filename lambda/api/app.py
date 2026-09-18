@@ -290,15 +290,22 @@ def list_engagements(tenant_id):
 
 
 def list_pending(tenant_id, engagement):
-    """Analysed but not yet filed: the proposed type, how sure, and why."""
+    """Analysed but not yet filed: the proposed type, how sure, and why.
+
+    'unreadable' travels with them. It is not fileable and the screen must not
+    offer it as though it were - but it has to ARRIVE, because a file sent and
+    never seen as a row is what left the review screen waiting ten minutes for
+    something no process would ever create. The row is what clears that wait
+    (decision record, 18 September, item 1)."""
     result = _sql(
         """
         SELECT document_id, filename, document_type, page_count,
                thin_text, char_count, type_confidence, type_reason, state,
-               uploaded_by, part_index, page_from, page_to
+               uploaded_by, part_index, page_from, page_to,
+               refusal_code, refusal_reason
         FROM document
         WHERE tenant_id = :tenant_id
-          AND state IN ('analysed', 'reading')
+          AND state IN ('analysed', 'reading', 'unreadable')
           AND s3_key LIKE :prefix
         ORDER BY document_id
         """,
@@ -318,9 +325,22 @@ def list_pending(tenant_id, engagement):
          "uploaded_by": _col(r, 9),
          "part_index": _col(r, 10),
          "page_from": _col(r, 11),
-         "page_to": _col(r, 12)}
+         "page_to": _col(r, 12),
+         "refusal_code": _col(r, 13),
+         "refusal_reason": _col(r, 14)}
         for r in result.get("records", [])
     ]
+
+
+def _in_list(values, prefix="id"):
+    """An IN list and its parameters.
+
+    Written out rather than interpolated. These are integers the caller sent,
+    and a query that interpolates once is a query that interpolates twice.
+    Mirrors registry._in."""
+    names = [":%s%d" % (prefix, i) for i in range(len(values))]
+    params = [_p("%s%d" % (prefix, i), v) for i, v in enumerate(values)]
+    return ", ".join(names), params
 
 
 def _envelope_suffix(page_from, part_index):
@@ -379,6 +399,25 @@ def file_documents(tenant_id, email, decisions, idempotency_key):
     charge again, and wallet.charge refuses the repeat.
     """
     registry = config.for_tenant(tenant_id)
+
+    # A document nobody could read is not fileable, and must not be counted
+    # before the charge. The screen does not offer it, so reaching here means a
+    # request made by hand - but the money moves two lines below, and a guard
+    # that runs after the charge is not a guard (decision record, 18
+    # September, items 5 and 11: a refused document costs nothing).
+    wanted = [int(d["document_id"]) for d in decisions
+              if d.get("document_id") is not None]
+    if wanted:
+        names, params = _in_list(wanted)
+        blocked = _sql(
+            "SELECT document_id FROM document "
+            "WHERE tenant_id = :t AND state = 'unreadable' "
+            "AND document_id IN (%s)" % names,
+            [_p("t", tenant_id)] + params).get("records", [])
+        if blocked:
+            raise ValueError(
+                "one of these could not be read and cannot be filed: %s"
+                % ", ".join(str(_col(r, 0)) for r in blocked))
 
     chargeable = sum(1 for d in decisions if d.get("include", True))
     if chargeable:
@@ -454,6 +493,11 @@ def remove_document(tenant_id, document_id):
     Refused once filing has started. A document in `reading` has a Textract job
     in flight that would write back to a row no longer there, and a filed one
     has been extracted and paid for. Neither is a misclick.
+
+    An `unreadable` row is removable. It is the one thing a person CAN do with
+    a file we could not read, and it has cost them nothing: no envelope was
+    written and no money moved. Deleting an envelope that was never written is
+    not an error in S3, so the path below needs no special case for it.
     """
     row = _sql("SELECT s3_key, state, page_from, part_index FROM document "
                "WHERE tenant_id = :t AND document_id = :d",
@@ -466,7 +510,7 @@ def remove_document(tenant_id, document_id):
     state = _col(records[0], 1)
     page_from = _col(records[0], 2)
     suffix = _envelope_suffix(page_from, _col(records[0], 3))
-    if state != "analysed":
+    if state not in ("analysed", "unreadable"):
         return {"refused": state}
 
     # One uploaded file can hold several documents, all reading from the same
