@@ -468,7 +468,7 @@ def verify(event, body):
         )
 
         # The trial credit, expiring with the trial. Kept in step with
-        # wallet.grant in lambda/api/wallet.py, which this function cannot
+        # wallet.grant in lambda/shared/wallet.py, which this function cannot
         # import: it has no layer. No ledger row, as grant writes none - the
         # ledger records charges, and this is money put in.
         _sql(

@@ -378,6 +378,46 @@ def _start_ocr(registry, tenant_id, document_id, s3_key, document_type):
     return job_id, mode
 
 
+# What a document is told when it was paid for and could not be read. The
+# sentence about the charge is part of it rather than a separate notice
+# somebody has to find (decision record, 18 September, item 16).
+OCR_FAILED_REASON = (
+    "This file could not be read, even with OCR. It can't be used in its "
+    "current state. Please fix it on your side and upload it again. The "
+    "charge for it has been refunded.")
+
+
+def _fail_and_refund(tenant_id, email, document_id, charge_entry_id, why):
+    """One document paid for and not delivered: say so, and give the money
+    back.
+
+    Terminal, and in the SAME state Stage 1 uses for a document nobody could
+    read. One refusal state, one block on the screen, one Remove - a second
+    state would mean a second of each, telling a person the same thing twice
+    in two different words.
+
+    Returns 1 where money came back and 0 otherwise, so the caller can report
+    it. Never raises: it is already handling a failure, and a refund that
+    throws would lose both the refusal and the money.
+    """
+    _sql(
+        "UPDATE document SET state = 'unreadable', refusal_code = 'ocr_failed',"
+        " refusal_reason = :r WHERE tenant_id = :t AND document_id = :d",
+        [_p("r", OCR_FAILED_REASON), _p("t", tenant_id), _p("d", document_id)])
+
+    try:
+        given = wallet.refund(tenant_id, document_id, charge_entry_id, email)
+    except Exception as exc:  # noqa: BLE001 - the refusal stands regardless
+        print("[refund-failed] tenant=%s doc=%s entry=%s %r" % (
+            tenant_id, document_id, charge_entry_id, exc))
+        return 0
+
+    print("[ocr-failed] tenant=%s doc=%s why=%s refunded=%s repeated=%s "
+          "cents=%s" % (tenant_id, document_id, why, given.get("refunded"),
+                        given.get("repeated"), given.get("amount_cents")))
+    return 1 if given.get("refunded") else 0
+
+
 def file_documents(tenant_id, email, decisions, idempotency_key):
     """Confirm types and file. The deliberate act that starts extraction, and
     the point at which money changes hands.
@@ -420,13 +460,15 @@ def file_documents(tenant_id, email, decisions, idempotency_key):
                 % ", ".join(str(_col(r, 0)) for r in blocked))
 
     chargeable = sum(1 for d in decisions if d.get("include", True))
+    charge_entry_id = None
     if chargeable:
-        wallet.charge(
+        paid = wallet.charge(
             tenant_id, email, "document_filed", chargeable,
             reference=str(chargeable) + " documents filed",
             idempotency_key=idempotency_key)
+        charge_entry_id = (paid or {}).get("entry_id")
 
-    filed, rejected, reading = 0, 0, 0
+    filed, rejected, reading, refunded = 0, 0, 0, 0
 
     for d in decisions:
         document_id = int(d.get("document_id"))
@@ -451,32 +493,60 @@ def file_documents(tenant_id, email, decisions, idempotency_key):
         thin = bool(_col(records[0], 1))
         suffix = _envelope_suffix(_col(records[0], 2), _col(records[0], 3))
 
-        if thin or registry.always_ocr(document_type):
-            _start_ocr(registry, tenant_id, document_id, s3_key,
-                       document_type)
-            reading += 1
-            continue
-
-        _sql("UPDATE document SET document_type = :ty, type_confirmed = 1, "
-             "state = 'filed' WHERE tenant_id = :t AND document_id = :d",
-             [_p("ty", document_type), _p("t", tenant_id),
+        # Which entry paid for it, before anything can fail. A refund has to
+        # name the charge, and one click is one ledger row for every document
+        # in it - so without this there is no way back from a document to the
+        # money (migration 026).
+        _sql("UPDATE document SET charge_entry_id = :e "
+             "WHERE tenant_id = :t AND document_id = :d",
+             [_p("e", charge_entry_id), _p("t", tenant_id),
               _p("d", document_id)])
 
-        # Extraction listens for .normalized.json. Renaming the envelope is
-        # what starts it - filing, not uploading.
-        body = _s3.get_object(Bucket=REVIEW_BUCKET,
-                              Key=s3_key + suffix)["Body"].read()
-        envelope = json.loads(body.decode("utf-8"))
-        envelope["document_type"] = document_type
-        envelope["document_type_confirmed"] = True
-        _s3.put_object(
-            Bucket=REVIEW_BUCKET,
-            Key=s3_key + suffix.replace(".analysed.", ".normalized."),
-            Body=json.dumps(envelope, ensure_ascii=False).encode("utf-8"),
-            ContentType="application/json")
-        filed += 1
+        if thin or registry.always_ocr(document_type):
+            # PAID FOR ALREADY. Everything below this point can fail with the
+            # money gone, which is what item 14 exists to answer: the document
+            # is told, and the charge for it comes back. The rest of the batch
+            # carries on - one bad document must not strand seventeen good
+            # ones that have also been paid for.
+            try:
+                _start_ocr(registry, tenant_id, document_id, s3_key,
+                           document_type)
+                reading += 1
+            except Exception as exc:  # noqa: BLE001 - refunded, then reported
+                refunded += _fail_and_refund(
+                    tenant_id, email, document_id, charge_entry_id,
+                    "textract.start: %s" % type(exc).__name__)
+            continue
 
-    return {"filed": filed, "reading": reading, "rejected": rejected}
+        # Everything here is after the charge too. A missing envelope, a KMS
+        # refusal, malformed JSON - any of them used to leave the money gone
+        # and the document in limbo with a 500 on screen.
+        try:
+            _sql("UPDATE document SET document_type = :ty, type_confirmed = 1, "
+                 "state = 'filed' WHERE tenant_id = :t AND document_id = :d",
+                 [_p("ty", document_type), _p("t", tenant_id),
+                  _p("d", document_id)])
+
+            # Extraction listens for .normalized.json. Renaming the envelope is
+            # what starts it - filing, not uploading.
+            body = _s3.get_object(Bucket=REVIEW_BUCKET,
+                                  Key=s3_key + suffix)["Body"].read()
+            envelope = json.loads(body.decode("utf-8"))
+            envelope["document_type"] = document_type
+            envelope["document_type_confirmed"] = True
+            _s3.put_object(
+                Bucket=REVIEW_BUCKET,
+                Key=s3_key + suffix.replace(".analysed.", ".normalized."),
+                Body=json.dumps(envelope, ensure_ascii=False).encode("utf-8"),
+                ContentType="application/json")
+            filed += 1
+        except Exception as exc:  # noqa: BLE001 - refunded, then reported
+            refunded += _fail_and_refund(
+                tenant_id, email, document_id, charge_entry_id,
+                "filing: %s" % type(exc).__name__)
+
+    return {"filed": filed, "reading": reading, "rejected": rejected,
+            "refunded": refunded}
 
 
 # --- documents -------------------------------------------------------------
