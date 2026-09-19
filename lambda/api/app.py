@@ -445,19 +445,41 @@ def file_documents(tenant_id, email, decisions, idempotency_key):
     # request made by hand - but the money moves two lines below, and a guard
     # that runs after the charge is not a guard (decision record, 18
     # September, items 5 and 11: a refused document costs nothing).
+    included = [d for d in decisions if d.get("include", True)]
     wanted = [int(d["document_id"]) for d in decisions
               if d.get("document_id") is not None]
+    known = {}
     if wanted:
         names, params = _in_list(wanted)
-        blocked = _sql(
-            "SELECT document_id FROM document "
-            "WHERE tenant_id = :t AND state = 'unreadable' "
-            "AND document_id IN (%s)" % names,
-            [_p("t", tenant_id)] + params).get("records", [])
+        known = {
+            _col(r, 0): (_col(r, 1), _col(r, 2))
+            for r in _sql(
+                "SELECT document_id, filename, state FROM document "
+                "WHERE tenant_id = :t AND document_id IN (%s)" % names,
+                [_p("t", tenant_id)] + params).get("records", [])
+        }
+
+        blocked = [n for _id, (n, st) in known.items() if st == "unreadable"]
         if blocked:
             raise ValueError(
                 "one of these could not be read and cannot be filed: %s"
-                % ", ".join(str(_col(r, 0)) for r in blocked))
+                % ", ".join(sorted(blocked)))
+
+    # A SCAN ARRIVES WITH NO TYPE, and the read mode comes from the confirmed
+    # type - so _start_ocr would fail on a null, AFTER the charge. Refused
+    # here, before the money moves, and named so a person knows which one
+    # (decision record, 18 September, item 7).
+    typeless = sorted(
+        known.get(int(d["document_id"]), (str(d.get("document_id")), None))[0]
+        for d in included
+        if d.get("document_id") is not None
+        and not (d.get("document_type") or "").strip())
+    if typeless:
+        raise ValueError(
+            "choose what %s before filing. A scan has no type until you "
+            "give it one, and the type decides how it is read."
+            % (("these are: " + ", ".join(typeless)) if len(typeless) > 1
+               else ("this is: " + typeless[0])))
 
     chargeable = sum(1 for d in decisions if d.get("include", True))
     charge_entry_id = None
@@ -757,10 +779,17 @@ def document_passage(tenant_id, document_id, unit):
     else:
         suffix = suffix.replace(".analysed.", ".normalized.")
 
-    envelope = json.loads(
-        _s3.get_object(Bucket=REVIEW_BUCKET,
-                       Key=s3_key + suffix)["Body"].read()
-        .decode("utf-8"))
+    # A refusal has no envelope at all - nothing was read, so there was
+    # nothing to write one from - and a scan's is empty until OCR fills it.
+    # Neither is an error here: the point of opening one of these is to look
+    # at the ORIGINAL, and source_url below is what does that.
+    try:
+        envelope = json.loads(
+            _s3.get_object(Bucket=REVIEW_BUCKET,
+                           Key=s3_key + suffix)["Body"].read()
+            .decode("utf-8"))
+    except ClientError:
+        envelope = {}
 
     raw = envelope.get("raw_text") or ""
     units = envelope.get("units") or []

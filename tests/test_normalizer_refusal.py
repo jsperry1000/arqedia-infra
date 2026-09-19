@@ -10,6 +10,7 @@ screen waited ten minutes for something no process would ever create.
 """
 
 import importlib.util
+import json
 import os
 import sys
 import types
@@ -38,9 +39,11 @@ def load_normalizer():
     extractors = types.ModuleType("extractors")
 
     class UnreadableDocument(Exception):
-        def __init__(self, reason):
+        def __init__(self, reason, pages=None, chars=None):
             super().__init__(reason)
             self.reason = reason
+            self.pages = pages
+            self.chars = chars
 
     extractors.UnreadableDocument = UnreadableDocument
     extractors.extract = mock.MagicMock()
@@ -103,9 +106,9 @@ class RefusalTest(unittest.TestCase):
         with mock.patch.object(self.app, "_sql", self.db.sql):
             return self.app.lambda_handler(event(), None)
 
-    def refuse_with(self, reason):
+    def refuse_with(self, reason, pages=None, chars=None):
         self.extractors.extract.side_effect = \
-            self.extractors.UnreadableDocument(reason)
+            self.extractors.UnreadableDocument(reason, pages, chars)
         return self.run_handler()
 
     def row(self):
@@ -114,14 +117,6 @@ class RefusalTest(unittest.TestCase):
         return inserts[0][1]
 
     # --- a row is written, whatever the reason -----------------------------
-
-    def test_a_scan_writes_a_row(self):
-        result = self.refuse_with("no_text_layer")
-        values = self.row()
-        self.assertEqual(values["code"], "no_text_layer")
-        self.assertIn("scan", values["reason"])
-        self.assertIn("OCR process on your side", values["reason"])
-        self.assertEqual(result["status"], "unreadable")
 
     def test_a_corrupt_file_writes_a_row(self):
         self.refuse_with("pdf-parse-failed: something broke")
@@ -160,7 +155,7 @@ class RefusalTest(unittest.TestCase):
     # --- what the row says -------------------------------------------------
 
     def test_the_row_is_terminal_and_identifies_the_file(self):
-        self.refuse_with("no_text_layer")
+        self.refuse_with("no-pages")
         sent, values = self.db.inserts()[0]
         self.assertIn("'unreadable'", sent)
         self.assertEqual(values["tenant_id"], 9)
@@ -169,9 +164,10 @@ class RefusalTest(unittest.TestCase):
         self.assertEqual(values["uploaded_by"], "walk1@deus-ex.co")
         self.assertEqual(values["config_revision"], 7)
 
-    def test_no_envelope_is_written(self):
+    def test_no_envelope_is_written_for_a_refusal(self):
         # There is no text to put in one, and nothing downstream reads it.
-        self.refuse_with("no_text_layer")
+        # A SCAN is the opposite case and must have one - see ScanTest.
+        self.refuse_with("no-pages")
         self.app._s3.put_object.assert_not_called()
 
     def test_an_unknown_reason_becomes_error_rather_than_a_new_code(self):
@@ -197,6 +193,99 @@ class RefusalTest(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         for _, values in self.db.inserts():
             self.assertIsNone(values.get("code"))
+
+
+class ScanTest(unittest.TestCase):
+    """no_text_layer is not a refusal any more. It is a document with no type
+    yet, bound for OCR at filing (decision record, 18 September, item 3)."""
+
+    def setUp(self):
+        self.app, self.extractors = load_normalizer()
+        self.db = FakeDb()
+        body = mock.MagicMock()
+        body.read.return_value = b"%PDF-1.4 a scan"
+        self.app._s3.get_object.return_value = {
+            "Body": body, "VersionId": "v1",
+            "Metadata": {"uploaded-by": "walk1@deus-ex.co"},
+        }
+        self.extractors.extract.side_effect =             self.extractors.UnreadableDocument("no_text_layer", pages=12,
+                                               chars=340)
+
+    def run_handler(self):
+        with mock.patch.object(self.app, "_sql", self.db.sql):
+            return self.app.lambda_handler(event(), None)
+
+    def row(self):
+        inserts = self.db.inserts()
+        self.assertEqual(len(inserts), 1, "expected exactly one row")
+        return inserts[0]
+
+    def test_it_is_fileable_not_refused(self):
+        # state travels as a bound parameter here, unlike the refusal INSERT
+        # which inlines 'unreadable'.
+        result = self.run_handler()
+        sent, values = self.row()
+        self.assertEqual(result["status"], "scan")
+        self.assertEqual(values["state"], "analysed")
+        self.assertNotIn("'unreadable'", sent)
+
+    def test_thin_text_is_set_so_filing_sends_it_to_ocr(self):
+        # This is the flag file_documents reads to choose OCR. Without it the
+        # scan would go to extraction and yield nothing.
+        self.run_handler()
+        self.assertEqual(self.row()[1]["thin_text"], 1)
+
+    def test_no_type_is_proposed(self):
+        # Nothing to classify from. A type guessed from a filename would put a
+        # guess where a reading belongs.
+        self.run_handler()
+        values = self.row()[1]
+        self.assertIsNone(values["document_type"])
+        self.assertIsNone(values["type_confidence"])
+
+    def test_classification_is_skipped_entirely(self):
+        self.run_handler()
+        self.app.segment.segment.assert_not_called()
+        values = self.row()[1]
+        self.assertIsNone(values["classify_tokens_in"])
+        self.assertIsNone(values["classify_tokens_out"])
+
+    def test_the_reason_goes_in_type_reason_not_refusal(self):
+        # A scan is not a refusal. refusal_* stays for the three that are.
+        self.run_handler()
+        sent, values = self.row()
+        self.assertEqual(values["type_reason"], self.app.SCAN_REASON)
+        self.assertIn("A scan, no readable text", values["type_reason"])
+        self.assertNotIn("refusal_code", sent)
+        self.assertNotIn("refusal_reason", sent)
+
+    def test_the_measured_counts_are_kept(self):
+        # The gate had both numbers when it refused and used to discard them,
+        # leaving the screen saying "? pages" about a file it had counted.
+        self.run_handler()
+        values = self.row()[1]
+        self.assertEqual(values["page_count"], 12)
+        self.assertEqual(values["char_count"], 340)
+
+    def test_an_envelope_is_written_and_it_is_empty(self):
+        # The collector READS this object when OCR finishes and overwrites its
+        # fields. Without it the job completes with nowhere to put the result.
+        self.run_handler()
+        self.app._s3.put_object.assert_called_once()
+        body = self.app._s3.put_object.call_args.kwargs["Body"]
+        envelope = json.loads(body.decode("utf-8"))
+        self.assertEqual(envelope["raw_text"], "")
+        self.assertEqual(envelope["units"], [])
+        self.assertTrue(envelope["thin_text"])
+        self.assertIsNone(envelope["document_type"])
+
+    def test_one_part_and_no_page_range(self):
+        self.run_handler()
+        values = self.row()[1]
+        self.assertEqual(values["part_index"], 1)
+        self.assertIsNone(values["page_from"])
+        self.assertIsNone(values["page_to"])
+
 
 
 if __name__ == "__main__":
