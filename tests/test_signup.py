@@ -49,21 +49,38 @@ def plain(value):
 
 
 class FakeSignupDb:
-    def __init__(self, plans=("base", "business"), pending=None):
+    """allow defaults to the address every test uses, so the allowlist does
+    not have to be restated in tests that are about something else. claimed
+    maps a domain to the tenant already holding it."""
+
+    def __init__(self, plans=("base", "business"), pending=None,
+                 allow=("a@firm.com",), claimed=None):
         self.plans = set(plans)
         self.pending = pending
+        self.allow = set(allow)
+        self.claimed = dict(claimed or {})
         self.statements = []
 
     def sql(self, statement, params=None, tx=None):
         s = " ".join(statement.split())
         values = {p["name"]: plain(p["value"]) for p in params or []}
         self.statements.append((s, values))
+        if s.startswith("SELECT email FROM signup_allow"):
+            return rows((values["e"],)) if values["e"] in self.allow else rows()
         if s.startswith("SELECT 1 FROM plan"):
             return rows((1,)) if values["k"] in self.plans else rows()
         if "COUNT(*)" in s:
             return rows((0,))
         if s.startswith("SELECT pending_id"):
             return rows(self.pending) if self.pending else rows()
+        # The one-trial-per-domain read and the claim read, in that order of
+        # specificity - both begin "SELECT tenant_id FROM tenant_domain".
+        if s.startswith("SELECT tenant_id, multi_allowed FROM tenant_domain"):
+            held = self.claimed.get(values["d"])
+            return rows((held, 0)) if held is not None else rows()
+        if s.startswith("SELECT tenant_id FROM tenant_domain"):
+            held = self.claimed.get(values["d"])
+            return rows((held,)) if held is not None else rows()
         if s.startswith("INSERT INTO tenant ("):
             return {"generatedFields": [{"longValue": 42}]}
         return rows()
@@ -158,6 +175,97 @@ class SignupTest(unittest.TestCase):
         self.assertLess(abs((ends - expected).total_seconds()), 60)
         [bucket] = db.inserted("wallet_bucket")
         self.assertEqual(bucket["exp"], tenant["trial"])
+
+
+class AllowlistTest(unittest.TestCase):
+    """Signup is invite-only. The allowlist is the single gate on WHO; every
+    other check is about abuse volume or duplication."""
+
+    def setUp(self):
+        self.signup = load_signup()
+        self.signup._rds = mock.MagicMock()
+        self.signup._rds.begin_transaction.return_value = {"transactionId": "tx"}
+        self.signup._ses = mock.MagicMock()
+        self.signup._idp = mock.MagicMock()
+        # begin() asks Cognito whether the address already has a user; a bare
+        # MagicMock answers yes to everything, so the absence has to be said.
+        not_found = type("UserNotFoundException", (Exception,), {})
+        self.signup._idp.exceptions.UserNotFoundException = not_found
+        self.signup._idp.admin_get_user.side_effect = not_found()
+
+    def begin(self, db, email="a@firm.com"):
+        with mock.patch.object(self.signup, "_sql", db.sql):
+            return self.signup.begin(EVENT, {"email": email,
+                                             "org_name": "Firm"})
+
+    def pending(self, domain="firm.com"):
+        return (1, domain, self.signup._sha("123456"), 0, "Firm", None,
+                "us-east-2", None, None, "2999-01-01 00:00:00", None, None)
+
+    def verify(self, db, email="a@firm.com"):
+        with mock.patch.object(self.signup, "_sql", db.sql):
+            return self.signup.verify(EVENT, {"email": email,
+                                              "code": "123456",
+                                              "password": "pw"})
+
+    def test_an_invited_address_is_admitted(self):
+        db = FakeSignupDb(allow=("a@firm.com",))
+        reply = self.begin(db)
+        self.assertEqual(reply["statusCode"], 200)
+        self.assertEqual(len(db.inserted("pending_signup")), 1)
+        self.signup._ses.send_email.assert_called_once()
+
+    def test_an_uninvited_address_is_refused_as_not_invited(self):
+        db = FakeSignupDb(allow=())
+        reply = self.begin(db)
+        self.assertEqual(reply["statusCode"], 400)
+        self.assertIn("not open for signup", reply["body"])
+        # Nothing created and no code sent.
+        self.assertEqual(db.inserted("pending_signup"), [])
+        self.signup._ses.send_email.assert_not_called()
+        # Recorded as an attempt, like every other refusal.
+        [attempt] = db.inserted("signup_attempt")
+        self.assertEqual(attempt["o"], "not_invited")
+
+    def test_an_invited_address_at_a_claimed_domain_is_admitted(self):
+        # gmail.com is held by tenant 0 on dev, and two of the four seeded
+        # addresses are at domains that are already claimed. The allowlist is
+        # the decision; the domain rule must not overrule it.
+        db = FakeSignupDb(allow=("a@firm.com",), claimed={"firm.com": 7})
+        reply = self.begin(db)
+        self.assertEqual(reply["statusCode"], 200)
+        self.assertEqual(len(db.inserted("pending_signup")), 1)
+
+    def test_the_existing_claim_is_left_exactly_as_it_was(self):
+        db = FakeSignupDb(allow=("a@firm.com",), claimed={"firm.com": 7},
+                          pending=self.pending())
+        reply = self.verify(db)
+        self.assertEqual(reply["statusCode"], 200)
+        # The tenant is made...
+        self.assertEqual(len(db.inserted("tenant")), 1)
+        # ...and the claim is NOT written, updated or replaced.
+        self.assertEqual(db.inserted("tenant_domain"), [])
+        for sent, _ in db.statements:
+            self.assertNotIn("UPDATE tenant_domain", sent)
+            self.assertNotIn("REPLACE INTO tenant_domain", sent)
+            self.assertNotIn("INSERT IGNORE INTO tenant_domain", sent)
+
+    def test_a_free_domain_is_still_claimed(self):
+        db = FakeSignupDb(allow=("a@firm.com",), pending=self.pending())
+        reply = self.verify(db)
+        self.assertEqual(reply["statusCode"], 200)
+        [claim] = db.inserted("tenant_domain")
+        self.assertEqual((claim["d"], claim["t"]), ("firm.com", 42))
+
+    def test_verify_refuses_an_address_removed_from_the_allowlist(self):
+        # A pending_signup row lives fifteen minutes. One created while an
+        # address was allowed must not be verifiable after it is removed.
+        db = FakeSignupDb(allow=(), pending=self.pending())
+        reply = self.verify(db)
+        self.assertEqual(reply["statusCode"], 400)
+        self.assertIn("not open for signup", reply["body"])
+        self.assertEqual(db.inserted("tenant"), [])
+
 
 
 if __name__ == "__main__":
