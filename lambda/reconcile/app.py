@@ -39,6 +39,23 @@ SECRET_ARN = os.environ["SECRET_ARN"]
 DATABASE = os.environ["DATABASE"]
 ORPHAN_AFTER_MINUTES = int(os.environ.get("ORPHAN_AFTER_MINUTES", "30"))
 
+# Objects older than this are known historical debris, not findings.
+#
+# Eighty-eight objects predate the Stage 1 apply of 18 September, when the
+# normalizer began writing a row for every refusal. Before that a refused
+# document left no trace at all - which is the hole Stage 1 closed - so every
+# one of them is an orphan by construction. Every key is recorded, with its
+# timestamp, in docs/ARQEDIA_orphans_before_stage1_2026-09-19.md.
+#
+# Reporting them every fifteen minutes would bury a real one. They are COUNTED
+# AND NOT LISTED: the summary line carries historical=N on every run, so the
+# number stays in front of whoever reads it and a change in it would show.
+# Nothing is hidden; it is just not repeated eighty-eight times an hour.
+#
+# Empty disables the split and everything is reported, which is what a fresh
+# environment wants.
+HISTORICAL_BEFORE = os.environ.get("HISTORICAL_BEFORE", "").strip()
+
 # How many keys go into one IN list. Bounded so a bucket with a hundred
 # thousand objects asks a hundred reasonable questions rather than one
 # impossible one.
@@ -49,6 +66,23 @@ _CHUNK = 200
 # silent run and a run that did not happen look identical otherwise.
 ORPHAN = "[orphan]"
 SUMMARY = "[reconcile]"
+
+
+def _historical_cutoff():
+    """The boundary, or None where it is not set or is unreadable.
+
+    A malformed value reports EVERYTHING rather than nothing. The failure that
+    matters is a backstop that goes quiet, and a typo here must not cause
+    one."""
+    if not HISTORICAL_BEFORE:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(
+            HISTORICAL_BEFORE.replace("Z", "+00:00"))
+    except ValueError:
+        print("%s historical_before=%r is not a date; reporting everything"
+              % (SUMMARY, HISTORICAL_BEFORE))
+        return None
 
 
 def _sql(statement, params=None):
@@ -121,19 +155,27 @@ def lambda_handler(event, context):
     candidates, scanned = _candidates(cutoff)
     known = _known([k for k, _, _ in candidates]) if candidates else set()
 
-    orphans = []
+    historical_before = _historical_cutoff()
+    orphans, historical = [], 0
     for key, modified, size in candidates:
         if key in known:
+            continue
+        if historical_before and modified < historical_before:
+            historical += 1
             continue
         age = int((now - modified).total_seconds() // 60)
         orphans.append(key)
         print("%s key=%s age_minutes=%d bytes=%d" % (ORPHAN, key, age, size))
 
     # ALWAYS PRINTED. Zero orphans is a result; no line at all is a function
-    # that did not run, and the two must not look the same.
-    print("%s scanned=%d older_than=%dm candidates=%d orphans=%d" % (
-        SUMMARY, scanned, ORPHAN_AFTER_MINUTES, len(candidates), len(orphans)))
+    # that did not run, and the two must not look the same. historical is on
+    # every line for the same reason - a count that only appears when it is
+    # non-zero is a count nobody notices changing.
+    print("%s scanned=%d older_than=%dm candidates=%d orphans=%d historical=%d"
+          % (SUMMARY, scanned, ORPHAN_AFTER_MINUTES, len(candidates),
+             len(orphans), historical))
 
     return {"scanned": scanned, "candidates": len(candidates),
             "orphans": len(orphans), "keys": orphans[:100],
+            "historical": historical,
             "older_than_minutes": ORPHAN_AFTER_MINUTES}

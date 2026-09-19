@@ -172,6 +172,16 @@ resource "aws_lambda_function" "reconcile" {
       SECRET_ARN           = aws_rds_cluster.main.master_user_secret[0].secret_arn
       DATABASE             = "arqedia"
       ORPHAN_AFTER_MINUTES = "30"
+
+      # The Stage 1 apply. Eighty-eight objects predate it and are orphans by
+      # construction: before it, a refused document left no trace at all.
+      # Verified against S3 LastModified, not inferred - the newest is
+      # 2026-09-18 15:47:26 UTC, and none is at or after this moment. Every
+      # key is in docs/ARQEDIA_orphans_before_stage1_2026-09-19.md.
+      #
+      # They are counted, not listed: the summary line carries historical=88
+      # on every run. Listing them every fifteen minutes would bury a real one.
+      HISTORICAL_BEFORE = "2026-09-18T19:45:00Z"
     }
   }
 
