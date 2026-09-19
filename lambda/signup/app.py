@@ -84,6 +84,26 @@ DISPOSABLE = {
     "fakeinbox.com", "mintemail.com", "mohmal.com", "spamgourmet.com",
 }
 
+# Domains that belong to no firm. A tenant_domain row means "this domain's
+# workspace", and gmail.com is not a workspace: the first person to sign up
+# from one would otherwise claim it for their own tenant and every later
+# address at it would be told to ask an administrator there for a seat - an
+# administrator who is a stranger. The claim is simply not written for these,
+# the same way it is not written for a domain somebody already holds.
+#
+# NOT A REFUSAL. These addresses may sign up exactly as before; they take a
+# tenant, a trial and their credit. It is only the claim that is skipped.
+#
+# A FIXED LIST, and a short one, by the same argument as DISPOSABLE above: a
+# stale list is worse than none because it reads as working. It covers what
+# people actually sign up with and no more. It is to be extended when signup
+# opens to the public, which is when addresses outside it start arriving.
+FREE_MAIL = {
+    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
+    "yahoo.com", "icloud.com", "me.com", "aol.com", "proton.me",
+    "protonmail.com",
+}
+
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -504,11 +524,11 @@ def verify(event, body):
         if not isinstance(tenant_id, int) or tenant_id <= 0:
             raise RuntimeError(f"tenant insert returned no usable id: {tenant_id!r}")
 
-        # THE CLAIM IS TAKEN ONLY IF IT IS FREE.
+        # THE CLAIM IS TAKEN ONLY IF IT IS FREE, AND ONLY IF IT IS A FIRM'S.
         #
         # An invited address is past the domain rule above, so it can reach
-        # here with the domain already claimed - gmail.com is held by tenant
-        # 0. A bare INSERT would hit the primary key and roll the whole
+        # here with the domain already claimed - ebl-finance.com is held by
+        # tenant 5. A bare INSERT would hit the primary key and roll the whole
         # transaction back, AFTER the code was verified, answering 500 and
         # naming nothing.
         #
@@ -522,23 +542,33 @@ def verify(event, body):
         #
         # So: look, then write. The existing row is never updated, never
         # replaced, and keeps its own created_at and multi_allowed.
-        held = _sql(
-            "SELECT tenant_id FROM tenant_domain WHERE domain = :d",
-            [_p("d", domain)],
-            tx=tx,
-        ).get("records", [])
-        if held:
-            # The new tenant has NO domain claim, and therefore no home_domain
-            # on its Seats screen, so no colleague is marked as outside the
-            # firm. Accepted deliberately; recorded in the handoff.
-            print("[claim-held] domain=%s new_tenant=%s held_by=%s" % (
-                domain, tenant_id, _col(held[0], 0)))
+        #
+        # A free-mail domain is skipped before the lookup rather than after
+        # it: there is nothing to look up, because no tenant may hold one.
+        if domain in FREE_MAIL:
+            print("[claim-free-mail] domain=%s new_tenant=%s" % (
+                domain, tenant_id))
         else:
-            _sql(
-                "INSERT INTO tenant_domain (domain, tenant_id) VALUES (:d, :t)",
-                [_p("d", domain), _p("t", tenant_id)],
+            held = _sql(
+                "SELECT tenant_id FROM tenant_domain WHERE domain = :d",
+                [_p("d", domain)],
                 tx=tx,
-            )
+            ).get("records", [])
+            if held:
+                # The new tenant has NO domain claim, and therefore no
+                # home_domain on its Seats screen, so no colleague is marked
+                # as outside the firm. The same is true of the free-mail case
+                # above, and for the same reason it does not matter: with
+                # nothing to compare against, marking everybody external is
+                # noise. Accepted deliberately; recorded in the handoff.
+                print("[claim-held] domain=%s new_tenant=%s held_by=%s" % (
+                    domain, tenant_id, _col(held[0], 0)))
+            else:
+                _sql(
+                    "INSERT INTO tenant_domain (domain, tenant_id) VALUES (:d, :t)",
+                    [_p("d", domain), _p("t", tenant_id)],
+                    tx=tx,
+                )
 
         # The founding administrator holds a seat like anybody else. Without
         # one the seats screen counts nobody and the last-administrator rule

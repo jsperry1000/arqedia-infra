@@ -228,9 +228,9 @@ class AllowlistTest(unittest.TestCase):
         self.assertEqual(attempt["o"], "not_invited")
 
     def test_an_invited_address_at_a_claimed_domain_is_admitted(self):
-        # gmail.com is held by tenant 0 on dev, and two of the four seeded
-        # addresses are at domains that are already claimed. The allowlist is
-        # the decision; the domain rule must not overrule it.
+        # ebl-finance.com is held by tenant 5 on dev, and one of the four
+        # seeded addresses is at it. The allowlist is the decision; the domain
+        # rule must not overrule it.
         db = FakeSignupDb(allow=("a@firm.com",), claimed={"firm.com": 7})
         reply = self.begin(db)
         self.assertEqual(reply["statusCode"], 200)
@@ -266,6 +266,59 @@ class AllowlistTest(unittest.TestCase):
         self.assertIn("not open for signup", reply["body"])
         self.assertEqual(db.inserted("tenant"), [])
 
+
+class FreeMailClaimTest(unittest.TestCase):
+    """A tenant_domain row means "this domain's workspace", so no tenant may
+    hold gmail.com. Signing up from one is allowed and unchanged; only the
+    claim is skipped."""
+
+    def setUp(self):
+        self.signup = load_signup()
+        self.signup._rds = mock.MagicMock()
+        self.signup._rds.begin_transaction.return_value = {"transactionId": "tx"}
+        self.signup._ses = mock.MagicMock()
+        self.signup._idp = mock.MagicMock()
+
+    def pending(self, domain):
+        return (1, domain, self.signup._sha("123456"), 0, "Firm", None,
+                "us-east-2", None, None, "2999-01-01 00:00:00", None, None)
+
+    def verify(self, db, email):
+        with mock.patch.object(self.signup, "_sql", db.sql):
+            return self.signup.verify(EVENT, {"email": email,
+                                              "code": "123456",
+                                              "password": "pw"})
+
+    def test_a_gmail_signup_creates_a_tenant_and_writes_no_claim(self):
+        db = FakeSignupDb(allow=("a@gmail.com",),
+                          pending=self.pending("gmail.com"))
+        reply = self.verify(db, "a@gmail.com")
+        self.assertEqual(reply["statusCode"], 200)
+        # The account is made in full - this is not a refusal.
+        self.assertEqual(len(db.inserted("tenant")), 1)
+        self.assertEqual(len(db.inserted("seat")), 1)
+        # And gmail.com is claimed by nobody.
+        self.assertEqual(db.inserted("tenant_domain"), [])
+
+    def test_no_free_mail_domain_is_ever_claimed(self):
+        # The whole constant, not a sample: a domain added to the list
+        # without the skip working for it would be the defect this prevents.
+        for domain in sorted(self.signup.FREE_MAIL):
+            with self.subTest(domain=domain):
+                email = "a@" + domain
+                db = FakeSignupDb(allow=(email,),
+                                  pending=self.pending(domain))
+                reply = self.verify(db, email)
+                self.assertEqual(reply["statusCode"], 200)
+                self.assertEqual(db.inserted("tenant_domain"), [])
+
+    def test_a_firm_domain_is_still_claimed(self):
+        db = FakeSignupDb(allow=("a@firm.com",),
+                          pending=self.pending("firm.com"))
+        reply = self.verify(db, "a@firm.com")
+        self.assertEqual(reply["statusCode"], 200)
+        [claim] = db.inserted("tenant_domain")
+        self.assertEqual((claim["d"], claim["t"]), ("firm.com", 42))
 
 
 if __name__ == "__main__":
