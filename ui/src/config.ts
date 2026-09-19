@@ -1,3 +1,53 @@
+/**
+ * What this build points at.
+ *
+ * The Cognito and API values are still literals, and still wrong for a second
+ * environment (ENV-01). The Paddle pair is not: it is read from the build, so
+ * one codebase can produce a sandbox bundle or a live one, and producing the
+ * wrong one is an error rather than a surprise.
+ */
+
+/** A value the build cannot proceed without.
+ *
+ *  NEVER DEFAULTED. A default here is how a bundle ends up pointed at the
+ *  wrong Paddle account while looking perfectly healthy: sandbox prices
+ *  against a live token collect nothing, and a live token in a test build
+ *  takes real money. Missing is a failure, and it says so. vite.config.ts
+ *  makes the same check at build time, so this one should never fire in a
+ *  bundle that was built properly - it is the belt to that braces. */
+function required(name: string, value: string | undefined): string {
+  if (!value) {
+    throw new Error(
+      `${name} is not set. Copy ui/.env.example to ui/.env and fill it in, ` +
+      `then build again.`);
+  }
+  return value;
+}
+
+const paddleEnvironment = required(
+  "VITE_PADDLE_ENVIRONMENT", import.meta.env.VITE_PADDLE_ENVIRONMENT);
+
+if (paddleEnvironment !== "sandbox" && paddleEnvironment !== "production") {
+  throw new Error(
+    `VITE_PADDLE_ENVIRONMENT must be "sandbox" or "production", not ` +
+    `"${paddleEnvironment}".`);
+}
+
+const paddleToken = required(
+  "VITE_PADDLE_TOKEN", import.meta.env.VITE_PADDLE_TOKEN);
+
+// THE PAIR MUST AGREE. Paddle's documented format is
+// ^(test|live)_[a-zA-Z0-9]{27}$, and the prefix names the workspace the token
+// belongs to. A test_ token with environment "production" is ENV-01 happening
+// in front of a paying customer, so it is refused here rather than diagnosed
+// later from a checkout that silently does nothing.
+const expectedPrefix = paddleEnvironment === "sandbox" ? "test_" : "live_";
+if (!paddleToken.startsWith(expectedPrefix)) {
+  throw new Error(
+    `VITE_PADDLE_TOKEN does not match VITE_PADDLE_ENVIRONMENT: ` +
+    `"${paddleEnvironment}" expects a token beginning "${expectedPrefix}".`);
+}
+
 export const config = {
   userPoolId: "us-east-2_AcsEyzDLL",
   userPoolClientId: "7neoek1vpj90suoo8p8rrp04re",
@@ -5,24 +55,21 @@ export const config = {
 
   // Paddle's client-side token, and the environment it belongs to.
   //
-  // PUBLIC BY DESIGN, and the only Paddle credential that may appear here.
-  // Paddle's documentation: client-side tokens "have limited access to the
-  // data in your system, so they're safe to publish", and "never use API keys
-  // with Paddle.js - API keys should be kept secret and never used in your
-  // frontend". The API key and the webhook secret live in Secrets Manager and
-  // are read by the Lambda at start-up (decision record item 1); neither has
-  // any business in a bundle.
+  // PUBLIC BY DESIGN. Paddle's documentation: client-side tokens "have
+  // limited access to the data in your system, so they're safe to publish",
+  // and "never use API keys with Paddle.js". The API key and the webhook
+  // secret live in Secrets Manager and are read by the Lambda at start-up
+  // (decision record item 1); neither has any business in a bundle.
   //
-  // SANDBOX ONLY. A token is bound to one workspace: a test_ token works only
-  // against sandbox, where no real money is involved, and a live_ token only
-  // against live. They are different strings from different dashboards.
+  // FROM THE BUILD, NOT FROM GIT (ENV-01, partly closed 19 September). These
+  // are compiled in, so the bundle is still bound to one environment - but
+  // which one is now a build input rather than a commit, and a build with the
+  // wrong pair, or no pair at all, fails instead of shipping.
   //
-  // ONE BUNDLE CANNOT SERVE BOTH (ENV-01). These two values are compiled into
-  // web/, so the committed bundle carries a sandbox credential. Before live,
-  // this file must come from the build rather than from git - an environment
-  // variable read at build time, or a configuration fetched at start-up.
-  // Shipping this bundle against a live Paddle account would open a sandbox
-  // checkout at real prices and collect nothing.
-  paddleToken: "test_2e70a9990de45a16d204d1297ad",
-  paddleEnvironment: "sandbox" as const,
+  // STILL TRUE, AND STILL ENV-01: web/ is committed build output, so whatever
+  // token the last build used is in git inside web/assets/. Moving the value
+  // out of config.ts does not take it out of the repository. What it buys is
+  // that the live build never needs the live token to be committed anywhere.
+  paddleToken,
+  paddleEnvironment: paddleEnvironment as "sandbox" | "production",
 };
