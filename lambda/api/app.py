@@ -1829,6 +1829,33 @@ def proposals(tenant_id):
 # --- dispatch --------------------------------------------------------------
 
 def lambda_handler(event, context):
+    """Every request, and what became of it.
+
+    ONE LINE PER REQUEST. The log carried START, END and REPORT and nothing
+    else, so it could not answer "did POST /uploads arrive" - which is exactly
+    what was asked of it on 18 September, when sixteen of seventeen uploads
+    left no trace anywhere. Route and status are what make the log readable;
+    without them an invocation count is all there is.
+
+    NOT THE BODY, AND NOT THE EMAIL. The body carries the customer's address.
+    Tenant and route identify the request well enough to follow it, and
+    neither is personal data.
+    """
+    started = time.time()
+    route = event.get("routeKey", "")
+    authorizer = (event.get("requestContext") or {}).get("authorizer") or {}
+    claims = (authorizer.get("jwt") or {}).get("claims") or {}
+    tenant = claims.get("custom:tenant_id", "-")
+
+    reply = _dispatch(event, context)
+
+    print("[api] route=%s tenant=%s status=%s ms=%.0f" % (
+        route or "-", tenant, (reply or {}).get("statusCode"),
+        (time.time() - started) * 1000))
+    return reply
+
+
+def _dispatch(event, context):
     try:
         tenant_id, email, role = caller(event)
     except (PermissionError, ValueError, TypeError):
