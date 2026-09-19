@@ -29,9 +29,60 @@ needed no change**: `AllowAdminCreateUserOnly` is already true and
 allowlist cannot be walked around. This is a temporary gate, not a product
 decision about who may buy.
 
+## Free-mail domains are never claimed
+
+A `tenant_domain` row means "this domain's workspace", and `gmail.com` is not
+a workspace. Before this, the first person to sign up from a free-mail address
+would have claimed it for their own tenant, after which every later address at
+that domain would have been told to ask an administrator there for a seat - an
+administrator who is a stranger to them. `verify()` now skips the claim for a
+fixed set held as `FREE_MAIL` in `lambda/signup/app.py`: **gmail.com,
+googlemail.com, outlook.com, hotmail.com, live.com, yahoo.com, icloud.com,
+me.com, aol.com, proton.me, protonmail.com**. It is skipped the same way a
+domain somebody already holds is skipped, and it is **not a refusal** - the
+tenant, the seat, the trial and the credit are created exactly as before. The
+list is deliberately short, by the same argument as `DISPOSABLE`: a stale list
+is worse than none, because it reads as working. **It is to be extended when
+signup opens to the public**, which is when addresses outside it start
+arriving. Deployed 19 September 2026, CodeSha256
+`F58XoiEzOIhPNEnIQttu5pSagN4qALNvYByHNmk1ub8=`.
+
+## The 16 September `LAST_INSERT_ID` incident, and its cleanup
+
+One bug explained three separately-reported open items. On 16 September at
+14:24:44 a signup created tenant 4 (`jspgmail`) and then lost its own id: the
+Data API's `LAST_INSERT_ID()` returned 0, so everything after the `tenant`
+insert was written against tenant **0** or not at all. It left a `gmail.com ->
+tenant 0` domain claim **thirty hours before tenant 0's row existed** (tenant 0
+was created 17 September 21:00:52), a Cognito user
+`jonathanscottperry+t1@gmail.com` carrying `custom:tenant_id = 0` rather than
+4, and tenant 4 itself with `active_revision` and `forked_pack` both NULL, no
+user, no seat, no claim and a live trial to 16 October. The bogus claim was
+blocking every gmail address at signup, which is what made it look like three
+faults instead of one. **`arqedia.com` was never claimed by anybody** - that
+was an assumption, not a row. Cleaned up on 19 September, dev data, no record
+kept beyond this paragraph: the claim deleted (1 row), the disabled `+t1` user
+deleted, and tenant 4 removed after a read-only inventory found it held
+**exactly one row in the whole database** - its own - and **zero objects** under
+`tenants/4/` in all seven buckets. `tenant` went 6 rows to 5; the remaining ids
+are 0, 1, 2, 5, 9. The gaps in that sequence (3, 6, 7, 8) are auto-increment
+values consumed by signups that failed the same way or were removed by hand.
+
 ---
 
 ## Open items
+
+- **Tenants 1 and 2 hold no domain claim, and that is correct.**
+  `tenant_domain` was created by `014_signup.sql` on 15 September; TESTCO A and
+  TESTCO B were made by hand on 26 and 28 August, seventeen days earlier, and
+  nothing backfills. `vmac.com -> 1` was inserted by hand two minutes after
+  that migration ran; nobody did the same for tenant 2, whose users are at
+  gmail.com and now never could be claimed. The only consequence is that
+  `_home_domain()` returns null for them, so nobody on those Seats screens is
+  marked as outside the firm - which `lambda/api/seats.py:132` anticipates in
+  its own docstring. **It has nothing to do with signing in**: the tenant comes
+  from `custom:tenant_id` on the Cognito user, and no authentication path reads
+  this table.
 
 - **A tenant at an already-claimed domain has no `home_domain`.** Accepted
   deliberately. `verify()` leaves the existing claim alone, so the new tenant
@@ -41,19 +92,24 @@ decision about who may buy.
   counsel and consultants. It is not a control: outside addresses are allowed
   and merely marked. Two of the four seeded addresses will land here.
 
-- **Tenant 4 (`jspgmail`) is an orphan.** Created 2026-09-16 14:24:44 with
-  `signup_ip 68.194.186.38` and a **live trial to 2026-10-16**. It has **no
-  Cognito user, no seat row and no domain claim**. Residue of the signup that
-  produced tenant 0's user - `jonathanscottperry+t1@gmail.com` carries
-  `custom:tenant_id = 0`, not 4, and is disabled. Nobody can reach it and it
-  is consuming a trial.
+- **CLOSED 19 September: tenant 4, the `+t1` user and the `gmail.com` claim.**
+  All three were one bug. See the incident above.
 
-- **Tenant 0 has two Cognito users and no seat rows.** `admin@arqedia.com`
-  (the curator) and the disabled `+t1` account both carry
-  `custom:tenant_id = 0`, but `seat` holds nothing for tenant 0. The seats
-  screen therefore counts nobody there, and the last-administrator rule has
-  nobody to protect. Tenant 0 also holds the **`gmail.com` domain claim**,
-  which blocks every gmail address from signing up.
+- **Tenant 0 has no seat rows.** `admin@arqedia.com` (the curator) carries
+  `custom:tenant_id = 0` and is now the only user that does, but `seat` holds
+  nothing for tenant 0. The seats screen counts nobody there, and the
+  last-administrator rule has nobody to protect. Unchanged by the cleanup:
+  removing the `+t1` user took away a second user, not a seat that never
+  existed.
+
+- **There is no account-deletion path in the code.** Removing tenant 4 was
+  done by hand, statement by statement, because there is nothing to call. It
+  is specified - `wallet_entitlement_spec_v1.md:266` says deletion "scrubs
+  tenant rows, storage prefix, derived artifacts, and revokes every
+  outstanding share grant", and `build_index.md:116` calls it "the only
+  destructive action" - and it is not built. The known gap that it would
+  forget `tenant_domain` (CLAUDE.md) is why step one of the cleanup was a
+  manual `DELETE` too.
 
 - **No `X-Robots-Tag` header on `app.arqedia.com`.** Confirmed by
   `curl -sI`: the only directive is `<meta name="robots" content="noindex,
