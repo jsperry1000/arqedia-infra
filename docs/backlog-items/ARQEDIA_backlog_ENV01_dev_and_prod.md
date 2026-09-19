@@ -45,8 +45,19 @@ Read both before anything else here.
   Nothing in the repository records which environment received which migration.
   Migration 013 (`tenant.brand_light`) was applied to dev only — that is
   recorded here and nowhere else.
-- **Front-end configuration.** `ui/src/config.ts` carries the Cognito pool ids.
-  One bundle cannot serve both stacks.
+- **Front-end configuration.** `ui/src/config.ts` carries the Cognito pool ids,
+  and since 19 September the **Paddle client-side token and environment** as
+  well. Both are sandbox-bound: a `test_` token works only against Paddle's
+  sandbox and a `live_` one only against live, and `paddleEnvironment` names
+  which. One bundle cannot serve both stacks, and the build compiles these
+  values into `web/`, so **the committed bundle carries a sandbox credential**.
+  It is a credential Paddle documents as safe to publish - client-side tokens
+  "have limited access to the data in your system" - so this is an environment
+  problem, not a secret leak. **Before live, this file must come from the build
+  rather than from git**: an environment variable read at build time, or a
+  configuration fetched at start-up. Shipping today's bundle against a live
+  Paddle account would open a sandbox checkout at real prices and collect
+  nothing.
 
 ---
 

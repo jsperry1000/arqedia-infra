@@ -111,38 +111,20 @@ export const VIEWER_MEMO = {
 };
 
 // --- subscription ----------------------------------------------------------
-
-/** Shown mid-trial, because that is the state with the most to look at: the
- *  subscription has not started, so the screen has to carry both the trial
- *  and the thing that ends it. */
-export const SUBSCRIPTION = {
-  status: "Trial",
-  trialEnds: "12 October 2026",
-  trialDaysLeft: 27,
-  plan: "Small Business",
-  price: "$65 / month",
-  renews: "on the day the subscription starts",
-  card: null as string | null,
-  seatsIncluded: 5,
-  seatsUsed: 3,
-};
-
-/** The settled plan table. Not invented - the figures are the ones in the
- *  plans and wallet specifications. Which plan is current is mock. */
-export const PLANS = [
-  {
-    name: "Base", price: "$25 / month", seats: 2, credit: "$5.00",
-    shares: "5 a month", fieldSets: 3, sections: 12, topUp: "$10", current: false,
-  },
-  {
-    name: "Small Business", price: "$65 / month", seats: 5, credit: "$15.00",
-    shares: "unlimited", fieldSets: 5, sections: 25, topUp: "$25", current: true,
-  },
-  {
-    name: "Enterprise", price: "negotiated", seats: 0, credit: "as contracted",
-    shares: "as contracted", fieldSets: 10, sections: 50, topUp: "$5 x seats", current: false,
-  },
-];
+//
+// SUBSCRIPTION and PLANS are gone. The tab is live: it reads
+// /billing/subscription, and the plan table is built from the plan ROWS in
+// that response.
+//
+// Removed rather than left unused, like the fake balance and the fake
+// colleagues before them. PLANS was the more dangerous of the two: it listed
+// three plans where the database holds two - there is no Enterprise row - so
+// the next screen needing "the plans we sell" would have found it here and
+// offered one that cannot be bought. It also marked Small Business as the
+// current plan of a tenant that had no subscription at all.
+//
+// INVOICES stays below. Invoices are out of scope on this branch (decision
+// record item 8) and those four rows are still invented.
 
 // SEATS is gone. The Seats tab is live: it reads /seats and writes through
 // the four routes beside it.

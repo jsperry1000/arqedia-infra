@@ -68,6 +68,31 @@ top-ups: a cancelled subscription cannot be charged (item 10). Cash still expire
   transaction), opened with `Paddle.Checkout.open({transactionId})`. No route
   calls it yet.
 
+### Amendment — 19 September 2026
+
+- **Subscribe is not offered while `past_due`.** The amendment of 17 September
+  says Subscribe is available in every state except active, and during
+  `past_due` the button is "Update card". Those are the same sentence read two
+  ways, and the server settles it: `billing.checkout` refuses whenever a
+  subscription exists and is not `canceled`, so a Subscribe button in
+  `past_due` would take the click and come back 409. There is already a
+  subscription; the correct action is **updating the card**, and that is the
+  only action the screen offers there. Subscribe is offered on a trial and
+  after a cancellation, which are the two states with no subscription to fix.
+
+- **Paused is still undecided.** It is treated as `past_due` throughout - the
+  screen says "Subscription paused" and offers the same inert "Update card" -
+  but **Paddle's update-payment-method transaction is not available for a
+  paused subscription**, so that action cannot work there even once the route
+  exists. What a paused subscription should offer instead is open. PROPOSED,
+  and the weakest part of this branch.
+
+- **"Update card" is still inert**, in both `active` and `past_due`. It needs
+  `GET /subscriptions/{id}/update-payment-method-transaction` behind a route of
+  ours, and there is none: `paddle_api.py` has `create_checkout_transaction`,
+  `charge_topup` and `change_plan` and nothing else. The button says "not
+  connected yet" on click and the screen says why beside it.
+
 ---
 
 ## 3. Open

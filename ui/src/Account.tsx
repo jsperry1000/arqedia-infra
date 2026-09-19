@@ -1,14 +1,46 @@
 import { useEffect, useState } from "react";
 import { useBackAction } from "./shell";
-import { api, type Wallet, type LedgerEntry, type Seats as SeatState,
-         type Invited } from "./api";
-import { SUBSCRIPTION, PLANS, INVOICES, Inert, NotConnected } from "./mock";
+import { api, chargeKey, type Wallet, type LedgerEntry,
+         type Seats as SeatState, type Invited,
+         type SubscriptionView, type Plan } from "./api";
+import { openCheckout } from "./paddle";
+import { INVOICES, Inert, NotConnected } from "./mock";
 
 /** Cents, as money. One place, so a balance and a ledger row never disagree
  *  about how many decimals a dollar has. */
 function money(cents: number) {
   return "$" + (cents / 100).toLocaleString(undefined, {
     minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** A MySQL datetime, as a Date. The API answers "2026-10-16 14:24:44" in UTC,
+ *  which is not ISO 8601 and which browsers have been free to refuse. Made
+ *  explicit rather than left to chance. */
+function when(value: string | null): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value.replace(" ", "T") + "Z");
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function on(value: string | null) {
+  const date = when(value);
+  return date ? date.toLocaleDateString(undefined,
+    { day: "numeric", month: "long", year: "numeric" }) : "—";
+}
+
+/** Whole days from now, never negative. Something that has ended is over,
+ *  not minus three days from ending. */
+function daysUntil(value: string | null) {
+  const date = when(value);
+  if (!date) return null;
+  return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 86400000));
+}
+
+/** A refusal the server wrote to be read by a person, unwrapped from the
+ *  {"error": "..."} it travels in. */
+function message(err: unknown) {
+  const text = String((err as Error)?.message ?? err);
+  try { return JSON.parse(text).error ?? text; } catch { return text; }
 }
 
 /** A bucket's kind, said in words. The database calls it monthly_credit
@@ -40,9 +72,15 @@ const KINDS: Record<string, string> = {
  * SEATS IS LIVE. It reads /seats and writes through the four routes beside
  * it. Inviting somebody genuinely reserves a seat.
  *
- * SUBSCRIPTION IS NOT. There is no subscription endpoint, so that tab reads
- * mock.tsx and every control on it is inert. It says so on the tab rather
- * than at the top, now that two of the three are real.
+ * SUBSCRIPTION IS LIVE, except invoices. It reads /billing/subscription and
+ * writes through /billing/checkout and /billing/plan; subscribing opens
+ * Paddle's overlay. Two things on it are still drawn and inert, and say so
+ * where they sit: the invoice list (decision record item 8) and "Update
+ * card", which needs a route we have not built (amendment of 18 September).
+ *
+ * NOTHING ON THIS SCREEN GRANTS MONEY. Every payment is granted by Paddle's
+ * webhooks through our own processor (item 6). What the screen does after a
+ * checkout is ASK AGAIN, and say plainly that the answer may take a moment.
  */
 
 type Tab = "subscription" | "balance" | "seats";
@@ -73,97 +111,280 @@ export function AccountView({ onBack }: { onBack: () => void }) {
 
 // --- subscription ----------------------------------------------------------
 
+/**
+ * What am I on, and what would I be on instead.
+ *
+ * FOUR STATES, and they are not a spectrum: a trial has no subscription at
+ * all, active is paying, past_due has failed a payment, cancelled has run
+ * out. Each gets the sentence that is true of it rather than one paragraph
+ * hedged to cover all four.
+ *
+ * standing is what may be SPENT, and it is the server's word rather than a
+ * guess made here from the status: past_due, paused and an expired
+ * cancellation all come back purchased_only, where filing and generating
+ * spend unexpired top-up cash and nothing else (items 12 and 13, as amended).
+ */
 function Subscription() {
-  const [chosen, setChosen] = useState(
-    PLANS.findIndex((p) => p.name === SUBSCRIPTION.plan));
+  const [view, setView] = useState<SubscriptionView | null>(null);
+  const [wallet, setWallet] = useState<Wallet | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+  const [waiting, setWaiting] = useState("");
+  const [chosen, setChosen] = useState<string | null>(null);
 
-  const onTrial = SUBSCRIPTION.status === "Trial";
+  const load = () => api.subscription().then((fresh) => {
+    setView(fresh);
+    setChosen((current) => current ?? fresh.plan);
+    return fresh;
+  });
+
+  useEffect(() => {
+    load().catch((e) => setError(message(e)));
+    // The trial credit, from the bucket that holds it rather than from a
+    // figure typed here. $5.00 is the grant; what is left is the question.
+    api.wallet().then(setWallet).catch(() => setWallet(null));
+  }, []);
+
+  /**
+   * Ask the server again until the webhook has landed, or give up saying so.
+   *
+   * The overlay answering "completed" means Paddle took the payment, NOT that
+   * our side knows: the webhook is a separate journey and arrives in its own
+   * time. Fifteen tries, two seconds apart - half a minute, long enough for
+   * the ordinary case and short enough that nobody is left watching a
+   * spinner. Giving up is not a failure and does not say it is.
+   */
+  async function settle(done: (fresh: SubscriptionView) => boolean) {
+    setWaiting("Paddle has taken the payment. Recording it here…");
+    for (let i = 0; i < 15; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        if (done(await load())) { setWaiting(""); return; }
+      } catch { /* keep asking: one refused read is not an answer */ }
+    }
+    setWaiting(
+      "The payment went through. It has not reached this screen yet, which " +
+      "can take a minute - reload and it will be here. Nothing is lost, and " +
+      "nothing will be charged twice.");
+  }
+
+  async function subscribe(planKey: string) {
+    setError("");
+    setBusy("Opening checkout");
+    try {
+      const { transaction_id } = await api.checkout(planKey);
+      setBusy("");
+      const outcome = await openCheckout(transaction_id);
+      // Closed without paying leaves the tenant exactly as it was: nothing
+      // was created here, and the transaction Paddle holds is simply never
+      // paid. We re-read anyway, because it may have completed elsewhere.
+      if (outcome === "completed") {
+        await settle((fresh) => fresh.paddle_status === "active");
+      } else {
+        await load();
+      }
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function change(planKey: string) {
+    setError("");
+    setBusy("Changing plan");
+    try {
+      await api.changePlan(planKey);
+      await settle((fresh) => fresh.plan === planKey);
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  if (error && !view) return <p className="error">{error}</p>;
+  if (!view) return <p className="muted">Loading&hellip;</p>;
+
+  const status = view.paddle_status;
+  const onTrial = !status;
+  const active = status === "active";
+  const pastDue = status === "past_due" || status === "paused";
+  const canceled = status === "canceled";
+  const plan = view.plans.find((p) => p.plan_key === view.plan) ?? null;
+  const target = view.plans.find((p) => p.plan_key === chosen) ?? null;
+  const trialLeft = daysUntil(view.trial_ends_at);
+  const trialBucket = wallet?.buckets.find((b) => b.kind === "trial");
 
   return (
     <>
-      <NotConnected what="Subscription" />
+      {error && <p className="error">{error}</p>}
+      {busy && <p className="busy">{busy}&hellip;</p>}
+      {waiting && <p className="revision-note">{waiting}</p>}
 
       {onTrial && (
         <p className="revision-note">
-          <strong>Trial &mdash; {SUBSCRIPTION.trialDaysLeft} days left.</strong>{" "}
-          Full use until {SUBSCRIPTION.trialEnds}, with $5.00 of metered credit
-          and no card held. Memoranda generated in the trial stay downloadable
-          afterwards. Starting a subscription does not end the trial early
-          &mdash; it takes over when the trial runs out.
+          <strong>
+            {trialLeft === null ? "Trial — no end date recorded."
+              : trialLeft === 0 ? "Trial — ends today."
+              : `Trial — ${trialLeft} day${trialLeft === 1 ? "" : "s"} left.`}
+          </strong>{" "}
+          Full use until {on(view.trial_ends_at)}, with no card held.
+          {trialBucket
+            ? ` ${money(trialBucket.remaining_cents)} of the `
+              + `${money(trialBucket.granted_cents)} metered credit is left.`
+            : " The metered credit is on the Balance tab."}{" "}
+          Memoranda generated in the trial stay downloadable afterwards.
+          Subscribing does not end the trial early &mdash; the credit keeps its
+          own expiry and is spent first.
+        </p>
+      )}
+
+      {pastDue && (
+        <p className="revision-note">
+          <strong>
+            {status === "paused" ? "Subscription paused." : "Payment failed."}
+          </strong>{" "}
+          Filing and generating can still spend unexpired top-up credit until
+          it runs out or expires; everything else that costs money waits.
+          Reading, downloading and editing your configuration are unaffected.
+          Paddle retries on its own schedule, and a new card clears it at once.
+        </p>
+      )}
+
+      {canceled && (
+        <p className="revision-note">
+          <strong>Subscription cancelled.</strong> Nothing further will be
+          charged. Unexpired top-up credit can still be spent on filing and
+          generating until it runs out or reaches its own expiry &mdash; it was
+          paid for and it is not forfeited. Everything already filed or
+          generated stays readable and downloadable. Subscribing again starts a
+          new subscription rather than resuming this one.
         </p>
       )}
 
       <div className="stat-cards">
         <div className="stat">
           <span className="lbl">Status</span>
-          <span className="big serif">{SUBSCRIPTION.status}</span>
+          <span className="big serif">
+            {onTrial ? "Trial"
+              : active ? "Active"
+              : status === "past_due" ? "Payment failed"
+              : status === "paused" ? "Paused"
+              : "Cancelled"}
+          </span>
           <span className="muted small">
-            {onTrial ? `Ends ${SUBSCRIPTION.trialEnds}` : `Renews ${SUBSCRIPTION.renews}`}
+            {onTrial ? `Ends ${on(view.trial_ends_at)}`
+              : canceled ? `Paid to ${on(view.current_period_ends_at)}`
+              : `Renews ${on(view.current_period_ends_at)}`}
           </span>
         </div>
         <div className="stat">
           <span className="lbl">Plan</span>
-          <span className="big serif">{SUBSCRIPTION.plan}</span>
-          <span className="muted small">{SUBSCRIPTION.price}</span>
+          <span className="big serif">{plan ? plan.name : "None"}</span>
+          <span className="muted small">
+            {plan ? `${money(plan.monthly_price_cents)} / month`
+                  : "No plan while on trial"}
+          </span>
         </div>
         <div className="stat">
-          <span className="lbl">Payment method</span>
-          <span className="big serif">{SUBSCRIPTION.card ? "On file" : "None"}</span>
+          <span className="lbl">What you may spend</span>
+          <span className="big serif">
+            {view.standing === "active" ? "Everything"
+              : view.standing === "trial" ? "Trial credit"
+              : "Top-up only"}
+          </span>
           <span className="muted small">
-            {SUBSCRIPTION.card ?? "No card held. Nothing can be charged."}
+            {view.standing === "purchased_only"
+              ? "Cash you bought, until it expires"
+              : "Filing and generating, against the balance"}
           </span>
         </div>
       </div>
 
-      <h3>Choose a plan</h3>
+      <h3>{active ? "Change plan" : "Choose a plan"}</h3>
       <p className="muted small">
         Seats are a fixed attribute of the plan. Adding a seat is a plan change
-        rather than a proration.
+        rather than a proration, and a downgrade is refused while more seats are
+        taken or reserved than the smaller plan holds.
       </p>
 
       <table className="docs">
         <thead>
           <tr>
             <th></th><th>Plan</th><th>Seats</th><th>Monthly credit</th>
-            <th>Shares</th><th>Field sets</th><th>Sections</th><th>Top-up</th>
+            <th>Shares</th><th>A month</th>
           </tr>
         </thead>
         <tbody>
-          {PLANS.map((p, i) => (
-            <tr key={p.name} onClick={() => setChosen(i)}
-                className={i === chosen ? "chosen" : undefined}>
+          {view.plans.map((p: Plan) => (
+            <tr key={p.plan_key} onClick={() => setChosen(p.plan_key)}
+                className={p.plan_key === chosen ? "chosen" : undefined}>
               <td style={{ width: 34 }}>
-                <input type="radio" name="plan" checked={i === chosen}
-                       onChange={() => setChosen(i)} style={{ width: "auto" }} />
+                <input type="radio" name="plan"
+                       checked={p.plan_key === chosen}
+                       onChange={() => setChosen(p.plan_key)}
+                       style={{ width: "auto" }} />
               </td>
               <td>
                 <strong>{p.name}</strong>
-                <div className="muted small">{p.price}</div>
-                {p.current && <div className="in-use">selected at signup</div>}
+                {p.plan_key === view.plan && (
+                  <div className="in-use">current</div>
+                )}
               </td>
-              <td className="ref">{p.seats || "as contracted"}</td>
-              <td className="ref">{p.credit}</td>
-              <td className="ref">{p.shares}</td>
-              <td className="ref">{p.fieldSets}</td>
-              <td className="ref">{p.sections}</td>
-              <td className="ref">{p.topUp}</td>
+              <td className="ref">{p.seat_count}</td>
+              <td className="ref">{money(p.monthly_credit_cents)}</td>
+              <td className="ref">
+                {p.share_allowance === null ? "unlimited" : p.share_allowance}
+              </td>
+              <td className="ref">{money(p.monthly_price_cents)}</td>
             </tr>
           ))}
         </tbody>
       </table>
 
       <div className="form-actions">
-        <Inert what={onTrial ? "Starting a subscription" : "Changing plan"}>
-          {onTrial ? `Start on ${PLANS[chosen].name}` : `Change to ${PLANS[chosen].name}`}
-        </Inert>
-        <span className="muted small">
-          A card is taken at this point, and the monthly charge begins when the
-          trial ends. Metered use is never charged to the card without a further
-          click.
-        </span>
+        {active ? (
+          <>
+            <button disabled={!!busy || !chosen || chosen === view.plan}
+                    onClick={() => chosen && change(chosen)}>
+              {target && chosen !== view.plan
+                ? `Change to ${target.name}` : "Change plan"}
+            </button>
+            <Inert what="Updating the card">Update card</Inert>
+            <span className="muted small">
+              An upgrade is billed now, at the difference, and the extra monthly
+              credit arrives with it. A downgrade grants nothing back and takes
+              nothing away &mdash; the ledger is append-only.
+            </span>
+          </>
+        ) : pastDue ? (
+          <>
+            <Inert what="Updating the card">Update card</Inert>
+            <span className="muted small">
+              Not connected yet: it needs a route that asks Paddle for a
+              payment-method transaction, and there is not one. Until then,
+              Paddle&rsquo;s own emails carry a link that works. Subscribing
+              again is not offered here &mdash; there is already a subscription,
+              and the card is what needs fixing.
+            </span>
+          </>
+        ) : (
+          <>
+            <button disabled={!!busy || !chosen}
+                    onClick={() => chosen && subscribe(chosen)}>
+              {target ? `Subscribe on ${target.name}` : "Subscribe"}
+            </button>
+            <span className="muted small">
+              A card is taken at this point and the first month is charged now.
+              Metered use is never charged to the card without a further click.
+            </span>
+          </>
+        )}
       </div>
 
       <h3>Invoices</h3>
+      <NotConnected what="Invoices" />
       <table className="docs">
         <thead>
           <tr><th>Date</th><th>What</th><th>Amount</th><th>Status</th><th></th></tr>
@@ -201,11 +422,58 @@ function Balance() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [entries, setEntries] = useState<LedgerEntry[] | null>(null);
   const [error, setError] = useState("");
+  const [increments, setIncrements] = useState(1);
+  const [busy, setBusy] = useState("");
+  const [said, setSaid] = useState("");
 
   useEffect(() => {
     api.wallet().then(setWallet).catch((e) => setError(String(e.message ?? e)));
     api.walletLedger(50).then((r) => setEntries(r.ledger)).catch(() => setEntries([]));
   }, []);
+
+  /**
+   * Buy credit. The charge goes to the card Paddle already holds.
+   *
+   * THE KEY IS MINTED ON THE CLICK, which is what makes a double click, a
+   * retry or a stalled network one purchase rather than two. A repeat comes
+   * back {repeated: true} and is reported as such rather than as an error:
+   * nothing went wrong, it simply already happened.
+   *
+   * 202, AND THE MONEY IS NOT HERE YET. The credit is granted by Paddle's
+   * transaction.completed webhook (item 6), so this polls the wallet instead
+   * of adding the amount locally. A balance that goes up because the browser
+   * decided it should is a balance that disagrees with the ledger.
+   */
+  async function topUp() {
+    setBusy("Charging your card");
+    setError("");
+    setSaid("");
+    const before = wallet?.available_cents ?? 0;
+    try {
+      const result = await api.topUp(increments, chargeKey());
+      setSaid(result.repeated
+        ? `Already bought: ${money(result.amount_cents)}. Nothing was charged `
+          + "twice."
+        : `${money(result.amount_cents)} charged. The credit lands when the `
+          + "payment completes, which is usually seconds.");
+      // Ten tries, three seconds apart: the webhook is its own journey.
+      for (let i = 0; i < 10; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const fresh = await api.wallet().catch(() => null);
+        if (!fresh) continue;
+        setWallet(fresh);
+        if (fresh.available_cents > before) {
+          api.walletLedger(50).then((r) => setEntries(r.ledger))
+            .catch(() => undefined);
+          break;
+        }
+      }
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
 
   if (error) return <p className="error">{error}</p>;
   if (!wallet) return <p className="muted">Loading&hellip;</p>;
@@ -253,11 +521,17 @@ function Balance() {
       )}
 
       <div className="form-actions">
-        <Inert what="Top-up">Top up</Inert>
+        <input type="number" min={1} max={50} value={increments}
+               disabled={!!busy} style={{ width: 70 }}
+               onChange={(e) => setIncrements(
+                 Math.min(50, Math.max(1, Number(e.target.value) || 1)))} />
+        <button onClick={topUp} disabled={!!busy}>
+          {busy ? "Charging…" : `Top up ${money(increments * 500)}`}
+        </button>
         <span className="muted small">
-          No payment provider is connected yet. When one is, a click will buy
-          one increment &mdash; there is no standing mandate and nothing is ever
-          charged unprompted.
+          {said || "In $5 increments, charged to the card Paddle holds. There "
+            + "is no standing mandate: nothing is charged without this click, "
+            + "and purchased credit expires 30 days after purchase."}
         </span>
       </div>
 
@@ -378,11 +652,6 @@ function Seats() {
     api.seats().then(setState).catch((e) => setError(message(e)));
 
   useEffect(() => { load(); }, []);
-
-  function message(err: unknown) {
-    const text = String((err as Error)?.message ?? err);
-    try { return JSON.parse(text).error ?? text; } catch { return text; }
-  }
 
   /** Every write reloads. The seat count, the free count and what the last
    *  administrator may do all move together, and a screen that updates one of
