@@ -219,6 +219,21 @@ worst. The input that most needs OCR is the only one that cannot reach it.
     choice, and a reader months later should see a reversal rather than a
     second charge.
 
+18. **The API access log records the caller's IP, and keeps it thirty days.**
+    An IP address is personal data in the EU and the UK. It is kept because it
+    is what makes a request traceable after the fact - the whole reason the
+    access log exists is that sixteen uploads could not be accounted for - and
+    bounded at thirty days by `retention_in_days` on the log group, so it
+    expires without anybody remembering to delete it.
+
+    Nothing else identifying goes in. No body, no headers, no query string:
+    any of them can carry the customer's address, and the request is
+    identifiable enough from tenant, route and request id.
+
+    This matches the rule already settled for `signup_attempt.ip` - an IP is a
+    signal, never a gate - and the retention limit that item is still open on
+    applies here too, at thirty days.
+
 ---
 
 ## 3. Open

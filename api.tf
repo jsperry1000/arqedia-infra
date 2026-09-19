@@ -315,6 +315,37 @@ resource "aws_apigatewayv2_stage" "default" {
   name        = "$default"
   auto_deploy = true
 
+  # Every request, whether or not it reached the Lambda. Without this there is
+  # no record of a request the gateway answered itself - a preflight, a 401
+  # from the authorizer, a payload refused - and those are exactly the ones
+  # nobody can otherwise account for (observability.tf).
+  #
+  # JSON rather than CLF, because it is read by a person grepping for a route
+  # at the time somebody says an upload failed. integrationErrorMessage and
+  # error.message are what say WHY the gateway answered as it did; without
+  # them a 500 in this log is indistinguishable from a 500 in the other.
+  #
+  # No body, no headers, no query string - any of them could carry the
+  # customer's address.
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.api_access.arn
+    format = jsonencode({
+      requestId       = "$context.requestId"
+      requestTime     = "$context.requestTime"
+      httpMethod      = "$context.httpMethod"
+      routeKey        = "$context.routeKey"
+      path            = "$context.path"
+      status          = "$context.status"
+      responseLength  = "$context.responseLength"
+      responseLatency = "$context.responseLatency"
+      sourceIp        = "$context.identity.sourceIp"
+      # Why the gateway refused, where it did.
+      authorizerError  = "$context.authorizer.error"
+      integrationError = "$context.integrationErrorMessage"
+      errorMessage     = "$context.error.message"
+    })
+  }
+
   default_route_settings {
     throttling_burst_limit = 50
     throttling_rate_limit  = 25
