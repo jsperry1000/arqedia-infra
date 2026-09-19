@@ -476,10 +476,9 @@ def file_documents(tenant_id, email, decisions, idempotency_key):
         and not (d.get("document_type") or "").strip())
     if typeless:
         raise ValueError(
-            "choose what %s before filing. A scan has no type until you "
-            "give it one, and the type decides how it is read."
-            % (("these are: " + ", ".join(typeless)) if len(typeless) > 1
-               else ("this is: " + typeless[0])))
+            "Choose a type for %s before filing. A scan has no type until "
+            "you give it one, and the type decides how it is read."
+            % ", ".join(typeless))
 
     chargeable = sum(1 for d in decisions if d.get("include", True))
     charge_entry_id = None
