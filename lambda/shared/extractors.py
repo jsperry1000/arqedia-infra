@@ -8,9 +8,11 @@ Every extractor returns (raw_text, units, method) where units is a list of
 `units` is the evidence substrate (EV-01). Extraction later returns a unit
 index per value; that index resolves against this list to a character range.
 
-Stage 1 scope: native formats plus digital-text PDFs. Scanned PDFs are
-rejected by the readability gate rather than sent to Textract - Textract is
-deferred, see README.
+Native formats plus digital-text PDFs. A PDF below the readability gate is
+NOT rejected any more: no_text_layer means a scan, and the normalizer gives it
+a row with no type and sends it to OCR at filing (unreadable documents
+decision record, 18 September, item 3). The gate still refuses a file that
+will not parse or holds no pages, because OCR cannot help either.
 """
 
 import io
@@ -33,10 +35,22 @@ STRUCTURAL_EXTS = {".json", ".xml"}
 
 
 class UnreadableDocument(Exception):
-    """Raised when a document has no usable text layer."""
+    """Raised when a document has no usable text layer.
 
-    def __init__(self, reason):
+    CARRIES WHAT IT MEASURED. no_text_layer is no longer the end of the road -
+    a scan goes to OCR (Stage 4) - and the row it produces has to say how many
+    pages it has and how little was on them. The gate has both numbers in hand
+    at the moment it refuses and used to throw them away, leaving a screen
+    saying "? pages" about a file it had just counted.
+
+    pages and chars are None where they are genuinely unknown: a PDF that
+    would not parse has no page count, and inventing a zero would be a
+    measurement nobody took."""
+
+    def __init__(self, reason, pages=None, chars=None):
         self.reason = reason
+        self.pages = pages
+        self.chars = chars
         super().__init__(reason)
 
 
@@ -148,9 +162,10 @@ def extract_xlsx(body):
 def extract_pdf(body):
     """Digital-text PDF. Units are pages.
 
-    Raises UnreadableDocument when the text layer is absent or too thin -
-    the readability gate. Stage 1 has no OCR fallback, so the operator is
-    told to OCR the file and resubmit."""
+    Raises UnreadableDocument at the readability gate. no_text_layer means a
+    scan, and the normalizer routes it to OCR rather than refusing it; the
+    other two are refusals, because OCR cannot help a file that will not parse
+    or has no pages in it."""
     try:
         reader = PdfReader(io.BytesIO(body))
         pages = [(p.extract_text() or "") for p in reader.pages]
@@ -158,11 +173,12 @@ def extract_pdf(body):
         raise UnreadableDocument("pdf-parse-failed: {}".format(exc))
 
     if not pages:
-        raise UnreadableDocument("no-pages")
+        raise UnreadableDocument("no-pages", pages=0, chars=0)
 
-    avg = sum(len(p) for p in pages) / len(pages)
-    if avg < PDF_MIN_CHARS_PER_PAGE:
-        raise UnreadableDocument("no_text_layer")
+    chars = sum(len(p) for p in pages)
+    if chars / len(pages) < PDF_MIN_CHARS_PER_PAGE:
+        raise UnreadableDocument("no_text_layer", pages=len(pages),
+                                 chars=chars)
 
     text, units = _units_from_parts(pages, "page")
     return text, units, "pdf-text"

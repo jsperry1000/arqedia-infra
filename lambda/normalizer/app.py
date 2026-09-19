@@ -197,10 +197,6 @@ def _write_envelope(key, envelope):
 # no_text_layer is INTERIM. Stage 4 converts it from a refusal into the OCR
 # route, and this entry goes with it (decision record, 18 September, item 3).
 _REFUSAL_TEXT = {
-    "no_text_layer":
-        "This file is a scan - its pages are images, with no text behind "
-        "them. Put it through an OCR process on your side and upload the "
-        "result.",
     "pdf_parse_failed":
         "This file carries nothing readable. Put it through an OCR process "
         "on your side and upload the result.",
@@ -215,10 +211,21 @@ _REFUSAL_TEXT = {
 # The reasons extractors raises, mapped to ours. Theirs carry a colon and a
 # hyphen; a code that reaches a database column and a log filter should carry
 # neither. An unrecognised reason becomes 'error' rather than inventing a code.
+#
+# no_text_layer IS NOT HERE. It was an interim refusal and Stage 4 made it a
+# route: a scan gets a row and goes to OCR, and the wording that told a person
+# to OCR it themselves went with it (decision record, 18 September, item 3).
 _REFUSAL_CODES = {
-    "no_text_layer": "no_text_layer",
     "no-pages": "no_pages",
 }
+
+# What a scan's row says about why it has no proposed type. It goes in
+# type_reason - which means exactly "why the classifier proposed what it did",
+# and here the answer is that there was nothing to classify from. NOT in
+# refusal_reason: a scan is not a refusal, and refusal_* stays for the three
+# that are.
+SCAN_REASON = ("A scan, no readable text. Choose a type and file it to read "
+               "it.")
 
 
 def _refusal_code(reason):
@@ -307,7 +314,12 @@ def _record_document(envelope):
             _p("s3_version_id", envelope["source_version_id"]),
             _p("sha256", envelope["sha256_source"]),
             _p("filename", envelope["filename"]),
-            _p("page_count", len(envelope["units"])),
+            # Measured where the caller measured them. A scan has real pages
+            # and a real (tiny) character count, and its envelope is empty -
+            # deriving these from the envelope would say 0 pages about a file
+            # the gate had just counted.
+            _p("page_count", envelope.get(
+                "page_count", len(envelope["units"]))),
             _p("part_index", envelope.get("part_index")),
             _p("page_from", envelope.get("page_from")),
             _p("page_to", envelope.get("page_to")),
@@ -315,7 +327,8 @@ def _record_document(envelope):
             _p("document_type", envelope.get("document_type")),
             _p("state", "analysed"),
             _p("thin_text", 1 if envelope.get("thin_text") else 0),
-            _p("char_count", len(envelope.get("raw_text") or "")),
+            _p("char_count", envelope.get(
+                "char_count", len(envelope.get("raw_text") or ""))),
             _p("byte_size", envelope.get("byte_size")),
             _p("type_confidence", envelope.get("document_type_confidence")),
             _p("type_reason", envelope.get("document_type_reason")),
@@ -369,10 +382,64 @@ def lambda_handler(event, context):
         return {"status": "unreadable", "reason": log_reason, "code": code,
                 "key": src_key}
 
+    def scan(exc):
+        """A file whose pages are images. Not a refusal - a document with no
+        type yet, bound for OCR at filing.
+
+        ONE PART, NO CLASSIFICATION. segment.segment is not called: there is
+        no text to classify from, and a type guessed from a filename would put
+        a guess where a reading belongs. The person chooses it, which is the
+        price item 3 accepted.
+
+        THE ENVELOPE MUST EXIST. It is empty - raw_text "" and no units -
+        because nothing has been read yet. The collector READS this object
+        when OCR finishes and overwrites those fields; without it the job
+        completes and has nowhere to put the result."""
+        envelope = {
+            "tenant_id": tenant_id,
+            "document_type": None,
+            "document_type_proposed": None,
+            "document_type_confidence": None,
+            "document_type_reason": SCAN_REASON,
+            "document_type_confirmed": False,
+            "part_index": 1,
+            "page_from": None,
+            "page_to": None,
+            "byte_size": len(body),
+            "thin_text": True,
+            "state": "analysed",
+            "uploaded_by": uploaded_by,
+            "engagement": engagement,
+            "filename": filename,
+            "source_bucket": src_bucket,
+            "source_key": src_key,
+            "source_version_id": obj.get("VersionId"),
+            "sha256_source": sha,
+            "extraction_method": None,
+            "extracted_at": _now(),
+            "config_revision": config.active_revision(tenant_id),
+            "page_count": exc.pages,
+            "char_count": exc.chars,
+            "raw_text": "",
+            "units": [],
+            "extracted_values": [],
+            "extraction_complete": False,
+        }
+        document_id = _record_document(envelope)
+        envelope["document_id"] = document_id
+        review_key = _write_envelope(src_key, envelope)
+        print("[scan] doc=%s pages=%s chars=%s by=%s key=%s" % (
+            document_id, exc.pages, exc.chars, uploaded_by, src_key))
+        return {"status": "scan", "document_id": document_id,
+                "pages": exc.pages, "chars": exc.chars,
+                "review_key": review_key, "key": src_key}
+
     try:
         return _analyse(src_bucket, src_key, tenant_id, engagement, filename,
                         obj, body, sha, uploaded_by)
     except extractors.UnreadableDocument as exc:
+        if exc.reason == "no_text_layer":
+            return scan(exc)
         return refuse(_refusal_code(exc.reason), exc.reason)
     except Exception as exc:  # noqa: BLE001 - the row is the record, not a raise
         # NOT RE-RAISED, deliberately. Re-raising would have EventBridge retry

@@ -483,6 +483,14 @@ export function EngagementView({ id, onBack, onMemo }: {
                 <span className="muted">
                   {p.pages ? `${p.pages} pages` : "—"}
                 </span>
+                {/* Nothing was read, so there is nothing to View. The
+                    original is the only thing there is to look at, and a
+                    person deciding whether to remove it needs to see it. */}
+                <button className="secondary" disabled={!!busy}
+                        onClick={() => view(p, 1)}
+                        title="Open the file itself. Nothing was read from it.">
+                  Open the file
+                </button>
                 <button className="secondary" disabled={!!busy}
                         onClick={() => remove(p)}
                         title="Remove it. The file and its row both go.">
@@ -514,13 +522,18 @@ export function EngagementView({ id, onBack, onMemo }: {
                       ? `pages ${p.page_from}\u2013${p.page_to}`
                       : `${p.pages ?? "?"} pages`}
                   </span>
+                  {/* A scan has a row and no text: "View" would open an
+                      empty panel. The original is what a person needs to see
+                      to choose its type, and the panel links to it. */}
                   <button
                     className="secondary"
                     disabled={p.state === "reading"}
                     onClick={() => view(p, p.page_from ?? 1)}
-                    title="Read what the system read, before naming it."
+                    title={p.thin_text && !p.proposed_type
+                      ? "Open the file itself. Nothing has been read from it yet."
+                      : "Read what the system read, before naming it."}
                   >
-                    View
+                    {p.thin_text && !p.proposed_type ? "Open the file" : "View"}
                   </button>
                   <button
                     className="secondary"
@@ -910,7 +923,14 @@ function PassagePanel({ passage, bounds, onGo, onClose }: {
           </a>
         </div>
 
-        <pre className="passage">{passage.text}</pre>
+        {passage.text.trim()
+          ? <pre className="passage">{passage.text}</pre>
+          : (
+            <p className="why warn">
+              Nothing has been read from this file yet. Open it above to see
+              what it is.
+            </p>
+          )}
       </aside>
     </div>
   );
