@@ -234,6 +234,37 @@ worst. The input that most needs OCR is the only one that cannot reach it.
     signal, never a gate - and the retention limit that item is still open on
     applies here too, at thirty days.
 
+19. **Eighty-eight objects predate Stage 1 and are recorded as historical.**
+    The reconciler built in Stage 2 found, on its first run, eighty-eight
+    objects in the dev docs bucket with no `document` row.
+
+    **Every one predates the Stage 1 apply of 2026-09-18 19:45 UTC**, checked
+    against S3 `LastModified` rather than inferred from age: oldest
+    2026-08-28 14:25:03, newest 2026-09-18 15:47:26 - about four hours before
+    the apply, inside that day's incident window. **None at or after it.**
+
+    They are orphans by construction. Before Stage 1 a refused document left
+    no trace at all, which is the hole item 1 closed and item 3 turned into a
+    route. So the number is a measure of what the hole cost, not a fault still
+    running: nothing uploaded since has been orphaned.
+
+    **They are not touched and not read.** The reconciler lists object
+    metadata and asks which keys have a row; it never calls GetObject, and
+    neither did the check behind this item. What is in them is unknown.
+
+    Recorded with every key and timestamp in
+    `docs/ARQEDIA_orphans_before_stage1_2026-09-19.md`, and the reconciler
+    carries `HISTORICAL_BEFORE` set to the apply so it reports only what is
+    newer. **The count is not hidden**: `historical=88` prints on every
+    summary line, so the number stays in front of whoever reads it and a
+    change in it would show. Listing eighty-eight known rows every fifteen
+    minutes would bury a real one.
+
+    **What to do with them is open**, and deliberately not decided here:
+    knowing what they are means reading somebody's documents. Leaving them
+    and re-uploading a sample through the new path are both defensible; the
+    second measures the cost and is the owner's call, not a diagnosis.
+
 ---
 
 ## 3. Open
