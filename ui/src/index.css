@@ -389,6 +389,17 @@ p.warn { color: #b45309; }
 }
 .cite:hover { color: var(--deep); border-bottom-color: var(--deep); }
 
+/* A citation whose document has been deleted (8.2). The memorandum said what
+   it said, so the reference still reads; there is nothing behind it to open,
+   so it is struck through and goes quiet rather than pretending. Not an
+   error: this is what the tenant asked for when they deleted the document. */
+.cite.gone {
+  cursor: default; color: var(--muted);
+  border-bottom: 0; text-decoration: line-through;
+  text-decoration-color: var(--line);
+}
+.cite.gone:hover { color: var(--muted); }
+
 .passage {
   background: var(--wash); border: 1px solid var(--line); border-radius: 3px;
   padding: 14px 16px; margin: 12px 0 16px;

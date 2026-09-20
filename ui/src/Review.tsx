@@ -114,6 +114,13 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [removeSaid, setRemoveSaid] = useState("");
   const [removeWhy, setRemoveWhy] = useState<Record<number, string>>({});
 
+  // 8.2 - a FILED document being deleted, with the facts read out of it. The
+  // detail is fetched first, because the confirmation states what deleting
+  // reaches - how many memoranda cite it, whether a charge paid for it - and
+  // those are the server's counts rather than anything this screen knows.
+  const [deleting, setDeleting] = useState<DocumentDetail | null>(null);
+  const [typedName, setTypedName] = useState("");
+
   async function refresh() {
     const [p, d, m] = await Promise.all([
       api.pending(id), api.documents(id), api.memos(id),
@@ -406,6 +413,47 @@ export function EngagementView({ id, onBack, onMemo }: {
     });
     setBusy("");
     refresh();
+  }
+
+  /** Open the confirmation for a filed document, having first asked the
+   *  server what deleting it would reach (8.2). */
+  async function askDelete(documentId: number) {
+    setError("");
+    setBusy("Reading what this would reach");
+    try {
+      setTypedName("");
+      setDeleting(await api.documentValues(documentId));
+    } catch (err) {
+      setError(reason(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  /** Delete a filed document. The server does the work in one transaction;
+   *  this only reports it. */
+  async function deleteFiled() {
+    if (!deleting) return;
+    const doomed = deleting;
+    setDeleting(null);
+    setBusy(`Deleting ${doomed.filename}`);
+    setError("");
+    setRemoveSaid("");
+    try {
+      await api.removeDocument(doomed.document_id);
+      setRemoveSaid(
+        `${doomed.filename} deleted, with ${doomed.values.length} `
+        + `${doomed.values.length === 1 ? "fact" : "facts"} read from it.`
+        + (doomed.memos
+          ? ` ${doomed.memos} ${doomed.memos === 1 ? "memorandum" : "memoranda"}`
+            + " still cite it and are unchanged."
+          : ""));
+    } catch (err) {
+      setError(reason(err));
+    } finally {
+      setBusy("");
+      refresh();
+    }
   }
 
   async function fileAll() {
@@ -826,6 +874,10 @@ export function EngagementView({ id, onBack, onMemo }: {
                 <th onClick={() => sortBy("values")}>Values{arrow("values")}</th>
                 <th onClick={() => sortBy("filed_at")}>Uploaded{arrow("filed_at")}</th>
                 <th>By</th>
+                {/* Deleting a filed document, with the facts read out of it
+                    (8.2). Its own column, at the far end, away from the tick
+                    that means in use. */}
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -835,7 +887,7 @@ export function EngagementView({ id, onBack, onMemo }: {
                 return (
               <Fragment key={g.key}>
                 <tr>
-                  <td colSpan={6}>
+                  <td colSpan={7}>
                     <a onClick={() =>
                       setOpenGroup(openGroup === g.key ? null : g.key)}>
                       {open ? "\u25be" : "\u25b8"} {g.label}
@@ -898,6 +950,16 @@ export function EngagementView({ id, onBack, onMemo }: {
                   </td>
                   <td className="muted">{(d.filed_at ?? "").slice(0, 16)}</td>
                   <td className="muted">{d.uploaded_by ?? "\u2014"}</td>
+                  <td>
+                    {/* Set aside is the ordinary act and lives in the tick at
+                        the other end of the row. This one does not come
+                        back (8.2). */}
+                    <a className="danger small"
+                       onClick={() => { if (!busy) askDelete(d.document_id); }}
+                       title="Delete this document and everything read from it">
+                      Delete
+                    </a>
+                  </td>
                 </tr>
                 ))}
               </Fragment>
@@ -1092,6 +1154,73 @@ export function EngagementView({ id, onBack, onMemo }: {
                 </button>
                 <a className="secondary"
                    onClick={() => setRemoving(false)}>Cancel</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Deleting a filed document (8.2). The heaviest thing this product
+          lets a tenant do to their own work, so it is asked for with the
+          name typed, as deleting a whole memorandum is - and it says all
+          four of the things that are true, including the one nobody
+          expects about the ledger. */}
+      {deleting && (
+        <div className="panel-backdrop" onClick={() => setDeleting(null)}>
+          <div className="panel narrow" onClick={(e) => e.stopPropagation()}
+               onKeyDown={(e) => { if (e.key === "Escape") setDeleting(null); }}>
+            <a className="panel-close"
+               onClick={() => setDeleting(null)}>Close</a>
+            <div className="form">
+              <h4>Delete {deleting.filename}</h4>
+
+              <p className="muted small">
+                This deletes the document, everything read from it &mdash;{" "}
+                {deleting.values.length}{" "}
+                {deleting.values.length === 1 ? "fact" : "facts"} &mdash; and
+                its file. <strong>It cannot be undone.</strong>
+              </p>
+
+              {deleting.memos > 0 ? (
+                <p className="why warn">
+                  {deleting.memos}{" "}
+                  {deleting.memos === 1 ? "memorandum cites" : "memoranda cite"}{" "}
+                  it. They are not changed and their text stands, but the
+                  citations to this document will no longer open and it will
+                  show in their sources as removed.
+                </p>
+              ) : (
+                <p className="muted small">
+                  No memorandum cites it.
+                </p>
+              )}
+
+              {deleting.charged && (
+                <p className="muted small">
+                  You were charged for filing it. That charge stays on the
+                  ledger and is not refunded &mdash; and once this is done,
+                  nothing connects that line to the document it paid for.
+                </p>
+              )}
+
+              <p className="muted small">
+                A clean memorandum means generating a new one, which is
+                charged.
+              </p>
+
+              <label className="row">
+                <span>Type {deleting.filename} to confirm</span>
+                <input value={typedName} autoFocus
+                       onChange={(e) => setTypedName(e.target.value)} />
+              </label>
+
+              <div className="form-actions">
+                <button disabled={!!busy || typedName.trim() !== deleting.filename}
+                        onClick={deleteFiled}>
+                  Delete this document
+                </button>
+                <a className="secondary"
+                   onClick={() => setDeleting(null)}>Cancel</a>
               </div>
             </div>
           </div>

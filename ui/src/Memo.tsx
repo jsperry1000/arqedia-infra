@@ -295,6 +295,15 @@ export function MemoView({ memoId, onBack, onOpen }: {
     return map;
   }, [memo]);
 
+  // Sources whose document has been deleted (8.2). They stay in the map
+  // above, so a citation to one is still FOUND - it is drawn as spent rather
+  // than falling through to prose, which is what happened while the server
+  // dropped them from the list altogether.
+  const gone = useMemo(
+    () => new Set((memo?.sources ?? []).filter((s) => s.removed)
+                                       .map((s) => s.filename)),
+    [memo]);
+
   async function openRef(ref: Ref) {
     setLoadingRef(true);
     try {
@@ -449,7 +458,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
   // preview, both panes of a rewrite - goes through here, so tables are
   // tables and citations behave the same way everywhere.
   const markdownOf = (text: string) => (
-    <MemoDocument markdown={text} byFilename={byFilename} onOpen={openRef} />
+    <MemoDocument markdown={text} byFilename={byFilename} gone={gone}
+                  onOpen={openRef} />
   );
 
   // Which sections of this memo the model wrote, grouped by who prompted.
@@ -570,7 +580,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
             <>
               <div className="rewrite-body">
                 <MemoDocument markdown={split.head} byFilename={byFilename}
-                              onOpen={openRef}
+                              gone={gone} onOpen={openRef}
                               onChange={(text) => setDraft(
                                 joinSections(text, split.hasHead, split.sections))} />
               </div>
@@ -611,7 +621,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
                 ) : (
                   <div className="rewrite-body">
                     <MemoDocument markdown={s.text} byFilename={byFilename}
-                                  onOpen={openRef}
+                                  gone={gone} onOpen={openRef}
                                   onChange={(text) => setDraft(
                                     replaceSection(draft, s.key, text))} />
                   </div>
@@ -672,8 +682,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
           })}
         </div>
       ) : (
-        <MemoDocument markdown={draft} byFilename={byFilename} onOpen={openRef}
-                      onChange={setDraft} />
+        <MemoDocument markdown={draft} byFilename={byFilename} gone={gone}
+                      onOpen={openRef} onChange={setDraft} />
       )}
 
       {passage && (

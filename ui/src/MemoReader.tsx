@@ -60,11 +60,15 @@ export function parseRefs(raw: string, byFilename: Record<string, number>):
 
 /** The mark a run of citations leaves in the text when they are put away, and
  *  the references themselves when they are out. */
-function Citations({ refs, shown, onToggle, byFilename, onOpen }: {
+function Citations({ refs, shown, onToggle, byFilename, gone, onOpen }: {
   refs: string[];
   shown: boolean;
   onToggle: () => void;
   byFilename: Record<string, number>;
+  /** Sources whose document has been deleted. The citation still reads - the
+   *  memorandum said what it said - and there is nothing behind it to open,
+   *  so it is drawn as spent rather than quietly turned back into prose. */
+  gone?: Set<string>;
   onOpen: (ref: Ref) => void;
 }) {
   if (!shown) {
@@ -84,6 +88,12 @@ function Citations({ refs, shown, onToggle, byFilename, onOpen }: {
           {parseRefs(raw, byFilename).map((p, k) =>
             typeof p === "string" ? (
               <span key={k}>{p}</span>
+            ) : gone?.has(p.filename) ? (
+              <span key={k} className="cite gone"
+                    title={p.filename + " has been deleted. The memorandum is "
+                           + "unchanged; there is nothing left to open."}>
+                {p.text}
+              </span>
             ) : (
               <span key={k} className="cite" onClick={() => onOpen(p)}
                     title={"Open " + p.filename}>{p.text}</span>
@@ -97,12 +107,13 @@ function Citations({ refs, shown, onToggle, byFilename, onOpen }: {
   );
 }
 
-function Inlines({ nodes, blockId, shown, onToggle, byFilename, onOpen }: {
+function Inlines({ nodes, blockId, shown, onToggle, byFilename, gone, onOpen }: {
   nodes: Inline[];
   blockId: string;
   shown: Record<string, boolean>;
   onToggle: (key: string) => void;
   byFilename: Record<string, number>;
+  gone?: Set<string>;
   onOpen: (ref: Ref) => void;
 }) {
   return (
@@ -115,7 +126,7 @@ function Inlines({ nodes, blockId, shown, onToggle, byFilename, onOpen }: {
         return (
           <Citations key={i} refs={n.refs} shown={!!shown[key]}
                      onToggle={() => onToggle(key)}
-                     byFilename={byFilename} onOpen={onOpen} />
+                     byFilename={byFilename} gone={gone} onOpen={onOpen} />
         );
       })}
     </>
@@ -250,9 +261,11 @@ function Editable({ html, onEdit, onSplit, deferred, className }: {
   );
 }
 
-export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
+export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
   markdown: string;
   byFilename: Record<string, number>;
+  /** Filenames whose document has been deleted (8.2). */
+  gone?: Set<string>;
   onOpen: (ref: Ref) => void;
   // Absent, the memo is read-only. Present, every block carries an edit
   // control and this is called with the whole memo after each change.
@@ -455,7 +468,7 @@ export function MemoDocument({ markdown, byFilename, onOpen, onChange }: {
 
   const inlinesOf = (block: Block, nodes: Inline[]) => (
     <Inlines nodes={nodes} blockId={block.id} shown={shown} onToggle={toggle}
-             byFilename={byFilename} onOpen={onOpen} />
+             byFilename={byFilename} gone={gone} onOpen={onOpen} />
   );
 
   /** The per-block controls. Always there, so they are never hunted for. */

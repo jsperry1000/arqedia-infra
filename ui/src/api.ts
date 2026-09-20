@@ -281,7 +281,10 @@ export type Memo = {
   modified_by: string | null;
   modified_at: string | null;
   markdown: string;
-  sources: { document_id: number; filename: string }[];
+  /** Every document this memo was written from. `removed` is a source whose
+   *  document has been deleted: the memo still cites it, the citation still
+   *  reads, and there is no longer anything behind it to open. */
+  sources: { document_id: number; filename: string; removed?: boolean }[];
   // Sections of this memo the model rewrote, and at whose prompt. Empty on a
   // generated memo and on a revision a person wrote alone.
   rewrites?: {
@@ -354,6 +357,10 @@ export type DocumentDetail = {
   values: ExtractedValue[];
   missing: { field_id: string; label: string }[];
   expected: number;
+  /** What deleting it would reach: how many memoranda cite it, and whether a
+   *  ledger line paid for filing it. Both are read live by the server. */
+  memos: number;
+  charged: boolean;
 };
 
 export type Settings = {
