@@ -118,13 +118,19 @@ def _clean(name):
     return name[:120]
 
 
-def _sql(statement, params=None):
-    """Data API call, retrying while the cluster wakes from zero capacity."""
+def _sql(statement, params=None, tx=None):
+    """Data API call, retrying while the cluster wakes from zero capacity.
+
+    `tx` runs the statement inside a transaction begun by the caller. Written
+    the same way as wallet._sql, because the two do the same job and a second
+    shape for it is a second thing to get right."""
+    kwargs = dict(resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
+                  database=DATABASE, sql=statement, parameters=params or [])
+    if tx:
+        kwargs["transactionId"] = tx
     for _ in range(12):
         try:
-            return _rds.execute_statement(
-                resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
-                database=DATABASE, sql=statement, parameters=params or [])
+            return _rds.execute_statement(**kwargs)
         except ClientError as exc:
             if exc.response.get("Error", {}).get("Code") in (
                 "DatabaseResumingException", "ThrottlingException"
@@ -573,25 +579,43 @@ def file_documents(tenant_id, email, decisions, idempotency_key):
 # --- documents -------------------------------------------------------------
 
 def remove_document(tenant_id, document_id):
-    """Discard a document that has not been filed.
+    """Delete a document, and everything read out of it.
 
-    The only destructive action outside account deletion, and deliberately so.
-    A file chosen by mistake may belong to another client or to nobody's
-    business but the uploader's, and marking it rejected would leave it in this
-    tenant's storage indefinitely. Both objects go - the upload and the
-    analysed envelope holding its text - and then the row.
+    THE ONE DESTRUCTIVE ACT ON A TENANT'S OWN WORK, outside closing the
+    account. It was limited to documents that had not been filed; on 20
+    September it was extended to filed ones, with the facts extracted from
+    them, by decision - which overrides "non-destructive throughout" for this
+    act and for nothing else.
 
-    Refused once filing has started. A document in `reading` has a Textract job
-    in flight that would write back to a row no longer there, and a filed one
-    has been extracted and paid for. Neither is a misclick.
+    WHAT GOES: the evidence binding this document's values to sentences, the
+    values, both envelopes, the upload, and the row.
 
-    An `unreadable` row is removable. It is the one thing a person CAN do with
-    a file we could not read, and it has cost them nothing: no envelope was
-    written and no money moved. Deleting an envelope that was never written is
-    not an error in S3, so the path below needs no special case for it.
+    WHAT STAYS, deliberately:
+      memo            a memorandum already written is what it said when it was
+                      written. A clean one is a new generation, charged.
+      memo_source     kept, and given the document's name on the way out
+                      (migration 028), so a citation to a deleted source
+                      renders as present-but-dead rather than silently
+                      becoming prose.
+      claim           a claim binds a sentence that still exists. Deleting it
+                      would say the sentence was never evidenced, rather than
+                      that its evidence was deleted.
+      wallet_*        the ledger is append-only. The charge stays and is not
+                      refunded; what is lost is the link back from that line
+                      to what it bought, which the confirmation says.
+
+    ONLY `reading` IS REFUSED. A Textract job in flight would write back to a
+    row that is no longer there.
+
+    THE DATABASE WORK IS ONE TRANSACTION, with the two S3 deletes inside it.
+    That ordering is the instruction and it has a cost worth naming: if the
+    row delete fails after the objects are gone, the rollback restores the
+    rows and the file does not come back. The alternative - commit, then
+    delete - fails the other way, leaving objects nobody can reach. Neither is
+    free; this one at least leaves a row a person can see and retry.
     """
-    row = _sql("SELECT s3_key, state, page_from, part_index FROM document "
-               "WHERE tenant_id = :t AND document_id = :d",
+    row = _sql("SELECT s3_key, state, page_from, part_index, filename "
+               "FROM document WHERE tenant_id = :t AND document_id = :d",
                [_p("t", tenant_id), _p("d", document_id)])
     records = row.get("records", [])
     if not records:
@@ -601,7 +625,8 @@ def remove_document(tenant_id, document_id):
     state = _col(records[0], 1)
     page_from = _col(records[0], 2)
     suffix = _envelope_suffix(page_from, _col(records[0], 3))
-    if state not in ("analysed", "unreadable"):
+    filename = _col(records[0], 4)
+    if state == "reading":
         return {"refused": state}
 
     # One uploaded file can hold several documents, all reading from the same
@@ -613,16 +638,47 @@ def remove_document(tenant_id, document_id):
         [_p("t", tenant_id), _p("k", s3_key), _p("d", document_id)])
     remaining = _col(siblings.get("records", [[{}]])[0], 0) or 0
 
-    # Storage first. A failure here leaves the row intact and the card on
-    # screen, which is retryable. The reverse orphans an object nobody can see.
-    # Deleting a key that is not there is not an error in S3, so the second
-    # call is safe whether or not the normalizer got that far.
-    _s3.delete_object(Bucket=REVIEW_BUCKET, Key=s3_key + suffix)
-    if not remaining:
-        _s3.delete_object(Bucket=DOCS_BUCKET, Key=s3_key)
+    where = [_p("t", tenant_id), _p("d", document_id)]
+    tx = _rds.begin_transaction(resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
+                                database=DATABASE)["transactionId"]
+    try:
+        # The name, before the row that holds it goes. Every memo citing this
+        # document reads its filename from here afterwards.
+        _sql("UPDATE memo_source SET filename = :f "
+             "WHERE tenant_id = :t AND document_id = :d",
+             [_p("f", filename)] + where, tx=tx)
 
-    _sql("DELETE FROM document WHERE tenant_id = :t AND document_id = :d",
-         [_p("t", tenant_id), _p("d", document_id)])
+        # Evidence first: it points at the values, and the values are about to
+        # go. A claim with nothing left behind it stays - see the docstring.
+        _sql("DELETE FROM claim_evidence WHERE value_id IN "
+             "(SELECT value_id FROM extracted_value "
+             " WHERE tenant_id = :t AND document_id = :d)", where, tx=tx)
+
+        _sql("DELETE FROM extracted_value "
+             "WHERE tenant_id = :t AND document_id = :d", where, tx=tx)
+
+        # Deleting a key that is not there is not an error in S3, so neither
+        # call needs to know whether the normalizer, filing or OCR got that
+        # far. The suffix comes from _envelope_suffix, which the normalizer
+        # and the collector mirror - there is no fourth copy of that rule.
+        _s3.delete_object(Bucket=REVIEW_BUCKET,
+                          Key=s3_key + suffix.replace(".analysed.",
+                                                      ".normalized."))
+        _s3.delete_object(Bucket=REVIEW_BUCKET, Key=s3_key + suffix)
+        if not remaining:
+            _s3.delete_object(Bucket=DOCS_BUCKET, Key=s3_key)
+
+        _sql("DELETE FROM document WHERE tenant_id = :t AND document_id = :d",
+             where, tx=tx)
+    except Exception:
+        _rds.rollback_transaction(resourceArn=CLUSTER_ARN,
+                                  secretArn=SECRET_ARN, transactionId=tx)
+        raise
+    _rds.commit_transaction(resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
+                            transactionId=tx)
+
+    print("[document-deleted] tenant=%s doc=%s state=%s" % (
+        tenant_id, document_id, state))
     return {"removed": document_id}
 
 
@@ -738,6 +794,19 @@ def document_values(tenant_id, document_id):
             if f[0] not in found:
                 missing.append({"field_id": f[0], "label": f[1]})
 
+    # What deleting this document would reach, read live so the confirmation
+    # states a fact rather than a guess (8.2). Cheap: two counts on indexed
+    # columns, and this is the call the drawer already makes.
+    reach = _sql(
+        """
+        SELECT (SELECT COUNT(DISTINCT memo_id) FROM memo_source
+                 WHERE tenant_id = :t AND document_id = :d) AS memos,
+               (SELECT charge_entry_id FROM document
+                 WHERE tenant_id = :t AND document_id = :d) AS entry
+        """,
+        [_p("t", tenant_id), _p("d", int(document_id))],
+    ).get("records", [[{}, {}]])
+
     return {
         "document_id": int(document_id),
         "filename": _col(records[0], 0),
@@ -747,6 +816,9 @@ def document_values(tenant_id, document_id):
         "values": values,
         "missing": missing,
         "expected": len(expected),
+        # How many memoranda cite it, and whether a ledger line paid for it.
+        "memos": _col(reach[0], 0) or 0,
+        "charged": _col(reach[0], 1) is not None,
     }
 
 
@@ -889,11 +961,24 @@ def get_memo(tenant_id, memo_id):
     markdown = _s3.get_object(
         Bucket=_col(r, 0), Key=_col(r, 1))["Body"].read().decode("utf-8")
 
+    # LEFT JOIN, and the name from whichever side still holds it.
+    #
+    # An inner join dropped a deleted source out of this list altogether, and
+    # the reader builds its filename -> document_id map from this list - so
+    # every citation naming that file quietly stopped being a citation and
+    # read as ordinary prose. A memorandum that loses its evidence must say
+    # so. The row survives the delete and carries the name (migration 028), so
+    # the source is still listed, marked removed, and its citations render as
+    # present and not clickable.
     sources = _sql(
         """
-        SELECT d.document_id, d.filename
+        SELECT ms.document_id,
+               COALESCE(d.filename, ms.filename) AS filename,
+               d.document_id IS NULL AS removed
         FROM memo_source ms
-        JOIN document d ON d.document_id = ms.document_id
+        LEFT JOIN document d
+               ON d.document_id = ms.document_id
+              AND d.tenant_id = ms.tenant_id
         WHERE ms.tenant_id = :t AND ms.memo_id = :m
         """,
         [_p("t", tenant_id), _p("m", int(memo_id))],
@@ -927,7 +1012,11 @@ def get_memo(tenant_id, memo_id):
         "modified_by": _col(r, 7),
         "modified_at": _col(r, 8),
         "markdown": markdown,
-        "sources": [{"document_id": _col(s, 0), "filename": _col(s, 1)}
+        "sources": [{"document_id": _col(s, 0),
+                     # A source deleted before migration 028 ran has no name
+                     # anywhere. Said rather than left blank.
+                     "filename": _col(s, 1) or "a deleted document",
+                     "removed": bool(_col(s, 2))}
                     for s in sources.get("records", [])],
         "rewrites": [{"section_heading": _col(w, 0), "prompted_by": _col(w, 1),
                       "model_id": _col(w, 2), "completed_at": _col(w, 3)}
