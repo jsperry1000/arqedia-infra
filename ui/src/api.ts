@@ -366,6 +366,10 @@ export type DocumentDetail = {
 export type Settings = {
   name: string;
   plan: string;
+  /** The caller's own role, from the token. Branding is an administrator act,
+   *  and the server refuses a member - this is what lets the screen say so
+   *  before the click rather than after it. */
+  role: "admin" | "member";
   may_brand: boolean;
   may_remove_footer: boolean;
   logo_key: string | null;

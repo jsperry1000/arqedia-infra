@@ -96,7 +96,11 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
 
   if (!settings) return <p className="muted">Loading&hellip;</p>;
 
-  const locked = !settings.may_brand;
+  // Two gates, and the server holds both: the plan, and the role. A member on
+  // Business used to see live swatches that answered 403 on the first click.
+  const planLocked = !settings.may_brand;
+  const roleLocked = settings.role !== "admin";
+  const locked = planLocked || roleLocked;
 
   return (
     <div>
@@ -106,11 +110,18 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
         {settings.name} &middot; {settings.plan} plan
       </p>
 
-      {locked && (
+      {planLocked && (
         <p className="revision-note">
           Memos carry ARQEDIA's mark and colours on the Base plan. Business and
           Enterprise let you set your own; Enterprise also removes the ARQEDIA
           line from the footer.
+        </p>
+      )}
+
+      {roleLocked && (
+        <p className="revision-note">
+          The mark and the colours are an administrator's to set. You can see
+          them here, and render a sample memo to see how they look.
         </p>
       )}
 
