@@ -159,6 +159,20 @@ resource "aws_route53_record" "www_a" {
   }
 }
 
+# Where the marketing site answers, for whoever has to link to it.
+#
+# FROM local.site_host, which is what the alias, both A records and the
+# certificate are built from - so the hostname is stated once in dns.tf and
+# everything that needs it derives it. The application's front end reads this
+# into VITE_SITE_URL at build time, which is how "Leave and go home" on the
+# signup flow knows where home is without a fourth copy of the hostname.
+#
+# When prod takes arqedia.com and dev moves to dev.arqedia.com (dns.tf), this
+# follows on its own.
+output "site_url" {
+  value = "https://${local.site_host}"
+}
+
 output "site_bucket" {
   value = aws_s3_bucket.site.id
 }

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { signIn } from "aws-amplify/auth";
 import { api } from "./api";
+import { config } from "./config";
 import { REGIONS, JURISDICTIONS } from "./mock";
 
 /**
@@ -151,8 +152,12 @@ export function SignUp({ onSignIn, onSignedUp }: {
             point before the code is answered, so leaving costs nothing and
             nothing has to be undone - but until this there was no door: the
             only control that left the flow was "Sign in" at the very foot,
-            which reads as an answer to a different question. */}
-        <a className="small signup-home" onClick={onSignIn}>
+            which reads as an answer to a different question.
+            HOME IS THE MARKETING SITE, not the sign-in card. Somebody
+            abandoning a signup has no account to sign in to, and the page
+            they came from is the one that persuaded them. The address is
+            Terraform's, through the build; see config.ts. */}
+        <a className="small signup-home" href={config.siteUrl}>
           Leave and go home
         </a>
       </div>
