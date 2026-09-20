@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { updatePassword } from "aws-amplify/auth";
 import { useBackAction } from "./shell";
 import { api, chargeKey, type Wallet, type LedgerEntry,
          type Seats as SeatState, type Invited,
@@ -65,12 +66,17 @@ const TOPUP_CENTS = 500;
 /**
  * Account management. Everything to do with money and with who may spend it.
  *
- * Three parts, because they answer three different questions and a person
+ * Four parts, because they answer four different questions and a person
  * arrives knowing which one they have:
  *
  *   Subscription - what am I on, and what would I be on instead
  *   Balance      - what have I got left, and what went where
  *   Seats        - who may use this, and what may they do
+ *   Password     - how I get in
+ *
+ * Password is the odd one: it touches no endpoint of ours at all, and is here
+ * because this is where a person looks for it rather than because it belongs
+ * with money (10.3).
  *
  * The wallet is not a separate destination. A balance is an account matter,
  * and putting it on its own rail entry asked people to know the difference
@@ -93,7 +99,7 @@ const TOPUP_CENTS = 500;
  * checkout is ASK AGAIN, and say plainly that the answer may take a moment.
  */
 
-type Tab = "subscription" | "balance" | "seats";
+type Tab = "subscription" | "balance" | "seats" | "password";
 
 export function AccountView({ onBack }: { onBack: () => void }) {
   useBackAction(onBack);
@@ -110,11 +116,14 @@ export function AccountView({ onBack }: { onBack: () => void }) {
                 onClick={() => setTab("balance")}>Balance</button>
         <button className={tab === "seats" ? "on" : undefined}
                 onClick={() => setTab("seats")}>Seats and permissions</button>
+        <button className={tab === "password" ? "on" : undefined}
+                onClick={() => setTab("password")}>Password</button>
       </nav>
 
       {tab === "subscription" && <Subscription />}
       {tab === "balance" && <Balance />}
       {tab === "seats" && <Seats />}
+      {tab === "password" && <Password />}
     </div>
   );
 }
@@ -944,6 +953,100 @@ function Seats() {
         session next refreshes. Removing the seat takes effect at once, which
         is why removal rather than demotion is what to reach for in a hurry.
       </p>
+    </>
+  );
+}
+
+// --- password --------------------------------------------------------------
+
+/**
+ * The password of whoever is signed in, changed by them.
+ *
+ * NOTHING OF OURS IS IN THE PATH. Amplify talks to Cognito directly, as the
+ * sign-in card does, so there is no route, no Lambda and no record of this on
+ * our side. The old password is Cognito's requirement, not a second thought
+ * added here: a session left open on a shared machine is exactly what it is
+ * for.
+ *
+ * COGNITO'S REFUSAL IS WHAT THE SCREEN SAYS. A wrong old password, a password
+ * below the policy, too many attempts - each has a sentence already written
+ * for a person to read, and rewording them here would mean maintaining a copy
+ * of a policy we do not own.
+ *
+ * The one check that is ours is typing it twice, because Cognito has no
+ * opinion about that and a mistyped new password locks somebody out of their
+ * own account.
+ */
+function Password() {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [again, setAgain] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [changed, setChanged] = useState(false);
+
+  const mismatch = again.length > 0 && next !== again;
+  const ready = current.length > 0 && next.length > 0 && !mismatch;
+
+  async function change() {
+    setBusy(true);
+    setError("");
+    setChanged(false);
+    try {
+      await updatePassword({ oldPassword: current, newPassword: next });
+      setCurrent("");
+      setNext("");
+      setAgain("");
+      setChanged(true);
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      {error && <p className="error">{error}</p>}
+      {busy && <p className="busy">Changing&hellip;</p>}
+      {changed && !busy && <p className="saved">Password changed.</p>}
+
+      <h3>Change your password</h3>
+      <p className="muted small">
+        At least 12 characters, with an upper case letter, a lower case letter
+        and a number. This changes the password of the account you are signed
+        in with and nobody else&rsquo;s &mdash; an administrator cannot set
+        another person&rsquo;s password, and never sees one.
+      </p>
+
+      <div className="form">
+        <label className="row">
+          <span>Current password</span>
+          <input type="password" value={current} disabled={busy}
+                 onChange={(e) => setCurrent(e.target.value)} />
+        </label>
+        <label className="row">
+          <span>New password</span>
+          <input type="password" value={next} disabled={busy}
+                 onChange={(e) => setNext(e.target.value)} />
+        </label>
+        <label className="row">
+          <span>New password again</span>
+          <input type="password" value={again} disabled={busy}
+                 onChange={(e) => setAgain(e.target.value)} />
+        </label>
+        <div className="form-actions">
+          <button onClick={change} disabled={busy || !ready}>
+            Change password
+          </button>
+          <span className="muted small">
+            {mismatch
+              ? "The two new passwords are not the same."
+              : "Forgotten the current one? Sign out, and use "
+                + "“Forgotten your password?” on the sign-in card."}
+          </span>
+        </div>
+      </div>
     </>
   );
 }

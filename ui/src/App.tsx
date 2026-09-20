@@ -12,7 +12,8 @@ import { ViewerView } from "./Viewer";
 import { SignUp } from "./SignUp";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Amplify } from "aws-amplify";
-import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
+import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession,
+         resetPassword, confirmResetPassword } from "aws-amplify/auth";
 import { config } from "./config";
 import { api, type Engagement } from "./api";
 // The mark lives in one place, /brand, and both the application and the
@@ -32,19 +33,94 @@ Amplify.configure({
 
 // --- sign in ---------------------------------------------------------------
 
+/** Which shape the card is in.
+ *
+ *  "in"     email and password
+ *  "forgot" the address to send a reset code to
+ *  "reset"  the code, and the password to set with it
+ *
+ *  The first-sign-in challenge is not one of these: it is a state of the
+ *  sign-in attempt rather than a screen somebody chooses, and it keeps its own
+ *  flag. */
+type SignInMode = "in" | "forgot" | "reset";
+
+/** What a person is told when resetting cannot be started for their address.
+ *
+ *  DELIBERATELY SAYS NO CAUSE. Cognito refuses here for more than one reason -
+ *  an account that has never had a password set is one of them - and we have
+ *  not verified which refusal carries which cause. Naming the wrong one sends
+ *  somebody to fix a thing that is not broken. The administrator of their own
+ *  workspace can put any of them right, so that is who they are sent to. */
+const RESET_REFUSED =
+  "A code cannot be sent for that address from here. An administrator in " +
+  "your firm can set it right - ask them to remove your seat and invite you " +
+  "again.";
+
 function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [needsNew, setNeedsNew] = useState(false);
+  const [mode, setMode] = useState<SignInMode>("in");
+  const [code, setCode] = useState("");
+  const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  function go(to: SignInMode) {
+    setMode(to);
+    setError("");
+    setNote("");
+  }
+
+  /** Ask Cognito to send a reset code.
+   *
+   *  NEVER SAYS WHETHER THE ADDRESS HAS AN ACCOUNT. With user-existence errors
+   *  enabled, Cognito's own answer for an unknown address alternates between a
+   *  code-sent response naming a simulated destination and an
+   *  InvalidParameterException - so both are treated as the same neutral
+   *  sentence here, and the screen moves on either way. A card that behaves
+   *  differently for the two is the enumeration the pool setting exists to
+   *  prevent. */
+  async function sendCode() {
+    try {
+      await resetPassword({ username: email });
+    } catch (err: any) {
+      // The refusals that are about this person rather than about existence.
+      if (err?.name === "LimitExceededException"
+          || err?.name === "TooManyRequestsException") {
+        setError(err.message ?? String(err));
+        return;
+      }
+      if (err?.name !== "InvalidParameterException") {
+        setError(RESET_REFUSED);
+        return;
+      }
+    }
+    go("reset");
+    setNote("If that address has an account, a code is on its way to it. It "
+            + "lasts an hour.");
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     setBusy(true);
     try {
+      if (mode === "forgot") {
+        await sendCode();
+        return;
+      }
+      if (mode === "reset") {
+        await confirmResetPassword({
+          username: email, confirmationCode: code, newPassword });
+        setCode("");
+        setNewPassword("");
+        setPassword("");
+        go("in");
+        setNote("Password changed. Sign in with it.");
+        return;
+      }
       if (needsNew) {
         await confirmSignIn({ challengeResponse: newPassword });
         onDone();
@@ -63,32 +139,93 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
     }
   }
 
+  const action = mode === "forgot" ? "Send a code"
+    : mode === "reset" ? "Set the password"
+    : "Sign in";
+
   return (
     <div className="centre">
       <form onSubmit={submit} className="card">
         <img src={logoDeep} alt="" width="44" height="44" />
         <h1>ARQEDIA</h1>
-        {needsNew ? (
+
+        {mode === "forgot" && (
+          <>
+            <p className="muted">
+              We will email a code to the address you sign in with.
+            </p>
+            <input placeholder="Email" value={email}
+                   onChange={(e) => setEmail(e.target.value)} autoFocus />
+          </>
+        )}
+
+        {mode === "reset" && (
+          <>
+            <p className="muted">
+              Enter the code from the email, and the password you want.
+            </p>
+            <input placeholder="Code" value={code} inputMode="numeric"
+                   onChange={(e) => setCode(e.target.value)} autoFocus />
+            <input type="password" placeholder="New password" value={newPassword}
+                   onChange={(e) => setNewPassword(e.target.value)} />
+            {/* The quiet way out for somebody whose code never comes. It names
+                no cause, for the reason RESET_REFUSED does not. */}
+            <p className="muted small" style={{ margin: 0 }}>
+              At least 12 characters, with an upper case letter, a lower case
+              letter and a number. No code after a few minutes? Ask an
+              administrator in your firm.
+            </p>
+          </>
+        )}
+
+        {mode === "in" && needsNew && (
           <>
             <p className="muted">Choose a new password.</p>
             <input type="password" placeholder="New password" value={newPassword}
                    onChange={(e) => setNewPassword(e.target.value)} autoFocus />
           </>
-        ) : (
+        )}
+
+        {mode === "in" && !needsNew && (
           <>
             <input placeholder="Email" value={email}
                    onChange={(e) => setEmail(e.target.value)} autoFocus />
+            {/* There is no other user id, and somebody who has forgotten
+                which address they used is helped more by being told that
+                than by a screen that pretends to look one up (10.2). */}
+            <p className="muted small" style={{ margin: 0 }}>
+              Your user id is the email address you signed up with.
+            </p>
             <input type="password" placeholder="Password" value={password}
                    onChange={(e) => setPassword(e.target.value)} />
           </>
         )}
+
+        {note && <p className="muted small" style={{ margin: 0 }}>{note}</p>}
         {error && <p className="error">{error}</p>}
-        <button disabled={busy}>{busy ? "..." : "Sign in"}</button>
+        <button disabled={busy}>{busy ? "..." : action}</button>
+
+        {mode === "in" && !needsNew && (
+          <p className="muted small" style={{ textAlign: "center", margin: 0 }}>
+            <a onClick={() => go("forgot")}>Forgotten your password?</a>
+          </p>
+        )}
+
+        {mode !== "in" && (
+          <p className="muted small" style={{ textAlign: "center", margin: 0 }}>
+            <a onClick={() => { setCode(""); setNewPassword(""); go("in"); }}>
+              Back to signing in
+            </a>
+          </p>
+        )}
+
         {/* Somebody arriving from the site has no account yet. Until this
             existed the sign-in card was the end of the road for them. */}
-        <p className="muted small" style={{ textAlign: "center", margin: 0 }}>
-          No account? <a onClick={onCreate}>Start a 30-day trial</a>
-        </p>
+        {mode === "in" && (
+          <p className="muted small" style={{ textAlign: "center", margin: 0 }}>
+            No account? <a onClick={onCreate}>Start a 30-day trial</a>
+          </p>
+        )}
       </form>
     </div>
   );

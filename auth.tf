@@ -120,6 +120,22 @@ resource "aws_cognito_user_pool_client" "web" {
   # Deliberately neither tenant_id nor role: a user may not move themselves
   # between tenants, nor promote themselves.
   write_attributes = ["name"]
+
+  # Never say whether an address has an account.
+  #
+  # Created through the API rather than the console, this defaults to LEGACY -
+  # so sign-in answered "User does not exist." for an unknown address and
+  # "Incorrect username or password." for a known one with the wrong password,
+  # which tells anybody who asks which firms are customers. ENABLED makes both
+  # the same generic failure.
+  #
+  # It matters more from 10.1 onwards: "Forgotten your password?" takes an
+  # address from anybody, signed out, and would otherwise be an enumeration
+  # oracle that needs no password at all. With this set, Cognito's answer for
+  # an unknown address alternates between a code-sent response naming a
+  # simulated destination and an InvalidParameterException, and the sign-in
+  # card treats both as the same sentence.
+  prevent_user_existence_errors = "ENABLED"
 }
 
 # --- Users -----------------------------------------------------------------
