@@ -5,6 +5,13 @@ on:
     branches: [main]
     paths:
       - "site/**"
+      # The site builds from source, and some of that source is not under
+      # site/. tokens.css, flock.ts and the mark are shared with the
+      # application, one copy each, so a change to any of them changes what
+      # this job would publish - and without these two lines the job never
+      # ran, because nothing under site/ had moved.
+      - "ui/src/**"
+      - "brand/**"
       - ".github/workflows/deploy-site.yml"
   workflow_dispatch:
     inputs:

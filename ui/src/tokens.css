@@ -30,6 +30,15 @@
   --ink-2:  #3c4a5c;   /* body prose */
   --muted:  #64748b;
 
+  /* --- dulled ------------------------------------------------------------- */
+  /* A stage of the sequence that is not the one in use: the same picture with
+     the colour taken out of it. Only the stage strip uses these, and it uses
+     them by shadowing --medium, --rule, --light and --deep on the element the
+     canvas reads its palette from. */
+  --dull-ink:  #cbd3dc;
+  --dull-line: #e6eaef;
+  --dull-deep: #c2ccd7;
+
   /* --- type -------------------------------------------------------------- */
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
   --sans:  "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Helvetica, Arial, sans-serif;
