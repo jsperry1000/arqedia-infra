@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type Settings } from "./api";
 import { useBackAction } from "./shell";
+import { EnterpriseLink, UpgradePrompt } from "./upgrade";
 
 /**
  * Settings. Branding today; seats, plan and billing will join it.
@@ -111,11 +112,23 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
       </p>
 
       {planLocked && (
-        <p className="revision-note">
-          Memos carry ARQEDIA's mark and colours on the Base plan. Business and
-          Enterprise let you set your own; Enterprise also removes the ARQEDIA
-          line from the footer.
-        </p>
+        <>
+          <p className="revision-note">
+            Memos carry ARQEDIA's mark and colours on the Base plan. Business
+            and Enterprise let you set your own; Enterprise also removes the
+            ARQEDIA line from the footer.
+          </p>
+          {/* The note above named the plan that would unlock this and offered
+              no way to it (11.1), and named Enterprise, which cannot be
+              bought from anywhere (11.4). Both are answered here. */}
+          <UpgradePrompt action="See plans">
+            Your logo and your four colours are on Small Business and above.
+            On this plan every memorandum you send carries ours.{" "}
+            <EnterpriseLink className="small" />{" "}
+            if the footer line has to go as well &mdash; that one is
+            negotiated rather than bought.
+          </UpgradePrompt>
+        </>
       )}
 
       {roleLocked && (

@@ -14,6 +14,7 @@ import {
 } from "./api";
 import { useNavigate } from "react-router-dom";
 import { useBackAction, Working } from "./shell";
+import { BALANCE, UpgradePrompt } from "./upgrade";
 
 /** The name a file is stored under: the API's _clean, whitespace to a dash
  *  and anything else unsafe dropped. Compared on both sides, so a row whose
@@ -817,16 +818,20 @@ export function EngagementView({ id, onBack, onMemo }: {
             </div>
           )}
 
+          {/* The way out used to be prose - "Top up under Settings, Account
+              management" - which asks a person to go and find a screen while
+              holding a proposal they cannot file. It is a control now, as the
+              generate drawer's already was (11.1), and it lands on Balance
+              rather than on whichever tab Account happens to open. */}
           {fileQuote && !fileQuote.affordable && (
-            <p className="why warn">
+            <UpgradePrompt tone="warn" action="Top up" to={BALANCE}>
               {fileQuote.affordable_count === 0
                 ? "There is not enough balance to file any of these. Nothing "
                 + "has been charged, and the proposal keeps until there is."
                 : `There is enough for ${fileQuote.affordable_count} of `
                 + `${fileQuote.quantity}. Set the rest aside, or top up and `
-                + "file them together."}{" "}
-              Top up under Settings, Account management.
-            </p>
+                + "file them together."}
+            </UpgradePrompt>
           )}
 
           <button onClick={fileAll}
@@ -1099,7 +1104,11 @@ export function EngagementView({ id, onBack, onMemo }: {
                     not offered at all - the way out is a top-up, so that is
                     what is here instead. */}
                 {memoQuote && !memoQuote.affordable ? (
-                  <button onClick={() => navigate("/account")}>
+                  // Was /account, which opens on Subscription - so the one
+                  // control on the screen that says "Top up" landed a person
+                  // on the plan table instead of the balance. The tab is in
+                  // the address now (11.1).
+                  <button onClick={() => navigate(BALANCE)}>
                     Top up
                   </button>
                 ) : (
