@@ -1,5 +1,8 @@
 import './styles/site.css'
-import { mountFlock } from './flock'
+// One source, two surfaces - the same footing tokens.css uses. The engine
+// lives in the application and the site reads it from there; a copy is how
+// the hero and the configuration screen's stages would drift apart.
+import { mountFlock } from '../../ui/src/flock'
 
 /* The hero animation, the worked sample, and the starter-pack chooser.
    Nothing else on the page moves. */

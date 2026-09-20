@@ -13,6 +13,8 @@ import {
   type Validation,
 } from "./api";
 import { ProposeView } from "./Propose";
+import { StageStrip } from "./StageStrip";
+import type { Stage } from "./flock";
 import type { Report as StartReport } from "./Welcome";
 import {
   slugKey, KeyLine, ColumnEditor, columnsReady, ReadModeControls, useGrows,
@@ -446,12 +448,20 @@ type Deleting = {
   run: () => Promise<unknown>;
 };
 
-// The parts of the configuration screen, in the order the bar offers them.
+// The parts of the configuration screen, in the order the band offers them.
 // How documents group sits on the documents tab rather than a tab of its own.
+//
+// Each carries the line it needs (3.1) and the stage of the home page's
+// sequence it stands for (3.2). Stage 1 - the swarm, which is the work the
+// model does between a document arriving and a fact being filed - belongs to
+// no part of the configuration and is never lit.
 const PARTS = [
-  ["sections", "Report sections"],
-  ["facts", "Facts"],
-  ["documents", "Document types"],
+  ["sections", "Report sections",
+   "What the memorandum says, and in what order", 3],
+  ["facts", "Facts",
+   "The vocabulary every memorandum draws on", 2],
+  ["documents", "Document types",
+   "Where those facts are looked for", 0],
 ] as const;
 
 export function ConfigureView({ onBack }: { onBack: () => void }) {
@@ -801,9 +811,23 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     return set;
   }, [draft]);
 
-  // The bar is held beneath the site header and the Back strip, and an open
-  // section's row beneath the bar. Both offsets are measured rather than
-  // assumed: they change with the width of the window.
+  /** How much each part holds, from the draft, so the band says what is in
+   *  there rather than only what it is called (3.1). Sections are the ones
+   *  belonging to the memorandum on screen; facts and document types belong
+   *  to the whole configuration, as the screen says throughout. */
+  const partCount = (key: string) =>
+    key === "sections" ? sections.length
+      : key === "facts" ? (draft?.fields.length ?? 0)
+        : (draft?.document_types.length ?? 0);
+
+  /** Which stage of the home page's sequence the part on screen stands for
+   *  (3.2). Stage 1 is not among them. */
+  const litStage = (PARTS.find(([key]) => key === part)?.[3] ?? null) as
+    Stage | null;
+
+  // The bar and the band are held beneath the site header and the Back strip,
+  // and an open section's row beneath both. Every offset is measured rather
+  // than assumed: they change with the width of the window.
   const pinTop = usePinTop();
 
   const bar = useRef<HTMLDivElement | null>(null);
@@ -1106,11 +1130,18 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     // per document group, and four groups do not fit the width that suits
     // prose. See main:has(.wide-page).
     <div className="wide-page">
-      {/* The working controls, held at the top while the page scrolls. A
-          person deep in a section list could not leave, change part or
-          publish without scrolling back up to find them (UX-02). */}
-      <div className={"config-bar" + (stuck ? " covered" : "")}
+      {/* Where the part on screen sits in the whole business: the same four
+          stages the home page runs through, still and in miniature, with the
+          one this part stands for brought forward (3.2). */}
+      <StageStrip lit={litStage} />
+
+      {/* The working controls and the band of parts beneath them, held at the
+          top together while the page scrolls (UX-02). Measured as ONE block,
+          because what an open section's row has to clear is both of them -
+          which is what keeps --fields-top honest without a second measure. */}
+      <div className={"config-top" + (stuck ? " covered" : "")}
            ref={bar} style={{ top: pinTop }}>
+      <div className="config-bar">
         <select aria-label="Memorandum" value={current?.key ?? ""}
                 onChange={(e) => {
                   setTemplate(e.target.value);
@@ -1120,12 +1151,6 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             <option key={t.key} value={t.key}>{t.label || t.key}</option>
           ))}
         </select>
-        <nav className="parts">
-          {PARTS.map(([key, label]) => (
-            <a key={key} className={part === key ? "on" : undefined}
-               onClick={() => setPart(key)}>{label}</a>
-          ))}
-        </nav>
         {/* What Publish covers, beside it (UX-05). The whole configuration,
             not the report on screen. */}
         <span className="live muted small">
@@ -1146,6 +1171,22 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           onClick={() => setPublishing(true)}>
           Publish
         </button>
+      </div>
+
+      {/* The three things this screen is about, at the size that says so
+          (3.1). They were three 13px links in the bar, the same weight as
+          Discard. The tab pattern is Account management's, widened to carry a
+          line about each part and how much of it there is. */}
+      <nav className="tabs parts-band">
+        {PARTS.map(([key, label, note]) => (
+          <button key={key} className={part === key ? "on" : undefined}
+                  onClick={() => setPart(key)}>
+            <b>{label}</b>
+            <span className="count">{partCount(key)}</span>
+            <i>{note}</i>
+          </button>
+        ))}
+      </nav>
       </div>
 
       <div className="memo-head">
