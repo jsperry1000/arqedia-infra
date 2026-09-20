@@ -1450,10 +1450,17 @@ _HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 _LOGO_TYPES = {"image/png": ".png", "image/jpeg": ".jpg"}
 
 
-def get_settings(tenant_id):
+def get_settings(tenant_id, role=None):
     """The tenant's name, plan and branding. Branding is returned whatever the
     plan, so a Base tenant can see what a paid plan would let them set rather
-    than finding an empty screen."""
+    than finding an empty screen.
+
+    THE CALLER'S ROLE TRAVELS WITH IT. Branding has two server gates -
+    _require_branding refuses a member and refuses a plan below Business - and
+    the screen could only see one of them, so a member on Business was shown
+    live swatches that answered 403 on the first click. The role is returned
+    so the screen can disable them and say why, which is what it already does
+    for the plan. It is NOT the control: _require_branding is."""
     result = _sql(
         """
         SELECT name, plan, brand_logo_key, brand_deep, brand_mid,
@@ -1483,6 +1490,8 @@ def get_settings(tenant_id):
     return {
         "name": _col(r, 0),
         "plan": plan,
+        # What the token says this caller is, echoed rather than decided here.
+        "role": role,
         "may_brand": plan in ("business", "enterprise"),
         "may_remove_footer": plan == "enterprise",
         "logo_key": logo_key,
@@ -1532,11 +1541,11 @@ def update_settings(tenant_id, role, body):
         params.append(_p("brand_logo_key", None))
 
     if not fields:
-        return get_settings(tenant_id)
+        return get_settings(tenant_id, role)
 
     _sql("UPDATE tenant SET " + ", ".join(fields) + " WHERE tenant_id = :t",
          params)
-    return get_settings(tenant_id)
+    return get_settings(tenant_id, role)
 
 
 def render_memo(tenant_id, memo_id):
@@ -1613,7 +1622,7 @@ def confirm_logo(tenant_id, role, key):
 
     _sql("UPDATE tenant SET brand_logo_key = :k WHERE tenant_id = :t",
          [_p("k", key), _p("t", tenant_id)])
-    return get_settings(tenant_id)
+    return get_settings(tenant_id, role)
 
 
 # --- uploads and generation ------------------------------------------------
@@ -2186,7 +2195,7 @@ def _dispatch(event, context):
                                           body.get("filename", "")))
 
         if route == "GET /settings":
-            settings = get_settings(tenant_id)
+            settings = get_settings(tenant_id, role)
             if settings is None:
                 return _reply(404, {"error": "not found"})
             return _reply(200, settings)

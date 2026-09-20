@@ -130,11 +130,14 @@ def build_styles(palette):
             fontName="Helvetica-Bold", fontSize=13, leading=17,
             textColor=colors.white, spaceBefore=0, spaceAfter=0),
 
-        # A fourth level, lighter than the sub-heading above it.
+        # A fourth level, lighter than the sub-heading above it. Its pill is
+        # filled with the LIGHT colour, so the text is the deep rather than
+        # reversed out: white on a pale tint is not readable, and the two
+        # levels above it are already white on something dark.
         "pill": ParagraphStyle(
             "pill", parent=base,
             fontName="Helvetica-Bold", fontSize=PILL_SIZE, leading=11,
-            textColor=colors.white, spaceBefore=0, spaceAfter=0),
+            textColor=deep, spaceBefore=0, spaceAfter=0),
 
         "subsection": ParagraphStyle(
             "subsection", parent=base,

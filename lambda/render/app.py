@@ -47,9 +47,13 @@ DATABASE = os.environ["DATABASE"]
 
 
 # A short memo in the shape of a real one: masthead, status bar, a section
-# heading, prose carrying citations, a table and a gap callout. Enough to show
-# every place a colour lands, and nothing more - a preview that takes a minute
-# to render is not a preview.
+# heading, a fourth-level heading, prose carrying citations, a table and a gap
+# callout. Enough to show every place a colour lands, and nothing more - a
+# preview that takes a minute to render is not a preview.
+#
+# The fourth-level heading is here because Settings offers a Light swatch and
+# names the pill as the thing it sets. Without one in the sample, the only
+# colour a tenant can choose is the only one the preview never shows.
 PREVIEW_MARKDOWN = """
 | | |
 |---|---|
@@ -79,6 +83,11 @@ governance roles:
 *Sources: certificate-of-incorporation.pdf, page 1; shareholder-register.pdf, page 2.*
 
 ## II. Ownership and Control
+
+#### Shareholders of Record
+
+The register shows two holders, neither of which is itself a holding company.
+*shareholder-register.pdf, page 2*
 
 > **Gap.** No beneficial ownership declaration has been provided, so ultimate
 > control cannot be confirmed from the registered position alone.
@@ -636,8 +645,11 @@ def _pill(text, styles, palette):
     Companies". Three levels now, each lighter than the one above it: a band
     across the page, a narrower band, and this.
 
-    Takes the mid colour. It wants the palest member of the palette, and a
-    tenant holds only three - see BR-01."""
+    Takes the LIGHT colour, the palest member of the palette, which is what
+    keeps a fourth-level heading lighter than the sub-heading above it. It
+    took the mid until 20 September because a tenant held only three colours;
+    it holds four (migration 013), and its text is set in the deep - white on
+    a pale tint is not readable (BR-01, closed)."""
     para = _para(text, styles["pill"])
     wanted = min(style.CONTENT_WIDTH,
                  stringWidth(re.sub(r"[*_`]", "", text or ""),
@@ -648,7 +660,7 @@ def _pill(text, styles, palette):
     # command, so it is set on the table itself.
     table = Table([[para]], colWidths=[wanted], cornerRadii=[5, 5, 5, 5])
     table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), palette["mid"]),
+        ("BACKGROUND", (0, 0), (-1, -1), palette["light"]),
         ("TOPPADDING", (0, 0), (-1, -1), 3),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
         ("LEFTPADDING", (0, 0), (-1, -1), 9),
