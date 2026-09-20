@@ -104,6 +104,16 @@ export function EngagementView({ id, onBack, onMemo }: {
   // The confirmation between pressing Generate and spending anything (4.1).
   const [confirming, setConfirming] = useState(false);
 
+  // 8.1 - which of the pre-filing documents are ticked, the confirmation
+  // before they go, what the last removal did, and why any of them stayed.
+  // Only the two blocks above the filed table carry ticks: the filed table's
+  // tick means in use, which is not destructive and must not be confused
+  // with this one.
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [removing, setRemoving] = useState(false);
+  const [removeSaid, setRemoveSaid] = useState("");
+  const [removeWhy, setRemoveWhy] = useState<Record<number, string>>({});
+
   async function refresh() {
     const [p, d, m] = await Promise.all([
       api.pending(id), api.documents(id), api.memos(id),
@@ -142,6 +152,59 @@ export function EngagementView({ id, onBack, onMemo }: {
   // own, out of the count, out of the quote, and out of what File sends.
   const refused = pending.filter((p) => p.state === "unreadable");
   const toFile = pending.filter((p) => p.state !== "unreadable");
+
+  /** What may be ticked. A document being read has a Textract job in flight
+   *  that would write back to a row no longer there, so the server refuses
+   *  it - the tick is withheld for the same reason the row's own Remove is
+   *  disabled today, rather than offered and then refused. */
+  const selectable = (p: Pending) => p.state !== "reading";
+
+  const pickedIn = (list: Pending[]) =>
+    list.filter((p) => selectable(p) && picked.has(p.document_id));
+
+  /** Tick or untick a whole block. Checked where every document in it that
+   *  CAN go is ticked; part-way where some are. */
+  const allBox = (list: Pending[], label: string) => {
+    const may = list.filter(selectable);
+    const chosen = pickedIn(list);
+    const all = may.length > 0 && chosen.length === may.length;
+    return (
+      <label className="inline-check">
+        <input type="checkbox" checked={all} disabled={may.length === 0}
+               ref={(el) => {
+                 if (el) el.indeterminate = !all && chosen.length > 0;
+               }}
+               onChange={() => setPicked((prev) => {
+                 const next = new Set(prev);
+                 may.forEach((p) => {
+                   if (all) next.delete(p.document_id);
+                   else next.add(p.document_id);
+                 });
+                 return next;
+               })} />
+        {all ? `All ${may.length} ${label} selected`
+             : `Select all ${may.length} ${label}`}
+      </label>
+    );
+  };
+
+  /** One document's tick. */
+  const pickBox = (p: Pending) => (
+    <input type="checkbox" checked={picked.has(p.document_id)}
+           disabled={!selectable(p) || !!busy}
+           title={selectable(p)
+             ? "Select for removal"
+             : "Being read. It cannot be removed until that finishes."}
+           onChange={() => setPicked((prev) => {
+             const next = new Set(prev);
+             if (next.has(p.document_id)) next.delete(p.document_id);
+             else next.add(p.document_id);
+             return next;
+           })} />
+  );
+
+  const pickedAll = [...refused, ...toFile]
+    .filter((p) => selectable(p) && picked.has(p.document_id));
 
   useEffect(() => { api.documentTypes().then((r) => setTypes(r.types)); }, []);
 
@@ -283,6 +346,62 @@ export function EngagementView({ id, onBack, onMemo }: {
     setChoices((prev) => {
       const next = { ...prev };
       delete next[p.document_id];
+      return next;
+    });
+    setBusy("");
+    refresh();
+  }
+
+  /** A refusal as the server wrote it, unwrapped from the {"error": "..."}
+   *  it travels in. A removal refused for state answers with the state -
+   *  "reading", "filed" - which is the reason, said in one word. */
+  function reason(err: unknown) {
+    const text = String((err as Error)?.message ?? err);
+    try { return JSON.parse(text).error ?? text; } catch { return text; }
+  }
+
+  /**
+   * Remove everything ticked, ONE AT A TIME (8.1).
+   *
+   * Not in parallel, and not in one call: each removal deletes objects from
+   * two buckets and then a row, and parts of one uploaded file share that
+   * file - the last part to go takes it. Serial is what keeps that count
+   * honest, and it is what lets a failure in the middle be reported as a
+   * failure of that document rather than of the batch.
+   *
+   * WHAT FAILS STAYS. A document that could not go keeps its row, its tick
+   * and its reason, so the next press retries exactly those.
+   */
+  async function removePicked() {
+    const chosen = pickedAll;
+    setRemoving(false);
+    if (chosen.length === 0) return;
+    setError("");
+    setRemoveSaid("");
+    setRemoveWhy({});
+
+    const failed: Record<number, string> = {};
+    let done = 0;
+    for (const p of chosen) {
+      setBusy(`Removing ${done + Object.keys(failed).length + 1} of ${chosen.length}`);
+      try {
+        await api.removeDocument(p.document_id);
+        done += 1;
+      } catch (err) {
+        failed[p.document_id] = reason(err);
+      }
+    }
+
+    const left = Object.keys(failed).length;
+    setRemoveSaid(
+      `${done} of ${chosen.length} removed.`
+      + (left ? ` ${left} could not be removed.` : ""));
+    setRemoveWhy(failed);
+    // Only what failed stays ticked; what went is gone from the list anyway.
+    setPicked(new Set(Object.keys(failed).map(Number)));
+    setChoices((prev) => {
+      const next = { ...prev };
+      chosen.forEach((p) => { if (!failed[p.document_id]) delete next[p.document_id]; });
       return next;
     });
     setBusy("");
@@ -479,12 +598,33 @@ export function EngagementView({ id, onBack, onMemo }: {
           terminal: nothing further will happen to these on its own, and the
           only move is to remove them and upload something readable. Said
           before the fileable ones so it is not lost under a list of twenty. */}
+      {/* What is ticked, across both blocks above the filed table, and the
+          one control that acts on it (8.1). Shown only once something is
+          ticked: an empty toolbar on a screen with nothing selected is a
+          control looking for a purpose. */}
+      {(refused.length > 0 || toFile.length > 0) && (
+        <div className="filters">
+          <button className="secondary" disabled={!!busy || pickedAll.length === 0}
+                  onClick={() => setRemoving(true)}>
+            Remove selected{pickedAll.length ? ` · ${pickedAll.length}` : ""}
+          </button>
+          {pickedAll.length > 0 && (
+            <a className="small" onClick={() => setPicked(new Set())}>
+              Clear the selection
+            </a>
+          )}
+          {removeSaid && <span className="muted small">{removeSaid}</span>}
+        </div>
+      )}
+
       {refused.length > 0 && (
         <>
           <h3>Could not be read</h3>
+          <div className="filters">{allBox(refused, "of these")}</div>
           {refused.map((p) => (
             <div className="review" key={p.document_id}>
               <div className="review-head">
+                {pickBox(p)}
                 <strong>{p.filename}</strong>
                 <span className="muted">
                   {p.pages ? `${p.pages} pages` : "—"}
@@ -504,6 +644,11 @@ export function EngagementView({ id, onBack, onMemo }: {
                 </button>
               </div>
               <p className="why warn">{p.refusal_reason}</p>
+              {removeWhy[p.document_id] && (
+                <p className="why warn">
+                  Not removed: {removeWhy[p.document_id]}
+                </p>
+              )}
             </div>
           ))}
           <p className="muted small">
@@ -515,6 +660,7 @@ export function EngagementView({ id, onBack, onMemo }: {
       {toFile.length > 0 && (
         <>
           <h3>Ready to file</h3>
+          <div className="filters">{allBox(toFile, "of these")}</div>
           {toFile.map((p) => {
             const choice = choices[p.document_id] ??
               { type: p.proposed_type, include: true };
@@ -522,6 +668,7 @@ export function EngagementView({ id, onBack, onMemo }: {
             return (
               <div className="review" key={p.document_id}>
                 <div className="review-head">
+                  {pickBox(p)}
                   <strong>{p.filename}</strong>
                   <span className="muted">
                     {p.page_from
@@ -587,6 +734,11 @@ export function EngagementView({ id, onBack, onMemo }: {
                   <p className="why warn">
                     Little readable text &mdash; {p.chars} characters across{" "}
                     {p.pages} pages. Confirm the type and file it to read the scan.
+                  </p>
+                )}
+                {removeWhy[p.document_id] && (
+                  <p className="why warn">
+                    Not removed: {removeWhy[p.document_id]}
                   </p>
                 )}
               </div>
@@ -904,6 +1056,43 @@ export function EngagementView({ id, onBack, onMemo }: {
                 balance rather than the card. A repeat of this click is
                 refused as a repeat rather than charged twice.
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Removing is the one destructive act on this screen, so it is asked
+          for twice and the second asking says what it reaches (8.1). The
+          drawer is the one every delete uses. */}
+      {removing && (
+        <div className="panel-backdrop" onClick={() => setRemoving(false)}>
+          <div className="panel narrow" onClick={(e) => e.stopPropagation()}
+               onKeyDown={(e) => { if (e.key === "Escape") setRemoving(false); }}>
+            <a className="panel-close"
+               onClick={() => setRemoving(false)}>Close</a>
+            <div className="form">
+              <h4>
+                Remove {pickedAll.length}{" "}
+                {pickedAll.length === 1 ? "document" : "documents"}
+              </h4>
+              <p className="muted small">
+                The file and everything read from it are deleted, and so is
+                the row. <strong>It cannot be undone</strong> &mdash; there is
+                no restoring a removed document, and uploading the file again
+                starts it over as a new one.
+              </p>
+              <p className="muted small">
+                Nothing has been filed or charged for, so nothing is refunded
+                and no memorandum changes.
+              </p>
+              <div className="form-actions">
+                <button onClick={removePicked} disabled={!!busy}>
+                  Remove {pickedAll.length}{" "}
+                  {pickedAll.length === 1 ? "document" : "documents"}
+                </button>
+                <a className="secondary"
+                   onClick={() => setRemoving(false)}>Cancel</a>
+              </div>
             </div>
           </div>
         </div>
