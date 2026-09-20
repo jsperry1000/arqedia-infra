@@ -382,9 +382,15 @@ export default function App() {
 
   return (
     <div className="shell" style={shellVars}>
+      {/* The mark goes home, as a mark does on every site anybody has used
+          (6.1). It was decoration; a person who wanted out of a screen had
+          Back, which goes one step, or the rail, which asks them to know
+          that Engagements is where home lives. */}
       <header ref={header}>
-        <img src={logoWhite} alt="" width="22" height="22" />
-        <strong>ARQEDIA</strong>
+        <a className="mark" onClick={() => navigate("/")} title="Home">
+          <img src={logoWhite} alt="" width="22" height="22" />
+          <strong>ARQEDIA</strong>
+        </a>
         <span className="account" ref={account}>
           <a aria-expanded={accountOpen}
              onClick={() => setAccountOpen(!accountOpen)}>
@@ -449,8 +455,15 @@ export default function App() {
           every screen and held there while the page scrolls (UX-16). */}
       <div className="work">
         <BackContext.Provider value={registerBack}>
+          {/* Back goes one step; Home goes to Engagements, which is where
+              every journey in the product starts (6.1). Both are drawn once,
+              here, so they are in the same place on every screen and held
+              there while the page scrolls (UX-16). Home is the quieter of
+              the two: leaving a screen is ordinary, abandoning what you were
+              doing is not. */}
           <div className="back-strip">
             <BackPill onClick={() => (leave.current ?? back)()} />
+            <a className="home-pill" onClick={() => navigate("/")}>Home</a>
           </div>
           <main>
             <Routes>

@@ -160,9 +160,32 @@ main:has(.wide-page) { max-width: 1560px; }
    shows. */
 .back-strip {
   position: sticky; top: var(--header-h, 0px); z-index: 15;
+  display: flex; align-items: center; gap: 10px;
   padding: 12px 24px;
   background: var(--paper);
 }
+
+/* Home, beside Back (6.1). The quieter of the two: leaving a screen is
+   ordinary, and going back to the start is a bigger move that should not be
+   the easier one to hit by accident. */
+.home-pill {
+  display: inline-block; white-space: nowrap;
+  padding: 8px 15px; border-radius: var(--pill-round);
+  border: 1px solid var(--line);
+  background: var(--paper); color: var(--ink-2);
+  font-size: 13px; font-weight: 500;
+}
+.home-pill:hover {
+  border-color: var(--medium); color: var(--deep); text-decoration: none;
+}
+
+/* The mark is the other way home (6.1), so it carries a pointer and lights
+   on hover rather than sitting there as an image. */
+.shell header .mark {
+  display: flex; align-items: center; gap: 16px;
+  color: inherit;
+}
+.shell header .mark:hover { text-decoration: none; opacity: 0.85; }
 
 /* Back, in ARQEDIA's deep with the text reversed out. NOT the tenant's.
    A tenant's colours belong to what they produce - a rendered memorandum and
@@ -1231,15 +1254,26 @@ a.add:hover { background: var(--paper); text-decoration: none; }
 /* --- the working indicator ------------------------------------------------ */
 
 /* One indicator for everything that runs (UX-12): what is running, over a
-   thin bar as wide as the words, with a band sweeping along it. */
+   bar with a band sweeping along it.
+
+   MORE PROMINENT, 20 September (6.2). It was 13px of mid blue over a 2px
+   hairline as wide as the words - quieter than the muted note beside it, and
+   on a screen that had just started a two-minute read it was the one thing a
+   person needed to find. It now sits on its own ground with a rule around
+   it, at the body size, in the deep, with a bar three times the weight. It
+   is still not a modal and still does not block: the work behind it carries
+   on being readable. */
 .working {
-  width: fit-content; margin: 8px 0 12px;
-  color: var(--medium); font-size: 13px;
+  width: fit-content; min-width: 240px; max-width: 100%;
+  margin: 12px 0 16px; padding: 10px 14px 12px;
+  background: var(--wash);
+  border: 1px solid var(--light); border-radius: var(--pill-radius);
+  color: var(--deep); font-size: 14px; font-weight: 500;
 }
 .working-bar {
   display: block; position: relative; overflow: hidden;
-  height: 2px; margin-top: 4px;
-  background: var(--line);
+  height: 6px; margin-top: 8px; border-radius: 3px;
+  background: var(--paper);
 }
 .working-bar::after {
   content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 30%;
