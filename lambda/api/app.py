@@ -78,6 +78,7 @@ from botocore.exceptions import ClientError
 import billing
 import config
 import editor
+import mail
 import paddle_api
 import registry
 import seats
@@ -2123,13 +2124,24 @@ def _dispatch(event, context):
             invited = seats.invite(tenant_id, email,
                                    body.get("email", ""),
                                    body.get("role", "member"))
-            # The token is returned once, in clear, and never again. There is
-            # no way to send it until SES is granted, so the screen offers a
-            # link to copy - which is also the fallback when an invitation
-            # email is lost.
+            # The token is returned once, in clear, and never again. The
+            # screen still shows the link to copy: it is the fallback when an
+            # invitation is lost, filtered or sent to the wrong address, and
+            # the person holding it is the administrator who just minted it.
             invited["accept_url"] = "%s/invitation?email=%s&token=%s" % (
                 APP_URL, urllib.parse.quote(invited["email"]),
                 urllib.parse.quote(invited["token"]))
+
+            # SENT AFTER THE SEAT IS RESERVED, AND NEVER AT ITS EXPENSE
+            # (10.5). The row is written and committed above; mail.send
+            # answers True or False and raises nothing, so a refusal from SES
+            # cannot undo an invitation that exists. The screen is told which
+            # it was, and shows the link either way.
+            subject, text = mail.invitation(
+                email, invited["accept_url"], invited["expires_at"],
+                invited["role"])
+            invited["sent"] = mail.send(invited["email"], subject, text,
+                                        reply_to=email)
             return _reply(201, invited)
 
         if route == "DELETE /seats/invitations/{invitation_id}":
