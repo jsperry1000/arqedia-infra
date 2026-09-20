@@ -569,20 +569,33 @@ p.warn { color: #b45309; }
 .cite-mark.shown { vertical-align: baseline; margin-left: 4px; }
 .cite-run { display: inline; }
 
-/* The per-block control. Always present, so it is never hunted for; quiet
-   until the pointer is near it. */
+/* The per-block control: Sources, and Edit.
+   READABLE BEFORE THE POINTER REACHES IT (7.1). They sat at 45% of eleven
+   grey pixels on a hairline, which on a white page beside black prose is a
+   smudge - so the two things a person can do to a paragraph were discoverable
+   only by moving the mouse over it and noticing something appear. They are
+   now at full strength in the brand mid blue on the page's own ground: quiet
+   against the prose, which is what they should be, but plainly there.
+   Hover and focus still answer - the ground fills and the text goes to the
+   deep - so the thing under the pointer is never in doubt. */
 .block-tools { margin-left: 6px; white-space: nowrap; }
 .block-tools .tool {
-  font: inherit; font-size: 11px; line-height: 1;
-  padding: 3px 7px; cursor: pointer;
-  color: var(--muted); background: transparent;
-  border: 1px solid var(--line); border-radius: 3px;
-  opacity: 0.45; transition: opacity 0.1s;
+  font: inherit; font-size: 11.5px; line-height: 1;
+  padding: 3px 8px; cursor: pointer;
+  color: var(--medium); background: var(--paper);
+  border: 1px solid var(--light); border-radius: 3px;
+  opacity: 1;
+  transition: background 120ms ease-out, border-color 120ms ease-out,
+              color 120ms ease-out;
 }
 .memo.doc p:hover .tool, .memo.doc .callout:hover .tool,
-.block-tools .tool:focus-visible { opacity: 1; }
-.block-tools .tool:hover { color: var(--medium); border-color: var(--medium); opacity: 1; }
-.block-tools .tool.on { opacity: 1; color: var(--medium); border-color: var(--light); }
+.block-tools .tool:focus-visible,
+.block-tools .tool:hover {
+  color: var(--deep); background: var(--wash); border-color: var(--medium);
+}
+.block-tools .tool.on {
+  color: var(--paper); background: var(--medium); border-color: var(--medium);
+}
 
 /* --- editing a block in place -------------------------------------------- */
 
@@ -660,10 +673,14 @@ p.warn { color: #b45309; }
 .memo.doc table.editing td, .memo.doc table.editing th { background: transparent; }
 .memo.doc thead.empty { display: none; }
 
-/* The controls are on every block, so they are quiet until wanted. */
+/* A heading, a list or a table under the pointer answers as a paragraph
+   does (7.1). It is no longer what makes the control visible - that is its
+   resting state now - only what marks which block you are over. */
 .memo.doc h2:hover .tool, .memo.doc h3:hover .tool, .memo.doc h4:hover .tool,
 .memo.doc h5:hover .tool, .memo.doc .list-wrap:hover .tool,
-.memo.doc .table-wrap:hover .tool { opacity: 1; }
+.memo.doc .table-wrap:hover .tool {
+  color: var(--deep); background: var(--wash); border-color: var(--medium);
+}
 
 /* Unsaved changes, kept, shown on the reader. The same sheet as the revision
    note, marked in the highlight so it is not read as part of the record. */
