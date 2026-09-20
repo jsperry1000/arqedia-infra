@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { ConfigColumn } from "./api";
 
 /**
@@ -30,6 +30,42 @@ export function slugKey(label: string, prefix = ""): string {
 export function fieldKey(label: string): string {
   return slugKey(label, "f_").replace(/-/g, "_");
 }
+
+/**
+ * A textarea that grows with what is written, to a ceiling, then scrolls
+ * inside itself (UX-09).
+ *
+ * The measurements are read from the element's own computed style rather than
+ * assumed, so it follows the font the tokens set. Lifted out of SectionForm,
+ * where it was written for "How it should read": a second copy in the field
+ * card is how the two drift apart.
+ *
+ * Pair it with className="grows", which turns off the manual resize handle.
+ */
+export function useGrows(value: string, maxLines = 25) {
+  const box = useRef<HTMLTextAreaElement | null>(null);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const fit = () => {
+      const css = getComputedStyle(el);
+      const line = parseFloat(css.lineHeight) || parseFloat(css.fontSize) * 1.55;
+      const edges = parseFloat(css.borderTopWidth)
+        + parseFloat(css.borderBottomWidth);
+      const ceiling = line * maxLines + parseFloat(css.paddingTop)
+        + parseFloat(css.paddingBottom) + edges;
+      el.style.height = "auto";
+      const wanted = el.scrollHeight + edges;
+      el.style.height = Math.min(wanted, ceiling) + "px";
+      el.style.overflowY = wanted > ceiling ? "auto" : "hidden";
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [value, maxLines]);
+  return box;
+}
+
 
 export function KeyLine({ value }: { value: string }) {
   return (

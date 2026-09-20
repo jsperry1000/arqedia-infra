@@ -15,7 +15,7 @@ import {
 import { ProposeView } from "./Propose";
 import type { Report as StartReport } from "./Welcome";
 import {
-  slugKey, KeyLine, ColumnEditor, columnsReady, ReadModeControls,
+  slugKey, KeyLine, ColumnEditor, columnsReady, ReadModeControls, useGrows,
 } from "./config-parts";
 
 // --- what Get started brought -----------------------------------------------
@@ -105,6 +105,13 @@ function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments }: {
   const key = f.key ?? slugKey(f.label, "f_").replace(/-/g, "_");
   const isTable = f.cardinality === "group";
 
+  // What the fact is grows with what is written, to 25 lines, then scrolls
+  // (UX-09). The same box as "How it should read" on a section, and the same
+  // measuring: this description is what the system reads when deciding
+  // whether it has found the fact, so it is often several sentences and was
+  // being written into two visible rows.
+  const describe = useGrows(f.description);
+
   return (
     <div className="form">
       <h4>{existing ? "Edit field" : "New field"}</h4>
@@ -135,7 +142,7 @@ function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments }: {
 
       <label className="row">
         <span>What it is</span>
-        <textarea rows={2} value={f.description}
+        <textarea rows={2} value={f.description} ref={describe} className="grows"
           placeholder="What this fact is, in a sentence. This is what the system reads when deciding whether it has found it."
           onChange={(e) => setF({ ...f, description: e.target.value })} />
       </label>
@@ -331,26 +338,9 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
   const key = s.key ?? slugKey(s.title);
 
   // How it should read grows with what is written, to a ceiling of 25 lines,
-  // and then scrolls inside itself (UX-09).
-  const prompt = useRef<HTMLTextAreaElement | null>(null);
-  useLayoutEffect(() => {
-    const box = prompt.current;
-    if (!box) return;
-    const fit = () => {
-      const css = getComputedStyle(box);
-      const line = parseFloat(css.lineHeight) || parseFloat(css.fontSize) * 1.55;
-      const edges = parseFloat(css.borderTopWidth) + parseFloat(css.borderBottomWidth);
-      const ceiling = line * 25 + parseFloat(css.paddingTop)
-        + parseFloat(css.paddingBottom) + edges;
-      box.style.height = "auto";
-      const wanted = box.scrollHeight + edges;
-      box.style.height = Math.min(wanted, ceiling) + "px";
-      box.style.overflowY = wanted > ceiling ? "auto" : "hidden";
-    };
-    fit();
-    window.addEventListener("resize", fit);
-    return () => window.removeEventListener("resize", fit);
-  }, [s.prompt]);
+  // and then scrolls inside itself (UX-09). The field card's description box
+  // does the same, through the same hook.
+  const prompt = useGrows(s.prompt);
 
   const dirty = s.numeral !== (initial?.numeral ?? "")
     || s.title !== (initial?.title ?? "")
@@ -579,6 +569,15 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   const [typedName, setTypedName] = useState("");
   const [openField, setOpenField] = useState<string | null>(null);
   const [fieldFilter, setFieldFilter] = useState("");
+  // A fact being added from a section's own list, and the section to bind it
+  // to when it saves. Null when the card was opened from the Facts tab, where
+  // a new fact belongs to the vocabulary and to no section in particular.
+  const [bindNewTo, setBindNewTo] =
+    useState<{ template_key: string; key: string } | null>(null);
+  // Searching the fields a document is looked at for (2.6). Its own box, like
+  // the section list's: a filter shared between two lists empties controls
+  // nobody can connect to what they typed.
+  const [typeFieldSearch, setTypeFieldSearch] = useState("");
 
   // What is being added or amended. Null is nothing open; a key is that item;
   // the empty string is a new one.
@@ -652,6 +651,38 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       setBusy("");
     }
   }
+
+  /** Bind or unbind facts on one section, WITHOUT reloading the screen.
+   *
+   *  A tick used to run act(), which is three calls in series: the save, then
+   *  GET /config - which revalidates the whole draft server-side - and GET
+   *  /config/draft. Both reads replace `draft` wholesale, so every list on the
+   *  page re-rendered before the tick appeared to take. Measured on dev over
+   *  the last three days: GET /config a median of 487 ms, GET /config/draft
+   *  328 ms, before the save itself.
+   *
+   *  So the draft is changed here first and the tick lands at once; the save
+   *  follows; a failure puts back exactly what was there and says so.
+   *  Validation is read afterwards on its own - binding changes what
+   *  publishing would refuse - and it is the cheap call rather than the whole
+   *  state. Publish is still refused server-side whatever this holds. */
+  const setFields = async (s: ConfigSection, next: string[]) => {
+    const before = draft;
+    setDraft((d) => d && ({
+      ...d,
+      sections: d.sections.map((x) =>
+        x.template_key === s.template_key && x.key === s.key
+          ? { ...x, fields: next } : x),
+    }));
+    setError("");
+    try {
+      await api.setSectionFields(s.template_key, s.key, next);
+      setValidation(await api.validateDraft());
+    } catch (e) {
+      setDraft(before);
+      setError(message(e));
+    }
+  };
 
   const fieldsByKey = useMemo(() => {
     const map: Record<string, string> = {};
@@ -1009,18 +1040,62 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     return (
       <div className="bind" key={f.key}>
         <input type="checkbox" checked={on}
-          onChange={() => {
-            const next = on
-              ? s.fields.filter((x) => x !== f.key)
-              : [...s.fields, f.key];
-            act("Saving",
-                () => api.setSectionFields(s.template_key, s.key, next));
-          }} />{" "}
-        <a onClick={() => setEditField(f.key)}>{f.label}</a>
+          onChange={() => setFields(s, on
+            ? s.fields.filter((x) => x !== f.key)
+            : [...s.fields, f.key])} />{" "}
+        {/* The whole name on hover: a column holds a fixed width now, so a
+            long label is cut rather than pushing its column wider than the
+            one beside it. */}
+        <a title={f.label} onClick={() => setEditField(f.key)}>{f.label}</a>
         {f.is_group && (
           <span className="muted small"> (table)</span>
         )}
       </div>
+    );
+  };
+
+  /** The bound facts, column by column.
+   *
+   *  LEFTMOST WINS, here only. A fact found in documents from two groups
+   *  belongs to both, and the lower list says so - that is the truth about it
+   *  and it is how a person finds it under either heading. Repeated in the
+   *  upper list it reads as two facts bound twice, so above the rule each one
+   *  appears in its leftmost column and nowhere to the right of it.
+   *
+   *  Every group is returned, empty ones included, so the columns above the
+   *  rule and the columns below it are the same groups in the same order. */
+  const boundColumns = (s: ConfigSection) => {
+    const shown = new Set<string>();
+    return byGroup.map((g) => {
+      const fields = g.fields.filter(
+        (f) => s.fields.includes(f.key) && !shown.has(f.key));
+      fields.forEach((f) => shown.add(f.key));
+      return { key: g.key, label: g.label, fields };
+    });
+  };
+
+  /** Tick or untick a whole column. Checked when every fact of the group is
+   *  bound, part-way when some are; clicking binds all of them, or takes all
+   *  of them off. One save, not one per fact. */
+  const groupBox = (s: ConfigSection, g: { key: string; fields: ConfigField[] },
+                    shownHere: ConfigField[]) => {
+    const keys = g.fields.map((f) => f.key);
+    const boundHere = keys.filter((k) => s.fields.includes(k));
+    const all = keys.length > 0 && boundHere.length === keys.length;
+    return (
+      <input type="checkbox" className="group-box"
+        checked={all}
+        ref={(el) => {
+          if (el) el.indeterminate = !all && boundHere.length > 0;
+        }}
+        title={all ? "Take all of these off the section"
+                   : "Render all of these in this section"}
+        onChange={() => setFields(s, all
+          ? s.fields.filter((k) => !keys.includes(k))
+          : [...s.fields, ...keys.filter((k) => !s.fields.includes(k))])}
+        // Nothing to tick where the group is empty above the rule and below
+        // it alike.
+        disabled={keys.length === 0 && shownHere.length === 0} />
     );
   };
 
@@ -1324,20 +1399,20 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                   <>
                     <div className="bound-facts">
                       <div className="binder-groups">
-                        {byGroup.map((g) => {
-                          const fields = g.fields.filter(
-                            (f) => s.fields.includes(f.key));
-                          if (fields.length === 0) return null;
-                          return (
-                            <div key={g.key}>
-                              <h5>
-                                {g.label}{" "}
-                                <span className="muted">{fields.length}</span>
-                              </h5>
-                              {fields.map((f) => bindRow(s, f))}
-                            </div>
-                          );
-                        })}
+                        {boundColumns(s).map((g) => (
+                          <div key={g.key}>
+                            {/* Every group, empty ones included, so a column
+                                here stands over the same group below the
+                                rule. */}
+                            <h5>
+                              {groupBox(s, byGroup.find((x) => x.key === g.key)
+                                ?? { key: g.key, fields: [] }, g.fields)}
+                              {" "}{g.label}{" "}
+                              <span className="muted">{g.fields.length}</span>
+                            </h5>
+                            {g.fields.map((f) => bindRow(s, f))}
+                          </div>
+                        ))}
                       </div>
                     </div>
                     <hr className="bound-rule" />
@@ -1351,9 +1426,25 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                     <a className="small"
                        onClick={() => setSectionSearch("")}>Clear</a>
                   )}
+                  {/* A fact the vocabulary does not hold yet, from where a
+                      person discovers it is missing. It is created in the
+                      draft and bound to this section in one act; before this
+                      they had to leave for the Facts tab, add it, come back
+                      and find the section again. */}
+                  <a className="small" onClick={() => {
+                    setBindNewTo({ template_key: s.template_key, key: s.key });
+                    setEditField("");
+                  }}>
+                    Add a fact
+                  </a>
                 </div>
               </div>
 
+              {/* The list scrolls inside itself, as the bound block above it
+                  does, so its headings can be held at the top of it while the
+                  facts run past (2.5). A sticky child cannot hold against the
+                  window from inside a box that scrolls sideways, which this
+                  one does - so the box it holds against is this one. */}
               <div className="unbound-facts">
               <div className="binder-groups">
                 {byGroup.map((g) => {
@@ -1362,18 +1453,26 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                   const fields = g.fields.filter((f) =>
                     !s.fields.includes(f.key)
                     && (!needle || f.label.toLowerCase().includes(needle)));
-                  if (fields.length === 0) return null;
 
                   // EVERYTHING OPEN. This is where facts are bound to a
                   // section, and a person doing that needs to see the whole
                   // vocabulary at once. Collapsing it here was a mistake -
                   // the browsing lists collapse, the working list does not.
+                  //
+                  // An empty column is kept rather than dropped, so the
+                  // columns line up with the bound ones above the rule. A
+                  // group emptied by the search says so.
                   return (
                   <div key={g.key}>
                     <h5>
                       {g.label}{" "}
                       <span className="muted">{fields.length}</span>
                     </h5>
+                    {fields.length === 0 && (
+                      <div className="muted small none">
+                        {needle ? "none matching" : "all bound"}
+                      </div>
+                    )}
                     {fields.map((f) => bindRow(s, f))}
                   </div>
                   );
@@ -1596,6 +1695,9 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                   <td className="muted small">
                     <a onClick={() => {
                       setOpenType(t.key);
+                      // The search belongs to whichever document is open, so
+                      // it is cleared as that changes.
+                      setTypeFieldSearch("");
                       setTypeFields((draft?.fields ?? [])
                         .filter((f) => f.found_in.includes(t.key))
                         .map((f) => f.key));
@@ -1622,20 +1724,44 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             <a onClick={() => setOpenType(null)} className="panel-close">
               Close
             </a>
-            <h3>
-              {draft.document_types.find((t) => t.key === openType)?.label}
-            </h3>
-            <p className="muted small">
-              What is looked for in this document. The same relationship as
-              &ldquo;where is this field found&rdquo;, read from the other end
-              &mdash; changing it here changes it there.
-            </p>
+            {/* The name, the note and the search are held at the top of the
+                drawer while the facts scroll under them (2.6). The drawer is
+                the scrolling box, so a sticky child holds against it. */}
+            <div className="panel-head">
+              <h3>
+                {draft.document_types.find((t) => t.key === openType)?.label}
+              </h3>
+              <p className="muted small">
+                What is looked for in this document. The same relationship as
+                &ldquo;where is this field found&rdquo;, read from the other
+                end &mdash; changing it here changes it there.
+              </p>
+              <div className="filters">
+                <input placeholder="Search facts" value={typeFieldSearch}
+                       onChange={(e) => setTypeFieldSearch(e.target.value)} />
+                {typeFieldSearch && (
+                  <a className="small"
+                     onClick={() => setTypeFieldSearch("")}>Clear</a>
+                )}
+                <span className="muted small">
+                  {typeFields.length} ticked
+                </span>
+              </div>
+            </div>
 
             <div className="binder-groups">
               {byGroup.map((g) => (
                 <div key={g.key}>
                   <h5>{g.label}</h5>
-                  {g.fields.map((f) => {
+                  {g.fields
+                    .filter((f) => {
+                      // Searching narrows what is shown and never what is
+                      // ticked - a fact already looked for stays looked for
+                      // whether or not it matches what was typed.
+                      const needle = typeFieldSearch.trim().toLowerCase();
+                      return !needle || f.label.toLowerCase().includes(needle);
+                    })
+                    .map((f) => {
                     const on = typeFields.includes(f.key);
                     return (
                       <div className="bind" key={f.key}>
@@ -1804,9 +1930,25 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 setEditField(null);
               }}
               initial={draft?.fields.find((x) => x.key === editField)}
-              onCancel={() => setEditField(null)}
+              onCancel={() => { setBindNewTo(null); setEditField(null); }}
               onSave={(body) => act("Saving", async () => {
                 await api.saveField(body as never);
+                // Added from a section's list: bind it there too, so the act
+                // a person started - "this section needs a fact we do not
+                // hold" - finishes where it began (2.1). A fact added from
+                // the Facts tab binds to nothing, as before.
+                const target = bindNewTo;
+                const added = (body as { key?: string }).key;
+                if (target && added) {
+                  const s = (draft?.sections ?? []).find(
+                    (x) => x.template_key === target.template_key
+                      && x.key === target.key);
+                  if (s && !s.fields.includes(added)) {
+                    await api.setSectionFields(
+                      target.template_key, target.key, [...s.fields, added]);
+                  }
+                }
+                setBindNewTo(null);
                 setEditField(null);
               })}
               onDelete={editField ? () => {
