@@ -12,6 +12,7 @@ import {
   type Template,
   type Quote,
 } from "./api";
+import { useNavigate } from "react-router-dom";
 import { useBackAction, Working } from "./shell";
 
 /** The name a file is stored under: the API's _clean, whitespace to a dash
@@ -56,6 +57,9 @@ export function EngagementView({ id, onBack, onMemo }: {
   onMemo: (memoId: number) => void;
 }) {
   useBackAction(onBack);
+  // Where a top-up is offered from, because the way out of "not enough
+  // balance" is Account management and nothing else on this screen.
+  const navigate = useNavigate();
   const [pending, setPending] = useState<Pending[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [memos, setMemos] = useState<MemoRef[]>([]);
@@ -97,6 +101,8 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [passage, setPassage] = useState<Passage | null>(null);
   const [bounds, setBounds] = useState<[number, number]>([1, 1]);
+  // The confirmation between pressing Generate and spending anything (4.1).
+  const [confirming, setConfirming] = useState(false);
 
   async function refresh() {
     const [p, d, m] = await Promise.all([
@@ -781,7 +787,11 @@ export function EngagementView({ id, onBack, onMemo }: {
         </p>
       )}
 
-      <button onClick={generate}
+      {/* Generating costs money, so it is asked for twice (4.1). This press
+          opens the confirmation; the charge happens on the one inside it.
+          Filing has shown its cost before the click since the wallet was
+          built - this is that, for the other act that spends. */}
+      <button onClick={() => setConfirming(true)}
               disabled={blocked || activeCount === 0
                         || (memoQuote ? !memoQuote.affordable : false)}>
         {reading > 0
@@ -816,6 +826,88 @@ export function EngagementView({ id, onBack, onMemo }: {
       </table>
 
       </>)}
+
+      {/* The second press, and the only one that spends (4.1).
+          EVERY FIGURE COMES FROM THE QUOTE the server priced - the same
+          /wallet/quote the filing block above uses - so the screen never
+          states a price of its own. The block is the filing block: the
+          figures have to reconcile with a ledger line somebody may read
+          months later, and two shapes for one kind of number is how they
+          stop reconciling. */}
+      {confirming && (
+        <div className="panel-backdrop" onClick={() => setConfirming(false)}>
+          <div className="panel narrow" onClick={(e) => e.stopPropagation()}
+               onKeyDown={(e) => { if (e.key === "Escape") setConfirming(false); }}>
+            <a className="panel-close"
+               onClick={() => setConfirming(false)}>Close</a>
+            <div className="form">
+              <h4>Generate a memorandum</h4>
+
+              <p className="muted small">
+                {activeCount} {activeCount === 1 ? "document" : "documents"} in
+                use{templates.length > 1 && template
+                  ? `, written as ${templates.find((t) => t.key === template)
+                      ?.label ?? template}` : ""}. One charge, whatever its
+                length and however many documents it draws on.
+              </p>
+
+              {memoQuote && (
+                <div className="quote">
+                  <div>
+                    <span>1 memorandum</span>
+                    <b>{money(memoQuote.total_cents)}</b>
+                  </div>
+                  <div>
+                    <span>Available</span>
+                    <b>{money(memoQuote.available_cents)}</b>
+                  </div>
+                  {!memoQuote.affordable && (
+                    <div className="short">
+                      <span>Short by</span>
+                      <b>{money(memoQuote.total_cents
+                                - memoQuote.available_cents)}</b>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {memoQuote && !memoQuote.affordable && (
+                <p className="why warn">
+                  There is not enough balance for this. Nothing has been
+                  charged and nothing will be until there is.
+                </p>
+              )}
+
+              {error && <p className="error">{error}</p>}
+
+              <div className="form-actions">
+                {/* Where the money does not reach, the button that spends is
+                    not offered at all - the way out is a top-up, so that is
+                    what is here instead. */}
+                {memoQuote && !memoQuote.affordable ? (
+                  <button onClick={() => navigate("/account")}>
+                    Top up
+                  </button>
+                ) : (
+                  <button disabled={blocked || activeCount === 0}
+                          onClick={() => { setConfirming(false); generate(); }}>
+                    Generate{memoQuote
+                      ? ` · ${money(memoQuote.total_cents)}` : ""}
+                  </button>
+                )}
+                <a className="secondary"
+                   onClick={() => setConfirming(false)}>Cancel</a>
+              </div>
+
+              <p className="muted small">
+                The charge is made when the memorandum is started, against the
+                balance rather than the card. A repeat of this click is
+                refused as a repeat rather than charged twice.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {detail && <ValuePanel detail={detail} onClose={() => setDetail(null)} />}
 

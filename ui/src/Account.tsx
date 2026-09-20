@@ -52,6 +52,16 @@ const KINDS: Record<string, string> = {
   daily_test: "Daily test allowance",
 };
 
+/** What one top-up increment costs, in cents.
+ *
+ *  NOT A METERED PRICE. Filing and generating are priced in `meter_price` and
+ *  read from /wallet/quote, which is why no screen states those figures. A
+ *  top-up is a Paddle price rather than a meter, so there is nothing to read:
+ *  the server computes the amount and returns it on the response, and this is
+ *  what the screen says beforehand. It was written twice inline; named once
+ *  here so the button and the confirmation cannot disagree. */
+const TOPUP_CENTS = 500;
+
 /**
  * Account management. Everything to do with money and with who may spend it.
  *
@@ -425,6 +435,8 @@ function Balance() {
   const [increments, setIncrements] = useState(1);
   const [busy, setBusy] = useState("");
   const [said, setSaid] = useState("");
+  // The confirmation between pressing Top up and charging the card (4.2).
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     api.wallet().then(setWallet).catch((e) => setError(String(e.message ?? e)));
@@ -525,8 +537,11 @@ function Balance() {
                disabled={!!busy} style={{ width: 70 }}
                onChange={(e) => setIncrements(
                  Math.min(50, Math.max(1, Number(e.target.value) || 1)))} />
-        <button onClick={topUp} disabled={!!busy}>
-          {busy ? "Charging…" : `Top up ${money(increments * 500)}`}
+        {/* This press opens the confirmation; the card is charged on the one
+            inside it (4.2). Every other act that spends is asked for twice,
+            and this is the only one that reaches a card. */}
+        <button onClick={() => setConfirming(true)} disabled={!!busy}>
+          {busy ? "Charging…" : `Top up ${money(increments * TOPUP_CENTS)}`}
         </button>
         <span className="muted small">
           {said || "In $5 increments, charged to the card Paddle holds. There "
@@ -534,6 +549,65 @@ function Balance() {
             + "and purchased credit expires 30 days after purchase."}
         </span>
       </div>
+
+      {/* The second press, and the only one that charges (4.2). The figures
+          are laid out as the filing and generating quotes are, so money on
+          this screen reads the same way wherever it appears. */}
+      {confirming && (
+        <div className="panel-backdrop" onClick={() => setConfirming(false)}>
+          <div className="panel narrow" onClick={(e) => e.stopPropagation()}
+               onKeyDown={(e) => { if (e.key === "Escape") setConfirming(false); }}>
+            <a className="panel-close"
+               onClick={() => setConfirming(false)}>Close</a>
+            <div className="form">
+              <h4>Top up the balance</h4>
+
+              <div className="quote">
+                <div>
+                  <span>
+                    {increments} &times; {money(TOPUP_CENTS)}
+                    {increments === 1 ? " increment" : " increments"}
+                  </span>
+                  <b>{money(increments * TOPUP_CENTS)}</b>
+                </div>
+                <div>
+                  <span>Available now</span>
+                  <b>{wallet.available}</b>
+                </div>
+                <div>
+                  <span>Once it lands</span>
+                  <b>{money(wallet.available_cents
+                            + increments * TOPUP_CENTS)}</b>
+                </div>
+              </div>
+
+              <p className="muted small">
+                Charged to the card Paddle holds, now. The credit arrives when
+                Paddle reports the payment, which is usually seconds and is
+                not instant &mdash; nothing here grants money, the webhook
+                does. Purchased credit expires 30 days after purchase.
+              </p>
+
+              {memo && (
+                <p className="muted small">
+                  {increments * TOPUP_CENTS / memo} more{" "}
+                  {increments * TOPUP_CENTS / memo === 1
+                    ? "memorandum" : "memoranda"}, at today&rsquo;s price.
+                </p>
+              )}
+
+              <div className="form-actions">
+                <button disabled={!!busy}
+                        onClick={() => { setConfirming(false); topUp(); }}>
+                  Charge {money(increments * TOPUP_CENTS)}
+                </button>
+                <a className="secondary"
+                   onClick={() => setConfirming(false)}>Cancel</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <h3>Balance, by bucket</h3>
       <p className="muted small">
