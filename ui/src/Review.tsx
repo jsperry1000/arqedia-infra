@@ -998,12 +998,15 @@ export function EngagementView({ id, onBack, onMemo }: {
         </div>
       )}
 
+      {/* The last "go and find a screen" sentence on this page. The Generate
+          button beneath is disabled for want of money, so the only thing to
+          do here is the one thing this now offers. */}
       {memoQuote && !memoQuote.affordable && activeCount > 0 && (
-        <p className="why warn">
+        <UpgradePrompt tone="warn" action="Top up" to={BALANCE}>
           A memorandum costs {money(memoQuote.total_cents)} and{" "}
           {money(memoQuote.available_cents)} is available. Nothing has been
-          charged. Top up under Settings, Account management.
-        </p>
+          charged.
+        </UpgradePrompt>
       )}
 
       {/* Generating costs money, so it is asked for twice (4.1). This press
