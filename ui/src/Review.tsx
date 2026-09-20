@@ -800,7 +800,10 @@ export function EngagementView({ id, onBack, onMemo }: {
           {memos.map((m) => (
             <tr key={m.memo_id} onClick={() => onMemo(m.memo_id)}>
               <td><a>Memo {m.label}</a></td>
-              <td className="muted small">{m.template}</td>
+              {/* The name the memo was written under, which the API carries
+                  on the row. Renaming a memorandum does not rename memoranda
+                  already written. */}
+              <td className="muted small">{m.template_label}</td>
               <td className="muted">{(m.generated_at ?? "").slice(0, 16)}</td>
               <td className="muted">
                 {m.modified_by

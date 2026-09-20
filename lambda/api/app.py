@@ -822,10 +822,22 @@ def document_passage(tenant_id, document_id, unit):
 # --- memos -----------------------------------------------------------------
 
 def list_memos(tenant_id, engagement):
+    """Memos for one engagement, each named as it was when it was written.
+
+    THE NAME COMES FROM THE MEMO'S OWN REVISION, not from the tenant's active
+    one. A memorandum renamed in September must not rename the memo somebody
+    generated under it in March: that memo was written against config_revision
+    N, and config_template holds the label per revision, so the row at N is
+    what the memo was called. The key is returned beside it, unchanged - it is
+    the identity, and the name is only what a person reads.
+
+    Loaded through config.load, which caches on (tenant, revision), so a page
+    of memos sharing a revision is one load."""
     result = _sql(
         """
         SELECT memo_id, template_key, generated_at, generated_by,
-               parent_memo_id, revision, modified_by, modified_at, pdf_key
+               parent_memo_id, revision, modified_by, modified_at, pdf_key,
+               config_revision
         FROM memo
         WHERE tenant_id = :tenant_id
           AND s3_key LIKE :prefix
@@ -837,6 +849,11 @@ def list_memos(tenant_id, engagement):
     return [
         {"memo_id": _col(r, 0),
          "template": _col(r, 1),
+         # A revision that no longer names this template falls back to the
+         # key, which is what label_for_template does and is better than a
+         # blank column.
+         "template_label": config.load(
+             tenant_id, _col(r, 9) or 1).label_for_template(_col(r, 1)),
          "generated_at": _col(r, 2),
          "generated_by": _col(r, 3),
          "parent_memo_id": _col(r, 4),
