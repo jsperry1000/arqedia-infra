@@ -146,6 +146,19 @@ def transaction_event(event_id, transaction_id, origin, price, quantity=1,
                                         "ends_at": "2026-10-16T10:00:00Z"}}}
 
 
+def plan_change_event(event_id, transaction_id, to_price, from_price,
+                      tenant_id=7):
+    """A proration transaction in the shape Paddle sends: the plan moved to at
+    quantity 1, the plan moved from at quantity -1. Taken from
+    txn_01m2xc3cn4kr6dmsn99hy67818 (sandbox, 19 September 2026), which carried
+    pri_business at 1 and pri_base at -1."""
+    event = transaction_event(event_id, transaction_id, "subscription_update",
+                              to_price, tenant_id=tenant_id)
+    event["data"]["items"].append({"price": {"id": from_price},
+                                   "quantity": -1})
+    return event
+
+
 class ProcessorTest(unittest.TestCase):
     def setUp(self):
         self.app = load_processor()
@@ -244,8 +257,7 @@ class ProcessorTest(unittest.TestCase):
 
     def test_upgrade_grants_the_difference(self):
         self.on_plan("base")
-        event = transaction_event("evt_1", "txn_up", "subscription_update",
-                                  BUSINESS)
+        event = plan_change_event("evt_1", "txn_up", BUSINESS, BASE)
         self.assertEqual(self.apply(event), "upgrade-credit-granted")
         self.assertEqual(self.change_buckets(), [{
             "tenant_id": 7, "kind": "monthly_credit", "cents": 1000,
@@ -253,17 +265,14 @@ class ProcessorTest(unittest.TestCase):
 
     def test_downgrade_grants_nothing(self):
         self.on_plan("business")
-        event = transaction_event("evt_1", "txn_down", "subscription_update",
-                                  BASE)
+        event = plan_change_event("evt_1", "txn_down", BASE, BUSINESS)
         self.assertEqual(self.apply(event), "downgrade-no-grant")
         self.assertEqual(self.change_buckets(), [])
 
     def test_duplicate_upgrade_reference_grants_once(self):
         self.on_plan("base")
-        first = transaction_event("evt_1", "txn_up", "subscription_update",
-                                  BUSINESS)
-        second = transaction_event("evt_2", "txn_up", "subscription_update",
-                                   BUSINESS)
+        first = plan_change_event("evt_1", "txn_up", BUSINESS, BASE)
+        second = plan_change_event("evt_2", "txn_up", BUSINESS, BASE)
         self.assertEqual(self.apply(first), "upgrade-credit-granted")
         self.assertEqual(self.apply(second), "upgrade-reference-exists")
         self.assertEqual(len(self.change_buckets()), 1)
@@ -279,12 +288,10 @@ class ProcessorTest(unittest.TestCase):
 
     def test_transaction_before_subscription_updated_grants_once(self):
         self.on_plan("base")
-        upgrade = transaction_event("evt_1", "txn_up", "subscription_update",
-                                    BUSINESS)
+        upgrade = plan_change_event("evt_1", "txn_up", BUSINESS, BASE)
         update = subscription_event("evt_2", "2026-09-16T12:00:00Z",
                                     price=BUSINESS)
-        redelivered = transaction_event("evt_3", "txn_up",
-                                        "subscription_update", BUSINESS)
+        redelivered = plan_change_event("evt_3", "txn_up", BUSINESS, BASE)
         self.assertEqual(self.apply(upgrade), "upgrade-credit-granted")
         self.assertEqual(self.apply(update), "applied")
         self.assertEqual(self.apply(redelivered), "upgrade-reference-exists")
@@ -294,10 +301,8 @@ class ProcessorTest(unittest.TestCase):
         self.on_plan("base")
         update = subscription_event("evt_1", "2026-09-16T12:00:00Z",
                                     price=BUSINESS)
-        upgrade = transaction_event("evt_2", "txn_up", "subscription_update",
-                                    BUSINESS)
-        redelivered = transaction_event("evt_3", "txn_up",
-                                        "subscription_update", BUSINESS)
+        upgrade = plan_change_event("evt_2", "txn_up", BUSINESS, BASE)
+        redelivered = plan_change_event("evt_3", "txn_up", BUSINESS, BASE)
         self.assertEqual(self.apply(update), "applied")
         self.assertEqual(self.apply(upgrade), "upgrade-credit-granted")
         self.assertEqual(self.apply(redelivered), "upgrade-reference-exists")
@@ -308,15 +313,14 @@ class ProcessorTest(unittest.TestCase):
         self.on_plan("business")
         update = subscription_event("evt_1", "2026-09-16T12:00:00Z",
                                     price=BASE)
-        downgrade = transaction_event("evt_2", "txn_down",
-                                      "subscription_update", BASE)
+        downgrade = plan_change_event("evt_2", "txn_down", BASE, BUSINESS)
         self.assertEqual(self.apply(update), "applied")
         self.assertEqual(self.apply(downgrade), "downgrade-no-grant")
         self.assertEqual(self.change_buckets(), [])
 
-    def test_plan_change_with_no_lower_plan_is_flagged_for_review(self):
-        # The row already shows the new plan and no previous plan is
-        # recorded: neither gives a plan to measure the upgrade from.
+    def test_single_item_change_with_no_lower_plan_is_flagged_for_review(self):
+        # No negative item, so the row is the only source, and it already
+        # shows the new plan with no previous plan recorded.
         self.on_plan("business")
         event = transaction_event("evt_1", "txn_up", "subscription_update",
                                   BUSINESS)
@@ -324,25 +328,35 @@ class ProcessorTest(unittest.TestCase):
         self.assertTrue(self.store.events["evt_1"]["needs_review"])
         self.assertEqual(self.change_buckets(), [])
 
-    def test_plan_change_with_no_subscription_row_is_flagged_for_review(self):
+    def test_single_item_change_reads_the_old_plan_from_the_row(self):
+        """The fallback, granting: a plan change carrying no negative item."""
+        self.on_plan("base")
         event = transaction_event("evt_1", "txn_up", "subscription_update",
                                   BUSINESS)
+        self.assertEqual(self.apply(event), "upgrade-credit-granted")
+        self.assertEqual([b["cents"] for b in self.change_buckets()], [1000])
+
+    def test_plan_change_with_no_subscription_row_is_flagged_for_review(self):
+        # No subscription is no plan change, however completely the payload
+        # names both plans (19 September).
+        event = plan_change_event("evt_1", "txn_up", BUSINESS, BASE)
         self.assertEqual(self.apply(event), "review")
+        self.assertTrue(self.store.events["evt_1"]["needs_review"])
         self.assertEqual(self.change_buckets(), [])
 
     def test_upgrade_downgrade_upgrade_grants_ten_dollars_once(self):
         self.on_plan("base")
         steps = [
-            (transaction_event("evt_1", "txn_up_1", "subscription_update",
-                               BUSINESS), "upgrade-credit-granted"),
+            (plan_change_event("evt_1", "txn_up_1", BUSINESS, BASE),
+             "upgrade-credit-granted"),
             (subscription_event("evt_2", "2026-09-16T12:00:00Z",
                                 price=BUSINESS), "applied"),
-            (transaction_event("evt_3", "txn_down", "subscription_update",
-                               BASE), "downgrade-no-grant"),
+            (plan_change_event("evt_3", "txn_down", BASE, BUSINESS),
+             "downgrade-no-grant"),
             (subscription_event("evt_4", "2026-09-16T13:00:00Z",
                                 price=BASE), "applied"),
-            (transaction_event("evt_5", "txn_up_2", "subscription_update",
-                               BUSINESS), "upgrade-capped"),
+            (plan_change_event("evt_5", "txn_up_2", BUSINESS, BASE),
+             "upgrade-capped"),
         ]
         for event, outcome in steps:
             self.assertEqual(self.apply(event), outcome)
@@ -359,8 +373,7 @@ class ProcessorTest(unittest.TestCase):
             "current_period_ends_at": "2026-11-16 10:00:00.000000"}
         self.store.grant(7, "monthly_credit", 500,
                          "2026-11-16 10:00:00.000000", "txn_renew")
-        event = transaction_event("evt_1", "txn_up", "subscription_update",
-                                  BUSINESS)
+        event = plan_change_event("evt_1", "txn_up", BUSINESS, BASE)
         event["data"]["billing_period"]["ends_at"] = "2026-11-16T10:00:00Z"
         self.assertEqual(self.apply(event), "upgrade-credit-granted")
         self.assertEqual(self.change_buckets(), [{
@@ -369,8 +382,7 @@ class ProcessorTest(unittest.TestCase):
 
     def test_cap_holds_when_period_ends_differ_by_one_second(self):
         self.on_plan("base")   # renewal bucket expires 10:00:00
-        first = transaction_event("evt_1", "txn_up_1", "subscription_update",
-                                  BUSINESS)
+        first = plan_change_event("evt_1", "txn_up_1", BUSINESS, BASE)
         first["data"]["billing_period"]["ends_at"] = "2026-10-16T10:00:01Z"
         self.assertEqual(self.apply(first), "upgrade-credit-granted")
         self.assertEqual([(b["cents"], b["expires_at"])
@@ -380,8 +392,7 @@ class ProcessorTest(unittest.TestCase):
                                       price=BUSINESS))
         self.apply(subscription_event("evt_3", "2026-09-16T13:00:00Z",
                                       price=BASE))
-        again = transaction_event("evt_4", "txn_up_2", "subscription_update",
-                                  BUSINESS)
+        again = plan_change_event("evt_4", "txn_up_2", BUSINESS, BASE)
         again["data"]["billing_period"]["ends_at"] = "2026-10-16T10:00:01Z"
         self.assertEqual(self.apply(again), "upgrade-capped")
         self.assertEqual(sum(b["cents"] for b in self.change_buckets()), 1000)

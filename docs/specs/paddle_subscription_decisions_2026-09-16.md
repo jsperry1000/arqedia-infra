@@ -68,11 +68,106 @@ top-ups: a cancelled subscription cannot be charged (item 10). Cash still expire
   transaction), opened with `Paddle.Checkout.open({transactionId})`. No route
   calls it yet.
 
+### Amendment — 19 September 2026
+
+- **Subscribe is not offered while `past_due`.** The amendment of 17 September
+  says Subscribe is available in every state except active, and during
+  `past_due` the button is "Update card". Those are the same sentence read two
+  ways, and the server settles it: `billing.checkout` refuses whenever a
+  subscription exists and is not `canceled`, so a Subscribe button in
+  `past_due` would take the click and come back 409. There is already a
+  subscription; the correct action is **updating the card**, and that is the
+  only action the screen offers there. Subscribe is offered on a trial and
+  after a cancellation, which are the two states with no subscription to fix.
+
+- **Paused is still undecided.** It is treated as `past_due` throughout - the
+  screen says "Subscription paused" and offers the same inert "Update card" -
+  but **Paddle's update-payment-method transaction is not available for a
+  paused subscription**, so that action cannot work there even once the route
+  exists. What a paused subscription should offer instead is open. PROPOSED,
+  and the weakest part of this branch.
+
+- **Prices are tax-exclusive, and tax is added at checkout.** Settled by the
+  first real sandbox checkout, transaction
+  `txn_01m2x7kdkdrxjese1q6ekkb4rf`: Base at **$25.00** pre-tax, tax at
+  **6.6%** adding **$1.65**, **$26.65** paid. Paddle's fee was $1.83, leaving
+  $23.17 net. Paddle is the merchant of record and determines the rate from
+  the buyer's location, so **the figure a person pays is not known until they
+  reach the checkout and is not the figure on the plan table**. The plan rows
+  hold `monthly_price_cents` pre-tax and the Account screen prints them as
+  they are, which is correct and now deliberate.
+
+- **The pricing page must say so.** Plan prices on the marketing site and on
+  the Account screen are shown **pre-tax**, and the copy beside them has to
+  say that tax is added at checkout - "plus tax" or "excluding tax", in the
+  same breath as the number. Without it a $25 plan that bills $26.65 reads as
+  a surprise, and a surprise about money is the one kind nobody forgives. Not
+  yet written; this is a note for whoever does the pricing page.
+
+- **The client-side token comes from the build, not from `config.ts`.**
+  Item 1 said the token sits "in front-end config", and this morning it did -
+  a literal in `ui/src/config.ts`. It is now `VITE_PADDLE_TOKEN` and
+  `VITE_PADDLE_ENVIRONMENT`, read at build time from a git-ignored `ui/.env`,
+  with `ui/.env.example` committed in its place. Neither is defaulted and the
+  pair must agree: `vite.config.ts` fails the build when one is missing or
+  when a `test_` token is paired with `production`. Item 1 is otherwise
+  unchanged - the API key and the webhook secret stay in Secrets Manager.
+
+- **A plan change carries both plans. `previous_plan_id` becomes the
+  fallback.** A proration transaction holds the plan moved to at quantity 1
+  and the plan moved from at quantity −1 — `txn_01m2xc3cn4kr6dmsn99hy67818`
+  on this sandbox, Small Business at 1 beside Base at −1. The processor reads
+  both from the payload, so the old plan no longer depends on which event
+  landed first. `subscription.previous_plan_id` and migration 020 stay exactly
+  as they are, unused on this path, and remain the fallback for a plan change
+  carrying no negative item — a shape we have not seen. The payload supersedes
+  the row: a payload cannot race itself, which is what 020 was added to solve.
+
+- **Item 16's cap is the plan the transaction moves to.** Clarified 19
+  September. "The current plan's monthly credit" in the amendment of 17
+  September means the plan the transaction moves to, read from the payload —
+  never the plan the subscription row shows at apply time. The grant is earned
+  at the moment of the upgrade. The alternative reading makes the money depend
+  on the order Paddle happens to deliver in: an upgrade applied after its
+  matching downgrade had landed would grant nothing, while the same two events
+  in the other order grant $10.00. Two tests exist to prevent exactly that
+  —`test_transaction_before_subscription_updated_grants_once` and
+  `test_subscription_updated_before_transaction_grants_once` — and a cap read
+  from the row would contradict them. The consequence is accepted: after an
+  upgrade and a downgrade in one period, a tenant holds the higher plan's
+  monthly credit until the period ends, on the lower plan. A downgrade still
+  grants nothing and reclaims nothing (item 16, Wallet §4).
+
+- **A plan change with no subscription row is flagged, not applied.** Even
+  where the payload names both plans completely. No subscription is no plan
+  change, and a transaction claiming one for a tenant that has none is a thing
+  a person should look at.
+
+- **The two plan changes of 19 September stay ungranted.** `txn_…y67818`
+  (Base → Small Business) and `txn_…gag9zv` (Small Business → Base) were
+  flagged `needs_review` because the old `plan_of` saw two prices and named no
+  plan. The second grants nothing in any reading. The first would have granted
+  $10.00. Both stay as recorded: no replay path is built, and tenant 5 keeps
+  the $5.00 monthly credit it holds. Recorded rather than repaired — the
+  ledger is append-only, and a sandbox tenant is not worth a mechanism for
+  rewriting history.
+
+- **"Update card" is still inert**, in both `active` and `past_due`. It needs
+  `GET /subscriptions/{id}/update-payment-method-transaction` behind a route of
+  ours, and there is none: `paddle_api.py` has `create_checkout_transaction`,
+  `charge_topup` and `change_plan` and nothing else. The button says "not
+  connected yet" on click and the screen says why beside it.
+
 ---
 
 ## 3. Open
 
-- Sandbox test checkout not yet run: tax added on top unconfirmed.
+- **Closed 19 September:** the sandbox test checkout has now run end to end -
+  webhook, processor, subscription row and monthly credit - and tax is added
+  on top. See the amendment above.
+- **What Paddle charged is not recorded on our side.** `paddle_event` keeps no
+  amounts, so the figures in that amendment came from the Paddle dashboard by
+  hand. Backlog PAY-01.
 - API Gateway v2 body encoding: handler must hash exact raw bytes; unverified.
 - Front-end config holds a sandbox-only token; one bundle cannot serve both environments (ENV-01).
 - Live catalog and `config/paddle/live.json` do not exist.

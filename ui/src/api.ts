@@ -149,6 +149,39 @@ export type Quote = {
   affordable_count: number;
 };
 
+// What the Account screen reads. standing is what may be SPENT - trial,
+// active, or purchased_only where only unexpired top-up cash works.
+// paddle_status is Paddle's own word for the subscription, and is null when
+// there is no subscription at all.
+export type Standing = "trial" | "active" | "purchased_only";
+
+export type Plan = {
+  plan_key: string;
+  name: string;
+  seat_count: number;
+  monthly_price_cents: number;
+  monthly_credit_cents: number;
+  /** Null is unlimited, not zero. */
+  share_allowance: number | null;
+};
+
+export type SubscriptionView = {
+  standing: Standing;
+  /** The plan subscribed to, null on a trial. */
+  plan: string | null;
+  trial_ends_at: string | null;
+  current_period_ends_at: string | null;
+  /** active, past_due, paused, canceled - or null with no subscription. */
+  paddle_status: string | null;
+  // What was chosen at signup, so first sign-in can open checkout for it
+  // (amendment of 17 September 2026). Returned here; nothing reads it yet.
+  signup_plan: string | null;
+  signup_intent: string | null;
+  checkout_offered_at: string | null;
+  /** The plan rows, active ones only, cheapest first. */
+  plans: Plan[];
+};
+
 export type SignupBegun = {
   sent: boolean;
   /** Seconds the code lasts, so a screen can say so rather than guess. */
@@ -949,12 +982,57 @@ export const api = {
   walletQuote: (event: string, n = 1): Promise<Quote> =>
     call(`/wallet/quote?event=${encodeURIComponent(event)}&n=${n}`),
 
-  /** Refuses today: there is no payment provider connected, so it says so
-   *  rather than granting money nobody paid for. */
-  topUp: (cents: number) =>
+  /** Buy purchased credit in $5 increments, on the card Paddle holds.
+   *
+   *  Answers 202 and grants nothing: the credit arrives with Paddle's
+   *  transaction.completed webhook (item 6), so the screen polls wallet()
+   *  rather than believing this.
+   *
+   *  The key is minted on the click and is what refuses a repeat - two clicks
+   *  racing each other cannot both charge. A repeat comes back
+   *  {repeated: true}, which is an answer and not an error.
+   *
+   *  Refused with "Subscribe first" where there is no active subscription:
+   *  the charge API needs a subscription to charge against (item 10). */
+  topUp: (increments: number, idempotencyKey: string): Promise<{
+    requested?: boolean; repeated?: boolean;
+    increments: number; amount_cents: number;
+  }> =>
     call("/wallet/top-up", {
       method: "POST",
-      body: JSON.stringify({ cents }),
+      body: JSON.stringify({
+        increments, idempotency_key: idempotencyKey,
+      }),
+    }),
+
+  // --- subscription -------------------------------------------------------
+
+  /** What this tenant is on, what it may spend, and the plans on offer. Open
+   *  to any seat; the two writes below are administrator only. */
+  subscription: (): Promise<SubscriptionView> => call("/billing/subscription"),
+
+  /** A Paddle transaction for the chosen plan, to hand to the overlay.
+   *
+   *  Creates nothing and charges nothing here. Nothing in the body names a
+   *  tenant: the reference is set server-side from the token (item 7).
+   *
+   *  Refused with 409 where a subscription already exists and is not
+   *  cancelled - change the plan instead. */
+  checkout: (plan: string): Promise<{ transaction_id: string }> =>
+    call("/billing/checkout", {
+      method: "POST",
+      body: JSON.stringify({ plan }),
+    }),
+
+  /** Upgrade or downgrade. Paddle bills the difference now and its webhooks
+   *  move the plan, so this answers 202 and the screen polls.
+   *
+   *  Refused where more seats are taken or reserved than the target plan
+   *  holds (item 14), naming both numbers. */
+  changePlan: (plan: string): Promise<{ requested: boolean; plan: string }> =>
+    call("/billing/plan", {
+      method: "POST",
+      body: JSON.stringify({ plan }),
     }),
 
   // --- signing up ---------------------------------------------------------

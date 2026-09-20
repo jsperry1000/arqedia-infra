@@ -45,8 +45,25 @@ Read both before anything else here.
   Nothing in the repository records which environment received which migration.
   Migration 013 (`tenant.brand_light`) was applied to dev only — that is
   recorded here and nowhere else.
-- **Front-end configuration.** `ui/src/config.ts` carries the Cognito pool ids.
-  One bundle cannot serve both stacks.
+- **Front-end configuration.** `ui/src/config.ts` carries the Cognito pool ids
+  and the API URL as literals. One bundle cannot serve both stacks.
+
+  **The Paddle half of this is closed (19 September).** The client-side token
+  and its environment now come from `VITE_PADDLE_TOKEN` and
+  `VITE_PADDLE_ENVIRONMENT`, read at build time from `ui/.env`, which is
+  git-ignored; `ui/.env.example` is committed and holds no real token. Neither
+  is defaulted: `vite.config.ts` refuses to emit a bundle when either is
+  missing, and refuses a **mismatched pair** - `sandbox` takes a `test_` token
+  and `production` takes a `live_` one, per Paddle's documented format. Both
+  refusals were exercised, not assumed. `config.ts` repeats the same checks as
+  a second line of defence for a bundle built some other way.
+
+  **What that does not fix, and why this item stays open.** `web/` is committed
+  build output, so whatever token the last build used is in git inside
+  `web/assets/`. Moving the value out of `config.ts` does not take it out of
+  the repository - it means the *live* token never has to be committed to
+  produce a live build. The Cognito ids and the API URL are untouched and
+  still wrong for a second stack.
 
 ---
 
