@@ -253,7 +253,14 @@ export type Decision = {
 
 export type MemoRef = {
   memo_id: number;
+  /** The template's key - its identity, and what it has always been. */
   template: string;
+  /** Its name as it stood in the revision this memo was written against, not
+   *  as it stands today. A memorandum renamed in September leaves a memo
+   *  generated in March reading the March name, which is the same promise the
+   *  memo text itself makes. Falls back to the key where the revision no
+   *  longer names the template. */
+  template_label: string;
   generated_at: string;
   generated_by: string | null;
   parent_memo_id: number | null;

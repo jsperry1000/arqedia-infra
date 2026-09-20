@@ -483,7 +483,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
                 {saving ? "Saving\u2026" : "Save as a new revision"}
               </button>
             )}
-            <a className="secondary" onClick={openRewrite}>Rewrite</a>
+            <a className="secondary" onClick={openRewrite}>
+              Have Model Redraft a Section
+            </a>
             <a className="pdf" onClick={rendering ? undefined : downloadPdf}
                aria-disabled={rendering}>
               {rendering ? "Rendering\u2026" : "Download PDF"}

@@ -48,6 +48,40 @@ def load_billing():
             sys.path[:] = saved
 
 
+def load_api():
+    """app, with the modules it imports as it imported them.
+
+    Every environment variable app.py and its imports read at import time is
+    set here; a missing one is a KeyError at import rather than a test
+    failure that names something else."""
+    boto3 = types.ModuleType("boto3")
+    boto3.client = mock.MagicMock()
+    botocore = types.ModuleType("botocore")
+    exceptions = types.ModuleType("botocore.exceptions")
+    exceptions.ClientError = type("ClientError", (Exception,), {})
+    botocore.exceptions = exceptions
+    fakes = {"boto3": boto3, "botocore": botocore,
+             "botocore.exceptions": exceptions}
+    env = dict(ENV, **{
+        "DOCS_BUCKET": "docs", "REVIEW_BUCKET": "review",
+        "CURATED_BUCKET": "curated", "BRAND_BUCKET": "brand",
+        "COMPOSITION_FUNCTION": "composition",
+        "TEXTRACT_TOPIC_ARN": "arn:topic", "TEXTRACT_ROLE_ARN": "arn:role",
+        "RENDER_FUNCTION": "render", "PROPOSER_FUNCTION": "proposer",
+    })
+    saved = list(sys.path)
+    with mock.patch.dict(sys.modules, fakes), mock.patch.dict(os.environ, env):
+        for name in ("app", "billing", "config", "editor", "paddle_api",
+                     "registry", "seats", "textract", "wallet"):
+            sys.modules.pop(name, None)
+        sys.path.insert(0, str(API))
+        sys.path.insert(1, str(SHARED))
+        try:
+            return importlib.import_module("app")
+        finally:
+            sys.path[:] = saved
+
+
 def rows(*values):
     """Data API records from plain Python values."""
     def cell(v):

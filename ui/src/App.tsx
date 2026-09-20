@@ -419,7 +419,9 @@ export default function App() {
         {/* A screen rather than a choice. UX-04 made this a panel of options
             with the tenant's own memoranda behind one of them; they are the
             work and the reason for the screen, so they are the screen. */}
-        <a className={catalogueClass} onClick={() => navigate("/catalogue")}>Catalogue</a>
+        <a className={catalogueClass} onClick={() => navigate("/catalogue")}>
+          Template Catalogue
+        </a>
         <a className={railClass("/shares")} onClick={() => navigate("/shares")}>Sharing</a>
         {/* Settings opens a choice, as Configure does. Two things live under
             it and they are not alike: how memoranda look, and who pays for

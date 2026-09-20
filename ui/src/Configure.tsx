@@ -1186,7 +1186,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 + " with it, and which facts each renders. The facts"
                 + " themselves stay: they belong to you, not to one"
                 + " memorandum.",
-              action: "Delete this memorandum",
+              action: "Delete this template",
               name,
               run: async () => {
                 await api.deleteTemplate(current.key);
@@ -1194,7 +1194,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
               },
             });
           }}>
-            Delete this memorandum
+            Delete this template
           </a>
         ) : (
           <span className="muted small">
