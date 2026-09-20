@@ -103,11 +103,41 @@ def tenant_ref(data):
 
 
 def plan_of(items):
-    """The plan a list of items is for, or None when it names none or more
-    than one."""
-    keys = {PLAN_PRICES[(i.get("price") or {}).get("id")]
-            for i in items or []
-            if (i.get("price") or {}).get("id") in PLAN_PRICES}
+    """The plan the items are FOR: the plan price at positive quantity. None
+    when they name no plan, or more than one."""
+    return _one(_plan_keys(items, taken_away=False))
+
+
+def plan_removed(items):
+    """The plan the items TAKE AWAY: the plan price at negative quantity, or
+    None where there is none.
+
+    A proration transaction carries both - the plan moved to at quantity 1
+    beside the plan moved from at quantity -1. Reading the set of prices
+    without their quantities gave two plans and therefore None, which is why
+    both plan changes of 19 September were flagged rather than applied
+    (txn_01m2xc3cn4kr6dmsn99hy67818, txn_01m2xc3w5gk7f16fnnk2gag9zv)."""
+    return _one(_plan_keys(items, taken_away=True))
+
+
+def _plan_keys(items, taken_away):
+    """Plan keys on one side of the sign. A missing quantity counts as
+    positive: subscription items always carry one, and a plan price with no
+    quantity is the plan the entity is for."""
+    keys = set()
+    for item in items or []:
+        key = PLAN_PRICES.get((item.get("price") or {}).get("id"))
+        if key is None:
+            continue
+        quantity = item.get("quantity")
+        negative = (isinstance(quantity, int) and not isinstance(quantity, bool)
+                    and quantity < 0)
+        if negative == taken_away:
+            keys.add(key)
+    return keys
+
+
+def _one(keys):
     return keys.pop() if len(keys) == 1 else None
 
 
@@ -141,13 +171,16 @@ def apply(event, store):
                   if is_transaction and data.get("origin") == "subscription_charge"
                   else 0)
 
-    # Item 16. A plan change pays the difference in monthly credit. The new
-    # plan is the one the transaction is for. The old plan is read from the
-    # subscription row, which may already have moved: Paddle does not deliver
-    # in order, so subscription.updated can land before this transaction. So,
-    # in this order (PROPOSED):
-    #   the row already shows the new plan  previous_plan_id (migration 020)
-    #   otherwise                           the row's plan_id
+    # Item 16. A plan change pays the difference in monthly credit. Both plans
+    # come from the transaction itself: the plan moved to at positive
+    # quantity, the plan moved from at negative. A payload cannot race itself,
+    # so the out-of-order problem does not arise on this path.
+    #
+    # The subscription row is the fallback, for a plan change carrying no
+    # negative item - a shape we have not seen, so the fallback stays. The row
+    # is still read for the period end when the transaction carries none, and
+    # for whether there is a subscription at all: no row is no plan change,
+    # whatever the payload names (19 September).
     #
     # Read without a lock: subscription events lock paddle_event then
     # subscription, and taking them in the other order here could deadlock
@@ -155,9 +188,17 @@ def apply(event, store):
     is_plan_change = is_transaction and data.get("origin") == "subscription_update"
     new_plan = plan if is_plan_change else None
     old_plan = change_expires = None
-    if is_plan_change and tenant_id is not None:
-        row_plan, previous_plan, row_period_end = store.current_plan(tenant_id)
-        old_plan = previous_plan if row_plan == new_plan else row_plan
+    has_subscription = False
+    if is_plan_change:
+        old_plan = plan_removed(data.get("items"))
+        row_period_end = None
+        if tenant_id is not None:
+            row_plan, previous_plan, row_period_end = store.current_plan(tenant_id)
+            has_subscription = row_plan is not None
+            if old_plan is None:
+                # PROPOSED, and the fallback only: the row may already show the
+                # new plan, because Paddle does not deliver in order.
+                old_plan = previous_plan if row_plan == new_plan else row_plan
         # PROPOSED: the transaction's own period, else the subscription's.
         change_expires = (db_time(period["ends_at"]) if period.get("ends_at")
                           else row_period_end)
@@ -176,13 +217,16 @@ def apply(event, store):
         # credit expires.
         or (grants_credit and not period.get("ends_at"))
         # PROPOSED: a plan change whose plans cannot be placed. The items name
-        # no single plan; or neither the previous plan nor the current one
-        # gives a plan other than the new one - no subscription row, or a row
-        # already showing the new plan with no previous plan recorded. A known
-        # old plan that is higher is a downgrade, not a review: it grants
-        # nothing (item 16).
+        # no single plan at positive quantity; or nothing gives an old plan -
+        # no negative item, and no subscription row or a row already showing
+        # the new plan with no previous plan recorded. A known old plan that is
+        # higher is a downgrade, not a review: it grants nothing (item 16).
         or (is_plan_change and (new_plan is None or old_plan is None
                                 or old_plan == new_plan))
+        # A plan change for a tenant with no subscription row, however
+        # completely the payload names both plans: no subscription is no plan
+        # change (19 September).
+        or (is_plan_change and not has_subscription)
         # PROPOSED: no period to expire the upgrade credit at.
         or (is_plan_change and change_expires is None)
     )
@@ -255,7 +299,12 @@ def _grant_upgrade(store, tenant_id, old_plan, new_plan, transaction_id,
     grants once.
 
     Capped: monthly credit granted in one billing period never exceeds the
-    current plan's monthly credit. The grant is the new plan's monthly credit
+    monthly credit of the plan the transaction moves to - the ceiling is read
+    from the payload, never from the subscription row at apply time
+    (clarification of 19 September). The grant is earned at the moment of the
+    upgrade, so the same two events in either order pay the same money.
+
+    The grant is the new plan's monthly credit
     less every unexpired monthly_credit bucket - the period's own grant and
     any earlier upgrade - so upgrade, downgrade, upgrade again pays the
     difference once. Unexpired stands for "this period": monthly credit
