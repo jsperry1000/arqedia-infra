@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { updatePassword } from "aws-amplify/auth";
+import { useSearchParams } from "react-router-dom";
 import { useBackAction } from "./shell";
+import { EnterpriseLink, UpgradePrompt } from "./upgrade";
 import { api, chargeKey, type Wallet, type LedgerEntry,
          type Seats as SeatState, type Invited,
          type SubscriptionView, type Plan } from "./api";
@@ -101,9 +103,24 @@ const TOPUP_CENTS = 500;
 
 type Tab = "subscription" | "balance" | "seats" | "password";
 
+const TABS: Tab[] = ["subscription", "balance", "seats", "password"];
+
+/**
+ * THE TAB IS IN THE ADDRESS (11.1). It was local state, so every arrival
+ * opened on Subscription and no screen could send anybody anywhere else -
+ * which is why the one control in the product that says "Top up" landed a
+ * person on the plan table. /account?tab=balance now lands on the balance,
+ * and a bare /account still opens where it always did.
+ *
+ * Replace rather than push: choosing a tab is not a place to come back to
+ * with the browser's Back, which on this screen means leaving it.
+ */
 export function AccountView({ onBack }: { onBack: () => void }) {
   useBackAction(onBack);
-  const [tab, setTab] = useState<Tab>("subscription");
+  const [params, setParams] = useSearchParams();
+  const asked = params.get("tab") as Tab | null;
+  const tab: Tab = asked && TABS.includes(asked) ? asked : "subscription";
+  const setTab = (to: Tab) => setParams({ tab: to }, { replace: true });
 
   return (
     <div>
@@ -326,6 +343,16 @@ function Subscription() {
         Seats are a fixed attribute of the plan. Adding a seat is a plan change
         rather than a proration, and a downgrade is refused while more seats are
         taken or reserved than the smaller plan holds.
+      </p>
+      {/* The third column of the pricing page is not in this table and will
+          not be: Enterprise is negotiated per contract and a negotiated price
+          must not be a release (CLAUDE.md, Money). Saying so here, with a way
+          to ask, is what the table was missing (11.4). */}
+      <p className="muted small">
+        Enterprise is not listed because it is negotiated rather than bought:
+        seats, credit and allowances are whatever the contract says, and it is
+        the only plan that can take the ARQEDIA line off a memorandum&rsquo;s
+        footer. <EnterpriseLink className="small" />.
       </p>
 
       <table className="docs">
@@ -900,6 +927,19 @@ function Seats() {
           </span>
         </div>
       </div>
+
+      {/* The other way out of a full workspace, which the screen never
+          offered although the server's own refusal names it: "All N seats are
+          taken or reserved. Remove one, or change the plan." (seats.py:260).
+          Removing somebody was the only thing on offer here (11.1). */}
+      {state.free === 0 && (
+        <UpgradePrompt action="See plans">
+          All {state.bought}{" "}
+          {state.bought === 1 ? "seat is" : "seats are"} taken or reserved.
+          Seats come with the plan &mdash; a bigger one is how a workspace
+          gets more of them, and nobody has to be removed to make room.
+        </UpgradePrompt>
+      )}
 
       {invited && (
         <div className="panel" style={{ marginTop: 18, padding: "16px 18px" }}>
