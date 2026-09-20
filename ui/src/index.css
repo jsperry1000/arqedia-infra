@@ -1365,11 +1365,22 @@ table.docs tr.chosen td:first-child { box-shadow: inset 3px 0 0 var(--deep); }
 .stepper li.done .n { background: var(--light); color: var(--deep); border-color: var(--light); }
 @media (max-width: 720px) { .stepper .t { display: none; } }
 
+/* THE SAME CARD ON EVERY STEP (5.4). It grew and shrank with whatever the
+   step happened to hold, so the buttons moved under the pointer between one
+   step and the next and the page jumped as it went. A floor, and the actions
+   pushed to the foot of it, hold both still.
+
+   The floor is the tallest step, which is the summary on Second
+   administrator. A step with more in it than this still grows; none of them
+   does today. */
 .signup-card {
   max-width: 660px; margin: 0 auto; padding: 28px 32px;
   background: var(--paper); border: 1px solid var(--line);
   border-radius: var(--pill-radius);
+  min-height: 30rem;
+  display: flex; flex-direction: column;
 }
+.signup-card .form-actions { margin-top: auto; }
 .signup-card h3 { margin-top: 0; text-transform: none; letter-spacing: 0;
                   color: var(--deep); font-size: 17px; }
 .signup-card .row { display: block; margin: 0 0 14px; }
@@ -1377,7 +1388,19 @@ table.docs tr.chosen td:first-child { box-shadow: inset 3px 0 0 var(--deep); }
                            margin-bottom: 4px; }
 .signup-card .row > span.small { margin: 5px 0 0; }
 .signup-card input, .signup-card select { width: 100%; }
+/* A TICK IS NOT A TEXT BOX (5.1). The rule above is for the fields a person
+   types in, and it was catching the region radios too: each one stretched to
+   the width of the card, which pushed every label to a different place and
+   left the column looking ragged. `.bind input { width: auto }` had the same
+   specificity and lost on order. */
+.signup-card input[type="radio"],
+.signup-card input[type="checkbox"] { width: auto; }
 .signup-foot { text-align: center; margin: 20px auto 0; }
+
+/* The way out, on every step (5.3). Under the promise rather than beside it:
+   it is a door, not an offer. */
+.signup-home { display: inline-block; margin-top: 10px; color: var(--muted); }
+.signup-home:hover { color: var(--deep); }
 
 /* A pack, with enough of its content to choose between them. */
 .pack-row {

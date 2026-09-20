@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { signIn } from "aws-amplify/auth";
 import { api } from "./api";
+import { config } from "./config";
 import { REGIONS, JURISDICTIONS } from "./mock";
 
 /**
@@ -147,6 +148,18 @@ export function SignUp({ onSignIn, onSignedUp }: {
         <p className="muted">
           30 days, full use, no card. $5.00 of metered credit while you look.
         </p>
+        {/* A way out, on every step (5.3). Nothing has been created at any
+            point before the code is answered, so leaving costs nothing and
+            nothing has to be undone - but until this there was no door: the
+            only control that left the flow was "Sign in" at the very foot,
+            which reads as an answer to a different question.
+            HOME IS THE MARKETING SITE, not the sign-in card. Somebody
+            abandoning a signup has no account to sign in to, and the page
+            they came from is the one that persuaded them. The address is
+            Terraform's, through the build; see config.ts. */}
+        <a className="small signup-home" href={config.siteUrl}>
+          Leave and go home
+        </a>
       </div>
 
       <ol className="stepper">
@@ -305,9 +318,20 @@ export function SignUp({ onSignIn, onSignedUp }: {
         )}
 
         <div className="form-actions">
-          {step > 0 && step < VERIFY && (
-            <a className="secondary" onClick={() => setStep((n) => n - 1)}>Back</a>
-          )}
+          {/* BACK KEEPS ITS PLACE ON EVERY STEP (5.4). Rendered even where
+              there is nowhere to go back to - the first step, and the verify
+              step, where the code has already been sent - because a control
+              that appears and disappears moves the button beside it, and a
+              person clicking Continue four times in the same spot should not
+              find Back under the pointer on the fifth. Hidden rather than
+              absent: it holds its width. */}
+          <a className="secondary"
+             style={step > 0 && step < VERIFY
+               ? undefined : { visibility: "hidden" }}
+             aria-hidden={!(step > 0 && step < VERIFY)}
+             onClick={() => { if (step > 0 && step < VERIFY) setStep((n) => n - 1); }}>
+            Back
+          </a>
           {step < VERIFY ? (
             <button onClick={next} disabled={!ready || !!busy}>
               {step === LAST_BEFORE_VERIFY ? "Send my code" : "Continue"}

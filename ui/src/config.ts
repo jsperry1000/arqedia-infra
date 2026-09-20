@@ -24,6 +24,14 @@ function required(name: string, value: string | undefined): string {
   return value;
 }
 
+/** Where the marketing site answers.
+ *
+ *  Terraform's, through the build: `site_url` in site.tf is derived from
+ *  local.site_host in dns.tf, which is also what the DNS records and the
+ *  certificate are built from. So the hostname exists once in the stack and
+ *  this bundle carries a copy of it rather than a second opinion. */
+const siteUrl = required("VITE_SITE_URL", import.meta.env.VITE_SITE_URL);
+
 const paddleEnvironment = required(
   "VITE_PADDLE_ENVIRONMENT", import.meta.env.VITE_PADDLE_ENVIRONMENT);
 
@@ -52,6 +60,10 @@ export const config = {
   userPoolId: "us-east-2_AcsEyzDLL",
   userPoolClientId: "7neoek1vpj90suoo8p8rrp04re",
   apiUrl: "https://o4fofn0ez5.execute-api.us-east-2.amazonaws.com",
+
+  // The marketing site. Read from the build rather than written here, so the
+  // hostname lives in dns.tf and nowhere else in this codebase.
+  siteUrl,
 
   // Paddle's client-side token, and the environment it belongs to.
   //

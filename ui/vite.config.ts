@@ -33,10 +33,35 @@ function requirePaddleConfig(env: Record<string, string>) {
   }
 }
 
+/**
+ * Where the marketing site answers.
+ *
+ * Required, and never defaulted, for the same reason the Paddle pair is: a
+ * default is how a dev bundle ends up sending people to the production site,
+ * or the reverse, while looking perfectly healthy. The value comes from
+ * Terraform - `terraform output -raw site_url` - so the hostname is stated
+ * once, in dns.tf, and this build reads it rather than repeating it.
+ */
+function requireSiteUrl(env: Record<string, string>) {
+  const url = env.VITE_SITE_URL;
+  if (!url) {
+    throw new Error(
+      "VITE_SITE_URL is not set. Copy ui/.env.example to ui/.env and fill it " +
+      "in; `terraform output -raw site_url` prints the value.");
+  }
+  if (!/^https:\/\/[^/\s]+$/.test(url)) {
+    throw new Error(
+      `VITE_SITE_URL must be an https origin with no trailing path, not ` +
+      `"${url}".`);
+  }
+}
+
 export default defineConfig(({ mode }) => {
   // Only VITE_-prefixed variables, which are the only ones Vite exposes to
   // the client anyway. Nothing else in the environment is read or embedded.
-  requirePaddleConfig(loadEnv(mode, process.cwd(), "VITE_"));
+  const env = loadEnv(mode, process.cwd(), "VITE_");
+  requirePaddleConfig(env);
+  requireSiteUrl(env);
 
   return {
     plugins: [react()],
