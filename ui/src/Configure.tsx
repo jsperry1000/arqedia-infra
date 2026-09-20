@@ -1151,6 +1151,65 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             <option key={t.key} value={t.key}>{t.label || t.key}</option>
           ))}
         </select>
+
+        {/* What acts on the memorandum in the dropdown, beside the dropdown.
+            These sat in a row of their own under the band, on the sections
+            part only, where they read as acting on the sections below them
+            rather than on the memorandum named above them. They act on the
+            template in every part, so they are here in every part. */}
+        <span className="muted small">
+          {sections.length} {sections.length === 1 ? "section" : "sections"}
+        </span>
+        {/* Renaming is free and reaches memoranda already written: the key is
+            minted once and never follows the label, so nothing stored has to
+            move. */}
+        {current && renaming === null && (
+          <a className="small"
+             onClick={() => setRenaming(current.label || current.key)}>
+            Rename
+          </a>
+        )}
+        {/* A memorandum built from another rather than from nothing. A credit
+            pack and a KYC pack share most of their sections, and rebuilding
+            the second by hand is where they drift apart. */}
+        {current && (
+          <a className="small" onClick={() => act("Duplicating", async () => {
+            const made = await api.duplicateTemplate(current.key);
+            setTemplate(made.key);
+          })}>
+            Duplicate
+          </a>
+        )}
+        {/* Asked, with the name typed (UX-10). The last memorandum cannot go
+            - the API refuses it - so the control says so rather than offering
+            a delete that fails. */}
+        {current && (templates.length > 1 ? (
+          <a className="danger small" onClick={() => {
+            const name = current.label || current.key;
+            const count = sections.length;
+            setTypedName("");
+            setDeleting({
+              title: `Delete ${name}`,
+              reaches: `${count} ${count === 1 ? "section goes" : "sections go"}`
+                + " with it, and which facts each renders. The facts"
+                + " themselves stay: they belong to you, not to one"
+                + " memorandum.",
+              action: "Delete this template",
+              name,
+              run: async () => {
+                await api.deleteTemplate(current.key);
+                setTemplate("");
+              },
+            });
+          }}>
+            Delete this template
+          </a>
+        ) : (
+          <span className="muted small">
+            The only memorandum &mdash; it cannot be deleted
+          </span>
+        ))}
+
         {/* What Publish covers, beside it (UX-05). The whole configuration,
             not the report on screen. */}
         <span className="live muted small">
@@ -1188,6 +1247,30 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         ))}
       </nav>
       </div>
+
+      {/* Renaming, under the band rather than inside the sections part: the
+          control that opens it is in the bar now, and the bar is on every
+          part. Left where it was, pressing Rename anywhere but Report
+          sections would have set a name nobody could see or save. */}
+      {current && renaming !== null && (
+        <div className="filters">
+          <input value={renaming} autoFocus
+                 onChange={(e) => setRenaming(e.target.value)} />
+          <button disabled={!!busy || !renaming.trim()}
+                  onClick={() => act("Renaming", async () => {
+                    await api.saveTemplate(
+                      { key: current.key, label: renaming.trim() });
+                    setRenaming(null);
+                  })}>
+            Save
+          </button>
+          <a className="small" onClick={() => setRenaming(null)}>Cancel</a>
+          <span className="muted small">
+            The name only. Sections, bindings and memoranda already written
+            are untouched.
+          </span>
+        </div>
+      )}
 
       <div className="memo-head">
         <div>
@@ -1263,81 +1346,9 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         bound to it and nothing else.
       </p>
 
-      {/* The memorandum is chosen in the bar. */}
-      <div className="filters">
-        <span className="muted">
-          {sections.length} {sections.length === 1 ? "section" : "sections"}
-        </span>
-        {/* Renaming is free and reaches memoranda already written: the key is
-            minted once and never follows the label, so nothing stored has to
-            move. */}
-        {current && renaming === null && (
-          <a className="small"
-             onClick={() => setRenaming(current.label || current.key)}>
-            Rename
-          </a>
-        )}
-        {/* A memorandum built from another rather than from nothing. A
-            credit pack and a KYC pack share most of their sections, and
-            rebuilding the second by hand is where they drift apart. */}
-        {current && (
-          <a className="small" onClick={() => act("Duplicating", async () => {
-            const made = await api.duplicateTemplate(current.key);
-            setTemplate(made.key);
-          })}>
-            Duplicate
-          </a>
-        )}
-        {/* Asked, with the name typed (UX-10). The last memorandum cannot go
-            - the API refuses it - so the control says so rather than
-            offering a delete that fails. */}
-        {current && (templates.length > 1 ? (
-          <a className="danger small" onClick={() => {
-            const name = current.label || current.key;
-            const count = sections.length;
-            setTypedName("");
-            setDeleting({
-              title: `Delete ${name}`,
-              reaches: `${count} ${count === 1 ? "section goes" : "sections go"}`
-                + " with it, and which facts each renders. The facts"
-                + " themselves stay: they belong to you, not to one"
-                + " memorandum.",
-              action: "Delete this template",
-              name,
-              run: async () => {
-                await api.deleteTemplate(current.key);
-                setTemplate("");
-              },
-            });
-          }}>
-            Delete this template
-          </a>
-        ) : (
-          <span className="muted small">
-            The only memorandum &mdash; it cannot be deleted
-          </span>
-        ))}
-      </div>
-
-      {current && renaming !== null && (
-        <div className="filters">
-          <input value={renaming} autoFocus
-                 onChange={(e) => setRenaming(e.target.value)} />
-          <button disabled={!!busy || !renaming.trim()}
-                  onClick={() => act("Renaming", async () => {
-                    await api.saveTemplate(
-                      { key: current.key, label: renaming.trim() });
-                    setRenaming(null);
-                  })}>
-            Save
-          </button>
-          <a className="small" onClick={() => setRenaming(null)}>Cancel</a>
-          <span className="muted small">
-            The name only. Sections, bindings and memoranda already written
-            are untouched.
-          </span>
-        </div>
-      )}
+      {/* The memorandum is chosen in the bar, and what acts on it now sits
+          beside the dropdown there - including Rename, whose box opens
+          directly under the band rather than here. */}
 
       <p className="muted small">
         Every memorandum draws on the same facts and the same documents. What

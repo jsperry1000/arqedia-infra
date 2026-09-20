@@ -957,6 +957,12 @@ a.add:hover { background: var(--paper); text-decoration: none; }
   background: var(--paper);
 }
 
+/* Delete sits with Rename and Duplicate, beside the dropdown they all act on.
+   `.danger` pushes itself to the right - which is what it should do at the
+   foot of a form, and exactly wrong in a row where the thing it deletes is
+   named two controls to its left. */
+.config-bar .danger { margin-left: 0; }
+
 /* What Publish covers (UX-05). It takes the space that pushed Discard right,
    so Discard and Publish stay together at the end. */
 .config-bar .live { margin-left: auto; white-space: nowrap; }
