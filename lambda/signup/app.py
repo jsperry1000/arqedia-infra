@@ -84,6 +84,26 @@ DISPOSABLE = {
     "fakeinbox.com", "mintemail.com", "mohmal.com", "spamgourmet.com",
 }
 
+# Domains that belong to no firm. A tenant_domain row means "this domain's
+# workspace", and gmail.com is not a workspace: the first person to sign up
+# from one would otherwise claim it for their own tenant and every later
+# address at it would be told to ask an administrator there for a seat - an
+# administrator who is a stranger. The claim is simply not written for these,
+# the same way it is not written for a domain somebody already holds.
+#
+# NOT A REFUSAL. These addresses may sign up exactly as before; they take a
+# tenant, a trial and their credit. It is only the claim that is skipped.
+#
+# A FIXED LIST, and a short one, by the same argument as DISPOSABLE above: a
+# stale list is worse than none because it reads as working. It covers what
+# people actually sign up with and no more. It is to be extended when signup
+# opens to the public, which is when addresses outside it start arriving.
+FREE_MAIL = {
+    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
+    "yahoo.com", "icloud.com", "me.com", "aol.com", "proton.me",
+    "protonmail.com",
+}
+
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -185,6 +205,32 @@ def _record(domain, email, ip, outcome, detail=None):
 
 # --- the checks ------------------------------------------------------------
 
+NOT_INVITED = ("ARQEDIA is not open for signup yet. If you have been invited, "
+               "use the link in your invitation.")
+
+
+def _invited(email):
+    """Whether this address may create an account at all.
+
+    THE ONLY GATE ON WHO. Everything else in _checks is about abuse volume or
+    duplication - a disposable domain, one trial per domain, two rate limits -
+    and none of them asks who somebody is. Until this, anyone with a real
+    mailbox on an unclaimed domain got a tenant, a trial and $5.00 of credit.
+
+    FAILS SHUT. An empty table refuses everyone. A lookup that cannot reach
+    the database raises, and the handler answers 500 rather than letting
+    somebody through - the failure mode of a gate must be closed.
+
+    The address arrives lowercased from begin/verify, and signup_allow is
+    _ci, so a lookup matches whatever case was stored. Both, deliberately:
+    either alone would work until somebody changed the other."""
+    rows = _sql(
+        "SELECT email FROM signup_allow WHERE email = :e",
+        [_p("e", email)],
+    ).get("records", [])
+    return bool(rows)
+
+
 def _refuse(domain, email, ip, outcome, message, detail=None):
     _record(domain, email, ip, outcome, detail)
     return _reply(400, {"error": message})
@@ -192,6 +238,13 @@ def _refuse(domain, email, ip, outcome, message, detail=None):
 
 def _checks(email, domain, ip):
     """In the order that costs least. Returns a reply to send, or None."""
+
+    # FIRST, before anything that reveals the state of the system. An
+    # uninvited address costs one primary-key lookup and learns nothing about
+    # which domains are taken.
+    invited = _invited(email)
+    if not invited:
+        return _refuse(domain, email, ip, "not_invited", NOT_INVITED)
 
     if domain in DISPOSABLE:
         return _refuse(domain, email, ip, "disposable",
@@ -201,14 +254,24 @@ def _checks(email, domain, ip):
     # One trial per email domain. A second person from a firm that already has
     # a tenant is not turned away - they are told to ask for a seat, which is
     # what they wanted.
-    taken = _sql(
-        "SELECT tenant_id, multi_allowed FROM tenant_domain WHERE domain = :d",
-        [_p("d", domain)],
-    ).get("records", [])
-    if taken and not _col(taken[0], 1):
-        return _refuse(domain, email, ip, "domain_taken",
-                       f"{domain} already has an ARQEDIA workspace. Ask an "
-                       f"administrator there to invite you to a seat.")
+    #
+    # NOT APPLIED TO AN INVITED ADDRESS. The rule exists to stop a firm taking
+    # a second free trial by signing up twice; the allowlist already decides
+    # who may sign up, one address at a time, so a second decision by domain
+    # would overrule a decision already made deliberately. Two of the four
+    # seeded addresses are at domains that are already claimed.
+    #
+    # The disposable list and both rate limits still apply: those are about
+    # abuse, and an invitation is not a licence to hammer the endpoint.
+    if not invited:
+        taken = _sql(
+            "SELECT tenant_id, multi_allowed FROM tenant_domain WHERE domain = :d",
+            [_p("d", domain)],
+        ).get("records", [])
+        if taken and not _col(taken[0], 1):
+            return _refuse(domain, email, ip, "domain_taken",
+                           f"{domain} already has an ARQEDIA workspace. Ask an "
+                           f"administrator there to invite you to a seat.")
 
     hour = "DATE_SUB(NOW(), INTERVAL 1 HOUR)"
 
@@ -396,16 +459,26 @@ def verify(event, body):
              "WHERE pending_id = :id", [_p("id", pending_id)])
         return _reply(400, {"error": "That code is not right."})
 
+    # CHECKED AGAIN HERE, not only in begin(). A pending_signup row lives
+    # fifteen minutes, so one created before an address was removed from the
+    # allowlist - or before the allowlist existed at all - could otherwise be
+    # verified afterwards. The window is small and closing it costs one query.
+    invited = _invited(email)
+    if not invited:
+        return _refuse(domain, email, ip, "not_invited", NOT_INVITED)
+
     # The domain rule is checked again. Two people at one firm can reach this
-    # point together, and the first to arrive takes the tenant.
-    taken = _sql(
-        "SELECT tenant_id, multi_allowed FROM tenant_domain WHERE domain = :d",
-        [_p("d", domain)],
-    ).get("records", [])
-    if taken and not _col(taken[0], 1):
-        return _refuse(domain, email, ip, "domain_taken",
-                       f"{domain} already has an ARQEDIA workspace. Ask an "
-                       f"administrator there to invite you to a seat.")
+    # point together, and the first to arrive takes the tenant. An invited
+    # address is past it, for the reason given in _checks.
+    if not invited:
+        taken = _sql(
+            "SELECT tenant_id, multi_allowed FROM tenant_domain WHERE domain = :d",
+            [_p("d", domain)],
+        ).get("records", [])
+        if taken and not _col(taken[0], 1):
+            return _refuse(domain, email, ip, "domain_taken",
+                           f"{domain} already has an ARQEDIA workspace. Ask an "
+                           f"administrator there to invite you to a seat.")
 
     org = _col(r, 4) or domain
     jurisdiction = _col(r, 5)
@@ -451,11 +524,51 @@ def verify(event, body):
         if not isinstance(tenant_id, int) or tenant_id <= 0:
             raise RuntimeError(f"tenant insert returned no usable id: {tenant_id!r}")
 
-        _sql(
-            "INSERT INTO tenant_domain (domain, tenant_id) VALUES (:d, :t)",
-            [_p("d", domain), _p("t", tenant_id)],
-            tx=tx,
-        )
+        # THE CLAIM IS TAKEN ONLY IF IT IS FREE, AND ONLY IF IT IS A FIRM'S.
+        #
+        # An invited address is past the domain rule above, so it can reach
+        # here with the domain already claimed - ebl-finance.com is held by
+        # tenant 5. A bare INSERT would hit the primary key and roll the whole
+        # transaction back, AFTER the code was verified, answering 500 and
+        # naming nothing.
+        #
+        # NOT "INSERT IGNORE". MySQL's own manual: "With IGNORE, invalid
+        # values are adjusted to the closest values and inserted; warnings are
+        # produced but the statement does not abort." It downgrades data
+        # conversions, over-length strings and illegal dates as well as
+        # duplicate keys - so it would silently write a TRUNCATED domain
+        # rather than fail, and we would never know. A gate that hides the
+        # thing it was put there to catch is worse than no gate.
+        #
+        # So: look, then write. The existing row is never updated, never
+        # replaced, and keeps its own created_at and multi_allowed.
+        #
+        # A free-mail domain is skipped before the lookup rather than after
+        # it: there is nothing to look up, because no tenant may hold one.
+        if domain in FREE_MAIL:
+            print("[claim-free-mail] domain=%s new_tenant=%s" % (
+                domain, tenant_id))
+        else:
+            held = _sql(
+                "SELECT tenant_id FROM tenant_domain WHERE domain = :d",
+                [_p("d", domain)],
+                tx=tx,
+            ).get("records", [])
+            if held:
+                # The new tenant has NO domain claim, and therefore no
+                # home_domain on its Seats screen, so no colleague is marked
+                # as outside the firm. The same is true of the free-mail case
+                # above, and for the same reason it does not matter: with
+                # nothing to compare against, marking everybody external is
+                # noise. Accepted deliberately; recorded in the handoff.
+                print("[claim-held] domain=%s new_tenant=%s held_by=%s" % (
+                    domain, tenant_id, _col(held[0], 0)))
+            else:
+                _sql(
+                    "INSERT INTO tenant_domain (domain, tenant_id) VALUES (:d, :t)",
+                    [_p("d", domain), _p("t", tenant_id)],
+                    tx=tx,
+                )
 
         # The founding administrator holds a seat like anybody else. Without
         # one the seats screen counts nobody and the last-administrator rule
