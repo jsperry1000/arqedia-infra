@@ -6,21 +6,26 @@ import { drawStage, type Stage, type StageHandle } from "./flock";
  * configuration bar.
  *
  * It is the same engine the hero runs on - one file, imported by both - so a
- * stage here is the same picture as that stage there. What differs is that
- * these do not move and are drawn dull: the strip says where in the whole
- * business the part on screen sits, and a moving picture beside a working
- * screen would be a distraction rather than an orientation.
+ * stage here is the same picture as that stage there. No box and no caption:
+ * four small drawings in a row, and the band beneath names the part in use.
  *
  * STAGE 1 IS NEVER LIT. It is the work the model does between a document
  * arriving and a fact being filed, and no part of the configuration screen
  * corresponds to it. It is also the one stage with no still form - a swarm
- * frozen is a smudge - so it alone is allowed to stir, for two seconds, when
- * the part changes.
+ * frozen is a smudge - so it alone moves, continuously and slowly, and not at
+ * all where less motion has been asked for. The other three never move.
+ *
+ * STAGE 3 IS THE MARK. What is retrieved is an ARQEDIA memorandum, and at
+ * 48px the mark's three bars are a thing a person recognises where fourteen
+ * lines of text are a smear.
  *
  * The colours are a matter of CSS: flock.ts reads its palette from the canvas
- * element, and .stage-mini:not(.on) shadows the four it reads.
+ * element, and .stage-mini shadows the four it reads - dulled, or the lit set
+ * for the stage in use.
  */
 
+// The names are no longer drawn; they are kept because the order is the
+// sequence and a bare list of numbers says nothing to whoever reads this next.
 const STAGES: { stage: Stage; name: string }[] = [
   { stage: 0, name: "Documents" },
   { stage: 1, name: "Facts" },
@@ -56,9 +61,8 @@ export function StageStrip({ lit }: { lit: Stage | null }) {
     }
   };
 
-  // Mounted once. Each canvas keeps its own geometry and, for the swarm, its
-  // own clock, so the stirring carries on from where it stopped rather than
-  // starting again on every change of part.
+  // Mounted once. Each canvas keeps its own geometry, and the swarm keeps its
+  // own clock and runs itself from here on.
   useEffect(() => {
     guard("drawing", () => {
       handles.current = STAGES.map((s, i) => {
@@ -76,13 +80,12 @@ export function StageStrip({ lit }: { lit: Stage | null }) {
   }, []);
 
   // A change of part moves the highlight, which is a class, which changes the
-  // palette the canvas reads - so every stage is repainted, and the swarm is
-  // nudged. This runs after the class is on the element, which is what makes
-  // the repaint pick up the new colours.
+  // palette the canvas reads - so every stage is repainted. This runs after
+  // the class is on the element, which is what makes the repaint pick up the
+  // new colours. The swarm repaints itself anyway; the other three would not.
   useEffect(() => {
     guard("repainting", () => {
       handles.current.forEach((h) => h?.paint());
-      handles.current[1]?.nudge();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lit]);
@@ -95,11 +98,10 @@ export function StageStrip({ lit }: { lit: Stage | null }) {
     // screen reader being told about four canvases would learn nothing.
     <div className="stage-strip" aria-hidden="true">
       {STAGES.map((s, i) => (
-        <figure key={s.stage}
-                className={"stage-mini" + (lit === s.stage ? " on" : "")}>
+        <div key={s.stage}
+             className={"stage-mini" + (lit === s.stage ? " on" : "")}>
           <canvas ref={(el) => { canvases.current[i] = el; }} />
-          <figcaption>{s.name}</figcaption>
-        </figure>
+        </div>
       ))}
     </div>
   );

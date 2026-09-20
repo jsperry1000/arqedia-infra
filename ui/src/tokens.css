@@ -30,14 +30,25 @@
   --ink-2:  #3c4a5c;   /* body prose */
   --muted:  #64748b;
 
-  /* --- dulled ------------------------------------------------------------- */
-  /* A stage of the sequence that is not the one in use: the same picture with
-     the colour taken out of it. Only the stage strip uses these, and it uses
-     them by shadowing --medium, --rule, --light and --deep on the element the
-     canvas reads its palette from. */
-  --dull-ink:  #cbd3dc;
-  --dull-line: #e6eaef;
-  --dull-deep: #c2ccd7;
+  /* --- the stage strip ----------------------------------------------------- */
+  /* The strip shadows --medium, --rule, --light and --deep on the element the
+     canvas reads its palette from, so these are what it draws in.
+
+     A stage that is not the one in use: the same picture with the colour taken
+     out of it, and dark enough to read at 48px. Darkened 30% on 20 September;
+     the values before that were #cbd3dc, #e6eaef and #c2ccd7. */
+  --dull-ink:  #8E949A;
+  --dull-line: #A1A4A7;
+  --dull-deep: #888F97;
+
+  /* The stage in use. It inherited the brand tokens outright until 20
+     September; these are those four darkened 20%, so the lit stage carries
+     more weight than the page around it without shouting. ARQEDIA's own
+     colours, never a tenant's: the strip is chrome. */
+  --lit-ink:   #1F6EA2;   /* --medium  #278ACA */
+  --lit-rule:  #9CA6B2;   /* --rule    #C3D0DE */
+  --lit-light: #9FB6C6;   /* --light   #C7E4F8 */
+  --lit-deep:  #001E4E;   /* --deep    #002561 */
 
   /* --- type -------------------------------------------------------------- */
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
