@@ -56,6 +56,38 @@ const RESET_REFUSED =
   "your firm can set it right - ask them to remove your seat and invite you " +
   "again.";
 
+/** What a failed code is told, in our words rather than Cognito's.
+ *
+ *  COGNITO DOES NOT RELIABLY TELL THE TWO APART. ConfirmForgotPassword
+ *  documents both CodeMismatchException and ExpiredCodeException, but a plainly
+ *  wrong code against a real address comes back as
+ *
+ *    name    "ExpiredCodeException"
+ *    message "Invalid code provided, please request a code again."
+ *
+ *  - verified against the pool on 20 September. So a card that shows Cognito's
+ *  sentence tells somebody who mistyped a digit that their code has run out,
+ *  and tells them to request a new one while offering nowhere to do it. Both
+ *  names are therefore answered here in one sentence that is true of either,
+ *  and CodeMismatch keeps the sharper wording for when it does arrive.
+ *
+ *  Anything else - a password below the policy, a rate limit - is Cognito's
+ *  own sentence, because it is about something other than the code and is
+ *  already written for a person to read. */
+function codeRefusal(err: any): string {
+  if (err?.name === "CodeMismatchException") {
+    return "That code is not right. Use the most recent email - asking for a "
+      + "new code stops the one before it working.";
+  }
+  if (err?.name === "ExpiredCodeException") {
+    return "That code is not right, or it has run out. Ask for a new one "
+      + "below and use the newest email.";
+  }
+  // `||`, not `??`: an AuthError carrying an empty message would otherwise
+  // set the error to "" and the card would fail in silence.
+  return err?.message || String(err);
+}
+
 function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -89,7 +121,7 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
       // The refusals that are about this person rather than about existence.
       if (err?.name === "LimitExceededException"
           || err?.name === "TooManyRequestsException") {
-        setError(err.message ?? String(err));
+        setError(err?.message || String(err));
         return;
       }
       if (err?.name !== "InvalidParameterException") {
@@ -99,7 +131,23 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
     }
     go("reset");
     setNote("If that address has an account, a code is on its way to it. It "
-            + "lasts an hour.");
+            + "lasts an hour, and it replaces any code sent before it.");
+  }
+
+  /** Another code, asked for from the step where the last one failed.
+   *
+   *  The refusal says to ask for a new one, so there has to be somewhere to
+   *  do it. Before this, the only route was Back to signing in and starting
+   *  the whole thing again. */
+  async function again() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await sendCode();
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function submit(e: React.FormEvent) {
@@ -112,8 +160,17 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
         return;
       }
       if (mode === "reset") {
-        await confirmResetPassword({
-          username: email, confirmationCode: code, newPassword });
+        try {
+          await confirmResetPassword({
+            username: email, confirmationCode: code, newPassword });
+        } catch (err) {
+          // The note above still says a code is on its way and how long it
+          // lasts. Left up beside a refusal it reads as a contradiction, and
+          // it was written about a code that has now been answered.
+          setNote("");
+          setError(codeRefusal(err));
+          return;
+        }
         setCode("");
         setNewPassword("");
         setPassword("");
@@ -133,7 +190,7 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
         onDone();
       }
     } catch (err: any) {
-      setError(err.message ?? String(err));
+      setError(err?.message || String(err));
     } finally {
       setBusy(false);
     }
@@ -168,12 +225,18 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
                    onChange={(e) => setCode(e.target.value)} autoFocus />
             <input type="password" placeholder="New password" value={newPassword}
                    onChange={(e) => setNewPassword(e.target.value)} />
-            {/* The quiet way out for somebody whose code never comes. It names
-                no cause, for the reason RESET_REFUSED does not. */}
             <p className="muted small" style={{ margin: 0 }}>
               At least 12 characters, with an upper case letter, a lower case
-              letter and a number. No code after a few minutes? Ask an
-              administrator in your firm.
+              letter and a number.
+            </p>
+            {/* Where "ask for a new one" is actually done, beside the sentence
+                that says to. The quiet way out for somebody whose code never
+                arrives at all is under it, and names no cause, for the reason
+                RESET_REFUSED does not. */}
+            <p className="muted small" style={{ margin: 0 }}>
+              <a className="small" onClick={again}>Send a new code</a>
+              {" "}&middot; no code after a few minutes? Ask an administrator
+              in your firm.
             </p>
           </>
         )}
