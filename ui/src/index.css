@@ -390,15 +390,23 @@ p.warn { color: #b45309; }
 .cite:hover { color: var(--deep); border-bottom-color: var(--deep); }
 
 /* A citation whose document has been deleted (8.2). The memorandum said what
-   it said, so the reference still reads; there is nothing behind it to open,
-   so it is struck through and goes quiet rather than pretending. Not an
-   error: this is what the tenant asked for when they deleted the document. */
+   it said, so the reference still reads; there is nothing behind it to open.
+   It must read as NO LONGER AVAILABLE rather than merely quiet: at --muted
+   with a --line rule through it, on 12px italic, the strike was barely there
+   and the whole thing passed for ordinary prose - which is the outcome
+   marking it exists to prevent.
+   So: body-prose ink, and the line in the same ink at twice the weight,
+   unbroken by descenders. Not an error - this is what the tenant asked for
+   when they deleted the document - which is why it darkens rather than
+   reddens. The pointer and the message are unchanged. */
 .cite.gone {
-  cursor: default; color: var(--muted);
+  cursor: default; color: var(--ink-2);
   border-bottom: 0; text-decoration: line-through;
-  text-decoration-color: var(--line);
+  text-decoration-color: currentColor;
+  text-decoration-thickness: 2px;
+  text-decoration-skip-ink: none;
 }
-.cite.gone:hover { color: var(--muted); }
+.cite.gone:hover { color: var(--ink-2); }
 
 .passage {
   background: var(--wash); border: 1px solid var(--line); border-radius: 3px;
