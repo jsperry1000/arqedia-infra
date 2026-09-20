@@ -131,6 +131,19 @@ function buildScene(W: number, H: number, N: number, random: () => number): Scen
     lines.push({ y: yy, x: px + 18, w: (pw - 36) * (head ? 0.46 : rnd(0.72, 1)) })
     yy += head ? 26 : 13
   }
+  // A SHORT CANVAS PRODUCES NO LINES AT ALL, and every particle reads one.
+  // The first line sits 26 below the top of the page and the last must clear
+  // its foot by 14, so a page under about 52px high has room for none: at the
+  // strip's 48px the page is 37px and the loop never runs once. `lines` was
+  // then empty, `i % 0` is NaN, `lines[NaN]` is undefined, and reading .x off
+  // it threw - which took the whole Configure screen down with it, because an
+  // error in an effect with no boundary above it unmounts the tree.
+  //
+  // One line, centred, is what a page that small can honestly show. The hero
+  // never reaches here: at its shortest, 230px, the loop yields eight.
+  if (lines.length === 0) {
+    lines.push({ y: py + ph / 2, x: px + 6, w: Math.max(6, pw - 12) })
+  }
   const page: Page = { x: px, y: py, w: pw, h: ph }
 
   const pts: Pt[] = []
