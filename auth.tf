@@ -61,6 +61,29 @@ resource "aws_cognito_user_pool" "main" {
     from_email_address    = "ARQEDIA <${var.signup_sender}>"
   }
 
+  # What the password reset code says (10.4).
+  #
+  # THIS IS THE FORGOT-PASSWORD MESSAGE. Cognito's own table names the
+  # verification message template as the one ForgotPassword and
+  # AdminResetUserPassword use; {####} is the code. The signup code is our own
+  # Lambda's text and is not affected by anything here.
+  #
+  # It names the hour because the reset card names the hour, and two places
+  # stating a duration must agree. It says to ignore an unasked-for code
+  # rather than to contact us, because that is true - nothing changes until
+  # the code is used - and because there is no mailbox to contact.
+  #
+  # WRITTEN WITH \n RATHER THAN A HEREDOC, deliberately. A heredoc in a
+  # checkout that writes CRLF puts \r\n into the message and makes this
+  # resource plan as changed on every run, for ever.
+  verification_message_template {
+    # Code, not link. A link in an email asking about a password is the shape
+    # of every phishing message there is.
+    default_email_option = "CONFIRM_WITH_CODE"
+    email_subject        = "Your ARQEDIA password reset code"
+    email_message        = "Your ARQEDIA password reset code is {####}\n\nIt lasts one hour, and asking for another stops this one working.\n\nIf you did not ask to reset your password, ignore this - your password has not changed.\n\nARQEDIA\nThis address does not take replies."
+  }
+
   password_policy {
     minimum_length    = 12
     require_lowercase = true
