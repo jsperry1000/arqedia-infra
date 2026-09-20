@@ -15,6 +15,14 @@
 # creating members without any rule being rewritten.
 # ---------------------------------------------------------------------------
 
+# The verified identity every message in the product goes out as. Verified
+# outside Terraform, along with its DKIM records, and read here rather than
+# managed: the domain is the account's, not this stack's, and a second stack
+# must not be able to delete it.
+data "aws_ses_domain_identity" "sender" {
+  domain = local.root_domain
+}
+
 resource "aws_cognito_user_pool" "main" {
   name                     = "${local.name_prefix}-users"
   auto_verified_attributes = ["email"]
@@ -23,6 +31,34 @@ resource "aws_cognito_user_pool" "main" {
 
   software_token_mfa_configuration {
     enabled = true
+  }
+
+  # The password reset code comes from us, not from Cognito (10.4).
+  #
+  # THE DEFAULT SENDER WAS NEVER MEANT FOR PRODUCTION. Cognito's own
+  # documentation: "For typical production environments, the default email
+  # limit is below the required delivery volume." It is 50 messages a day for
+  # the whole AWS account, resetting at 0900 UTC and not adjustable, shared
+  # with everything else the account sends through it. Our SES quota is
+  # 50,000 a day.
+  #
+  # AND IT CAME FROM A DOMAIN NOBODY RECOGNISES. A reset code for ARQEDIA
+  # arriving from no-reply@verificationemail.com is indistinguishable from
+  # the phishing it looks like. It now comes from the same address as the
+  # signup code.
+  #
+  # A BOUNCE BECOMES OURS. Under the default configuration a hard bounce puts
+  # the address on an AWS-managed suppression list we cannot see or clear -
+  # "An email address can remain on the AWS-managed suppression list
+  # indefinitely." Under ours it is our list. Nothing watches it yet; that is
+  # 10.6 and is not built here.
+  #
+  # The apply that first sets this creates a service-linked role, so the
+  # session running it needs iam:CreateServiceLinkedRole.
+  email_configuration {
+    email_sending_account = "DEVELOPER"
+    source_arn            = data.aws_ses_domain_identity.sender.arn
+    from_email_address    = "ARQEDIA <${var.signup_sender}>"
   }
 
   password_policy {

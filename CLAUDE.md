@@ -261,9 +261,21 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
 
 ## What is open
 
-- **SES production access** in `us-east-2`, and a verified sender. It gates the
-  signup code and the invitation email. Everything either side of the send
-  works.
+- **What the product sends by email**, now that SES no longer stops any of it.
+  Production access in `us-east-2` is granted, `arqedia.com` is verified and
+  DKIM reads `SUCCESS`, and on 20 September one message was sent by hand from
+  `no-reply@arqedia.com`: CloudWatch `AWS/SES` recorded `Send 1`, `Delivery 1`
+  and no bounce. What is left is per path rather than per service:
+  - the **signup code** is written, permitted and has never gone to a real
+    person;
+  - the **seat invitation** now sends (10.5), and its failure is reported
+    rather than swallowed — the seat is reserved before the send is tried;
+  - the **password reset code** still comes from Cognito's own sender, capped
+    at 50 a day for the whole account, until 10.4 is applied;
+  - **nothing watches a bounce.** No configuration set, no SNS topic, and
+    `arqedia.com` publishes no MX record, so a reply to `no-reply@` goes
+    nowhere — which is why an invitation sets Reply-To to the administrator
+    who sent it. That is 10.6 and is not built.
 - **TPL-03** — `Configure.tsx`'s first-run screen offers bases while calling
   them memoranda.
 - **The marketing site's `PACKS` array** lists six memoranda where one ships.

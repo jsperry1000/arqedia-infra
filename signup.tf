@@ -149,8 +149,12 @@ resource "aws_lambda_permission" "signup_gateway" {
   source_arn    = "${aws_apigatewayv2_api.main.execution_arn}/*/*"
 }
 
+# The sender for everything the product emails: the signup code here, the
+# seat invitation on the API (10.5), and the password reset code, which
+# Cognito sends on our behalf once the pool is on SES (10.4). One address,
+# verified once.
 variable "signup_sender" {
-  description = "Verified SES sender for signup codes."
+  description = "Verified SES sender for every message the product sends."
   type        = string
   default     = "no-reply@arqedia.com"
 }

@@ -102,6 +102,16 @@ data "aws_iam_policy_document" "api" {
     resources = [aws_secretsmanager_secret.paddle_api_key.arn]
   }
 
+  # The seat invitation (10.5). The same action the signup function holds for
+  # the signup code, and for the same reason: there is one verified sender and
+  # SES scopes a send by the identity of the From address, which the handler
+  # takes from SENDER rather than from anything a caller supplies.
+  statement {
+    effect    = "Allow"
+    actions   = ["ses:SendEmail"]
+    resources = ["*"]
+  }
+
   # Composition writes a memo; the proposer reads a sample memorandum and
   # proposes a configuration. Both take minutes, so both are started here and
   # polled for rather than waited on.
@@ -143,6 +153,10 @@ resource "aws_lambda_function" "api" {
       REVIEW_BUCKET             = aws_s3_bucket.data["review"].id
       COMPOSITION_FUNCTION      = aws_lambda_function.composition.function_name
       APP_URL                   = "https://${local.app_host}"
+      # One sender for the whole product, declared in signup.tf. A second
+      # variable would be a second address to verify and a second one to
+      # forget.
+      SENDER                    = var.signup_sender
       TEXTRACT_TOPIC_ARN        = aws_sns_topic.textract.arn
       TEXTRACT_ROLE_ARN         = aws_iam_role.textract_publish.arn
       RENDER_FUNCTION           = aws_lambda_function.render.function_name

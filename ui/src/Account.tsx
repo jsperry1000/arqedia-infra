@@ -943,11 +943,24 @@ function Seats() {
 
       {invited && (
         <div className="panel" style={{ marginTop: 18, padding: "16px 18px" }}>
-          <h4 style={{ marginTop: 0 }}>Send {invited.email} this link</h4>
+          <h4 style={{ marginTop: 0 }}>
+            {invited.sent
+              ? `Invitation sent to ${invited.email}`
+              : `Send ${invited.email} this link`}
+          </h4>
+          {/* The seat is reserved either way. What changes is who has to
+              deliver the link (10.5). */}
           <p className="muted small">
-            No email has gone out &mdash; we cannot send one yet. This link is
-            shown once and cannot be recovered; if it is lost, invite them
-            again and a new one replaces it.
+            {invited.sent
+              ? "It has gone to them from no-reply@arqedia.com, and a reply "
+                + "to it reaches you. The same link is below: it is shown "
+                + "once and cannot be recovered, so keep it until they are "
+                + "in. If it is lost, invite them again and a new one "
+                + "replaces it."
+              : "The seat is reserved, but the email could not be sent. Send "
+                + "them this link yourself. It is shown once and cannot be "
+                + "recovered; if it is lost, invite them again and a new one "
+                + "replaces it."}
           </p>
           <pre className="passage" style={{ whiteSpace: "pre-wrap" }}>
             {invited.accept_url}

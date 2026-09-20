@@ -98,6 +98,10 @@ export type Invited = {
   email: string;
   role: "admin" | "member";
   expires_at: string;
+  /** Whether SES accepted the invitation email. False is not a failure of the
+   *  invitation: the seat is reserved and the link below still works, which
+   *  is why the server answers 201 either way (10.5). */
+  sent: boolean;
   /** Returned once and never again, like a password reset. Shown so it can be
    *  copied - which is both the fallback for a lost invitation email and the
    *  only way to deliver one until SES is granted. */

@@ -71,8 +71,8 @@ def load_api():
     })
     saved = list(sys.path)
     with mock.patch.dict(sys.modules, fakes), mock.patch.dict(os.environ, env):
-        for name in ("app", "billing", "config", "editor", "paddle_api",
-                     "registry", "seats", "textract", "wallet"):
+        for name in ("app", "billing", "config", "editor", "mail",
+                     "paddle_api", "registry", "seats", "textract", "wallet"):
             sys.modules.pop(name, None)
         sys.path.insert(0, str(API))
         sys.path.insert(1, str(SHARED))
