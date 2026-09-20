@@ -30,8 +30,9 @@ export interface FlockHandle { stop(): void; settle(): void }
 /** Which of the four. The names live in the markup that shows them. */
 export type Stage = 0 | 1 | 2 | 3
 
-/** A still stage, and - for the swarm alone - a way to move it a little. */
-export interface StageHandle { paint(): void; nudge(): void; stop(): void }
+/** A stage on the strip: repaint it (the palette is a class away) and put it
+ *  away. The swarm runs itself; the other three never move. */
+export interface StageHandle { paint(): void; stop(): void }
 
 interface Pt {
   x: number; y: number; sx: number; sy: number
@@ -56,11 +57,23 @@ const SPEED = 1.1 / 1.3
  *  picture is a swarm caught either forming or dispersing. */
 export const SWARM_MOMENT = P.leave + (P.swarm - P.leave) / 2
 
-/** One nudge: how far the swarm's own clock moves, and how long that takes on
- *  the wall clock. Slow on purpose - the strip is a picture that stirs, not
- *  an animation. */
-const NUDGE_MS = 900
-const NUDGE_FOR = 2000
+/** How fast the swarm's own clock runs in the strip, against the wall clock.
+ *  Just under a third of real time: the body turns over and breathes without
+ *  ever catching the eye of somebody working on the screen below it. */
+const DRIFT_RATE = 0.3
+
+/** The mark's three bars, as fractions of its 64-unit square.
+ *
+ *  Read from brand/logo-deep.svg, which draws them as
+ *    x 16, y 21, w 32   x 16, y 30, w 24   x 16, y 39, w 29
+ *  each 2.8 high with fully rounded ends, inside a square that is itself
+ *  outlined. The y here is the centre of each bar, which is where a line of
+ *  particles belongs. */
+const LOGO_BARS = [
+  { x: 16 / 64, w: 32 / 64, y: 22.4 / 64 },
+  { x: 16 / 64, w: 24 / 64, y: 31.4 / 64 },
+  { x: 16 / 64, w: 29 / 64, y: 40.4 / 64 },
+]
 
 const smooth = (x: number) => { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t) }
 
@@ -107,7 +120,8 @@ function hexToRgba(hex: string, a: number): string {
  *
  *  The random stream is given rather than taken, so the hero can be different
  *  every load and a still stage can be the same every time. */
-function buildScene(W: number, H: number, N: number, random: () => number): Scene {
+function buildScene(W: number, H: number, N: number, random: () => number,
+                   logo = false): Scene {
   const rnd = (a: number, b: number) => a + random() * (b - a)
 
   const docs: Doc[] = []
@@ -125,24 +139,37 @@ function buildScene(W: number, H: number, N: number, random: () => number): Scen
   const pw = Math.min(W * 0.24, 230), ph = Math.min(H * 0.78, 280)
   const px = W - pw - W * 0.08, py = H / 2 - ph / 2
   const lines: Wire[] = []
-  let yy = py + 26
-  while (yy < py + ph - 14) {
-    const head = random() < 0.22
-    lines.push({ y: yy, x: px + 18, w: (pw - 36) * (head ? 0.46 : rnd(0.72, 1)) })
-    yy += head ? 26 : 13
-  }
-  // A SHORT CANVAS PRODUCES NO LINES AT ALL, and every particle reads one.
-  // The first line sits 26 below the top of the page and the last must clear
-  // its foot by 14, so a page under about 52px high has room for none: at the
-  // strip's 48px the page is 37px and the loop never runs once. `lines` was
-  // then empty, `i % 0` is NaN, `lines[NaN]` is undefined, and reading .x off
-  // it threw - which took the whole Configure screen down with it, because an
-  // error in an effect with no boundary above it unmounts the tree.
-  //
-  // One line, centred, is what a page that small can honestly show. The hero
-  // never reaches here: at its shortest, 230px, the loop yields eight.
-  if (lines.length === 0) {
-    lines.push({ y: py + ph / 2, x: px + 6, w: Math.max(6, pw - 12) })
+  if (logo) {
+    // The page the facts are retrieved into IS the mark, in miniature: three
+    // bars in the proportions brand/logo-deep.svg draws them, inside the same
+    // outlined square. What is retrieved is an ARQEDIA memorandum, and at
+    // 48px a page of fourteen text lines is a grey smear where three bars are
+    // a thing you recognise.
+    for (const b of LOGO_BARS) {
+      lines.push({ x: px + pw * b.x, y: py + ph * b.y, w: pw * b.w })
+    }
+  } else {
+    let yy = py + 26
+    while (yy < py + ph - 14) {
+      const head = random() < 0.22
+      lines.push({ y: yy, x: px + 18, w: (pw - 36) * (head ? 0.46 : rnd(0.72, 1)) })
+      yy += head ? 26 : 13
+    }
+    // A SHORT CANVAS PRODUCES NO LINES AT ALL, and every particle reads one.
+    // The first line sits 26 below the top of the page and the last must
+    // clear its foot by 14, so a page under about 52px high has room for
+    // none. `lines` was then empty, `i % 0` is NaN, `lines[NaN]` is
+    // undefined, and reading .x off it threw - which took the whole Configure
+    // screen down with it, because an error in an effect with no boundary
+    // above it unmounts the tree.
+    //
+    // The strip no longer comes this way - stage 3 draws the mark - but the
+    // guard stays: the next caller with a small canvas should get a line
+    // rather than a crash. The hero never reaches it either; at its shortest,
+    // 230px, the loop yields eight.
+    if (lines.length === 0) {
+      lines.push({ y: py + ph / 2, x: px + 6, w: Math.max(6, pw - 12) })
+    }
   }
   const page: Page = { x: px, y: py, w: pw, h: ph }
 
@@ -334,11 +361,11 @@ export function mountFlock(cv: HTMLCanvasElement, mode: FlockMode): FlockHandle 
  * One stage, still, in miniature.
  *
  * Stages 0, 2 and 3 never move: they are the documents as they arrive, the
- * facts as they are filed, and the page they are retrieved into. Stage 1 is
+ * facts as they are filed, and the mark they are retrieved into. Stage 1 is
  * the work in between, and it has no still form - a swarm frozen is a smudge
- * - so it is sampled at one fixed moment (SWARM_MOMENT) from a fixed seed,
- * and stirs for two seconds when nudge() is called, easing in and out and
- * carrying on next time from wherever it stopped.
+ * - so it begins at one fixed moment (SWARM_MOMENT) from a fixed seed and
+ * then turns over continuously at DRIFT_RATE, slowly enough to read as
+ * breathing rather than as an animation.
  *
  * Nothing moves where less motion has been asked for.
  *
@@ -369,8 +396,9 @@ export function drawStage(
     cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr)
     ctx!.setTransform(dpr, 0, 0, dpr, 0, 0)
     // The same seed every time, so the picture does not change under somebody
-    // who is only resizing the window.
-    scene = buildScene(W, H, count, seeded(seed))
+    // who is only resizing the window. Stage 3 is the mark rather than a page
+    // of text.
+    scene = buildScene(W, H, count, seeded(seed), stage === 3)
     return true
   }
 
@@ -398,27 +426,28 @@ export function drawStage(
     ctx!.globalAlpha = 1
   }
 
-  function nudge() {
-    // Only the swarm moves, and only where motion is welcome. A nudge while
-    // one is already running is ignored rather than stacked: two at once
-    // would run the clock at double speed.
-    if (stage !== 1 || reduce || stopped || raf) return
-    const from = clock
-    const began = performance.now()
-    const step = (now: number) => {
-      const t = Math.min(1, (now - began) / NUDGE_FOR)
-      // Smoothstep: still at both ends, so it neither jerks into motion nor
-      // stops dead.
-      clock = from + NUDGE_MS * smooth(t)
-      paint()
-      if (t >= 1 || stopped) { raf = 0; return }
-      raf = requestAnimationFrame(step)
-    }
-    raf = requestAnimationFrame(step)
+  /** The swarm, turning over continuously.
+   *
+   *  It stirred for two seconds at a time on a change of part, which made the
+   *  one stage that is alive look broken between changes. It now runs at
+   *  DRIFT_RATE against the wall clock - slow enough to read as breathing
+   *  rather than as an animation - and stops for nobody except a person who
+   *  has asked for less motion, where it never starts.
+   *
+   *  requestAnimationFrame does not run in a hidden tab, so a strip nobody is
+   *  looking at costs nothing. */
+  let last = 0
+  function drift(now: number) {
+    if (stopped) return
+    clock += (last ? now - last : 0) * DRIFT_RATE
+    last = now
+    paint()
+    raf = requestAnimationFrame(drift)
   }
 
   if (!size()) return null
   paint()
+  if (stage === 1 && !reduce) raf = requestAnimationFrame(drift)
 
   let rt = 0
   const onResize = () => {
@@ -429,7 +458,6 @@ export function drawStage(
 
   return {
     paint,
-    nudge,
     stop() {
       stopped = true
       cancelAnimationFrame(raf)
