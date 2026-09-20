@@ -177,7 +177,7 @@ export function CatalogueView({ curator, onOpened }: {
 
   return (
     <div>
-      <h2>Catalogue</h2>
+      <h2>Template Catalogue</h2>
       <p className="muted">
         Every memorandum you write. Open one to change what it says, or add
         another below. A memorandum is layout over the facts you already hold,
