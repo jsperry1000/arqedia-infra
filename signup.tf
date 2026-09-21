@@ -76,6 +76,11 @@ data "aws_iam_policy_document" "signup" {
       "cognito-idp:AdminSetUserPassword",
       "cognito-idp:AdminGetUser",
       "cognito-idp:AdminDeleteUser",
+      # Read-only, and read once per container: the password policy, so an
+      # invitation refuses a password Cognito would refuse before it writes
+      # the seat rather than after (10.7). Without it the check passes
+      # everything and Cognito's own refusal is answered instead.
+      "cognito-idp:DescribeUserPool",
     ]
     resources = [aws_cognito_user_pool.main.arn]
   }

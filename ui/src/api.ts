@@ -1091,4 +1091,26 @@ export const api = {
     password: string;
     person_name?: string;
   }): Promise<SignupDone> => open_("/signup/verify", body),
+
+  /** Take a seat somebody reserved: the third route that carries no token,
+   *  for the same reason as the two above - the person has no account yet.
+   *
+   *  THIS IS WHERE THE ACCOUNT IS MADE. Inviting reserves a seat and writes
+   *  nothing in Cognito, so until this call the invited address does not
+   *  exist. The seat is written first and given back if the account cannot
+   *  be made, so nobody can sign in to a workspace that does not list them.
+   *
+   *  Refuses, with a sentence to show the person, when the link is
+   *  incomplete, when the invitation is no longer open - revoked, or already
+   *  accepted - when it has expired, when the token does not match, when the
+   *  workspace has filled up since it was sent, and when the password is
+   *  below the pool's policy.
+   */
+  acceptInvitation: (body: {
+    email: string;
+    token: string;
+    password: string;
+    person_name?: string;
+  }): Promise<{ tenant_id: number; role: "admin" | "member"; email: string }> =>
+    open_("/invitations/accept", body),
 };

@@ -191,6 +191,94 @@ def _client_ip(event):
                  .get("sourceIp"))
 
 
+# --- what Cognito will accept as a password --------------------------------
+#
+# READ FROM THE POOL, NOT WRITTEN HERE. The policy lives in auth.tf - twelve
+# characters, upper, lower, numbers - and a copy of it in this file is a copy
+# that goes stale the day somebody changes the real one. Cached for the life
+# of the container: it is read once and changes about once a year.
+#
+# WHY IT IS CHECKED AT ALL, rather than left to Cognito: accepting an
+# invitation writes the seat before it makes the account, deliberately, so
+# that nobody can sign in to a workspace that does not list them. A password
+# Cognito refuses therefore arrived AFTER the seat, rolled everything back,
+# and answered 500 - telling somebody the system had broken when what had
+# happened was that their password was too short.
+#
+# UNREADABLE IS NOT FATAL. Where the policy cannot be read - the permission
+# is new, and the deployed function may not hold it yet - this passes
+# everything, and Cognito's own refusal is answered as a 400 further down
+# rather than as a 500. The check is a courtesy; Cognito is the control.
+
+_password_policy_cache = None
+
+
+def _password_policy():
+    global _password_policy_cache
+    if _password_policy_cache is None:
+        try:
+            found = _idp.describe_user_pool(
+                UserPoolId=USER_POOL_ID)["UserPool"]["Policies"][
+                    "PasswordPolicy"]
+        except Exception as exc:  # noqa: BLE001 - a courtesy, not a control
+            print("[password-policy-unreadable] %r" % exc)
+            found = None
+        # A DICT OR NOTHING. Anything else - a response shaped differently by
+        # a future API version, or a stand-in in a test - would have its
+        # .get() answer something truthy for every rule and refuse every
+        # password on earth. An unrecognisable policy is no policy: the check
+        # stands down and Cognito refuses in its own words.
+        _password_policy_cache = found if isinstance(found, dict) else {}
+    return _password_policy_cache
+
+
+def _password_problem(password):
+    """One sentence where this password will be refused, or None.
+
+    Said as the requirement rather than as the failure - "needs at least
+    twelve characters, with an upper case letter" rather than "too short" -
+    so that somebody who is two rules short is told both at once instead of
+    being sent back twice."""
+    policy = _password_policy()
+    if not policy:
+        return None
+
+    wants = []
+    minimum = policy.get("MinimumLength")
+    if isinstance(minimum, int) and len(password or "") < minimum:
+        wants.append("at least %d characters" % minimum)
+    if policy.get("RequireUppercase") and not any(
+            c.isupper() for c in password or ""):
+        wants.append("an upper case letter")
+    if policy.get("RequireLowercase") and not any(
+            c.islower() for c in password or ""):
+        wants.append("a lower case letter")
+    if policy.get("RequireNumbers") and not any(
+            c.isdigit() for c in password or ""):
+        wants.append("a number")
+    if policy.get("RequireSymbols") and password and password.isalnum():
+        wants.append("a symbol")
+
+    if not wants:
+        return None
+    if len(wants) == 1:
+        return "That password needs %s." % wants[0]
+    return "That password needs %s and %s." % (", ".join(wants[:-1]),
+                                               wants[-1])
+
+
+def _cognito_refusal(exc):
+    """Cognito's own code and sentence, where the exception carries them.
+
+    A ClientError's str() is "An error occurred (X) when calling the Y
+    operation: Z" - the sentence written for a person is Z alone."""
+    try:
+        error = exc.response.get("Error", {})
+    except AttributeError:
+        return None, None
+    return error.get("Code"), error.get("Message")
+
+
 def _record(domain, email, ip, outcome, detail=None):
     _sql(
         """
@@ -720,6 +808,15 @@ def accept(event, body):
                                      "Ask an administrator to free one, then "
                                      "open this link again."})
 
+    # THE LAST THING CHECKED BEFORE THE SEAT IS WRITTEN (10.7). Everything
+    # above refuses the link; this refuses the password, and it happens here
+    # rather than inside admin_set_user_password so that a password two
+    # characters short costs a sentence rather than a seat written, an
+    # account half made, a rollback and a 500.
+    problem = _password_problem(password)
+    if problem:
+        return _reply(400, {"error": problem})
+
     _sql(
         "INSERT INTO seat (tenant_id, email, role, invited_by) "
         "VALUES (:t, :e, :r, :by)",
@@ -752,6 +849,17 @@ def accept(event, body):
         except Exception:
             pass
         _record(domain, email, ip, "invite_failed", str(exc)[:200])
+
+        # A refusal about the password is not a failure of ours, and must not
+        # be dressed as one. _password_problem catches these before the seat
+        # where it can; this is what answers when it could not read the
+        # policy, or when Cognito refuses for a reason it does not model -
+        # and it answers in Cognito's own words.
+        code, said = _cognito_refusal(exc)
+        if code in ("InvalidPasswordException", "InvalidParameterException") \
+                and said:
+            return _reply(400, {"error": said})
+
         return _reply(500, {"error": "The account could not be created. "
                                      "Nothing was kept, and the invitation is "
                                      "still open."})

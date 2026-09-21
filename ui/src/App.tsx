@@ -10,6 +10,7 @@ import { AccountView } from "./Account";
 import { ShareView } from "./Share";
 import { ViewerView } from "./Viewer";
 import { SignUp } from "./SignUp";
+import { InvitationView } from "./Invitation";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Amplify } from "aws-amplify";
 import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession,
@@ -550,6 +551,16 @@ export default function App() {
         <Route path="/signup"
                element={<SignUp onSignIn={() => navigate("/")}
                                 onSignedUp={() => { navigate("/welcome"); check(); }} />} />
+        {/* Accepting a seat (10.7). It lands on Engagements and never on Get
+            started: /welcome forks a base and publishes a configuration, and
+            a colleague joining a workspace that already has one must not be
+            shown that screen. Before this route existed the catch-all below
+            took the link and showed a sign-in card for an account that did
+            not exist yet. */}
+        <Route path="/invitation"
+               element={<InvitationView signedIn={false} who=""
+                                        onSignOut={() => undefined}
+                                        onDone={done} />} />
         {/* Anything else signed out is the sign-in card, whatever was asked
             for. The address is kept, so a link followed into the product
             lands where it meant to once signed in. */}
@@ -694,6 +705,18 @@ export default function App() {
                   and never saw Get started. Holding /signup here makes both
                   orders land in the same place. */}
               <Route path="/signup" element={<Navigate to="/welcome" replace />} />
+              {/* The same link, followed by a browser already signed in - as
+                  themselves, or as a colleague on a shared machine. Accepting
+                  would make an account for the invited address while this
+                  session belongs to another, so it is refused with the one
+                  control that fixes it rather than with a dead page (10.7). */}
+              <Route path="/invitation"
+                     element={<InvitationView signedIn who={who}
+                                onSignOut={async () => {
+                                  await signOut();
+                                  setSignedIn(false);
+                                }}
+                                onDone={() => navigate("/")} />} />
               {/* Anything else would render an empty page. */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
