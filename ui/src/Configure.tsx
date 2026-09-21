@@ -84,12 +84,17 @@ type FieldDraft = {
              description: string }[];
 };
 
-function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments }: {
+function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments,
+                    error }: {
   initial?: ConfigField;
   onSave: (f: FieldDraft) => void;
   onCancel: () => void;
   onDelete?: () => void;
   onShowDocuments?: () => void;
+  /** A refusal from the save, shown HERE (17.1). The screen's own error line
+   *  sits behind this drawer's backdrop, so a fact refused for holding a name
+   *  already taken looked like a Save that did nothing at all. */
+  error?: string;
 }) {
   const existing = Boolean(initial);
   const [f, setF] = useState<FieldDraft>({
@@ -183,10 +188,21 @@ function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments }: {
 
       <KeyLine value={key} />
 
+      {/* Kept above the buttons, where the press was. Nothing typed is
+          cleared: the card stays open on a refusal, holding its own state,
+          and a person fixes the name and presses Save again. */}
+      {error && <p className="error">{error}</p>}
+
       <div className="form-actions">
+        {/* THE KEY IS SENT ONLY WHEN EDITING (17.1). A key in the body means
+            "this fact exists, change it"; without one the server mints the
+            key and refuses if it is taken. The key is still SHOWN above -
+            somebody naming a fact should see the identity it will carry -
+            but showing it and claiming it are different things. */}
         <button disabled={!f.label.trim()
                   || (isTable && !columnsReady(f.columns as never))}
-                onClick={() => onSave({ ...f, key })}>Save</button>
+                onClick={() => onSave(existing ? { ...f, key }
+                                               : { ...f, key: undefined })}>Save</button>
         <a className="secondary" onClick={onCancel}>Cancel</a>
         {existing && onDelete && (
           <a className="danger small" onClick={onDelete}>Delete this field</a>
@@ -1976,6 +1992,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 - leaving it open put the documents behind it and the click
                 looked like it had done nothing. */}
             <FieldForm
+              error={error}
               onShowDocuments={() => {
                 if (!editField) return;
                 setOpenField(editField);
@@ -1984,13 +2001,18 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
               initial={draft?.fields.find((x) => x.key === editField)}
               onCancel={() => { setBindNewTo(null); setEditField(null); }}
               onSave={(body) => act("Saving", async () => {
-                await api.saveField(body as never);
+                // THE KEY COMES BACK FROM THE SERVER, because a new fact no
+                // longer sends one (17.1) and the binding below needs the key
+                // the server minted. Reading it off the body would bind
+                // nothing, silently.
+                const saved = await api.saveField(body as never) as
+                  { key?: string } | undefined;
                 // Added from a section's list: bind it there too, so the act
                 // a person started - "this section needs a fact we do not
                 // hold" - finishes where it began (2.1). A fact added from
                 // the Facts tab binds to nothing, as before.
                 const target = bindNewTo;
-                const added = (body as { key?: string }).key;
+                const added = saved?.key ?? (body as { key?: string }).key;
                 if (target && added) {
                   const s = (draft?.sections ?? []).find(
                     (x) => x.template_key === target.template_key
