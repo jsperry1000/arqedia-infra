@@ -54,18 +54,25 @@ export const SHAREABLE = [
   { memo_id: 103, label: "Lender Memorandum", subject: "Ardmore Logistics Ltd", generated: "12 February 2026" },
 ];
 
+/** Three grants, showing both viewer states (share_viewer_spec §6).
+ *
+ *  A VERIFIED RECIPIENT KEEPS IT FOR 2 WEEKS, not 30 days (12.1). A
+ *  REGISTERED ONE KEEPS IT FOR SIX MONTHS from registering - the extension is
+ *  the whole incentive to register, and a row showing both is what makes the
+ *  difference legible on the screen. The first row below is the registered
+ *  case and is deliberately not two weeks. */
 export const GRANTS = [
   {
     to: "j.ferrers@northbank.com", memo: "Credit Memorandum - Meridian Trading Ltd",
-    sent: "4 Mar", opened: "4 Mar", opens: 3, downloads: 1, expires: "3 Apr", registered: true,
+    sent: "4 Mar", opened: "4 Mar", opens: 3, downloads: 1, expires: "4 Sep", registered: true,
   },
   {
     to: "credit.committee@vmac.com", memo: "Credit Memorandum - Meridian Trading Ltd",
-    sent: "4 Mar", opened: null, opens: 0, downloads: 0, expires: "3 Apr", registered: false,
+    sent: "4 Mar", opened: null, opens: 0, downloads: 0, expires: "18 Mar", registered: false,
   },
   {
     to: "s.abara@ardmore.example", memo: "Lender Memorandum - Ardmore Logistics Ltd",
-    sent: "12 Feb", opened: "13 Feb", opens: 1, downloads: 0, expires: "14 Mar", registered: false,
+    sent: "12 Feb", opened: "13 Feb", opens: 1, downloads: 0, expires: "26 Feb", registered: false,
   },
 ];
 
@@ -95,7 +102,9 @@ export const VIEWER_MEMO = {
   preparedBy: "TESTCO A",
   generated: "4 March 2026",
   revision: 36,
-  expires: "3 April 2026",
+  // A verified viewer - the bar offers "Register to keep access" - so two
+  // weeks from send, not thirty days (12.1).
+  expires: "18 March 2026",
   sections: [
     {
       numeral: "IV",
