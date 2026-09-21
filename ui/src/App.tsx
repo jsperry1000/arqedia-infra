@@ -300,6 +300,7 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
 function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
   const [rows, setRows] = useState<Engagement[]>([]);
   const [newName, setNewName] = useState("");
+  const [cleaned, setCleaned] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -307,6 +308,32 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
       .then((r) => setRows(r.engagements))
       .finally(() => setLoading(false));
   }, []);
+
+  /** What the name being typed would be stored as (17.3).
+   *
+   *  ASKED OF THE SERVER, NOT WORKED OUT HERE. The rule is _clean, it
+   *  decides where a file is kept, and a copy of it in this file is how the
+   *  two come to disagree. Debounced, because it is a round trip per pause
+   *  rather than per keystroke, and the answer is only ever shown - nothing
+   *  is decided on it until the name is opened.
+   *
+   *  A failed lookup leaves the hint blank rather than guessing: saying
+   *  nothing is better than saying something that may be wrong about where
+   *  somebody's documents are about to go. */
+  useEffect(() => {
+    const typed = newName.trim();
+    if (!typed) { setCleaned(""); return; }
+    const timer = setTimeout(() => {
+      api.cleanEngagementName(typed)
+        .then(setCleaned)
+        .catch(() => setCleaned(""));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [newName]);
+
+  // Only where it differs. "Will be saved as MERIDIAN" under somebody who
+  // typed MERIDIAN is noise, and noise teaches people to stop reading.
+  const differs = cleaned !== "" && cleaned !== newName.trim();
 
   if (loading) return <p className="muted">Loading...</p>;
 
@@ -328,12 +355,25 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
         </tbody>
       </table>
 
+      {/* Opened under the name it will be STORED under, not the one typed.
+          Until this, typing "TEST - 2" opened /engagements/TEST - 2 while
+          every file went to TEST-2, and the screen polled an engagement
+          that existed nowhere (17.3). The cleaned name is the server's; with
+          none - nothing typed yet, or the lookup failed - the typed one is
+          used and POST /uploads corrects it on the first file. */}
       <form className="inline" onSubmit={(e) => { e.preventDefault();
-              if (newName.trim()) onOpen(newName.trim()); }}>
+              const open = cleaned || newName.trim();
+              if (open) onOpen(open); }}>
         <input placeholder="New engagement name" value={newName}
                onChange={(e) => setNewName(e.target.value)} />
         <button>Open</button>
       </form>
+      {differs && (
+        <p className="muted small" style={{ marginTop: 6 }}>
+          Will be saved as <strong>{cleaned}</strong> &mdash; spaces and
+          anything a storage key cannot carry become dashes.
+        </p>
+      )}
     </div>
   );
 }

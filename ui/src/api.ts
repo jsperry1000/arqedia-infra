@@ -942,8 +942,12 @@ export const api = {
   // Every header the link was signed with must be sent back, or S3 refuses
   // the request. The uploader's email is one of them: the API knows who is
   // asking and the normalizer does not, so it travels with the object.
-  upload: async (engagement: string, file: File) => {
-    const { url, uploaded_by } = await call("/uploads", {
+  /** Returns the engagement name the file was actually stored under, which
+   *  is not always the one that went in: the server cleans it for the key
+   *  ("TEST - 2" becomes "TEST-2"). A screen that keeps the typed name polls
+   *  an engagement that exists nowhere (17.3). */
+  upload: async (engagement: string, file: File): Promise<string> => {
+    const { url, uploaded_by, engagement: stored } = await call("/uploads", {
       method: "POST",
       body: JSON.stringify({ engagement, filename: file.name }),
     });
@@ -961,6 +965,22 @@ export const api = {
       throw new Error(
         `${file.name} was refused by storage (${put.status}).`);
     }
+    return stored as string;
+  },
+
+  /** What a typed engagement name would be stored as.
+   *
+   *  ASKED, NEVER COMPUTED. The rule is the server's `_clean`, and a copy of
+   *  it here would be a second implementation of the thing that decides
+   *  where a file is kept - two rules that agree today and drift the first
+   *  time one of them learns about a new character. There is no test runner
+   *  in this project that could prove they still agree, which settles it.
+   *
+   *  It rides on /engagements rather than a route of its own: an existing
+   *  route answering one more question needs no Terraform. */
+  cleanEngagementName: async (name: string): Promise<string> => {
+    const r = await call(`/engagements?name=${encodeURIComponent(name)}`);
+    return (r.cleaned ?? "") as string;
   },
 
   // --- seats --------------------------------------------------------------
