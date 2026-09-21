@@ -1829,7 +1829,14 @@ def upload_url(tenant_id, email, engagement, filename):
                 "ServerSideEncryption": "aws:kms",
                 "Metadata": {"uploaded-by": email}},
         ExpiresIn=900)
-    return {"url": url, "key": key, "uploaded_by": email}
+    # THE CLEANED NAME GOES BACK (17.3). _clean turned "TEST - 2" into
+    # "TEST-2" here and the screen kept what was typed, so it polled an
+    # engagement that existed nowhere: the pending list matched no rows, the
+    # upload sat on "analysing" for ever, and two perfectly good documents
+    # waited under a name nobody was looking at. The caller is told what the
+    # name became, and navigates to that.
+    return {"url": url, "key": key, "uploaded_by": email,
+            "engagement": engagement}
 
 
 def templates(tenant_id):
@@ -2197,7 +2204,22 @@ def _dispatch(event, context):
 
     try:
         if route == "GET /engagements":
-            return _reply(200, {"engagements": list_engagements(tenant_id)})
+            # ?name= asks what a typed name would become, and is how the
+            # screen shows "Will be saved as TEST-2" while somebody types
+            # (17.3). THE RULE STAYS HERE. A copy of _clean in TypeScript
+            # would be a second implementation of a rule that decides where
+            # a file is stored, and the two would drift the first time one
+            # of them learned about a new character - which is exactly how
+            # this bug arrived. The browser holds no rule and asks.
+            #
+            # On this route rather than one of its own: an existing route
+            # answering one more question needs no Terraform, and a new
+            # route for a string transformation is a route to maintain.
+            asked = (query.get("name") or "").strip()
+            answer = {"engagements": list_engagements(tenant_id)}
+            if asked:
+                answer["cleaned"] = _clean(asked)
+            return _reply(200, answer)
 
         if route == "DELETE /documents/{document_id}":
             removing = int((event.get("pathParameters") or {})

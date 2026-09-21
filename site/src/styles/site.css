@@ -39,22 +39,35 @@ nav.top a[aria-current="page"]{color:var(--ink);border-bottom-color:var(--ink)}
 .flock{border:1px solid var(--line);background:var(--paper);margin-bottom:clamp(32px,5vw,54px)}
 .flock canvas{display:block;width:100%;height:clamp(230px,32vw,380px)}
 /* The phase indicator. The live phase takes 30% more width, goes dark and
-   lights its text, over 0.6s; the one it took over from returns over the same
-   0.6s. The last phase is never taken over from, so it stays expanded. */
+   lights its text, over 571ms; the one it took over from returns over the
+   same 571ms. The last phase is never taken over from, so it stays expanded.
+
+   571 is 600 divided by 1.05, with the hero (15.1): the text and the drawing
+   keep step, and a transition still running when the next stage starts is
+   how they come apart. */
 .stages{display:flex;border-top:1px solid var(--line);overflow:hidden}
 .stages span{
   flex:1 1 0; min-width:0;
   display:flex; flex-direction:column; gap:3px;
   padding:12px 16px; border-left:1px solid var(--line);
   background:var(--paper); color:var(--muted);
-  transition:flex-grow 600ms ease-out, background 600ms ease-out, color 600ms ease-out;
+  transition:flex-grow 571ms ease-out, background 571ms ease-out, color 571ms ease-out;
 }
 .stages span:first-child{border-left:0}
 .stages span b{font-family:var(--mono);font-size:12px;font-weight:500;letter-spacing:.02em}
 .stages span i{
   font-style:normal; font-size:12.5px; line-height:1.35; color:var(--muted);
-  opacity:0; transition:opacity 600ms ease-out, color 600ms ease-out;
+  opacity:0; transition:opacity 571ms ease-out, color 571ms ease-out;
 }
+/* A stage that has run keeps its description (15.2). It was shown only while
+   its own stage was live, so the sequence ended on one sentence about the
+   last stage and three bare headings - the three things the product had just
+   done were described and then taken away.
+
+   Before .on, deliberately: a stage is both `done` and `on` while it runs,
+   the two rules carry the same specificity, and the later one wins - so `on`
+   keeps its own lit colour rather than inheriting the muted one here. */
+.stages span.done i{opacity:1}
 .stages span.on{flex-grow:1.45;background:var(--deep);color:var(--paper)}
 .stages span.on b{color:var(--paper)}
 .stages span.on i{opacity:1;color:var(--light)}
