@@ -616,10 +616,25 @@ def save_field(tenant_id, body):
 
     The key is minted once from the label and never follows it afterwards.
     That is what makes renaming free: two years of extracted values reference
-    the key, not the words on the screen."""
+    the key, not the words on the screen.
+
+    A KEY IN THE BODY MEANS "I AM NAMING A FACT THAT EXISTS" (17.1). Without
+    one this is a create: the key is minted from the label, and a fact
+    already holding it is a refusal rather than a target.
+
+    That contract is the fix. This route has always served both acts, and the
+    write is an upsert, so a person adding a fact whose name slugged to an
+    existing key silently overwrote that fact's label, shape, description and
+    group - and was told it had been created. It happened on dev on 20
+    September to tenant 0's Company Summary, which is in the catalogue every
+    tenant forks from.
+
+    The two could not be told apart before, because the screen minted the key
+    itself and sent it on both. It no longer does; nor does the proposer."""
     _require_draft(tenant_id)
 
-    key = body.get("key") or _slug(body.get("label"), "f_").replace("-", "_")
+    named = (body.get("key") or "").strip()
+    key = named or _slug(body.get("label"), "f_").replace("-", "_")
     if not _KEY.match(key):
         raise ValueError(
             "a field identity must be lower case letters, digits, dots, "
@@ -636,9 +651,18 @@ def save_field(tenant_id, body):
                     "Shorten the table's name." % (body.get("label"),
                                                    col.get("label")))
 
-    rows = _rows(tenant_id, "SELECT schema_key FROM config_field "
+    rows = _rows(tenant_id, "SELECT schema_key, label FROM config_field "
                             "WHERE tenant_id = :t AND revision = :r "
                             "AND field_key = :k", [_p("k", key)])
+
+    # THE REFUSAL. A create whose minted key is taken names the fact holding
+    # it, because "that name is in use" is useless when the name on screen is
+    # the label and the thing in the way is a key nobody typed.
+    if rows and not named:
+        raise ValueError(
+            "'%s' is already the fact '%s'. Open that one to change it, or "
+            "give this a different name." % (key, _col(rows[0], 1) or key))
+
     schema_key = _col(rows[0], 0) if rows else "unrouted"
 
     if not rows:

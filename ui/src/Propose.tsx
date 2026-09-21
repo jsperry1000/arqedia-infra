@@ -335,14 +335,20 @@ export function ProposeView({ onDone, onCancel }: {
       const newFacts = Object.values(facts)
         .filter((f) => live(f) && !f.existing);
 
+      // The key the SERVER minted for each new fact (17.1). A new fact no
+      // longer sends a key - a key in the body means "change the fact that
+      // holds it", and sending one here is what let a proposal overwrite a
+      // fact the tenant already had. What is written below must be the key
+      // that was actually created, not a second guess at it.
+      const minted: Record<string, string> = {};
+
       for (const f of newFacts) {
         // A table with no columns holds nothing; written as a single fact
         // instead, and made a table in the editor if it should be one.
         const columns = f.columns.filter((c) => c.trim());
         const table = f.shape === "group" && columns.length > 0;
         setBusy("Adding the fact " + f.label);
-        await api.saveField({
-          key: fieldKey(f.label),
+        const saved = await api.saveField({
           label: f.label,
           type: "text",
           cardinality: table ? "group" : "one",
@@ -353,7 +359,8 @@ export function ProposeView({ onDone, onCancel }: {
             ? columns.map((c) => ({ label: c.trim(), type: "text",
                                     description: "" }))
             : [],
-        } as never);
+        } as never) as { key?: string } | undefined;
+        minted[f.label] = saved?.key ?? fieldKey(f.label);
         done.push("fact " + f.label);
       }
 
@@ -363,7 +370,8 @@ export function ProposeView({ onDone, onCancel }: {
           .filter((k): k is string => Boolean(k))));
         if (documents.length === 0) continue;
         setBusy("Where to find " + f.label);
-        await api.setFieldDocuments(fieldKey(f.label), documents);
+        await api.setFieldDocuments(minted[f.label] ?? fieldKey(f.label),
+                                    documents);
       }
 
       setBusy("Adding the memorandum");
@@ -397,7 +405,7 @@ export function ProposeView({ onDone, onCancel }: {
         // a section binding the same field twice is refused.
         const keys = Array.from(new Set(Object.values(facts)
           .filter((f) => live(f) && f.sections.includes(i))
-          .map((f) => f.existing ?? fieldKey(f.label))));
+          .map((f) => f.existing ?? minted[f.label] ?? fieldKey(f.label))));
         if (keys.length === 0) continue;
         setBusy("Binding " + s.title);
         await api.setSectionFields(templateKey, sectionKeys[i], keys);
