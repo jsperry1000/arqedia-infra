@@ -116,7 +116,8 @@ def _load_values(tenant_id, engagement):
     result = _sql(
         """
         SELECT v.value_id, v.field_id, v.value, v.locator_kind,
-               v.locator_index, v.row_ordinal, v.document_id, d.filename
+               v.locator_index, v.row_ordinal, v.document_id, d.filename,
+               d.engagement_id
         FROM extracted_value v
         JOIN document d ON d.document_id = v.document_id
         WHERE v.tenant_id = :tenant_id
@@ -141,9 +142,34 @@ def _load_values(tenant_id, engagement):
             "row_ordinal": _col(r, 5),
             "document_id": _col(r, 6),
             "filename": _col(r, 7),
+            # The engagement these documents belong to (migration 030). Taken
+            # from the documents rather than looked up by name: they ARE the
+            # engagement, and a memo that binds their values belongs wherever
+            # they do.
+            "engagement_id": _col(r, 8),
         }
         for r in result.get("records", [])
     ]
+
+
+def _engagement_of(values):
+    """The engagement a memo belongs to, taken from the documents it is
+    written from (migration 030).
+
+    Not looked up by name: these values reached here through one LIKE on one
+    engagement's document keys, so they all carry the same id and the first
+    one that has it is it. Written this way rather than asserting they agree,
+    because a memo that refuses to be written over a disagreement about a
+    folder name would be a worse outcome than a memo filed in the first of
+    them.
+
+    NULL where the documents predate the migration and were never backfilled.
+    The migration's own verification exists to catch that; here it is
+    recorded as it stands rather than guessed at."""
+    for v in values:
+        if v.get("engagement_id") is not None:
+            return v["engagement_id"]
+    return None
 
 
 def _label_for(registry, field_id):
@@ -794,14 +820,15 @@ def lambda_handler(event, context):
     memo_result = _sql(
         """
         INSERT INTO memo
-          (tenant_id, template_key, config_revision, s3_bucket, s3_key,
-           s3_version_id, sha256, generated_by)
+          (tenant_id, engagement_id, template_key, config_revision,
+           s3_bucket, s3_key, s3_version_id, sha256, generated_by)
         VALUES
-          (:tenant_id, :template_key, :config_revision, :s3_bucket, :s3_key,
-           :s3_version_id, :sha256, :generated_by)
+          (:tenant_id, :engagement_id, :template_key, :config_revision,
+           :s3_bucket, :s3_key, :s3_version_id, :sha256, :generated_by)
         """,
         [
             _p("tenant_id", tenant_id),
+            _p("engagement_id", _engagement_of(values)),
             _p("template_key", template_key),
             _p("config_revision", revision),
             _p("s3_bucket", CURATED_BUCKET),

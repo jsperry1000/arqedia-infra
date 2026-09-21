@@ -163,6 +163,47 @@ def _parse_key(key):
     return int(m.group("tenant")), m.group("engagement"), m.group("file")
 
 
+def _engagement_id(tenant_id, name, created_by=None):
+    """The engagement's own row, created if this name has not been seen.
+
+    MIRRORED IN lambda/api/app.py's engagement_id, which creates the row when
+    somebody types the name at upload. This function usually finds what that
+    one wrote; it creates only where an object arrived without passing
+    through /uploads. The two must not drift - they are the same rule, and
+    the rule is that one name is one row (migration 030).
+
+    THE NAME FOLDS CASE, because the column's collation does. S3 keeps both
+    spellings as typed, which is why the row is found by name rather than
+    minted per key.
+
+    NOT LAST_INSERT_ID: it is per connection and the Data API does not
+    promise the same one between calls. Write, then read back; the unique key
+    makes the read authoritative even if two uploads race.
+    """
+    name = (name or "").strip()
+    if not name:
+        return None
+
+    found = _sql(
+        "SELECT engagement_id FROM engagement "
+        "WHERE tenant_id = :t AND name = :n",
+        [_p("t", tenant_id), _p("n", name)]).get("records", [])
+    if found:
+        return found[0][0].get("longValue")
+
+    _sql(
+        "INSERT INTO engagement (tenant_id, name, created_by) "
+        "VALUES (:t, :n, :by) "
+        "ON DUPLICATE KEY UPDATE engagement_id = engagement_id",
+        [_p("t", tenant_id), _p("n", name), _p("by", created_by)])
+
+    found = _sql(
+        "SELECT engagement_id FROM engagement "
+        "WHERE tenant_id = :t AND name = :n",
+        [_p("t", tenant_id), _p("n", name)]).get("records", [])
+    return found[0][0].get("longValue") if found else None
+
+
 def envelope_suffix(page_from, part_index):
     """Where a document's envelope lives, relative to the file's own key.
 
@@ -258,7 +299,19 @@ def _record_refusal(tenant_id, engagement, filename, src_bucket, src_key,
     true.
 
     config_revision is NOT NULL and active_revision falls back to 1 for a
-    tenant that has none, so this cannot fail for want of a configuration."""
+    tenant that has none, so this cannot fail for want of a configuration.
+
+    THE ENGAGEMENT IS RESOLVED, NOT REQUIRED. This row is the only record a
+    person will ever see of a file nobody could read, so it is written even
+    if the engagement cannot be looked up: a NULL id is a gap that stage 4
+    can fill, and a lost refusal is the defect this whole function exists to
+    close."""
+    try:
+        engagement_id = _engagement_id(tenant_id, engagement, uploaded_by)
+    except Exception as exc:  # noqa: BLE001 - the row matters more
+        print("[engagement-unresolved] key=%s %r" % (src_key, exc))
+        engagement_id = None
+
     _sql(
         """
         INSERT INTO document
@@ -266,12 +319,13 @@ def _record_refusal(tenant_id, engagement, filename, src_bucket, src_key,
            sha256, filename, byte_size, state, refusal_code, refusal_reason,
            uploaded_by, config_revision)
         VALUES
-          (:tenant_id, NULL, :s3_bucket, :s3_key, :s3_version_id,
+          (:tenant_id, :engagement_id, :s3_bucket, :s3_key, :s3_version_id,
            :sha256, :filename, :byte_size, 'unreadable', :code, :reason,
            :uploaded_by, :config_revision)
         """,
         [
             _p("tenant_id", tenant_id),
+            _p("engagement_id", engagement_id),
             _p("s3_bucket", src_bucket),
             _p("s3_key", src_key),
             _p("s3_version_id", version_id),
@@ -308,7 +362,14 @@ def _record_document(envelope):
         """,
         [
             _p("tenant_id", envelope["tenant_id"]),
-            _p("engagement_id", None),
+            # The engagement's row, found or created from the name in the key
+            # (migration 030). Not caught here, unlike the refusal path: if
+            # this cannot be resolved the handler's own catch records the
+            # file as unreadable, which is a row a person can see and retry -
+            # a document row with a silent gap in it is not.
+            _p("engagement_id", _engagement_id(
+                envelope["tenant_id"], envelope.get("engagement"),
+                envelope.get("uploaded_by"))),
             _p("s3_bucket", envelope["source_bucket"]),
             _p("s3_key", envelope["source_key"]),
             _p("s3_version_id", envelope["source_version_id"]),
