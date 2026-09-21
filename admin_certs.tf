@@ -11,13 +11,10 @@
 # staff console can be withdrawn by deleting its own resources rather than by
 # editing the customer's.
 #
-# THE HOSTNAME LIVES HERE, not beside site_host and app_host in dns.tf,
-# because nothing resolves it yet. Stage 1 issues a certificate and no A
-# record; the distribution that would answer on this name is a later stage.
-
-locals {
-  admin_host = "admin.${local.root_domain}"
-}
+# local.admin_host is declared in dns.tf, beside site_host and app_host. One
+# file names the hostnames this deployment answers on, whether or not each
+# one resolves yet: stage 1 issues a certificate and no A record, and the
+# distribution that would answer on this name is a later stage.
 
 resource "aws_acm_certificate" "admin" {
   provider = aws.use1

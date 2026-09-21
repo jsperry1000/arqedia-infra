@@ -59,12 +59,18 @@ resource "aws_cognito_user_pool" "staff" {
     email_message        = "Your ARQEDIA staff password reset code is {####}\n\nIt lasts one hour, and asking for another stops this one working.\n\nIf you did not ask to reset your password, ignore this - your password has not changed - and tell the team.\n\nARQEDIA\nThis address does not take replies."
   }
 
+  # STRICTER THAN THE CUSTOMER POOL, on purpose. A firm choosing its own
+  # posture gets twelve characters and no symbol requirement; the people who
+  # can read every firm's data get fourteen and a symbol. Cognito applies a
+  # policy change to the next password set, not to the ones already in the
+  # pool - which is an argument for setting it before there are any, and this
+  # pool has none.
   password_policy {
-    minimum_length    = 12
+    minimum_length    = 14
     require_lowercase = true
     require_uppercase = true
     require_numbers   = true
-    require_symbols   = false
+    require_symbols   = true
   }
 
   # Admin-create-only, as the customer pool is. There is no signup route to
@@ -92,6 +98,12 @@ resource "aws_cognito_user_pool" "staff" {
     }
   }
 
+  # Deleting this pool deletes every staff account and every registered
+  # authenticator with it, and a pool cannot be restored. ACTIVE makes the
+  # deletion a two-step act: this must be set to INACTIVE and applied before
+  # any destroy of the pool will be accepted.
+  deletion_protection = "ACTIVE"
+
   tags = { Name = "${local.name_prefix}-staff" }
 
   # From the first line, before anything is in it. auth.tf earned this the
@@ -116,9 +128,14 @@ resource "aws_cognito_user_pool_client" "admin" {
     "ALLOW_REFRESH_TOKEN_AUTH",
   ]
 
+  # ONE DAY, against the customer pool's thirty. A refresh token is the thing
+  # that keeps a session alive without the second factor being presented
+  # again, so on a console that reads every tenant's data it is the setting
+  # that decides how long a stolen browser profile is worth something. A day
+  # means a staff member signs in, with their authenticator, each working day.
   access_token_validity  = 60
   id_token_validity      = 60
-  refresh_token_validity = 30
+  refresh_token_validity = 1
 
   token_validity_units {
     access_token  = "minutes"

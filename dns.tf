@@ -23,6 +23,12 @@ locals {
   www_host  = "www.${local.root_domain}"
   app_host  = "app.${local.root_domain}"
 
+  # The staff console (Group 16). Nothing resolves it yet - stage 1 issues its
+  # certificate in admin_certs.tf and no A record - but the hostnames this
+  # deployment answers on are named in one place, not wherever each was first
+  # needed.
+  admin_host = "admin.${local.root_domain}"
+
   # CloudFront's hosted zone id. Fixed and global.
   cf_zone_id = "Z2FDTNDATAQYW2"
 }
