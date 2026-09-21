@@ -214,6 +214,12 @@ locals {
     "GET /engagements",
     "GET /engagements/{id}/documents",
     "GET /engagements/{id}/pending",
+
+    # The company the memoranda in this engagement are about. One route
+    # sets it and changes it: the row is resolved or created by name, so
+    # naming a subject before anything has been uploaded opens the
+    # engagement, and naming one afterwards edits it (SUBJ-01).
+    "PUT /engagements/{id}/subject",
     "POST /engagements/{id}/file",
     "GET /engagements/{id}/memos",
     "POST /engagements/{id}/generate",

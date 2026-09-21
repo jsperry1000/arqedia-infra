@@ -161,6 +161,86 @@ touch Lambda sources outside the `extraction-error` branch, and one of them —
 
 ---
 
+### Applied through, 21 September 2026
+
+SUBJ-01 needed `api`, `extraction` and `composition`. There is no narrower
+target that reaches them, for the reason set out above, so the drift was
+accepted and applied rather than worked around. The decision was taken by the
+user on 21 September; this section records what actually shipped.
+
+Applied from `c:\terraform\arqedia-subject`, a `git worktree` at
+`feature/subj-01-engagement-subject`, with `.terraform`, `.terraform.lock.hcl`
+and `build/` copied in. **Five functions were deployed, not three.**
+
+```
+                  deployed before              deployed after
+api          vYlrulwC+sX2gLxjHKahyfrlPn4r6drR1/VeZyCtcUc=  QLoWwGrqYJWqISebrIZCM3xzH7ZjX6Jq0hKCxofVQbk=
+extraction   CA37Kxcebvj3T1pB73pyZWnkrc5mCksfScYw1H2V6dY=  WiRcYNg5AVALWxI78BF8wnITRLYR5TvLn7UrMirPYzQ=
+composition  AvlEsXURRtpcAuKAdU6v3ltSpcR6amQ7lImY8em2LP4=  wMya551u2scRnO78dXgcxE1XCg7gphwxVPAWWJ2zDV4=
+proposer     guvwiMD9P6cA2kZTo5yx5aG2o6Roo6AHYhMGA7f6mis=  0d8HYzV9k60H6cL/3ZUkUBmjZzqIZtfKlfawhaXQcQI=
+render       NZBtRqpa9rysvWELUbXseEc7kKcsR+hvLPgMh0H3FEw=  xNivczNKf8HEh0b7So2AiSfw3qJZ3C6VSEl1CbXiYSQ=
+```
+
+`api`, `extraction` and `composition` carry SUBJ-01. `proposer` and `render`
+carry nothing but this drift: they were pulled in as dependencies of the
+targets and their source has not changed since 4 and 20 September.
+
+The three `after` values for `proposer`, `render` and `composition` are the
+ones this document predicted in **The baseline**, unchanged. Cause 1 is
+therefore closed for `proposer` and `composition`: what is deployed is now
+what a clean checkout builds, which is what `.gitattributes` says it should
+be. `normalizer` is untouched and still drifts.
+
+### `render` now runs without `sample.pdf`
+
+Cause 2 is resolved by removal, as this document said it would be. Confirmed
+by downloading the deployed bundle rather than by inferring it from the hash:
+
+```
+aws lambda get-function --function-name arqedia-dev-render  ->  Code.Location
+unzip -l  ->  app.py, style.py          (two files; no sample.pdf)
+```
+
+And exercised rather than assumed - the branding preview is the one path that
+renders a PDF from nothing but a tenant's colours, and is where a missing
+sample would have shown:
+
+```
+aws lambda invoke arqedia-dev-render  {"tenant_id": 1, "preview": true}
+  ->  {"status": "ok", "plan": "business", "url": <presigned>}
+```
+
+So `sample.pdf` was dead weight. **It is still present in
+`c:\terraform\arqedia\lambda\render\` and is still git-ignored**, so the next
+apply from that working copy puts it back into the function. Deleting it there,
+or committing it, is the remaining half of Cause 2 and is not done.
+
+### A third cause, found and cleared: `__pycache__`
+
+Running `python -m unittest discover -s tests` creates `__pycache__` in every
+`lambda/` directory the tests import - nine of them here. Each sits inside a
+`source_dir` that `archive_file` archives with no excludes, so the `.pyc`
+files go into the zips and move the hash. Two plans minutes apart disagreed on
+`api`, `extraction`, `composition` and `render` for this reason alone, and
+agreed again once the directories were removed.
+
+That is **BLD-01**, reached from a new direction: it is not only the long-lived
+working copy that can pollute a bundle, it is any tree the tests have been run
+in. `archive_file` remains deterministic over content; the content had changed.
+
+Verified clean before this section was written - every deployed bundle
+downloaded and listed:
+
+```
+api 5 files, extraction 1, composition 2, proposer 1, render 2
+pyc or __pycache__ in any of them:  False
+```
+
+The durable fix is an `excludes` on each `archive_file`, which belongs to
+BLD-01 and is not done here.
+
+---
+
 ## Addendum, 21 September 2026 · the same defect in `web/`
 
 Found while building `failed-row-tick`. The Lambda zips are not the only

@@ -343,11 +343,19 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
       {rows.length === 0 && (
         <p className="muted">Nothing yet. Name an engagement below to start.</p>
       )}
+      {/* The subject sits beside the name, because the name is a label
+          somebody typed for a folder and the subject is the company the
+          memoranda are about - and an engagement without one files
+          nothing. Said here as well as on the engagement's own screen, so
+          it is answerable before anybody opens one and uploads into it. */}
       <table>
         <tbody>
           {rows.map((r) => (
             <tr key={r.engagement} onClick={() => onOpen(r.engagement)}>
               <td><a>{r.engagement}</a></td>
+              <td className={r.subject_name ? "muted" : "warn"}>
+                {r.subject_name ?? "No subject"}
+              </td>
               <td className="muted">{r.documents} documents</td>
               <td className="muted">{r.last_activity}</td>
             </tr>
