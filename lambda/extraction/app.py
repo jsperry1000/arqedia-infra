@@ -43,6 +43,13 @@ _ENVELOPE_SUFFIX = ".normalized.json"
 # "is it set". The sentence a person reads is written by the screen, not here.
 ERROR_MALFORMED_GROUP = "group_key_missing"
 ERROR_SCHEMA_FAILED = "schema_failed"
+# The engagement never got a subject, so there is no telling whose facts
+# this document holds. The API refuses to file into an engagement with none,
+# which is the gate a person meets; this is the second line, for a document
+# that reached here by some other route - a file placed in the docs bucket
+# without passing through /uploads, or an engagement row minted by the
+# normalizer (SUBJ-01).
+ERROR_SUBJECT_MISSING = "subject_missing"
 
 
 class MalformedGroup(Exception):
@@ -120,6 +127,53 @@ def _unit_word(units):
     return units[0]["kind"] if units else "section"
 
 
+def _subject_for(tenant_id, document_id):
+    """The subject of the engagement this document belongs to, or None.
+
+    Through document.engagement_id (migration 030) to engagement.subject_name
+    (migration 031). The envelope does not carry the engagement, so this is a
+    read rather than a lookup in what we already hold.
+
+    AN INNER JOIN, deliberately. A document whose engagement_id is NULL -
+    one filed before 030's backfill, or written by a path that could not
+    resolve the engagement - returns no row and is treated as having no
+    subject. That is the truthful answer: there is no engagement to ask.
+    """
+    if not document_id:
+        return None
+    found = _sql(
+        """
+        SELECT e.subject_name
+        FROM document d
+        JOIN engagement e ON e.engagement_id = d.engagement_id
+                         AND e.tenant_id = d.tenant_id
+        WHERE d.tenant_id = :t AND d.document_id = :d
+        """,
+        [_p("t", tenant_id), _p("d", int(document_id))]).get("records", [])
+    if not found:
+        return None
+    cell = found[0][0]
+    return (cell.get("stringValue") or "").strip() or None
+
+
+# Opens every extraction prompt. The name entered is INDICATIVE, not
+# dispositive: "Cocoa Empire" has to reach "Cocoa Empire Uganda Limited",
+# "Cocoa Empire Uganda Ltd" and "CE", and no normalisation we could write
+# would do that honestly. The model is told the name and told what counts as
+# the same company; the second sentence is the one that matters, because the
+# failure this exists to stop is a BUYER's business description filed as the
+# subject's under a citation that is perfectly correct (SUBJ-01).
+def _subject_preamble(subject):
+    return (
+        "The subject of this file is **" + subject + "**. Documents may "
+        "write the name differently - with or without a legal suffix such "
+        "as Limited or Ltd, in another capitalisation, abbreviated, or in "
+        "full. Treat any name that refers to the same company as the "
+        "subject. Every other company - a buyer, supplier, lender, "
+        "inspector or other counterparty - is not the subject.\n\n"
+    )
+
+
 def _build_prompt(schema, envelope):
     units = envelope["units"]
     word = _unit_word(units)
@@ -158,7 +212,16 @@ def _build_prompt(schema, envelope):
 
     # Built by concatenation, not .format(): the text contains literal JSON
     # braces and every one of them would be read as a placeholder.
+    #
+    # THE SUBJECT COMES FIRST, before the field list, because the field
+    # descriptions are read in its light: "one-paragraph description of the
+    # SUBJECT" means nothing until the model has been told which company
+    # that is. Absent only where the handler has already refused, so this is
+    # never silently omitted.
     instruction = (
+        _subject_preamble(envelope["subject_name"])
+        if envelope.get("subject_name") else ""
+    ) + (
         "Extract the following from the document below. Return JSON with "
         "exactly these keys:\n\n"
         "{\n" + "\n".join(lines) + "\n}\n\n"
@@ -338,6 +401,50 @@ def _persist(envelope, registry, schema_key, extracted):
     return written
 
 
+def _refuse_no_subject(bucket, key, envelope):
+    """A document in an engagement that never named its subject.
+
+    Terminal and recorded, in the same two columns a schema failure uses -
+    one code, one place the screen looks. Nothing is read, nothing is
+    written to extracted_value, and no model call is made.
+
+    NOT A REFUND. The charge bought filing, and the API refuses to file
+    into an engagement with no subject - so a document reaching here has
+    not come through the paid path. Money is not moved from a function that
+    cannot tell whether any was taken."""
+    envelope["subject_name"] = None
+    envelope["extraction_error"] = ERROR_SUBJECT_MISSING
+    envelope["extraction_complete"] = True
+    envelope["extraction_results"] = {}
+    envelope["extraction_tokens"] = {"input": 0, "output": 0}
+    envelope["model_id"] = MODEL_ID
+
+    _s3.put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=json.dumps(envelope, ensure_ascii=False).encode("utf-8"),
+        ContentType="application/json",
+    )
+
+    document_id = envelope.get("document_id")
+    if document_id:
+        _sql(
+            "UPDATE document SET extracted_at = UTC_TIMESTAMP(), "
+            "extraction_error = :error "
+            "WHERE tenant_id = :t AND document_id = :d",
+            [_p("error", ERROR_SUBJECT_MISSING),
+             _p("t", envelope["tenant_id"]), _p("d", int(document_id))],
+        )
+
+    print("[extraction-refused] doc={} reason={}".format(
+        document_id, ERROR_SUBJECT_MISSING))
+
+    return {"status": "refused", "document_id": document_id,
+            "values_written": 0,
+            "extraction_error": ERROR_SUBJECT_MISSING,
+            "results": {}}
+
+
 def _source_from_event(event):
     records = event.get("Records")
     if records and records[0].get("s3"):
@@ -364,6 +471,23 @@ def lambda_handler(event, context):
     # Our own write re-fires the trigger. Exit rather than loop.
     if envelope.get("extraction_complete"):
         return {"status": "skipped", "reason": "already-extracted"}
+
+    # WHOSE FACTS THIS DOCUMENT HOLDS, before anything is read from it
+    # (SUBJ-01). Without it, a document describing a counterparty in detail
+    # and the subject not at all fills the subject's fields with the
+    # counterparty's - under citations that are entirely correct, which is
+    # what makes it dangerous rather than merely wrong.
+    #
+    # REFUSED, NOT EXTRACTED. Reading it anyway and hoping would cost a
+    # model call and produce values nobody can trust; the row says so
+    # instead, in the column migration 029 added and the screen already
+    # reads. extraction_complete is written so our own put_object does not
+    # re-fire the trigger into the same refusal for ever.
+    subject = _subject_for(envelope["tenant_id"], envelope.get("document_id"))
+    if not subject:
+        return _refuse_no_subject(bucket, key, envelope)
+
+    envelope["subject_name"] = subject
 
     # The revision the document was FILED under, not the tenant's current
     # one. A document filed under revision 11 resolves against revision 11 for
@@ -443,6 +567,12 @@ def lambda_handler(event, context):
     envelope["extraction_results"] = results
     envelope["extraction_tokens"] = {"input": tokens_in, "output": tokens_out}
     envelope["model_id"] = MODEL_ID
+    # envelope["subject_name"] was set above, before the prompts were built.
+    # It sits here beside model_id for the same reason: a value should be
+    # traceable to the subject it was read under, as it is to the model that
+    # read it. The engagement's subject is editable, so the name on this
+    # envelope is the only record of what it was at the moment of reading.
+    # ENVELOPE ONLY - no column, and nothing reads it yet (SUBJ-01, item 5).
 
     _s3.put_object(
         Bucket=bucket,
