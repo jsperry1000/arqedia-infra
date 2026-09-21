@@ -10,7 +10,7 @@ import { mountFlock } from '../../ui/src/flock'
 // --- the hero --------------------------------------------------------------
 
 const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-flock]')
-if (canvas) mountFlock(canvas, 'hero')
+if (canvas) mountFlock(canvas)
 
 // --- the worked sample -----------------------------------------------------
 //

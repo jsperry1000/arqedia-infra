@@ -8,15 +8,17 @@
  * same four stages drawn by the same code; two copies would drift, and then
  * the site would be promising a product that no longer looks like itself.
  *
- * Two modes off one engine. 'hero' runs the full sequence and holds on the
- * final frame. 'work' holds the swarm indefinitely and lands when settle() is
- * called.
+ * mountFlock() runs the full sequence once and holds on the final frame.
  *
- * NOTE ON 'work'. Nothing imports it. The application's working indicator
- * (UX-12) is a CSS bar, not this, so the mode is unused today - the comment
- * that once said otherwise was wrong and has gone.
+ * THERE WAS A SECOND MODE, 'work', and it is gone (15.3). It held the swarm
+ * indefinitely and landed when settle() was called, and it was written for
+ * the application's working indicator - which was built as a CSS bar
+ * (UX-12), so nothing ever imported it. It survived one correction already:
+ * the comment claiming it drove that indicator was removed while the code it
+ * described was left. Dead code with an honest comment is still dead code,
+ * and it carried a branch through every function in the engine.
  *
- * drawStage() is the third way in: one stage, still, for the strip above the
+ * drawStage() is the other way in: one stage, still, for the strip above the
  * configuration bar. It shares the geometry and the drawing, so a stage there
  * is the same picture as the same stage in the hero.
  *
@@ -24,8 +26,7 @@
  * density wave and the breathing all run off it.
  */
 
-export type FlockMode = 'hero' | 'work'
-export interface FlockHandle { stop(): void; settle(): void }
+export interface FlockHandle { stop(): void }
 
 /** Which of the four. The names live in the markup that shows them. */
 export type Stage = 0 | 1 | 2 | 3
@@ -47,7 +48,24 @@ interface Scene { docs: Doc[]; wires: Wire[]; page: Page; pts: Pt[] }
 
 const P = { docsIn: 1200, leave: 3890, swarm: 8610, report: 13800 }
 const LAND = 2400
-const SPEED = 1.1 / 1.3
+
+/** The single time scale, and the only place the sequence's pace is set.
+ *
+ *  Engine milliseconds run at SPEED against the wall clock, so a boundary at
+ *  P.report arrives at P.report / SPEED in real time. Every boundary, every
+ *  fade, the drift, the banking, the density wave and the breathing are
+ *  measured in engine milliseconds and therefore all move together.
+ *
+ *  MADE 5% FASTER ON 21 SEPTEMBER (15.1) by multiplying the scale rather than
+ *  dividing seventeen constants: dividing every duration and transition by
+ *  1.05 and multiplying the clock they are measured against by 1.05 are the
+ *  same arithmetic, and one of them can be got wrong in sixteen places. The
+ *  whole sequence now runs 20.2 seconds instead of 21.2.
+ *
+ *  IT DOES NOT REACH drawStage. The strip's stages are drawn from the scene
+ *  and, for the swarm, from SWARM_MOMENT and DRIFT_RATE; none of the three
+ *  reads this. The application's strip is unchanged by anything here. */
+const SPEED = (1.1 / 1.3) * 1.05
 
 /** The moment the swarm is sampled from, in the engine's own milliseconds.
  *
@@ -236,7 +254,7 @@ function paintPage(ctx: CanvasRenderingContext2D, page: Page, pal: Palette, a: n
   ctx.strokeRect(page.x, page.y, page.w, page.h); ctx.restore()
 }
 
-export function mountFlock(cv: HTMLCanvasElement, mode: FlockMode): FlockHandle | null {
+export function mountFlock(cv: HTMLCanvasElement): FlockHandle | null {
   const ctx = cv.getContext('2d')
   if (!ctx) return null
 
@@ -244,7 +262,7 @@ export function mountFlock(cv: HTMLCanvasElement, mode: FlockMode): FlockHandle 
   const stagesEl = cv.parentElement?.querySelector('.stages')
   const spans = stagesEl ? Array.from(stagesEl.querySelectorAll('span')) : []
 
-  const N = mode === 'hero' ? 1000 : 620
+  const N = 1000
   const dpr = Math.min(window.devicePixelRatio || 1, 2)
 
   let W = 0, H = 0
@@ -254,8 +272,6 @@ export function mountFlock(cv: HTMLCanvasElement, mode: FlockMode): FlockHandle 
   let page: Page = { x: 0, y: 0, w: 0, h: 0 }
   let raf = 0, t0: number | null = null
   let stopped = false, frozen = false
-  let phase: 'swarm' | 'landed' = 'swarm'
-  let settleAt = 0
   let pal: Palette = readPalette(cv)
 
   function build() {
@@ -273,17 +289,26 @@ export function mountFlock(cv: HTMLCanvasElement, mode: FlockMode): FlockHandle 
     return true
   }
 
-  const setStage = (i: number) => spans.forEach((el, n) => el.classList.toggle('on', n === i))
+  /** Which stage is running, and which have run (15.2).
+   *
+   *  'on' is the one happening now: it takes the extra width and the deep
+   *  band. 'done' is every stage up to and including it, and it is what keeps
+   *  a description on screen after its stage has passed - so the final frame
+   *  shows all four stages with what each one did, rather than one sentence
+   *  about the last of them and three bare headings.
+   *
+   *  Both are set from here rather than left to CSS, because only this knows
+   *  where the sequence has got to. What they LOOK like is site.css's. */
+  const setStage = (i: number) => spans.forEach((el, n) => {
+    el.classList.toggle('on', n === i)
+    el.classList.toggle('done', n <= i)
+  })
 
   function target(p: Pt, ms: number): [number, number] {
-    if (mode === 'hero') {
-      if (ms < P.leave) return [p.sx, p.sy]
-      if (ms < P.swarm) return swarmAt(p, ms, W, H)
-      if (ms < P.report) return (ms - P.swarm) / LAND < p.land ? swarmAt(p, ms, W, H) : [p.lx, p.ly]
-      return [p.px, p.py]
-    }
-    if (phase === 'swarm') return swarmAt(p, ms, W, H, 0.86)
-    return (ms - settleAt) / LAND < p.land ? swarmAt(p, ms, W, H, 0.86) : [p.lx, p.ly]
+    if (ms < P.leave) return [p.sx, p.sy]
+    if (ms < P.swarm) return swarmAt(p, ms, W, H)
+    if (ms < P.report) return (ms - P.swarm) / LAND < p.land ? swarmAt(p, ms, W, H) : [p.lx, p.ly]
+    return [p.px, p.py]
   }
 
   function frame(ts: number) {
@@ -291,27 +316,19 @@ export function mountFlock(cv: HTMLCanvasElement, mode: FlockMode): FlockHandle 
     if (t0 === null) t0 = ts
     const ms = (ts - t0) * SPEED
 
-    const trailing = mode === 'hero'
-      ? ms > P.leave && ms < P.swarm + LAND
-      : phase === 'swarm' || ms < settleAt + LAND
+    const trailing = ms > P.leave && ms < P.swarm + LAND
 
     if (trailing) { ctx!.fillStyle = pal.trail; ctx!.fillRect(0, 0, W, H) }
     else ctx!.clearRect(0, 0, W, H)
 
-    let ease: number
-    if (mode === 'hero') {
-      paintDocs(ctx!, docs, pal, 1 - smooth((ms - P.docsIn) / (P.leave - P.docsIn)))
-      paintWires(ctx!, wires, pal, smooth((ms - P.swarm + 500) / 1600) * (1 - smooth((ms - P.report) / 600)))
-      paintPage(ctx!, page, pal, smooth((ms - P.report + 400) / 900))
-      ease = ms < P.swarm ? 0.036 : ms < P.swarm + LAND + 500 ? 0.05 : ms < P.report ? 0.09 : 0.075
-      setStage(ms < P.leave ? 0 : ms < P.swarm ? 1 : ms < P.report ? 2 : 3)
-    } else {
-      paintWires(ctx!, wires, pal, phase === 'swarm' ? 0 : smooth((ms - settleAt + 500) / 1600))
-      ease = phase === 'swarm' ? 0.036 : ms < settleAt + LAND + 500 ? 0.05 : 0.09
-    }
+    paintDocs(ctx!, docs, pal, 1 - smooth((ms - P.docsIn) / (P.leave - P.docsIn)))
+    paintWires(ctx!, wires, pal, smooth((ms - P.swarm + 500) / 1600) * (1 - smooth((ms - P.report) / 600)))
+    paintPage(ctx!, page, pal, smooth((ms - P.report + 400) / 900))
+    const ease = ms < P.swarm ? 0.036 : ms < P.swarm + LAND + 500 ? 0.05 : ms < P.report ? 0.09 : 0.075
+    setStage(ms < P.leave ? 0 : ms < P.swarm ? 1 : ms < P.report ? 2 : 3)
 
     ctx!.fillStyle = pal.birds
-    ctx!.globalAlpha = mode === 'hero' ? smooth(ms / P.docsIn) * 0.85 : 0.8
+    ctx!.globalAlpha = smooth(ms / P.docsIn) * 0.85
     for (const p of pts) {
       const [tx, ty] = target(p, ms)
       p.x += (tx - p.x) * ease * p.lag
@@ -320,18 +337,21 @@ export function mountFlock(cv: HTMLCanvasElement, mode: FlockMode): FlockHandle 
     }
     ctx!.globalAlpha = 1
 
-    const over = mode === 'hero'
-      ? ms > P.report + 3300
-      : phase === 'landed' && ms > settleAt + LAND + 1400
-    if (over) { frozen = true; return }
+    if (ms > P.report + 3300) { frozen = true; return }
     raf = requestAnimationFrame(frame)
   }
 
+  /** What somebody who has asked for less motion sees: the last frame, drawn
+   *  once and never touched again - the page outlined, every particle already
+   *  on the line it was retrieved into, and setStage(3) marking all four
+   *  stages done, so the descriptions are the same four the sequence ends on
+   *  (15.2). No animation is started at all. */
   function staticFrame() {
     ctx!.clearRect(0, 0, W, H)
-    if (mode === 'hero') { paintPage(ctx!, page, pal, 1); setStage(3) } else paintWires(ctx!, wires, pal, 1)
+    paintPage(ctx!, page, pal, 1)
+    setStage(3)
     ctx!.fillStyle = pal.birds; ctx!.globalAlpha = 0.85
-    for (const p of pts) mode === 'hero' ? ctx!.fillRect(p.px, p.py, 1.4, 1.4) : ctx!.fillRect(p.lx, p.ly, 1.4, 1.4)
+    for (const p of pts) ctx!.fillRect(p.px, p.py, 1.4, 1.4)
     ctx!.globalAlpha = 1
   }
 
@@ -349,11 +369,6 @@ export function mountFlock(cv: HTMLCanvasElement, mode: FlockMode): FlockHandle 
 
   return {
     stop() { stopped = true; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize) },
-    settle() {
-      if (mode === 'hero' || phase !== 'swarm' || t0 === null) return
-      phase = 'landed'
-      settleAt = (performance.now() - t0) * SPEED
-    },
   }
 }
 
