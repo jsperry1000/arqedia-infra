@@ -14,6 +14,11 @@ Routes:
   GET  /engagements                      what this tenant has
   GET  /engagements/{id}/pending         analysed, awaiting confirmation
   POST /engagements/{id}/file            confirm types and file
+
+An engagement names the company its memoranda are about. Nothing in it is
+extracted until it does, because extraction reads a document for the
+SUBJECT's facts and cannot tell which company that is unless it is told.
+  PUT  /engagements/{id}/subject         set it, or change it
   GET  /engagements/{id}/documents       filed documents
   POST /documents/{document_id}/active   include or exclude from future memos
   DELETE /documents/{document_id}         discard one not yet filed
@@ -319,15 +324,106 @@ def engagement_id(tenant_id, name, created_by=None):
     return _col(found[0], 0) if found else None
 
 
+# The company an engagement's memoranda are about. Stored verbatim, as a
+# person writes it, so the bound is the column's (migration 031) rather than
+# _clean()'s key alphabet.
+_SUBJECT_MAX = 255
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+SUBJECT_REQUIRED = (
+    "Name the subject of this engagement before filing: the company these "
+    "memoranda are about. Every document is read for the subject's facts, "
+    "and nothing in the file says which company that is.")
+
+
+def engagement_subject(tenant_id, name):
+    """The subject recorded for an engagement, or None.
+
+    Resolved by the CLEANED name, because that is the name the row carries:
+    upload_url cleans before creating it (see engagement_id's caller), so a
+    lookup on the raw path parameter would miss the row for any name a
+    person typed with a space in it."""
+    found = _sql(
+        "SELECT subject_name FROM engagement "
+        "WHERE tenant_id = :t AND name = :n",
+        [_p("t", tenant_id), _p("n", _clean(name))]).get("records", [])
+    if not found:
+        return None
+    return (_col(found[0], 0) or "").strip() or None
+
+
+def set_subject(tenant_id, email, engagement, subject_name):
+    """Name the subject, or change it.
+
+    ONE ROUTE FOR BOTH. The row is resolved or created by name through
+    engagement_id, which is the same rule /uploads uses - so naming a
+    subject before anything has been uploaded opens the engagement, and
+    naming one afterwards edits it. There is no separate create.
+
+    STORED VERBATIM. _clean() is not applied to the subject: it exists to
+    make a string safe for a storage key and would turn "Cocoa Empire
+    Uganda Ltd." into "Cocoa-Empire-Uganda-Ltd". This value goes into an
+    extraction prompt and onto the front matter of a memorandum, and must
+    read as a person wrote it.
+
+    ANY SEAT. A Member uploads, files, generates and configures; naming
+    what an engagement is about belongs in that set. No admin gate.
+
+    EDITABLE AFTER EXTRACTION, deliberately. A changed subject reaches
+    every memorandum generated afterwards. Values already extracted change
+    only if the documents are re-extracted, which stays a separate, paid
+    act - so this never silently rewrites what a filed document yielded."""
+    name = _clean(engagement)
+    if not name:
+        raise ValueError("engagement is required")
+
+    subject = str(subject_name or "").strip()
+    if not subject:
+        raise ValueError("A subject is required: the company these "
+                         "memoranda are about.")
+    if _CONTROL.search(subject):
+        raise ValueError("a subject cannot contain control characters")
+    if len(subject) > _SUBJECT_MAX:
+        raise ValueError("a subject can be at most %d characters"
+                         % _SUBJECT_MAX)
+
+    found = engagement_id(tenant_id, name, email)
+    if found is None:
+        raise ValueError("that engagement could not be opened")
+
+    _sql("UPDATE engagement SET subject_name = :s "
+         "WHERE tenant_id = :t AND engagement_id = :e",
+         [_p("s", subject), _p("t", tenant_id), _p("e", int(found))])
+
+    print("[subject-set] tenant=%s engagement=%s by=%s" % (
+        tenant_id, name, email))
+    return {"engagement": name, "engagement_id": int(found),
+            "subject_name": subject}
+
+
 def list_engagements(tenant_id):
+    """What this tenant has, and what each one is about.
+
+    THE SUBJECT COMES FROM THE ENGAGEMENT ROW, joined on the same name the
+    grouping derives from the key. LEFT, because an engagement whose row
+    predates migration 031 - which is all thirty of them - has none yet,
+    and a list that dropped them would hide the very engagements that need
+    one. MAX() over a column that is constant within the group, because
+    the join key IS the group key; it satisfies ONLY_FULL_GROUP_BY and
+    picks nothing."""
     result = _sql(
         """
         SELECT
-          SUBSTRING_INDEX(SUBSTRING_INDEX(s3_key, '/docs/', -1), '/', 1) AS engagement,
-          COUNT(*)      AS documents,
-          MAX(filed_at) AS last_activity
-        FROM document
-        WHERE tenant_id = :tenant_id
+          SUBSTRING_INDEX(SUBSTRING_INDEX(d.s3_key, '/docs/', -1), '/', 1) AS engagement,
+          COUNT(*)            AS documents,
+          MAX(d.filed_at)     AS last_activity,
+          MAX(e.subject_name) AS subject_name
+        FROM document d
+        LEFT JOIN engagement e
+               ON e.tenant_id = d.tenant_id
+              AND e.name = SUBSTRING_INDEX(
+                    SUBSTRING_INDEX(d.s3_key, '/docs/', -1), '/', 1)
+        WHERE d.tenant_id = :tenant_id
         GROUP BY engagement
         ORDER BY last_activity DESC
         """,
@@ -336,7 +432,8 @@ def list_engagements(tenant_id):
     return [
         {"engagement": _col(r, 0),
          "documents": _col(r, 1),
-         "last_activity": _col(r, 2)}
+         "last_activity": _col(r, 2),
+         "subject_name": _col(r, 3)}
         for r in result.get("records", [])
     ]
 
@@ -470,7 +567,7 @@ def _fail_and_refund(tenant_id, email, document_id, charge_entry_id, why):
     return 1 if given.get("refunded") else 0
 
 
-def file_documents(tenant_id, email, decisions, idempotency_key):
+def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
     """Confirm types and file. The deliberate act that starts extraction, and
     the point at which money changes hands.
 
@@ -489,7 +586,18 @@ def file_documents(tenant_id, email, decisions, idempotency_key):
     The key makes this safe to call from a click. Eighteen documents are one
     click and one charge of eighteen; a retry or a double click must not
     charge again, and wallet.charge refuses the repeat.
+
+    NOTHING IS FILED INTO AN ENGAGEMENT WITH NO SUBJECT (SUBJ-01). Filing
+    is what starts extraction - it is the only thing in the product that
+    writes .normalized.json, which is what the extraction trigger listens
+    for - so this is the gate, and it is the FIRST thing here, above the
+    charge. Extraction carries a second line of its own for a document that
+    reaches it by some other route; this one is the one a person meets.
     """
+    held = engagement_subject(tenant_id, engagement)
+    if not held:
+        raise ValueError(SUBJECT_REQUIRED)
+
     registry = config.for_tenant(tenant_id)
 
     # A document nobody could read is not fileable, and must not be counted
@@ -2102,13 +2210,24 @@ def _dispatch(event, context):
             return _reply(200, outcome)
 
         if route == "GET /engagements/{id}/pending":
-            return _reply(200, {"pending": list_pending(tenant_id, engagement)})
+            # The subject travels with the pending list because the screen
+            # that shows the list is the screen that has to hold the File
+            # button and say why. One SELECT on a call it already makes,
+            # rather than a second round trip for one string.
+            return _reply(200, {
+                "pending": list_pending(tenant_id, engagement),
+                "subject_name": engagement_subject(tenant_id, engagement)})
 
         if route == "POST /engagements/{id}/file":
             body = json.loads(event.get("body") or "{}")
             return _reply(200, file_documents(
-                tenant_id, email, body.get("decisions", []),
+                tenant_id, email, engagement, body.get("decisions", []),
                 _key(body, "file", engagement)))
+
+        if route == "PUT /engagements/{id}/subject":
+            body = json.loads(event.get("body") or "{}")
+            return _reply(200, set_subject(tenant_id, email, engagement,
+                                           body.get("subject_name")))
 
         if route == "GET /engagements/{id}/documents":
             return _reply(200, {"documents": list_documents(tenant_id,
