@@ -24,7 +24,7 @@ export function ShareView({ onBack, onViewer }: {
 
   const [memoId, setMemoId] = useState(SHAREABLE[0].memo_id);
   const [to, setTo] = useState("");
-  const [expiry, setExpiry] = useState("30");
+  const [expiry, setExpiry] = useState("14");
 
   return (
     <div>
@@ -54,8 +54,13 @@ export function ShareView({ onBack, onViewer }: {
         <label className="row">
           <span>Access expires</span>
           <select value={expiry} onChange={(e) => setExpiry(e.target.value)}>
-            <option value="14">14 days</option>
-            <option value="30">30 days (default)</option>
+            {/* 2 weeks is the default a verified recipient gets (12.1,
+                share_viewer_spec §6). A date set here is a CEILING: the
+                spec's extension to six months on registration applies only
+                where the tenant left the default, which is what
+                share_grant.expiry_set_by_tenant exists to tell apart. */}
+            <option value="14">2 weeks (default)</option>
+            <option value="30">30 days</option>
             <option value="90">90 days</option>
           </select>
         </label>

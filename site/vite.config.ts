@@ -15,6 +15,10 @@ export default defineConfig({
       input: {
         index: resolve(__dirname, 'index.html'),
         pricing: resolve(__dirname, 'pricing/index.html'),
+        // The recipient's guide (12.3). Build wiring, not navigation: a page
+        // absent from here is not built at all, and nothing links to this one
+        // until the viewer and the share email exist.
+        guide: resolve(__dirname, 'guide/index.html'),
       },
     },
   },
