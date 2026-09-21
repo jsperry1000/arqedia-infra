@@ -172,6 +172,45 @@ def _engagement_of(values):
     return None
 
 
+def _subject_of(tenant_id, engagement_id):
+    """The engagement's subject, or None (migration 031).
+
+    THE CURRENT ONE, not the one in force when the documents were filed. A
+    subject is editable, and a change is meant to reach every memorandum
+    generated afterwards - which is the same rule composition already
+    follows for the template: the memo is written now, against the
+    configuration in force now. What a value was READ under is recorded on
+    the extraction envelope and is a separate question."""
+    if engagement_id is None:
+        return None
+    found = _sql(
+        "SELECT subject_name FROM engagement "
+        "WHERE tenant_id = :t AND engagement_id = :e",
+        [_p("t", tenant_id), _p("e", int(engagement_id))]).get("records", [])
+    if not found:
+        return None
+    return (_col(found[0], 0) or "").strip() or None
+
+
+def _subject_of_memo(tenant_id, memo_id):
+    """The subject of the engagement a memo belongs to, for a rewrite.
+
+    Through memo.engagement_id (migration 030). A rewrite is handed nothing
+    but a memo_rewrite row, so the engagement is reached from the memo
+    rather than passed in.
+
+    NULL where the memo predates 030's backfill and was never given an
+    engagement. The rewrite then runs exactly as it does today - see
+    cleanup.subject_rule, which is empty rather than guessing."""
+    found = _sql(
+        "SELECT engagement_id FROM memo "
+        "WHERE tenant_id = :t AND memo_id = :m",
+        [_p("t", tenant_id), _p("m", int(memo_id))]).get("records", [])
+    if not found:
+        return None
+    return _subject_of(tenant_id, _col(found[0], 0))
+
+
 def _label_for(registry, field_id):
     """Label from the configuration. Group columns resolve to their own column
     label."""
@@ -340,7 +379,7 @@ def _invoke(prompt, system=None, stage="?", section="?", chars_in=0):
 
 # --- stage 2: draft --------------------------------------------------------
 
-def _compose(section, assembled):
+def _compose(section, assembled, subject_name=None):
     """Model-drafted section. Evidence is every value fed into its context.
 
     Citations are masked here as well as at consolidation. Drafting was the one
@@ -364,8 +403,13 @@ def _compose(section, assembled):
     context = "\n\n".join(context_parts)
     masked, tokens = _mask_citations(context[:_SECTION_INPUT_CHARS])
 
+    # The draft has no system prompt, so the subject goes in the prompt
+    # itself - after the section's own instruction, which is what the
+    # section is FOR, and before the citation rules. Empty where the
+    # engagement has no subject, and the prompt is then what it was.
     prompt = (
         section["prompt"]
+        + cleanup.subject_rule(subject_name)
         + cleanup.CITATION_TOKENS
         + "\n\n--- CONTEXT START ---\n"
         + masked
@@ -444,7 +488,7 @@ def _restore_citations(text, tokens):
     return text, dropped
 
 
-def _consolidate(section, markdown):
+def _consolidate(section, markdown, subject_name=None):
     """Turn one assembled section into the version a reader receives.
 
     Runs per section, not per memo: a single prompt over fifty documents
@@ -484,7 +528,14 @@ def _consolidate(section, markdown):
         + "\n--- SECTION END ---"
     )
 
-    text, usage = _invoke(prompt, system=cleanup.CLEANUP_PREAMBLE,
+    # The subject joins the PREAMBLE, not the shape directive. cleanup.py's
+    # own rule: anything about what may be SAID belongs in the preamble,
+    # which governs every section; SECTION_PRESENTATION is about shape. It
+    # also means a tenant's own section prompt, which replaces the shaping,
+    # cannot displace it.
+    text, usage = _invoke(prompt,
+                          system=cleanup.CLEANUP_PREAMBLE
+                          + cleanup.subject_rule(subject_name),
                           stage="consolidate", section=section["key"],
                           chars_in=len(markdown))
     text, dropped = _restore_citations(text, tokens)
@@ -608,7 +659,15 @@ def _rewrite(event):
             + "\n--- SECTION END ---"
         )
 
-        text, usage = _invoke(prompt, system=cleanup.REWRITE_PREAMBLE,
+        # A rewrite may reorder, shorten and retable a section, and every
+        # one of those is a chance to attach a counterparty's fact to the
+        # subject. It gets the same rule the other two passes get, reached
+        # through memo.engagement_id because a rewrite is handed nothing
+        # but its own row.
+        text, usage = _invoke(prompt,
+                              system=cleanup.REWRITE_PREAMBLE
+                              + cleanup.subject_rule(
+                                  _subject_of_memo(tenant_id, memo_id)),
                               stage="rewrite", section=str(rewrite_id),
                               chars_in=len(body))
         tokens_in = usage.get("input_tokens", 0)
@@ -733,6 +792,13 @@ def lambda_handler(event, context):
     generated_at = datetime.datetime.now(datetime.timezone.utc)
     tokens_in = tokens_out = 0
 
+    # Whose memorandum this is (SUBJ-01). Read once and carried into the
+    # draft, the consolidation and the front matter, so all three say the
+    # same thing. None where the engagement never named one, and every
+    # prompt is then exactly what it was.
+    engagement_id = _engagement_of(values)
+    subject_name = _subject_of(tenant_id, engagement_id)
+
     # 1. Assemble the deterministic sections. They are the context for the rest.
     assembled = {}
     for section in registry.sections_of_kind("extract", template_key):
@@ -746,7 +812,7 @@ def lambda_handler(event, context):
 
     # 2. Draft the composed sections from that context.
     for section in registry.sections_of_kind("composed", template_key):
-        markdown, used, usage = _compose(section, assembled)
+        markdown, used, usage = _compose(section, assembled, subject_name)
         tokens_in += usage.get("input_tokens", 0)
         tokens_out += usage.get("output_tokens", 0)
         assembled[section["key"]] = {
@@ -765,13 +831,20 @@ def lambda_handler(event, context):
         if not block["markdown"].strip():
             empty_sections.append(section["title"])
             continue
-        clean, usage = _consolidate(section, block["markdown"])
+        clean, usage = _consolidate(section, block["markdown"], subject_name)
         tokens_in += usage.get("input_tokens", 0)
         tokens_out += usage.get("output_tokens", 0)
         block["markdown"] = clean
 
     # 4. Render. Front matter and the coverage banner are built, not written.
-    subject = cleanup.subject_from(values)
+    #
+    # THE ENTERED SUBJECT FIRST, then the counted one, then the engagement
+    # name (SUBJ-01). subject_from() counts f_legal_name across the whole
+    # engagement, and the same counting that put a buyer's business in
+    # section II can put a buyer's name at the head of the page. It stays
+    # as the fallback for every engagement that has no subject_name, and
+    # front_matter falls back again to the engagement name below that.
+    subject = subject_name or cleanup.subject_from(values)
     parts = [
         cleanup.front_matter(
             subject, engagement,
@@ -828,7 +901,7 @@ def lambda_handler(event, context):
         """,
         [
             _p("tenant_id", tenant_id),
-            _p("engagement_id", _engagement_of(values)),
+            _p("engagement_id", engagement_id),
             _p("template_key", template_key),
             _p("config_revision", revision),
             _p("s3_bucket", CURATED_BUCKET),
@@ -866,10 +939,15 @@ def lambda_handler(event, context):
     # on demand when somebody asks for it, so there is no window in which a
     # memo exists without one and no stored file to go stale.
 
+    # subject_named says whether the prompts carried a subject at all, which
+    # is the difference between a memo written under SUBJ-01's rule and one
+    # written as they were before it. The name itself is on the memo.
     print("[composed] memo={} template={} revision={} docs={} values={} "
-          "claims={} empty={} tokens_in={} tokens_out={}".format(
+          "claims={} empty={} subject_named={} tokens_in={} tokens_out={}"
+          .format(
               memo_id, template_key, revision, len(document_ids), len(values),
-              claims, len(empty_sections), tokens_in, tokens_out))
+              claims, len(empty_sections), bool(subject_name),
+              tokens_in, tokens_out))
 
     return {
         "status": "ok",
