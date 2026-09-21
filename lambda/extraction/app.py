@@ -38,6 +38,16 @@ MAX_CHARS = 50000
 
 _ENVELOPE_SUFFIX = ".normalized.json"
 
+# What goes in document.extraction_error (migration 029). Short, machine-read
+# codes: an operator counts them and the screen branches on nothing but
+# "is it set". The sentence a person reads is written by the screen, not here.
+ERROR_MALFORMED_GROUP = "group_key_missing"
+ERROR_SCHEMA_FAILED = "schema_failed"
+
+
+class MalformedGroup(Exception):
+    """A field calling itself a table that does not carry its columns."""
+
 
 def _sql(statement, params=None):
     """Data API call, retrying while the cluster wakes from zero capacity."""
@@ -83,6 +93,28 @@ def _column_name(column_key):
     return column_key.split(".", 1)[1] if "." in column_key else column_key
 
 
+def _group_columns(field):
+    """The columns of a group field, or a refusal that names the field.
+
+    A field's tuple is five parts, and a group's is six - the sixth being its
+    columns. config.py reads a config_field row with no group_key as a single
+    value, so a row whose cardinality says 'group' while its group_key is
+    NULL arrives here as a FIVE-part tuple calling itself a group. Asking it
+    for field[5] raises IndexError, and that is how three malformed fields in
+    revisions 2 and 3 stopped extraction on 102 documents on 5 September.
+
+    registry.validate refuses that shape at publish now (cc0f141), so no
+    revision published since carries it. This is the second line: a revision
+    published BEFORE that guard existed is still readable, is still what
+    documents filed under it resolve against for ever, and still reaches this
+    code. Raised rather than skipped - a table asked for and not read is a
+    finding, not a silence."""
+    if len(field) < 6 or not isinstance(field[5], (list, tuple)):
+        raise MalformedGroup(
+            "'%s' says it is a table but carries no columns" % field[0])
+    return field[5]
+
+
 def _unit_word(units):
     """What to call a unit in the prompt: page, sheet or section."""
     return units[0]["kind"] if units else "section"
@@ -112,7 +144,7 @@ def _build_prompt(schema, envelope):
             # every cell: of 483 values with no citation in one tenant, 474
             # were table columns and 9 were single values.
             cols = ", ".join('"' + _column_name(c[0]) + '": string | null'
-                             for c in field[5])
+                             for c in _group_columns(field))
             lines.append(
                 '  "' + field_id + '": { "rows": [ { ' + cols
                 + ', "unit": integer | null } ], "unit": integer | null },'
@@ -277,7 +309,7 @@ def _persist(envelope, registry, schema_key, extracted):
                     r_kind, r_index, r_start, r_end, r_cell = _resolve_locator(
                         row.get("unit"), units)
 
-                for col in field[5]:
+                for col in _group_columns(field):
                     col_id = col[0]
                     cell_value = row.get(_column_name(col_id))
                     if cell_value is None or cell_value == "":
@@ -343,6 +375,7 @@ def lambda_handler(event, context):
     schema_keys = registry.schemas_for(envelope.get("document_type"))
     results, total_written = {}, 0
     tokens_in = tokens_out = 0
+    failures = []
 
     for schema_key in schema_keys:
         schema = registry.get_schema(schema_key)
@@ -350,17 +383,43 @@ def lambda_handler(event, context):
             results[schema_key] = {"status": "no-schema"}
             continue
 
-        prompt, truncated = _build_prompt(schema, envelope)
-        extracted, usage = _invoke(prompt)
+        # ONE SCHEMA'S FAILURE IS ONE SCHEMA'S (pipeline spec, per-schema
+        # failure). This loop used to let an exception leave the handler: a
+        # document routed to twenty-one schemas lost the twenty that worked
+        # because the first one did not, and - because the UPDATE below never
+        # ran - said "extracting..." for ever afterwards.
+        #
+        # The whole schema is inside the try, the persist included. A failure
+        # in the writing rather than the reading is rarer and is not rolled
+        # back: what was written for this schema stays, because unpicking it
+        # would mean a transaction per schema and losing the values would be
+        # the worse answer. The failure is recorded either way.
+        try:
+            prompt, truncated = _build_prompt(schema, envelope)
+            extracted, usage = _invoke(prompt)
 
-        tokens_in += usage.get("input_tokens", 0)
-        tokens_out += usage.get("output_tokens", 0)
+            tokens_in += usage.get("input_tokens", 0)
+            tokens_out += usage.get("output_tokens", 0)
 
-        if extracted is None:
-            results[schema_key] = {"status": "invalid-json"}
+            if extracted is None:
+                results[schema_key] = {"status": "invalid-json"}
+                continue
+
+            written = _persist(envelope, registry, schema_key, extracted)
+        except Exception as exc:  # noqa: BLE001 - recorded, then carried on
+            code = (ERROR_MALFORMED_GROUP if isinstance(exc, MalformedGroup)
+                    else ERROR_SCHEMA_FAILED)
+            failures.append(code)
+            results[schema_key] = {
+                "status": "failed",
+                "error": type(exc).__name__,
+                "detail": str(exc),
+            }
+            print("[extraction-failed] doc={} schema={} error={} detail={}"
+                  .format(envelope.get("document_id"), schema_key,
+                          type(exc).__name__, exc))
             continue
 
-        written = _persist(envelope, registry, schema_key, extracted)
         total_written += written
 
         results[schema_key] = {
@@ -369,6 +428,17 @@ def lambda_handler(event, context):
             "truncated": truncated,
         }
 
+    # The one code the row carries, where several schemas failed differently.
+    # The malformed group wins: it names a fault in the CONFIGURATION, which
+    # somebody can go and fix, over a generic failure that says only that
+    # something went wrong.
+    extraction_error = None
+    if failures:
+        extraction_error = (ERROR_MALFORMED_GROUP
+                            if ERROR_MALFORMED_GROUP in failures
+                            else failures[0])
+
+    envelope["extraction_error"] = extraction_error
     envelope["extraction_complete"] = True
     envelope["extraction_results"] = results
     envelope["extraction_tokens"] = {"input": tokens_in, "output": tokens_out}
@@ -381,25 +451,37 @@ def lambda_handler(event, context):
         ContentType="application/json",
     )
 
-    # Mark the document extracted. Without this the list cannot tell a
-    # document still being read from one that yielded nothing - both show as
-    # zero values, and they mean very different things to a reader.
+    # Mark the document extracted, and say whether anything failed on the way.
+    # Without the timestamp the list cannot tell a document still being read
+    # from one that yielded nothing - both show as zero values, and they mean
+    # very different things to a reader. Without the code it cannot tell one
+    # that yielded nothing from one that was never asked properly.
+    #
+    # BOTH COLUMNS, EVERY TIME, and extraction_error is written NULL on a
+    # clean run: a document re-extracted after its configuration was fixed
+    # must not keep yesterday's fault. Nothing else on the row is named, so
+    # nothing else is touched.
     document_id = envelope.get("document_id")
     if document_id:
         _sql(
-            "UPDATE document SET extracted_at = UTC_TIMESTAMP() "
+            "UPDATE document SET extracted_at = UTC_TIMESTAMP(), "
+            "extraction_error = :error "
             "WHERE tenant_id = :t AND document_id = :d",
-            [_p("t", envelope["tenant_id"]), _p("d", int(document_id))],
+            [_p("error", extraction_error),
+             _p("t", envelope["tenant_id"]), _p("d", int(document_id))],
         )
 
-    print("[extracted] doc={} schemas={} values={} tokens_in={} tokens_out={}".format(
-        envelope.get("document_id"), list(results.keys()),
-        total_written, tokens_in, tokens_out))
+    print("[extracted] doc={} schemas={} values={} failed={} error={} "
+          "tokens_in={} tokens_out={}".format(
+              envelope.get("document_id"), list(results.keys()),
+              total_written, len(failures), extraction_error,
+              tokens_in, tokens_out))
 
     return {
         "status": "ok",
         "document_id": envelope.get("document_id"),
         "values_written": total_written,
+        "extraction_error": extraction_error,
         "results": results,
     }
 

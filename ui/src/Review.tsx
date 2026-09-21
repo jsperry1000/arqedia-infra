@@ -244,8 +244,15 @@ export function EngagementView({ id, onBack, onMemo }: {
   const reading = docs.filter((d) => d.state === "reading").length
     + pending.filter((p) => p.state === "reading").length;
   const unfiled = toFile.length;
+  // WHAT IS STILL BEING WORKED ON, and nothing else. Three conditions were
+  // missing and each one kept the screen asking about something no process
+  // would ever finish: a document set aside is not waiting on anything, and
+  // one that failed extraction is not waiting either - it has its answer.
+  // 51 rows from 5 September said "Extracting from 51 filed documents" every
+  // morning for a fortnight because of it.
   const extracting = docs.filter(
-    (d) => d.state === "filed" && !d.extracted_at).length;
+    (d) => d.active && d.state === "filed"
+      && !d.extracted_at && !d.extraction_error).length;
   const waitingFiles = expected?.names.length ?? 0;
   const blocked = busy !== "" || reading > 0 || unfiled > 0
     || generating !== null;
@@ -943,15 +950,45 @@ export function EngagementView({ id, onBack, onMemo }: {
                       : (d.document_type ?? "unclassified")}
                   </td>
                   <td className="muted">
-                    {d.state === "reading" || !d.extracted_at
-                      ? <span className="warn">extracting&hellip;</span>
-                      : (
-                        // Zero opens too: the drawer lists what was looked
-                        // for and not found.
-                        <a onClick={() => openValues(d.document_id)}>
-                          {d.values}
-                        </a>
-                      )}
+                    {/* Three answers, not two. A document that failed
+                        extraction says so AND shows what it did read: a
+                        failure part way through leaves real facts behind it,
+                        and hiding them behind "extracting..." was how fifteen
+                        extracted values looked like none at all. */}
+                    {d.extraction_error
+                      ? (
+                        <>
+                          <span className="warn">extraction failed</span>{" "}
+                          <a onClick={() => openValues(d.document_id)}>
+                            {d.values}
+                          </a>
+                          {/* The way out, on the row that needs it. Nothing
+                              further will happen to this document on its
+                              own, so the only move is to say it is not to be
+                              used - which is the tick at the other end of
+                              the row, offered here because this is where a
+                              person is looking. It goes through the same
+                              POST /documents/{'{'}id{'}'}/active any seat may
+                              call; nothing is deleted and the row, its file
+                              and whatever it did read all stay. */}
+                          {d.active && (
+                            <a className="small" onClick={() => toggleActive(d)}
+                               title="Set it aside. Nothing is deleted - it is
+                                      left out of the next memorandum.">
+                              {" ×"}
+                            </a>
+                          )}
+                        </>
+                      )
+                      : d.state === "reading" || !d.extracted_at
+                        ? <span className="warn">extracting&hellip;</span>
+                        : (
+                          // Zero opens too: the drawer lists what was looked
+                          // for and not found.
+                          <a onClick={() => openValues(d.document_id)}>
+                            {d.values}
+                          </a>
+                        )}
                   </td>
                   <td className="muted">{(d.filed_at ?? "").slice(0, 16)}</td>
                   <td className="muted">{d.uploaded_by ?? "\u2014"}</td>

@@ -691,6 +691,7 @@ def list_documents(tenant_id, engagement):
         SELECT document_id, filename, document_type, page_count,
                extraction_method, filed_at, uploaded_by, active, state,
                deactivated_by, deactivated_at, extracted_at,
+               extraction_error,
                (SELECT COUNT(*) FROM extracted_value v
                  WHERE v.document_id = d.document_id
                    AND v.tenant_id = d.tenant_id) AS values_found
@@ -718,7 +719,13 @@ def list_documents(tenant_id, engagement):
          # Null means extraction has not run. Zero values with a null here is
          # "still working"; zero values with a timestamp is a finding.
          "extracted_at": _col(r, 11),
-         "values": _col(r, 12)}
+         # And why it did not finish, where it did not (migration 029). Set
+         # with no timestamp is the third answer the pair could not give
+         # before: extraction ran, failed, and nothing further will happen on
+         # its own. Whatever values it did write are still counted below -
+         # a failure part way through leaves real facts behind it.
+         "extraction_error": _col(r, 12),
+         "values": _col(r, 13)}
         for r in result.get("records", [])
     ]
 
