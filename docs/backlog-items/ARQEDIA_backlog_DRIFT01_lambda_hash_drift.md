@@ -158,3 +158,161 @@ before a plan will run at all.
 Fixing it. Normalising the three files to LF and deciding `sample.pdf` both
 touch Lambda sources outside the `extraction-error` branch, and one of them —
 `normalizer` — is under active edit in another session.
+
+---
+
+### Applied through, 21 September 2026
+
+SUBJ-01 needed `api`, `extraction` and `composition`. There is no narrower
+target that reaches them, for the reason set out above, so the drift was
+accepted and applied rather than worked around. The decision was taken by the
+user on 21 September; this section records what actually shipped.
+
+Applied from `c:\terraform\arqedia-subject`, a `git worktree` at
+`feature/subj-01-engagement-subject`, with `.terraform`, `.terraform.lock.hcl`
+and `build/` copied in. **Five functions were deployed, not three.**
+
+```
+                  deployed before              deployed after
+api          vYlrulwC+sX2gLxjHKahyfrlPn4r6drR1/VeZyCtcUc=  QLoWwGrqYJWqISebrIZCM3xzH7ZjX6Jq0hKCxofVQbk=
+extraction   CA37Kxcebvj3T1pB73pyZWnkrc5mCksfScYw1H2V6dY=  WiRcYNg5AVALWxI78BF8wnITRLYR5TvLn7UrMirPYzQ=
+composition  AvlEsXURRtpcAuKAdU6v3ltSpcR6amQ7lImY8em2LP4=  wMya551u2scRnO78dXgcxE1XCg7gphwxVPAWWJ2zDV4=
+proposer     guvwiMD9P6cA2kZTo5yx5aG2o6Roo6AHYhMGA7f6mis=  0d8HYzV9k60H6cL/3ZUkUBmjZzqIZtfKlfawhaXQcQI=
+render       NZBtRqpa9rysvWELUbXseEc7kKcsR+hvLPgMh0H3FEw=  xNivczNKf8HEh0b7So2AiSfw3qJZ3C6VSEl1CbXiYSQ=
+```
+
+`api`, `extraction` and `composition` carry SUBJ-01. `proposer` and `render`
+carry nothing but this drift: they were pulled in as dependencies of the
+targets and their source has not changed since 4 and 20 September.
+
+The three `after` values for `proposer`, `render` and `composition` are the
+ones this document predicted in **The baseline**, unchanged. Cause 1 is
+therefore closed for `proposer` and `composition`: what is deployed is now
+what a clean checkout builds, which is what `.gitattributes` says it should
+be. `normalizer` is untouched and still drifts.
+
+### `render` now runs without `sample.pdf`
+
+Cause 2 is resolved by removal, as this document said it would be. Confirmed
+by downloading the deployed bundle rather than by inferring it from the hash:
+
+```
+aws lambda get-function --function-name arqedia-dev-render  ->  Code.Location
+unzip -l  ->  app.py, style.py          (two files; no sample.pdf)
+```
+
+And exercised rather than assumed - the branding preview is the one path that
+renders a PDF from nothing but a tenant's colours, and is where a missing
+sample would have shown:
+
+```
+aws lambda invoke arqedia-dev-render  {"tenant_id": 1, "preview": true}
+  ->  {"status": "ok", "plan": "business", "url": <presigned>}
+```
+
+So `sample.pdf` was dead weight. **It is still present in
+`c:\terraform\arqedia\lambda\render\` and is still git-ignored**, so the next
+apply from that working copy puts it back into the function. Deleting it there,
+or committing it, is the remaining half of Cause 2 and is not done.
+
+### A third cause, found and cleared: `__pycache__`
+
+Running `python -m unittest discover -s tests` creates `__pycache__` in every
+`lambda/` directory the tests import - nine of them here. Each sits inside a
+`source_dir` that `archive_file` archives with no excludes, so the `.pyc`
+files go into the zips and move the hash. Two plans minutes apart disagreed on
+`api`, `extraction`, `composition` and `render` for this reason alone, and
+agreed again once the directories were removed.
+
+That is **BLD-01**, reached from a new direction: it is not only the long-lived
+working copy that can pollute a bundle, it is any tree the tests have been run
+in. `archive_file` remains deterministic over content; the content had changed.
+
+Verified clean before this section was written - every deployed bundle
+downloaded and listed:
+
+```
+api 5 files, extraction 1, composition 2, proposer 1, render 2
+pyc or __pycache__ in any of them:  False
+```
+
+The durable fix is an `excludes` on each `archive_file`, which belongs to
+BLD-01 and is not done here.
+
+---
+
+## Addendum, 21 September 2026 · the same defect in `web/`
+
+Found while building `failed-row-tick`. The Lambda zips are not the only
+artefact whose hash a clean checkout cannot reproduce: **the front-end bundle
+is not reproducible either, and here the drift is already committed.**
+
+### The four sources
+
+`.gitattributes` names `*.tf`, `*.py` and `*.sql` and nothing else, so these
+are stored with CRLF while the committed `web/` output was built from LF
+copies of them:
+
+```
+brand/logo-deep.svg      CRLF in the repository
+brand/logo-white.svg     CRLF in the repository
+ui/src/index.css         CRLF in the repository
+ui/src/tokens.css        CRLF in the repository
+```
+
+Vite hashes an asset by its bytes, and a line ending is a byte. So a build
+from a clean checkout emits different filenames for files nobody edited:
+
+```
+built from the repository as checked out    built from LF copies
+web/assets/logo-deep-C3csgApn.svg           web/assets/logo-deep-Cc-XAy_2.svg   ← committed
+web/assets/logo-white-BA7qHUFe.svg          web/assets/logo-white-BjJcKX-d.svg  ← committed
+```
+
+The content is identical. `git diff` over the emitted CSS and both SVGs reports
+**no changed lines at all** — only `LF will be replaced by CRLF`.
+
+### What it costs
+
+Anyone running `npm run build` on a clean checkout sweeps three unrelated asset
+replacements into their commit: two logos added under new names, two deleted
+under the old, and `web/index.html` rewritten to match. Nothing warns them, and
+the diff looks like real work.
+
+**It has already happened.** `origin/feature/subj-01-engagement-subject`
+carries `web/assets/logo-deep-C3csgApn.svg` and
+`web/assets/logo-white-BA7qHUFe.svg` — the CRLF-hashed pair — where `main`
+carries the LF-hashed ones. Merging it swaps both assets for byte-identical
+copies under different names.
+
+CI does not catch it: `.github/workflows/deploy-frontend.yml` runs
+`aws s3 sync web/ --delete` on what is committed and never builds, so whatever
+hash a person's machine produced is what ships.
+
+### Two more git-ignored files the build needs
+
+A clean checkout cannot build the application at all without:
+
+```
+ui/.env          required, no default; the build refuses rather than point a
+                 bundle at the wrong Paddle account. Sandbox on dev, and the
+                 client-side token is public by Paddle's own documentation.
+ui/node_modules  npm ci, from the committed package-lock.json
+```
+
+`ui/.env.example` is committed and documents the first. Neither is a defect;
+they are recorded here because a worktree needs them before `web/` can be
+rebuilt, exactly as a plan needs `build/layer-docprocessing.zip`.
+
+### What was done about it on `failed-row-tick`
+
+The four sources were normalised to LF for the build, so the output reproduced
+the committed asset names, and then restored. That branch's `web/` diff is the
+bundle and one line of `index.html`, and nothing else. **The normalisation was
+not committed** — it is a workaround for one build, not a fix.
+
+### Still not in scope
+
+Fixing it. The honest repair is `.gitattributes` covering `*.svg` and `*.css`,
+then one commit that normalises those four files and rebuilds `web/` — which
+touches the front end while another session has it open.

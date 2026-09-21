@@ -130,6 +130,40 @@ def presentation_for(section_key):
     return SECTION_PRESENTATION.get(section_key, "")
 
 
+# Who the memorandum is about. Appended to the draft prompt and to both
+# preambles, because all three write prose about companies and none of them
+# was ever told which company the memorandum is for.
+#
+# ABOUT WHAT MAY BE SAID, not about shape - which is why it joins
+# CLEANUP_PREAMBLE and REWRITE_PREAMBLE rather than SECTION_PRESENTATION.
+#
+# THE NAME IS INDICATIVE. "Cocoa Empire" has to reach "Cocoa Empire Uganda
+# Limited" and "CE", and no matching we could write would do that honestly;
+# the model is told the name and told what counts as the same company. The
+# last sentence is the one this exists for: memo 120 described a BUYER's
+# business as the subject's, under a citation that was perfectly correct.
+#
+# EMPTY WHERE THERE IS NO SUBJECT. An engagement that never named one - which
+# is every engagement opened before migration 031 - composes exactly as it
+# did before. Silence is the honest answer; a guessed subject in a prompt is
+# worse than none, because the model would then attribute facts to it.
+def subject_rule(subject_name):
+    """The subject block for a prompt, or nothing."""
+    name = (subject_name or "").strip()
+    if not name:
+        return ""
+    return (
+        "\n\nSUBJECT\n"
+        "This memorandum is about " + name + ". Documents may write the "
+        "name differently - with or without a legal suffix such as Limited "
+        "or Ltd, in another capitalisation, abbreviated, or in full. Treat "
+        "any name that refers to the same company as the subject.\n"
+        "Every other company - a buyer, supplier, lender, inspector or "
+        "other counterparty - is not the subject. Never state a fact about "
+        "another company as a fact about the subject.\n"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Deterministic - never model work
 # ---------------------------------------------------------------------------
@@ -189,7 +223,14 @@ def subject_from(values):
     """The entity the memo is about: the most frequently stated legal name.
 
     Determined by counting, not asked of the model - the title of a compliance
-    record should not be a generated guess."""
+    record should not be a generated guess.
+
+    NO LONGER THE FIRST ANSWER (SUBJ-01). The engagement's own subject_name
+    is, where it has one: this counts f_legal_name across every document in
+    the engagement, and the same counting that can crown a counterparty in
+    the body can crown one in the title. It stays as the fallback because
+    every engagement opened before migration 031 has no subject_name, and
+    the alternative for those is a cleaned folder name."""
     try:
         names = {}
         for v in values:

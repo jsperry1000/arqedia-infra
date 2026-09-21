@@ -1,0 +1,104 @@
+-- 031_engagement_subject.sql
+--
+-- The engagement records its subject: the company the memorandum is about.
+-- PROPOSED, and not applied.
+--
+-- WHY. Memo 120 (tenant 1, engagement 29 COCOA-EMPIRE-1, revision 42)
+-- described GoodFlow - a BUYER - as the specialist originator, under a
+-- citation to a page that says Cocoa Empire Uganda Limited, and gave it
+-- 2025 sales for a company incorporated on 29 May 2026. The citation and
+-- the description were both right. The subject was wrong.
+--
+-- Nothing in the system records whose facts a field holds.
+-- f_company_summary says "one-paragraph description of the entity" and
+-- f_business_model says "how it operates / makes money"; neither says
+-- WHOSE. The extraction prompt carries field labels and descriptions and
+-- nothing else, so a document describing a counterparty in detail and the
+-- subject not at all fills the subject's fields with the counterparty's
+-- facts. cleanup.subject_from() works one out by counting f_legal_name,
+-- but only the front matter reads it and no prompt names it at all.
+--
+-- The fix is to scope, not to add an entity column to every extracted
+-- value (decision of 21 September, SUBJ-01, option B). One subject per
+-- engagement, recorded here, passed into extraction and composition.
+--
+-- 030 IS APPLIED. Checked before writing this, not assumed:
+--
+--   SELECT filename, applied_at FROM schema_migration
+--    WHERE filename = '030_engagement_and_memo_state.sql'
+--   -> 030_engagement_and_memo_state.sql | 2026-09-21 16:06:06
+--
+--   SELECT COUNT(*) FROM engagement   -> 30
+--
+-- ADDITIVE AND NULLABLE. One column on one table. Nothing is dropped and
+-- nothing already recorded is altered.
+
+-- --- the subject -------------------------------------------------------------
+--
+-- NO BACKFILL FROM engagement.name. The name is a label somebody typed at
+-- upload - COCOA-EMPIRE-1, cleaned by _clean() into an S3-safe alphabet -
+-- and it is not a company name. Copying it here would put a guess in the
+-- one field whose whole purpose is to be what a person actually said. All
+-- 30 engagements keep NULL until somebody enters one.
+--
+-- 255 RATHER THAN name's 120. name is bounded by _clean()'s 120-character
+-- key alphabet; this is stored verbatim, as a person writes it, and a
+-- legal name with its suffix and jurisdiction runs long. It matches
+-- created_by and archived_by, which are the other free-text columns here.
+--
+-- NOT IN ANY KEY, so the table's case-folding collation
+-- (utf8mb4_0900_ai_ci, migration 030) does not reach it. Two engagements
+-- may share a subject: a firm running three matters on one borrower is the
+-- ordinary case, not a mistake.
+--
+-- INDICATIVE, NOT DISPOSITIVE. "Cocoa Empire" must match "Cocoa Empire
+-- Uganda Limited", "Cocoa Empire Uganda Ltd" and "CE". That matching is
+-- the model's, told the entered name and told to treat any name referring
+-- to the same company as the subject. Nothing here tries to normalise it.
+
+ALTER TABLE engagement
+  ADD COLUMN subject_name VARCHAR(255) NULL AFTER name;
+
+-- Verification
+--
+--   SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
+--     FROM information_schema.COLUMNS
+--    WHERE TABLE_SCHEMA = 'arqedia' AND TABLE_NAME = 'engagement'
+--      AND COLUMN_NAME = 'subject_name'
+--
+-- Expect one row: subject_name | varchar(255) | YES.
+--
+--   SELECT COUNT(*) FROM engagement WHERE subject_name IS NOT NULL
+--
+-- Expect 0. This migration writes no value into it.
+--
+--   SELECT COUNT(*) FROM engagement
+--
+-- Expect 30, unchanged - read at the moment of applying rather than taken
+-- from here.
+--
+--   SELECT filename FROM schema_migration
+--    WHERE filename = '031_engagement_subject.sql'
+--
+-- Expect one row.
+--
+--
+-- DEPLOY ORDER. This migration first, the code second. The API writes this
+-- column by name and extraction reads it by name, so code deployed against
+-- a database without it fails on every subject set and every document
+-- extracted.
+--
+-- WHAT IS NOT IN THIS MIGRATION, deliberately:
+--
+--   The three field descriptions - f_company_summary, f_business_model,
+--   f_turnover_stated - are CONFIGURATION, not code and not schema. They
+--   are entered in Configure and published, and they take effect only for
+--   documents filed under the new revision, because extraction resolves
+--   against the filing revision. A migration writing config_field rows
+--   would put a tenant's wording beyond their reach and would rewrite
+--   revisions that documents already filed resolve against.
+--
+--   Engagement 29's stored values. Extraction only ever INSERTs into
+--   extracted_value, so re-extraction adds rows beside the old ones and
+--   _load_values has no config_revision filter. Deleting them is a
+--   separate decision (SUBJ-01, Open).

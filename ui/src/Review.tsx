@@ -71,6 +71,17 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
+  // The company these memoranda are about (SUBJ-01). Null until somebody
+  // names one, which is every engagement opened before migration 031.
+  // Nothing is filed without it, because extraction reads a document for
+  // the SUBJECT's facts and cannot tell which company that is unless it is
+  // told - so this screen holds File and says why, rather than letting the
+  // server refuse a click it could have prevented.
+  const [subject, setSubject] = useState<string | null>(null);
+  const [subjectDraft, setSubjectDraft] = useState("");
+  const [editingSubject, setEditingSubject] = useState(false);
+  const [subjectSaid, setSubjectSaid] = useState("");
+
   // What filing this proposal would cost, and what the memo would.
   //
   // FETCHED, NOT CALCULATED. Multiplying a count by a price the screen
@@ -129,6 +140,7 @@ export function EngagementView({ id, onBack, onMemo }: {
     setPending(p.pending);
     setDocs(d.documents);
     setMemos(m.memos);
+    setSubject(p.subject_name);
 
     // A sent file is seen once a row it produced is on screen.
     setExpected((e) => {
@@ -479,6 +491,40 @@ export function EngagementView({ id, onBack, onMemo }: {
     }
   }
 
+  /** Name the subject, or change it.
+   *
+   *  The server resolves or creates the engagement row by name, so this is
+   *  the same call whether the engagement has one already or not.
+   *
+   *  A CHANGE REACHES ONLY WHAT IS GENERATED AFTERWARDS. Values already
+   *  extracted were read under the old subject and stay as they are;
+   *  re-extracting is a separate act and is charged. Said on screen rather
+   *  than left to be discovered. */
+  async function saveSubject() {
+    const wanted = subjectDraft.trim();
+    if (!wanted || busy) return;
+    const was = subject;
+    setBusy("Saving the subject");
+    setError("");
+    setSubjectSaid("");
+    try {
+      const saved = await api.setSubject(id, wanted);
+      setSubject(saved.subject_name);
+      setEditingSubject(false);
+      setSubjectSaid(
+        was && was !== saved.subject_name
+          ? `Subject changed from ${was} to ${saved.subject_name}. `
+            + "Memoranda generated from now on say so; facts already read "
+            + "were read under the old one and are unchanged."
+          : "");
+    } catch (err) {
+      setError(reason(err));
+    } finally {
+      setBusy("");
+      refresh();
+    }
+  }
+
   async function fileAll() {
     const decisions: Decision[] = toFile.map((p) => ({
       document_id: p.document_id,
@@ -525,6 +571,21 @@ export function EngagementView({ id, onBack, onMemo }: {
     await api.setActive(d.document_id, !d.active);
     refresh();
   }
+
+  /** A document whose extraction failed and which read nothing at all.
+   *
+   *  It has no bearing on any memorandum. Composition reads documents only
+   *  through extracted_value - the JOIN is FROM extracted_value, never from
+   *  document - so a row with no values contributes no fact, no source and
+   *  no citation whether it is in use or not. Including it and excluding it
+   *  produce the same memorandum.
+   *
+   *  So the tick is ABSENT rather than disabled or unticked. Unticking it
+   *  would write active = 0 and say a person made a judgement they never
+   *  made; disabling it would invite them to work out why, and there is no
+   *  answer they could act on. Nothing is written for these rows at all. */
+  const nothingToInclude = (d: Doc) =>
+    !!d.extraction_error && d.values === 0;
 
   // Generating starts the memo and returns. The memo appears in the list when
   // it is written, found by polling rather than by a fixed wait.
@@ -654,6 +715,67 @@ export function EngagementView({ id, onBack, onMemo }: {
   return (
     <div>
       <h2>{id}</h2>
+
+      {/* The subject, above the upload control and above everything else
+          (SUBJ-01). It is here rather than in a drawer because a person
+          uploading into an engagement with no subject must not have to go
+          looking for the reason nothing will file. Composed from the
+          classes this screen already uses - no new CSS. */}
+      <div className="review">
+        <div className="review-head">
+          <strong>Subject</strong>
+          {subject && !editingSubject && <span>{subject}</span>}
+          {!editingSubject && (
+            <button className="secondary" disabled={!!busy}
+                    onClick={() => {
+                      setSubjectDraft(subject ?? "");
+                      setSubjectSaid("");
+                      setEditingSubject(true);
+                    }}
+                    title={subject
+                      ? "Change the company these memoranda are about."
+                      : "Name the company these memoranda are about."}>
+              {subject ? "Change" : "Name the subject"}
+            </button>
+          )}
+        </div>
+
+        {editingSubject && (
+          <div className="filters" style={{ marginTop: 10, marginBottom: 0 }}>
+            <input autoFocus value={subjectDraft}
+                   placeholder="The company these memoranda are about"
+                   maxLength={255}
+                   onChange={(e) => setSubjectDraft(e.target.value)}
+                   onKeyDown={(e) => {
+                     if (e.key === "Enter") saveSubject();
+                     if (e.key === "Escape") setEditingSubject(false);
+                   }} />
+            <button disabled={!!busy || subjectDraft.trim() === ""}
+                    onClick={saveSubject}>Save</button>
+            <a className="secondary small"
+               onClick={() => setEditingSubject(false)}>Cancel</a>
+          </div>
+        )}
+
+        {!subject && (
+          <p className="why warn">
+            This engagement has no subject, so nothing in it can be filed.
+            Every document is read for the subject's facts &mdash; a buyer,
+            supplier, lender or inspector named in the same file is not the
+            subject &mdash; and nothing here says which company that is.
+          </p>
+        )}
+
+        {subject && !editingSubject && (
+          <p className="why">
+            Written differently in a document &mdash; with or without a legal
+            suffix, abbreviated, or in full &mdash; it is still the subject.
+            Every other company in the file is not.
+          </p>
+        )}
+
+        {subjectSaid && <p className="why warn">{subjectSaid}</p>}
+      </div>
 
       <input type="file" multiple onChange={(e) => upload(e.target.files)} />
       {working && <Working what={working} />}
@@ -856,12 +978,20 @@ export function EngagementView({ id, onBack, onMemo }: {
             </UpgradePrompt>
           )}
 
+          {/* Held for want of a subject, and it says so rather than going
+              quiet. The server refuses this call above the charge in any
+              case; this is so a person is told before the click instead of
+              after it, which is what the money gate above already does. */}
           <button onClick={fileAll}
-                  disabled={!!busy || toFile.length === 0
-                            || (fileQuote ? !fileQuote.affordable : false)}>
-            File {toFile.length}{" "}
-            {toFile.length === 1 ? "document" : "documents"}
-            {fileQuote ? ` \u00b7 ${money(fileQuote.total_cents)}` : ""}
+                  disabled={!!busy || toFile.length === 0 || !subject
+                            || (fileQuote ? !fileQuote.affordable : false)}
+                  title={subject ? undefined
+                    : "Name the subject of this engagement first."}>
+            {!subject
+              ? "Name the subject to file"
+              : `File ${toFile.length} `
+                + `${toFile.length === 1 ? "document" : "documents"}`
+                + (fileQuote ? ` \u00b7 ${money(fileQuote.total_cents)}` : "")}
           </button>
         </>
       )}
@@ -927,15 +1057,30 @@ export function EngagementView({ id, onBack, onMemo }: {
                 {open && g.rows.map((d) => (
                 <tr key={d.document_id} className={d.active ? "" : "aside"}>
                   <td>
-                    <input
-                      type="checkbox"
-                      checked={d.active}
-                      onChange={() => toggleActive(d)}
-                      title={d.active
-                        ? "In use. Uncheck to leave it out of the next memo."
-                        : "Set aside" + (d.deactivated_by
-                          ? " by " + d.deactivated_by : "")}
-                    />
+                    {/* No tick where there is nothing to include. Every other
+                        row keeps the one it has always had, and so does the
+                        column: this is the absence of a control on the rows
+                        it means nothing for, not a change to what it does. */}
+                    {nothingToInclude(d)
+                      ? (
+                        <span className="muted"
+                              title="Nothing was read from this document, so
+                                     including it or leaving it out makes no
+                                     difference to any memorandum.">
+                          {"—"}
+                        </span>
+                      )
+                      : (
+                        <input
+                          type="checkbox"
+                          checked={d.active}
+                          onChange={() => toggleActive(d)}
+                          title={d.active
+                            ? "In use. Uncheck to leave it out of the next memo."
+                            : "Set aside" + (d.deactivated_by
+                              ? " by " + d.deactivated_by : "")}
+                        />
+                      )}
                   </td>
                   <td>
                     <a onClick={() => openValues(d.document_id)}>
@@ -977,22 +1122,6 @@ export function EngagementView({ id, onBack, onMemo }: {
                           <a onClick={() => openValues(d.document_id)}>
                             {d.values}
                           </a>
-                          {/* The way out, on the row that needs it. Nothing
-                              further will happen to this document on its
-                              own, so the only move is to say it is not to be
-                              used - which is the tick at the other end of
-                              the row, offered here because this is where a
-                              person is looking. It goes through the same
-                              POST /documents/{'{'}id{'}'}/active any seat may
-                              call; nothing is deleted and the row, its file
-                              and whatever it did read all stay. */}
-                          {d.active && (
-                            <a className="small" onClick={() => toggleActive(d)}
-                               title="Set it aside. Nothing is deleted - it is
-                                      left out of the next memorandum.">
-                              {" ×"}
-                            </a>
-                          )}
                         </>
                       )
                       : d.state === "reading" || !d.extracted_at
