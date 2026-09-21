@@ -244,8 +244,15 @@ export function EngagementView({ id, onBack, onMemo }: {
   const reading = docs.filter((d) => d.state === "reading").length
     + pending.filter((p) => p.state === "reading").length;
   const unfiled = toFile.length;
+  // WHAT IS STILL BEING WORKED ON, and nothing else. Three conditions were
+  // missing and each one kept the screen asking about something no process
+  // would ever finish: a document set aside is not waiting on anything, and
+  // one that failed extraction is not waiting either - it has its answer.
+  // 51 rows from 5 September said "Extracting from 51 filed documents" every
+  // morning for a fortnight because of it.
   const extracting = docs.filter(
-    (d) => d.state === "filed" && !d.extracted_at).length;
+    (d) => d.active && d.state === "filed"
+      && !d.extracted_at && !d.extraction_error).length;
   const waitingFiles = expected?.names.length ?? 0;
   const blocked = busy !== "" || reading > 0 || unfiled > 0
     || generating !== null;
@@ -943,15 +950,29 @@ export function EngagementView({ id, onBack, onMemo }: {
                       : (d.document_type ?? "unclassified")}
                   </td>
                   <td className="muted">
-                    {d.state === "reading" || !d.extracted_at
-                      ? <span className="warn">extracting&hellip;</span>
-                      : (
-                        // Zero opens too: the drawer lists what was looked
-                        // for and not found.
-                        <a onClick={() => openValues(d.document_id)}>
-                          {d.values}
-                        </a>
-                      )}
+                    {/* Three answers, not two. A document that failed
+                        extraction says so AND shows what it did read: a
+                        failure part way through leaves real facts behind it,
+                        and hiding them behind "extracting..." was how fifteen
+                        extracted values looked like none at all. */}
+                    {d.extraction_error
+                      ? (
+                        <>
+                          <span className="warn">extraction failed</span>{" "}
+                          <a onClick={() => openValues(d.document_id)}>
+                            {d.values}
+                          </a>
+                        </>
+                      )
+                      : d.state === "reading" || !d.extracted_at
+                        ? <span className="warn">extracting&hellip;</span>
+                        : (
+                          // Zero opens too: the drawer lists what was looked
+                          // for and not found.
+                          <a onClick={() => openValues(d.document_id)}>
+                            {d.values}
+                          </a>
+                        )}
                   </td>
                   <td className="muted">{(d.filed_at ?? "").slice(0, 16)}</td>
                   <td className="muted">{d.uploaded_by ?? "\u2014"}</td>

@@ -237,6 +237,11 @@ export type Doc = {
   deactivated_by: string | null;
   deactivated_at: string | null;
   extracted_at: string | null;
+  /** Why extraction did not finish, where it did not. Set with a null
+   *  extracted_at means it ran, failed, and nothing further will happen on
+   *  its own - which is the one thing extracted_at alone could not say.
+   *  Whatever values it wrote before failing are still in `values`. */
+  extraction_error: string | null;
   values: number;
 };
 
