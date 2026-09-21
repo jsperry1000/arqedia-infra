@@ -238,3 +238,81 @@ pyc or __pycache__ in any of them:  False
 
 The durable fix is an `excludes` on each `archive_file`, which belongs to
 BLD-01 and is not done here.
+
+---
+
+## Addendum, 21 September 2026 · the same defect in `web/`
+
+Found while building `failed-row-tick`. The Lambda zips are not the only
+artefact whose hash a clean checkout cannot reproduce: **the front-end bundle
+is not reproducible either, and here the drift is already committed.**
+
+### The four sources
+
+`.gitattributes` names `*.tf`, `*.py` and `*.sql` and nothing else, so these
+are stored with CRLF while the committed `web/` output was built from LF
+copies of them:
+
+```
+brand/logo-deep.svg      CRLF in the repository
+brand/logo-white.svg     CRLF in the repository
+ui/src/index.css         CRLF in the repository
+ui/src/tokens.css        CRLF in the repository
+```
+
+Vite hashes an asset by its bytes, and a line ending is a byte. So a build
+from a clean checkout emits different filenames for files nobody edited:
+
+```
+built from the repository as checked out    built from LF copies
+web/assets/logo-deep-C3csgApn.svg           web/assets/logo-deep-Cc-XAy_2.svg   ← committed
+web/assets/logo-white-BA7qHUFe.svg          web/assets/logo-white-BjJcKX-d.svg  ← committed
+```
+
+The content is identical. `git diff` over the emitted CSS and both SVGs reports
+**no changed lines at all** — only `LF will be replaced by CRLF`.
+
+### What it costs
+
+Anyone running `npm run build` on a clean checkout sweeps three unrelated asset
+replacements into their commit: two logos added under new names, two deleted
+under the old, and `web/index.html` rewritten to match. Nothing warns them, and
+the diff looks like real work.
+
+**It has already happened.** `origin/feature/subj-01-engagement-subject`
+carries `web/assets/logo-deep-C3csgApn.svg` and
+`web/assets/logo-white-BA7qHUFe.svg` — the CRLF-hashed pair — where `main`
+carries the LF-hashed ones. Merging it swaps both assets for byte-identical
+copies under different names.
+
+CI does not catch it: `.github/workflows/deploy-frontend.yml` runs
+`aws s3 sync web/ --delete` on what is committed and never builds, so whatever
+hash a person's machine produced is what ships.
+
+### Two more git-ignored files the build needs
+
+A clean checkout cannot build the application at all without:
+
+```
+ui/.env          required, no default; the build refuses rather than point a
+                 bundle at the wrong Paddle account. Sandbox on dev, and the
+                 client-side token is public by Paddle's own documentation.
+ui/node_modules  npm ci, from the committed package-lock.json
+```
+
+`ui/.env.example` is committed and documents the first. Neither is a defect;
+they are recorded here because a worktree needs them before `web/` can be
+rebuilt, exactly as a plan needs `build/layer-docprocessing.zip`.
+
+### What was done about it on `failed-row-tick`
+
+The four sources were normalised to LF for the build, so the output reproduced
+the committed asset names, and then restored. That branch's `web/` diff is the
+bundle and one line of `index.html`, and nothing else. **The normalisation was
+not committed** — it is a workaround for one build, not a fix.
+
+### Still not in scope
+
+Fixing it. The honest repair is `.gitattributes` covering `*.svg` and `*.css`,
+then one commit that normalises those four files and rebuilds `web/` — which
+touches the front end while another session has it open.
