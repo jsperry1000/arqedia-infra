@@ -201,6 +201,12 @@ export type Engagement = {
   engagement: string;
   documents: number;
   last_activity: string;
+  /** The company these memoranda are about. Null on every engagement opened
+   *  before migration 031, and until somebody names one. Nothing in an
+   *  engagement with none is filed, because extraction reads a document for
+   *  the SUBJECT's facts and cannot tell which company that is unless it is
+   *  told. */
+  subject_name: string | null;
 };
 
 export type Pending = {
@@ -832,8 +838,28 @@ export const api = {
   engagements: (): Promise<{ engagements: Engagement[] }> =>
     call("/engagements"),
 
-  pending: (id: string): Promise<{ pending: Pending[] }> =>
-    call(`/engagements/${encodeURIComponent(id)}/pending`),
+  // The subject travels with the pending list because the screen showing
+  // that list is the one that has to hold File and say why.
+  pending: (id: string): Promise<{
+    pending: Pending[]; subject_name: string | null;
+  }> => call(`/engagements/${encodeURIComponent(id)}/pending`),
+
+  /** Name the subject of an engagement, or change it.
+   *
+   *  One call for both: the row is resolved or created by name on the
+   *  server, so naming a subject before anything has been uploaded opens
+   *  the engagement and naming one afterwards edits it.
+   *
+   *  A changed subject reaches every memorandum generated afterwards.
+   *  Values already extracted change only if the documents are
+   *  re-extracted, which is a separate, paid act. */
+  setSubject: (id: string, subjectName: string): Promise<{
+    engagement: string; engagement_id: number; subject_name: string;
+  }> =>
+    call(`/engagements/${encodeURIComponent(id)}/subject`, {
+      method: "PUT",
+      body: JSON.stringify({ subject_name: subjectName }),
+    }),
 
   /** Confirm types and file. THIS CHARGES, once, for the documents included.
    *
