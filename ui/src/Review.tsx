@@ -308,10 +308,16 @@ export function EngagementView({ id, onBack, onMemo }: {
     setGaveUp(false);
     const known = new Set([...pending, ...docs].map((r) => r.document_id));
 
+    // Where the files actually went. The server cleans the engagement name
+    // for the key, so a screen opened under a name it cleaned - an old link,
+    // a pasted address - is watching an engagement nothing is being written
+    // to (17.3). It says so and moves, rather than polling for ever.
+    let landedIn = id;
+
     for (let i = 0; i < list.length; i++) {
       setBusy(`Uploading ${i + 1} of ${list.length} \u2014 ${list[i].name}`);
       try {
-        await api.upload(id, list[i]);
+        landedIn = await api.upload(id, list[i]) || id;
         const name = stored(list[i].name);
         setExpected((e) => ({ names: [...(e?.names ?? []), name],
                               known: e?.known ?? known }));
@@ -330,6 +336,15 @@ export function EngagementView({ id, onBack, onMemo }: {
     }
 
     setBusy("");
+
+    // The screen follows the files. Nothing is lost either way - the rows
+    // exist under the stored name whatever this screen does - but staying
+    // here would show an empty list and call it "analysing".
+    if (landedIn && landedIn !== id) {
+      navigate(`/engagements/${encodeURIComponent(landedIn)}`, { replace: true });
+      return;
+    }
+
     refresh();
   }
 
