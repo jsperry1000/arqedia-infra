@@ -962,6 +962,22 @@ export function EngagementView({ id, onBack, onMemo }: {
                           <a onClick={() => openValues(d.document_id)}>
                             {d.values}
                           </a>
+                          {/* The way out, on the row that needs it. Nothing
+                              further will happen to this document on its
+                              own, so the only move is to say it is not to be
+                              used - which is the tick at the other end of
+                              the row, offered here because this is where a
+                              person is looking. It goes through the same
+                              POST /documents/{'{'}id{'}'}/active any seat may
+                              call; nothing is deleted and the row, its file
+                              and whatever it did read all stay. */}
+                          {d.active && (
+                            <a className="small" onClick={() => toggleActive(d)}
+                               title="Set it aside. Nothing is deleted - it is
+                                      left out of the next memorandum.">
+                              {" ×"}
+                            </a>
+                          )}
                         </>
                       )
                       : d.state === "reading" || !d.extracted_at
