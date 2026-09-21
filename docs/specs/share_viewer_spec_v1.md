@@ -4,6 +4,19 @@
 Component 5 of 9. Gated by *Wallet & Entitlement Gate v1.0*. Consumes memos
 produced by *Pipeline v1.0*.
 
+> **Amended 21 September 2026 — the verified term is 2 weeks (12.1).** A
+> recipient who has only clicked the link keeps access for **2 weeks from
+> send**, not 30 days. Six places carried the old figure and all six are
+> changed: §3 twice, §6 twice, §7's funnel and §9's settled list.
+>
+> **The registered term is unchanged at 6 months**, and so is everything the
+> extension rests on — it is the incentive to register, and shortening the
+> verified term widens the gap rather than narrowing it. §6's ceiling rule is
+> unchanged: an expiry a tenant sets deliberately still wins, and extension
+> still applies only where the tenant left the default.
+>
+> Nothing else in this document has been altered.
+
 ---
 
 ## 0. Status of every claim here
@@ -56,12 +69,12 @@ billed, and it does not count toward the tenant's seat minimum.
 link, verifies by clicking it, and a viewer account is created against that
 address. First verification captures `first_opened_at`.
 
-**Two viewer states.** *Verified* — reached by clicking the link, 30-day access,
+**Two viewer states.** *Verified* — reached by clicking the link, 2-week access,
 no relationship with us. *Registered* — the viewer accepts our terms and sets a
 password and multi-factor, access extends to 6 months, and §7 applies
 (*Identity* §4). The prompt to register
 lives inside the memo view and leads with the extension, which is the honest
-pitch: register and keep access for six months instead of thirty days.
+pitch: register and keep access for six months instead of two weeks.
 
 **Why an account rather than an unauthenticated link.** A bare link forwards
 freely and audits nothing — the tenant cannot answer who read a due diligence
@@ -148,7 +161,7 @@ commercial promise about normal use, not an invitation to bulk-send.
 
 | Viewer state | Grant term |
 |---|---|
-| Sent, email-verified only | 30 days from send |
+| Sent, email-verified only | 2 weeks from send |
 | Registered with the app | Extended to 6 months from registration |
 
 Registration is a real signup — the viewer accepts our terms and privacy policy
@@ -158,7 +171,7 @@ recipient becomes someone with a direct relationship to us.
 
 **The tenant retains the ceiling.** If a tenant explicitly sets an expiry at
 send time, that date wins and registration cannot extend past it. Extension
-applies only where the tenant left the 30-day default, which signals a default
+applies only where the tenant left the 2-week default, which signals a default
 rather than a deliberate limit. A tenant who sets a short window for a reason
 keeps it.
 
@@ -195,7 +208,7 @@ terms and privacy policy directly, and is ours to contact.
 
 ```
 recipient → verified viewer → registered viewer → tenant
-   (30d)         (6 months)        (paying)
+ (2 weeks)       (6 months)        (paying)
 ```
 
 The 6-month extension is the incentive to register, and registration is what
@@ -268,7 +281,7 @@ existing grant rather than consuming a second share from the allowance.
    payments; verified against live documentation at selection.
 
 **Settled:** watermarked download permitted, revocation limited to future access
-(§5); expiry — 30 days, extending to 6 months on registration, with tenant-set
+(§5); expiry — 2 weeks, extending to 6 months on registration, with tenant-set
 expiry as a ceiling (§6); marketing — permitted once registered, subject to the
 opt-in control (§7); cached viewer delivery (§4).
 
