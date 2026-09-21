@@ -526,6 +526,21 @@ export function EngagementView({ id, onBack, onMemo }: {
     refresh();
   }
 
+  /** A document whose extraction failed and which read nothing at all.
+   *
+   *  It has no bearing on any memorandum. Composition reads documents only
+   *  through extracted_value - the JOIN is FROM extracted_value, never from
+   *  document - so a row with no values contributes no fact, no source and
+   *  no citation whether it is in use or not. Including it and excluding it
+   *  produce the same memorandum.
+   *
+   *  So the tick is ABSENT rather than disabled or unticked. Unticking it
+   *  would write active = 0 and say a person made a judgement they never
+   *  made; disabling it would invite them to work out why, and there is no
+   *  answer they could act on. Nothing is written for these rows at all. */
+  const nothingToInclude = (d: Doc) =>
+    !!d.extraction_error && d.values === 0;
+
   // Generating starts the memo and returns. The memo appears in the list when
   // it is written, found by polling rather than by a fixed wait.
   async function generate() {
@@ -927,15 +942,30 @@ export function EngagementView({ id, onBack, onMemo }: {
                 {open && g.rows.map((d) => (
                 <tr key={d.document_id} className={d.active ? "" : "aside"}>
                   <td>
-                    <input
-                      type="checkbox"
-                      checked={d.active}
-                      onChange={() => toggleActive(d)}
-                      title={d.active
-                        ? "In use. Uncheck to leave it out of the next memo."
-                        : "Set aside" + (d.deactivated_by
-                          ? " by " + d.deactivated_by : "")}
-                    />
+                    {/* No tick where there is nothing to include. Every other
+                        row keeps the one it has always had, and so does the
+                        column: this is the absence of a control on the rows
+                        it means nothing for, not a change to what it does. */}
+                    {nothingToInclude(d)
+                      ? (
+                        <span className="muted"
+                              title="Nothing was read from this document, so
+                                     including it or leaving it out makes no
+                                     difference to any memorandum.">
+                          {"—"}
+                        </span>
+                      )
+                      : (
+                        <input
+                          type="checkbox"
+                          checked={d.active}
+                          onChange={() => toggleActive(d)}
+                          title={d.active
+                            ? "In use. Uncheck to leave it out of the next memo."
+                            : "Set aside" + (d.deactivated_by
+                              ? " by " + d.deactivated_by : "")}
+                        />
+                      )}
                   </td>
                   <td>
                     <a onClick={() => openValues(d.document_id)}>
