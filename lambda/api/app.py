@@ -274,6 +274,51 @@ def _label_for(registry, field_id):
 
 # --- engagements -----------------------------------------------------------
 
+def engagement_id(tenant_id, name, created_by=None):
+    """The engagement's own row, created the first time the name is seen.
+
+    MIRRORED IN lambda/normalizer/app.py, which stamps the id on every
+    document row it writes and meets a name this has usually already
+    created. Two copies rather than one in the layer, deliberately: a shared
+    module reaches a Lambda only through the docprocessing layer, and adding
+    a layer rebuild to this deploy buys nothing for fifteen lines. The two
+    must not drift - they are the same rule, and the rule is that one name is
+    one row.
+
+    THE NAME FOLDS CASE, because the column's collation does (migration 030,
+    decision of 21 September): "Meridian" and "meridian" are one engagement.
+    S3 keeps both spellings as typed, which is why the row is found by name
+    rather than minted per key.
+
+    NOT LAST_INSERT_ID. It is per connection and the Data API does not
+    promise the same one between calls - signup learned that the hard way and
+    got tenant 0. The insert is written, then the row is read back; the
+    unique key makes that read authoritative even if two uploads race.
+    """
+    name = (name or "").strip()
+    if not name:
+        return None
+
+    found = _sql(
+        "SELECT engagement_id FROM engagement "
+        "WHERE tenant_id = :t AND name = :n",
+        [_p("t", tenant_id), _p("n", name)]).get("records", [])
+    if found:
+        return _col(found[0], 0)
+
+    _sql(
+        "INSERT INTO engagement (tenant_id, name, created_by) "
+        "VALUES (:t, :n, :by) "
+        "ON DUPLICATE KEY UPDATE engagement_id = engagement_id",
+        [_p("t", tenant_id), _p("n", name), _p("by", created_by)])
+
+    found = _sql(
+        "SELECT engagement_id FROM engagement "
+        "WHERE tenant_id = :t AND name = :n",
+        [_p("t", tenant_id), _p("n", name)]).get("records", [])
+    return _col(found[0], 0) if found else None
+
+
 def list_engagements(tenant_id):
     result = _sql(
         """
@@ -1046,7 +1091,8 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None):
     """
     parent = _sql(
         """
-        SELECT s3_key, template_key, config_revision, parent_memo_id, revision
+        SELECT s3_key, template_key, config_revision, parent_memo_id, revision,
+               engagement_id, state
         FROM memo WHERE tenant_id = :t AND memo_id = :m
         """,
         [_p("t", tenant_id), _p("m", int(memo_id))],
@@ -1059,6 +1105,13 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None):
     template_key = _col(records[0], 1)
     config_revision = _col(records[0], 2)
     root_id = _col(records[0], 3) or int(memo_id)
+    # Both inherited from the memo being revised (migration 030). The
+    # engagement because a revision is the same matter as its parent, and the
+    # state because a memorandum and its revisions are one document to the
+    # person who wrote it: revising something archived must not quietly
+    # unarchive it and put it back in the list.
+    parent_engagement = _col(records[0], 5)
+    parent_state = _col(records[0], 6) or "live"
 
     # A citation naming a file that is not one of this memo's sources cannot
     # be checked against anything. Refuse the save rather than accept an
@@ -1144,16 +1197,17 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None):
     created = _sql(
         """
         INSERT INTO memo
-          (tenant_id, template_key, config_revision, s3_bucket, s3_key,
-           s3_version_id, sha256, parent_memo_id, revision,
-           modified_by, modified_at)
+          (tenant_id, engagement_id, template_key, config_revision,
+           s3_bucket, s3_key, s3_version_id, sha256, parent_memo_id, revision,
+           state, modified_by, modified_at)
         VALUES
-          (:tenant_id, :template_key, :config_revision, :s3_bucket, :s3_key,
-           :s3_version_id, :sha256, :parent_memo_id, :revision,
-           :modified_by, UTC_TIMESTAMP())
+          (:tenant_id, :engagement_id, :template_key, :config_revision,
+           :s3_bucket, :s3_key, :s3_version_id, :sha256, :parent_memo_id,
+           :revision, :state, :modified_by, UTC_TIMESTAMP())
         """,
         [
             _p("tenant_id", tenant_id),
+            _p("engagement_id", parent_engagement),
             _p("template_key", template_key),
             _p("config_revision", config_revision),
             _p("s3_bucket", CURATED_BUCKET),
@@ -1162,6 +1216,7 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None):
             _p("sha256", sha),
             _p("parent_memo_id", root_id),
             _p("revision", next_revision),
+            _p("state", parent_state),
             _p("modified_by", email),
         ],
     )
@@ -1648,6 +1703,16 @@ def upload_url(tenant_id, email, engagement, filename):
     filename = _clean(filename)
     if not engagement or not filename:
         raise ValueError("engagement and file name are required")
+
+    # THE ENGAGEMENT BECOMES A ROW HERE, at the moment its name is first
+    # typed (migration 030). This is the only place in the product that knows
+    # WHO opened it - the normalizer meets the same name later with only an
+    # object and its metadata - so created_by is recorded here or nowhere.
+    #
+    # Nothing reads it yet: every list still matches on the S3 key, and
+    # switching them over is stage 4. What this closes is the older half of
+    # the problem, that an engagement with no documents did not exist at all.
+    engagement_id(tenant_id, engagement, email)
 
     key = "tenants/%d/docs/%s/%s" % (tenant_id, engagement, filename)
     url = _s3.generate_presigned_url(
