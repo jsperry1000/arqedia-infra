@@ -7,6 +7,33 @@
 -- written the same day and is not yet pushed; two files claiming one number
 -- is how a migration gets applied twice or not at all.
 --
+-- THE FIRST VERSION OF THE BACKFILL FAILED ON DEV, 21 September:
+--
+--   Error code: 1260; SQLState: HY000
+--   Row 162 was cut by GROUP_CONCAT()
+--
+-- It picked the earliest uploader with
+-- SUBSTRING_INDEX(GROUP_CONCAT(who ORDER BY at), 0x1F, 1), and
+-- group_concat_max_len is 1024 bytes. Three engagements on dev hold
+-- seventy-odd documents at twenty-three characters an address, which is
+-- 1848 bytes for the largest - so the trick worked on every small
+-- engagement and cut the one that mattered. It is replaced below by an
+-- INSERT that takes no uploader and an UPDATE that reads the earliest
+-- document's, which builds no string and has no length to exceed.
+--
+-- WHAT THE FAILURE LEFT: the empty `engagement` table and nothing else. The
+-- statements after it never ran, `migrate.ps1` records a migration only
+-- after every statement in it has succeeded, and no document or memo was
+-- altered. The table was dropped by hand before the corrected version ran,
+-- which is why CREATE TABLE below is unchanged and carries no IF NOT
+-- EXISTS: this file describes an empty database and says so plainly.
+--
+-- EDITED, NOT SUPERSEDED. A merged migration is normally immutable, and
+-- this one is the exception because it never applied anywhere: nothing
+-- holds a row it wrote, no schema_migration names it, and a 031 repairing a
+-- 030 that never ran would leave two files describing one intention and
+-- invite somebody to apply the broken one first.
+--
 -- WHY. An engagement is a string somebody typed, cleaned by _clean(), and
 -- thereafter a folder name in two buckets. Nothing records who opened it,
 -- when, or whether it is finished; list_engagements derives the list by
@@ -68,31 +95,42 @@ CREATE TABLE engagement (
 --   SELECT ... FROM memo m WHERE NOT EXISTS (SELECT 1 FROM document d ...)
 --   (no rows; 0 updated)
 --
--- created_at is the earliest thing seen in it; created_by is whoever
--- uploaded that earliest document, which is NULL for anything filed before
--- uploaded_by was recorded. Left NULL rather than guessed.
+-- created_at is the earliest thing seen in it. created_by follows in its own
+-- statement: whoever uploaded that earliest document, NULL for anything
+-- filed before uploaded_by was recorded, and NULL for an engagement known
+-- only from a memo. Left NULL rather than guessed.
 --
--- 0x1F is the unit separator: a byte that cannot occur in a name _clean()
--- produced, so it cannot split one address into two.
+-- TWO STATEMENTS RATHER THAN ONE, and that is the fix. Picking the earliest
+-- uploader inside the aggregate meant building a string of every uploader in
+-- the engagement and taking its first field, which cut at 1024 bytes on the
+-- three largest (see the header). A correlated read of one row has no length
+-- to exceed and says what it means.
 
-INSERT INTO engagement (tenant_id, name, created_at, created_by)
-SELECT k.tenant_id,
-       k.name,
-       MIN(k.at),
-       SUBSTRING_INDEX(
-         GROUP_CONCAT(k.who ORDER BY k.at SEPARATOR 0x1F), 0x1F, 1)
+INSERT INTO engagement (tenant_id, name, created_at)
+SELECT k.tenant_id, k.name, MIN(k.at)
 FROM (
   SELECT tenant_id,
          SUBSTRING_INDEX(SUBSTRING_INDEX(s3_key, '/docs/', -1), '/', 1) AS name,
-         filed_at AS at, uploaded_by AS who
+         filed_at AS at
   FROM document
   UNION ALL
   SELECT tenant_id,
          SUBSTRING_INDEX(SUBSTRING_INDEX(s3_key, '/memos/', -1), '/', 1),
-         generated_at, generated_by
+         generated_at
   FROM memo
 ) k
 GROUP BY k.tenant_id, k.name;
+
+UPDATE engagement e
+   SET created_by = (
+       SELECT d.uploaded_by
+       FROM document d
+       WHERE d.tenant_id = e.tenant_id
+         AND SUBSTRING_INDEX(
+               SUBSTRING_INDEX(d.s3_key, '/docs/', -1), '/', 1) = e.name
+       ORDER BY d.filed_at
+       LIMIT 1)
+ WHERE e.created_by IS NULL;
 
 -- --- the two columns that were always there ---------------------------------
 
@@ -145,7 +183,16 @@ CREATE INDEX idx_memo_state ON memo (tenant_id, engagement_id, state);
 --
 --   SELECT COUNT(*) FROM engagement
 --
--- Expect 28 on dev today.
+-- Expect 29 on dev at the time of writing - 28 when this was first drafted,
+-- and one more uploaded into since. The number to check it against is this,
+-- read at the moment of applying rather than taken from here:
+--
+--   SELECT COUNT(*) FROM (
+--     SELECT tenant_id, SUBSTRING_INDEX(SUBSTRING_INDEX(s3_key,'/docs/',-1),'/',1) AS n
+--     FROM document
+--     UNION
+--     SELECT tenant_id, SUBSTRING_INDEX(SUBSTRING_INDEX(s3_key,'/memos/',-1),'/',1)
+--     FROM memo) k
 --
 --   SELECT COUNT(*) FROM document WHERE engagement_id IS NULL
 --   SELECT COUNT(*) FROM memo     WHERE engagement_id IS NULL
