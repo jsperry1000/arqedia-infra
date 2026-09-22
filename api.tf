@@ -144,15 +144,15 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = merge(local.paddle_price_env, {
-      CLUSTER_ARN               = aws_rds_cluster.main.arn
-      SECRET_ARN                = aws_rds_cluster.main.master_user_secret[0].secret_arn
-      DATABASE                  = "arqedia"
-      DOCS_BUCKET               = aws_s3_bucket.data["docs"].id
-      CURATED_BUCKET            = aws_s3_bucket.data["curated"].id
-      BRAND_BUCKET              = aws_s3_bucket.brand.id
-      REVIEW_BUCKET             = aws_s3_bucket.data["review"].id
-      COMPOSITION_FUNCTION      = aws_lambda_function.composition.function_name
-      APP_URL                   = "https://${local.app_host}"
+      CLUSTER_ARN          = aws_rds_cluster.main.arn
+      SECRET_ARN           = aws_rds_cluster.main.master_user_secret[0].secret_arn
+      DATABASE             = "arqedia"
+      DOCS_BUCKET          = aws_s3_bucket.data["docs"].id
+      CURATED_BUCKET       = aws_s3_bucket.data["curated"].id
+      BRAND_BUCKET         = aws_s3_bucket.brand.id
+      REVIEW_BUCKET        = aws_s3_bucket.data["review"].id
+      COMPOSITION_FUNCTION = aws_lambda_function.composition.function_name
+      APP_URL              = "https://${local.app_host}"
       # One sender for the whole product, declared in signup.tf. A second
       # variable would be a second address to verify and a second one to
       # forget.
