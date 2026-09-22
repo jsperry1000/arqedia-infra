@@ -178,11 +178,40 @@ class ShapeTest(unittest.TestCase):
         site/pricing/index.html. Somebody reading this file a year from now has
         to be able to find that out without being told."""
         doc = json.loads(PLANS.read_text(encoding="utf-8"))
-        self.assertEqual(sorted(doc["sources"]),
-                         sorted(FIELDS + ("enterprise",)))
+        self.assertEqual(
+            sorted(doc["sources"]),
+            # topup_increment_cents is not one of a plan's fields - it sits
+            # beside them, for the reason the file's own note gives - so it
+            # is in "sources" without being in FIELDS.
+            sorted(FIELDS + ("enterprise", "topup_increment_cents")))
         for field in ("field_sets_per_type", "sections_per_template",
                       "daily_classification_cents"):
             self.assertIn("site/pricing/index.html", doc["sources"][field])
+
+
+class TopUpIncrementTest(unittest.TestCase):
+    """The one number on the pricing table that is not a plan attribute.
+
+    It reads $5 in all three columns and has since 16 September 2026; before
+    that it was $10, $25 and $5 x seats, which is why the row looks per-plan.
+    One value, outside "plans", rendered into every column by
+    site/plans-table.ts."""
+
+    def setUp(self):
+        self.doc = json.loads(PLANS.read_text(encoding="utf-8"))
+
+    def test_it_is_a_number_outside_the_plans(self):
+        self.assertIsInstance(self.doc["topup_increment_cents"], int)
+        for plan in self.doc["plans"]:
+            with self.subTest(plan=plan["plan_key"]):
+                self.assertNotIn("topup_increment_cents", plan)
+
+    def test_it_agrees_with_the_paddle_top_up_price(self):
+        """The row says what a customer pays, and Paddle is what charges
+        it."""
+        product = next(p for p in paddle_products() if p["name"] == NOT_A_PLAN)
+        self.assertEqual(self.doc["topup_increment_cents"],
+                         int(product["amount"]))
 
 
 if __name__ == "__main__":

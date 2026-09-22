@@ -34,8 +34,22 @@
     "paddle_price_name": "config/paddle/sandbox.json, product name",
     "how_it_starts": "site/pricing/index.html, the 'How it starts' row; the Enterprise address is also in ui/src/upgrade.tsx",
     "active": "plan table",
-    "enterprise": "site/pricing/index.html throughout - it has never been a plan row"
+    "enterprise": "site/pricing/index.html throughout - it has never been a plan row",
+    "topup_increment_cents": "billing.TOPUP_INCREMENT_CENTS and paddle_processor's copy of it, both 500, and the 'ARQEDIA Top-up' price in config/paddle/sandbox.json"
   },
+
+  "topup_increment_cents": 500,
+  "topup_increment_note": [
+    "OUTSIDE plans, BECAUSE IT IS NOT A PLAN ATTRIBUTE. The pricing page shows",
+    "it once per column and the three cells have read $5 since 16 September",
+    "2026; before that they were $10, $25 and $5 x seats, which is why the row",
+    "looks per-plan and is not. One number, written here once, rendered into",
+    "every column.",
+    "",
+    "It is still written down in three other places - billing.py,",
+    "paddle_processor/app.py and the Paddle catalogue - and this does not",
+    "change that. What it closes is the marketing page's copy."
+  ],
 
   "plans": [
     {
