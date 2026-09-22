@@ -103,9 +103,9 @@ resource "aws_lambda_function" "normalizer" {
 
   environment {
     variables = {
-      REVIEW_BUCKET = aws_s3_bucket.data["review"].id
-      CLUSTER_ARN   = aws_rds_cluster.main.arn
-      SECRET_ARN    = aws_rds_cluster.main.master_user_secret[0].secret_arn
+      REVIEW_BUCKET       = aws_s3_bucket.data["review"].id
+      CLUSTER_ARN         = aws_rds_cluster.main.arn
+      SECRET_ARN          = aws_rds_cluster.main.master_user_secret[0].secret_arn
       DATABASE            = "arqedia"
       CLASSIFIER_MODEL_ID = var.extraction_model_id
     }
