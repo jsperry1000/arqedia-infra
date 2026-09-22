@@ -1061,6 +1061,11 @@ function Password() {
   return (
     <>
       {error && <p className="error">{error}</p>}
+      {/* Left as it is (6.3), with the two in Memo.tsx. This one would
+           convert cleanly - it is a block paragraph like the four that did -
+           and it is held with them so the three are settled in one decision
+           rather than two now and one later. Nothing about it is special
+           except that company. */}
       {busy && <p className="busy">Changing&hellip;</p>}
       {changed && !busy && <p className="saved">Password changed.</p>}
 
