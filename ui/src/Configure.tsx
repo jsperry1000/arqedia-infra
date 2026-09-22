@@ -1159,7 +1159,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       {/* Where the part on screen sits in the whole business: the same four
           stages the home page runs through, still and in miniature, with the
           one this part stands for brought forward (3.2). */}
-      <StageStrip lit={litStage} />
+      <StageStrip />
 
       {/* The working controls and the band of parts beneath them, held at the
           top together while the page scrolls (UX-02). Measured as ONE block,
@@ -1262,24 +1262,26 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           (3.1). They were three 13px links in the bar, the same weight as
           Discard. The tab pattern is Account management's, widened to carry a
           line about each part and how much of it there is. */}
-      {/* The part in use, drawn larger, to the left of the tabs (18.3). The
-          strip above says where every part sits in the sequence; this says
-          which one is on screen, in the same picture. It hides below 900px
-          on the same rule as the strip - there is no room for a bearing
-          where the tabs themselves are down to their names. */}
-      <div className="band-row">
-        <StageIcon stage={litStage} />
-        <nav className="tabs parts-band">
-          {PARTS.map(([key, label, note]) => (
-            <button key={key} className={part === key ? "on" : undefined}
-                    onClick={() => setPart(key)}>
-              <b>{label}</b>
-              <span className="count">{partCount(key)}</span>
-              <i>{note}</i>
-            </button>
-          ))}
-        </nav>
-      </div>
+      {/* The part in use, drawn large in the margin beside the band (18.3).
+          It sat in a box inside the band, which made a fourth column out of
+          a bearing. It is now in the empty canvas to the left of the
+          content column, level with the band and changing with the part -
+          and it shows only where that canvas is wide enough to hold it
+          without touching either the content or the rail. Positioned
+          against .config-top, which is the sticky block, so it travels with
+          the band rather than scrolling away from it. */}
+      <StageIcon stage={litStage} />
+
+      <nav className="tabs parts-band">
+        {PARTS.map(([key, label, note]) => (
+          <button key={key} className={part === key ? "on" : undefined}
+                  onClick={() => setPart(key)}>
+            <b>{label}</b>
+            <span className="count">{partCount(key)}</span>
+            <i>{note}</i>
+          </button>
+        ))}
+      </nav>
       </div>
 
       {/* Renaming, under the band rather than inside the sections part: the
@@ -1807,13 +1809,16 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       {openType && draft && (
         <div className="panel-backdrop" onClick={() => setOpenType(null)}>
           <aside className="panel" onClick={(e) => e.stopPropagation()}>
-            <a onClick={() => setOpenType(null)} className="panel-close">
-              Close
-            </a>
-            {/* The name, the note and the search are held at the top of the
-                drawer while the facts scroll under them (2.6). The drawer is
-                the scrolling box, so a sticky child holds against it. */}
+            {/* The name, the note, the search and Save are held at the top
+                of the drawer while the facts scroll under them (2.6). The
+                drawer is the scrolling box, so a sticky child holds against
+                it - flush with its top edge since 18.2, which is why Close
+                is inside the head rather than above it: the head now covers
+                the band Close used to sit in. */}
             <div className="panel-head">
+              <a onClick={() => setOpenType(null)} className="panel-close">
+                Close
+              </a>
               <h3>
                 {draft.document_types.find((t) => t.key === openType)?.label}
               </h3>
