@@ -11,7 +11,7 @@
 | Revised | 20 September 2026 — one numbering scheme: groups and items only; admin page is Group 16 |
 | Revised | 22 September 2026 — Groups 13, 14, 16 and most of 18 closed; Group 18 added with the walk notes and every decision taken on 21 and 22 September |
 
-**Numbering.** Groups are numbered 1–18. Items are numbered within their group (2.3 is Group 2, item 3). Each group has one prompt for Code, named by its group. Nothing else is numbered.
+**Numbering.** Groups are numbered 1–19. Items are numbered within their group (2.3 is Group 2, item 3). Each group has one prompt for Code, named by its group. Nothing else is numbered.
 
 ---
 
@@ -307,6 +307,15 @@ Raised on the walk. Items marked *open* need an answer before a prompt is writte
 | 18.14 | Decided 22 September 2026: prices and plan limits are changed in config/plans.json, reviewed and deployed — not from the staff admin page, which shows them read-only. Process written: ARQEDIA_process_changing_prices_and_limits.md, to be committed to docs/ with the 18.5 build |
 | 18.15 | Found 22 September 2026 building 18.8: signup's second-administrator step wrote second_admin to pending_signup and nothing ever read it — no seat_invitation, no email. Anyone who named a colleague was told they would be invited and no invitation existed. The step is removed from signup and replaced by a prompt on Get started pointing at Account > Seats. The column stays; zero rows on dev ever carried a value |
 | 18.16 | Found 22 September 2026, stage 3 of 18.5: Enterprise's column wording sits in ui/src/upgrade.tsx, because it is deliberately not a plan row and the API bundle cannot read config/plans.json from the repository root. Close it by getting the file into the API bundle so /billing/subscription reports Enterprise too — a build change |
+
+## Group 19 — The trial
+Raised 22 September 2026, walking the trial after 18.5.
+
+| # | Item |
+|---|---|
+| 19.1 | **Closed 22 September 2026 (trial-length, layer 41, applied and walked):** every customer-facing place says 14 days, from config/plans.json, and standing() reports trial_ended instead of trial for ever |
+| 19.2 | Not built: nothing warns a tenant before the trial ends, and nothing announces that it has. No email, no banner on any working screen. Filing simply starts refusing once the trial money expires. Build a banner at 7, 3 and 1 day, and a plain ended state; email later |
+| 19.3 | Not built: on the ended-trial screen no plan is preselected. Preselect Small Business, which the tenant can change before paying |
 
 ## Rolled into existing backlog
 
