@@ -295,11 +295,28 @@ p.warn { color: #b45309; }
 
 /* --- panel --------------------------------------------------------------- */
 
-/* Above the header, which is sticky at 20. A drawer that opens under the
-   banner has its own close link covered by it. */
+/* BENEATH THE HEADER, AND STARTING UNDER IT (18.2).
+ *
+ * It used to be `inset: 0` at 30. The header is sticky at 20 and both live in
+ * the root stacking context - .shell is a plain grid with no z-index and no
+ * transform - so 30 painted over 20, and inset: 0 started the scrim at the
+ * top of the window. A drawer therefore covered the masthead: scrolled, it
+ * rose over the one band that should never move.
+ *
+ * The earlier comment here said the opposite, and gave a reason: a drawer
+ * that opens under the banner has its own Close covered by it. That reason
+ * goes with `top`, not with `z-index` - starting the scrim at --header-h
+ * puts the whole drawer, Close included, below the header rather than under
+ * it. So the drawer now sits at 18: over the page, over the rail at 25 it is
+ * not - see below - and beneath the masthead.
+ *
+ * 18 rather than 19: the account menu hangs from the header at 28 and must
+ * stay above everything, and the rail at 25 is part of the frame. A drawer
+ * is over the PAGE, which is what it is a drawer of. */
 .panel-backdrop {
-  position: fixed; inset: 0; background: rgba(13, 27, 42, 0.35);
-  display: flex; justify-content: flex-end; z-index: 30;
+  position: fixed; top: var(--header-h, 0px); right: 0; bottom: 0; left: 0;
+  background: rgba(13, 27, 42, 0.35);
+  display: flex; justify-content: flex-end; z-index: 18;
 }
 /* Wide enough for a fact and its documents grouped across columns, and
    still a drawer rather than a takeover of the page. A form wants less -
@@ -329,6 +346,10 @@ p.warn { color: #b45309; }
 .panel-head h3 { margin-bottom: 6px; }
 .panel-head p { margin: 0 0 8px; }
 .panel-head .filters { margin-bottom: 0; }
+/* Save, in the head that is pinned, so a long list does not have to be
+   scrolled back down to commit it (18.2). .form-actions carries its own top
+   margin for a form; in the head it sits in the row it was moved into. */
+.panel-head .form-actions { margin-top: 10px; }
 .panel h3 { margin-top: 0; text-transform: none; letter-spacing: 0;
             color: var(--deep); font-size: 16px; }
 

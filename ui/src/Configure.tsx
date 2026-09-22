@@ -467,17 +467,23 @@ type Deleting = {
 // The parts of the configuration screen, in the order the band offers them.
 // How documents group sits on the documents tab rather than a tab of its own.
 //
-// Each carries the line it needs (3.1) and the stage of the home page's
+// IN THE STRIP'S ORDER (18.3). The band ran Report sections, Facts, Document
+// types while the strip above it ran Documents, Facts, Filed, Report - so the
+// two read in opposite directions and the lit miniature travelled backwards
+// against the tab beneath it. The band now follows the strip: documents
+// arrive, facts are made of them, a report is written from them.
+//
+// Each carries the line it needs (3.1, 18.4) and the stage of the home page's
 // sequence it stands for (3.2). Stage 1 - the swarm, which is the work the
 // model does between a document arriving and a fact being filed - belongs to
 // no part of the configuration and is never lit.
 const PARTS = [
+  ["documents", "Document types",
+   "Which documents are expected to contain required facts", 0],
+  ["facts", "Facts",
+   "The extracted facts which all memos draw upon", 2],
   ["sections", "Report sections",
    "What the memorandum says, and in what order", 3],
-  ["facts", "Facts",
-   "The vocabulary every memorandum draws on", 2],
-  ["documents", "Document types",
-   "Where those facts are looked for", 0],
 ] as const;
 
 export function ConfigureView({ onBack }: { onBack: () => void }) {
@@ -1815,6 +1821,24 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                   {typeFields.length} ticked
                 </span>
               </div>
+              {/* SAVE IN THE PINNED HEAD (18.2). It sat under the list, and
+                  the list is every fact this tenant has grouped into columns
+                  - so committing a tick made half a minute of scrolling back
+                  to a button that had left the screen. The head is already
+                  held against the drawer while the facts pass under it. */}
+              <div className="form-actions">
+                <button disabled={!!busy} onClick={() =>
+                  act("Saving", async () => {
+                    await api.setDocumentFields(openType, typeFields);
+                    setOpenType(null);
+                  })}>
+                  Save {typeFields.length}{" "}
+                  {typeFields.length === 1 ? "field" : "fields"}
+                </button>
+                <a className="secondary" onClick={() => setOpenType(null)}>
+                  Cancel
+                </a>
+              </div>
             </div>
 
             <div className="binder-groups">
@@ -1851,19 +1875,6 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
               ))}
             </div>
 
-            <div className="form-actions">
-              <button disabled={!!busy} onClick={() =>
-                act("Saving", async () => {
-                  await api.setDocumentFields(openType, typeFields);
-                  setOpenType(null);
-                })}>
-                Save {typeFields.length}{" "}
-                {typeFields.length === 1 ? "field" : "fields"}
-              </button>
-              <a className="secondary" onClick={() => setOpenType(null)}>
-                Cancel
-              </a>
-            </div>
           </aside>
         </div>
       )}
