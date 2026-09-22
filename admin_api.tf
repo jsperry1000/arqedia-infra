@@ -49,12 +49,24 @@ resource "aws_iam_role_policy_attachment" "admin_logs" {
 # no lambda:InvokeFunction, no KMS - the staff console reads rows and returns
 # them.
 #
-# WHAT THIS IS NOT. ExecuteStatement outside a transaction autocommits, so
-# these two actions would permit a write if one were ever added to the code.
-# The read-only property of this function comes from cross_tenant.py refusing
-# any statement that is not a SELECT, which is a guard on the code rather
-# than on the credentials. The credential-level control is a SELECT-only
-# database user with its own secret - OBS-02 - and it is not built.
+# AND ONE SECRET, WHICH IS THE WHOLE POINT (16.9). This role can read
+# aws_secretsmanager_secret.admin_reader and cannot read the cluster's master
+# secret, so the only database identity it can present is
+# arqedia_admin_reader - a user holding SELECT on six tables and nothing
+# else.
+#
+# WHY THAT MATTERS MORE THAN THE ACTIONS ABOVE. ExecuteStatement outside a
+# transaction autocommits, so this policy still permits a write to be
+# ATTEMPTED; OBS-02 was raised because an earlier comment claimed otherwise.
+# What stops it now is the database: an INSERT on this credential comes back
+# "INSERT command denied to user 'arqedia_admin_reader'@'...'; Error code:
+# 1142", proved against dev on 22 September before this switch was made. The
+# guard in cross_tenant.py is still there and still refuses a non-SELECT
+# first; it is no longer the only thing standing between a careless edit and
+# a write.
+#
+# No kms:Decrypt: admin_reader takes the AWS managed key, exactly as the
+# master secret does.
 data "aws_iam_policy_document" "admin" {
   statement {
     effect    = "Allow"
@@ -65,7 +77,7 @@ data "aws_iam_policy_document" "admin" {
   statement {
     effect    = "Allow"
     actions   = ["secretsmanager:GetSecretValue"]
-    resources = [aws_rds_cluster.main.master_user_secret[0].secret_arn]
+    resources = [aws_secretsmanager_secret.admin_reader.arn]
   }
 }
 
@@ -92,8 +104,15 @@ resource "aws_lambda_function" "admin" {
   environment {
     variables = {
       CLUSTER_ARN = aws_rds_cluster.main.arn
-      SECRET_ARN  = aws_rds_cluster.main.master_user_secret[0].secret_arn
-      DATABASE    = "arqedia"
+
+      # THE READER, NOT THE MASTER (16.9). Every other function in the stack
+      # reads the database as arqedia_admin; this one cannot. admin_db.tf
+      # declares the secret, its value was set outside Terraform, and the
+      # user behind it holds SELECT on tenant, subscription, plan, seat,
+      # seat_invitation and signup_attempt - a SELECT on memo is refused by
+      # the database, never mind an INSERT.
+      SECRET_ARN = aws_secretsmanager_secret.admin_reader.arn
+      DATABASE   = "arqedia"
 
       # The same issuer the authorizer trusts, read by the handler so that a
       # mismatch between the two fails closed.
