@@ -81,6 +81,58 @@ resource "aws_iam_role_policy" "github_deploy" {
   policy = data.aws_iam_policy_document.github_deploy.json
 }
 
+# --- the staff console's own role ------------------------------------------
+#
+# A SECOND ROLE RATHER THAN TWO MORE RESOURCES ON THE FIRST. The role above
+# is held by the workflows that publish the application and the marketing
+# site, and adding the admin bucket to it would give those two the ability to
+# overwrite the staff console. Group 16's rule is that the console shares
+# nothing with the customer path; a deploy role is exactly the kind of thing
+# that gets shared because it already exists.
+#
+# The trust is the same federation - the same repository, through the same
+# OIDC provider. Narrowing it further, to one workflow or one branch, is a
+# real option and is not done here: it would be the first place in this stack
+# to do it, and doing it for one role and not the others is a decision rather
+# than a tidy-up.
+resource "aws_iam_role" "github_deploy_admin" {
+  name               = "${local.name_prefix}-github-deploy-admin"
+  assume_role_policy = data.aws_iam_policy_document.github_assume.json
+
+  tags = { Name = "${local.name_prefix}-github-deploy-admin" }
+}
+
+data "aws_iam_policy_document" "github_deploy_admin" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:ListBucket",
+    ]
+    resources = [
+      aws_s3_bucket.admin.arn,
+      "${aws_s3_bucket.admin.arn}/*",
+    ]
+  }
+
+  statement {
+    effect    = "Allow"
+    actions   = ["cloudfront:CreateInvalidation"]
+    resources = [aws_cloudfront_distribution.admin.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "github_deploy_admin" {
+  name   = "${local.name_prefix}-github-deploy-admin"
+  role   = aws_iam_role.github_deploy_admin.id
+  policy = data.aws_iam_policy_document.github_deploy_admin.json
+}
+
+output "github_deploy_admin_role_arn" {
+  value = aws_iam_role.github_deploy_admin.arn
+}
+
 output "github_deploy_role_arn" {
   value = aws_iam_role.github_deploy.arn
 }

@@ -1,0 +1,13 @@
+/* The single source, imported rather than copied.
+ *
+ * ui/src/tokens.css is the only file in any of the three codebases that
+ * declares a colour, a typeface or a radius. If a value is needed and is
+ * missing, it is added there, not to this file - the same footing
+ * site/src/styles/tokens.css stands on.
+ *
+ * NO TENANT COLOURS. brand_deep, brand_mid, brand_highlight and brand_light
+ * belong to a tenant and appear on a rendered memorandum only. This console
+ * looks at every tenant at once; wearing any one of their palettes would be
+ * both meaningless and misleading.
+ */
+@import "../../../ui/src/tokens.css";
