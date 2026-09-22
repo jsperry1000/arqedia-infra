@@ -230,9 +230,10 @@ function swarmAt(p: Pt, ms: number, W: number, H: number, qFix?: number): [numbe
    and by a still stage, so a document in the strip is the document in the
    hero. */
 
-function paintDocs(ctx: CanvasRenderingContext2D, docs: Doc[], pal: Palette, a: number) {
+function paintDocs(ctx: CanvasRenderingContext2D, docs: Doc[], pal: Palette, a: number,
+                   lw = 1) {
   if (a <= 0.01) return
-  ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = pal.docs; ctx.lineWidth = 1
+  ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = pal.docs; ctx.lineWidth = lw
   for (const d of docs) {
     ctx.save(); ctx.translate(d.x + d.w / 2, d.y + d.h / 2); ctx.rotate(d.tilt)
     ctx.strokeRect(-d.w / 2, -d.h / 2, d.w, d.h); ctx.restore()
@@ -240,17 +241,19 @@ function paintDocs(ctx: CanvasRenderingContext2D, docs: Doc[], pal: Palette, a: 
   ctx.restore()
 }
 
-function paintWires(ctx: CanvasRenderingContext2D, wires: Wire[], pal: Palette, a: number) {
+function paintWires(ctx: CanvasRenderingContext2D, wires: Wire[], pal: Palette, a: number,
+                   lw = 1) {
   if (a <= 0.01) return
-  ctx.save(); ctx.globalAlpha = a * 0.8; ctx.strokeStyle = pal.wires; ctx.lineWidth = 1
+  ctx.save(); ctx.globalAlpha = a * 0.8; ctx.strokeStyle = pal.wires; ctx.lineWidth = lw
   ctx.beginPath()
   for (const w of wires) { ctx.moveTo(w.x - 12, w.y); ctx.lineTo(w.x + w.w + 12, w.y) }
   ctx.stroke(); ctx.restore()
 }
 
-function paintPage(ctx: CanvasRenderingContext2D, page: Page, pal: Palette, a: number) {
+function paintPage(ctx: CanvasRenderingContext2D, page: Page, pal: Palette, a: number,
+                   lw = 1) {
   if (a <= 0.01) return
-  ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = pal.page; ctx.lineWidth = 1
+  ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = pal.page; ctx.lineWidth = lw
   ctx.strokeRect(page.x, page.y, page.w, page.h); ctx.restore()
 }
 
@@ -435,6 +438,225 @@ export function mountFlock(
   }
 }
 
+/** The strip's own time scale: 30% faster than the hero's (18.3).
+ *
+ *  SPEED is the hero's, and dividing it by 0.7 makes every boundary arrive at
+ *  0.7 of the time it takes there - one arithmetic change rather than four
+ *  boundaries edited by hand. The hero reads SPEED and this reads STRIP_SPEED;
+ *  neither can move the other.
+ *
+ *  At SPEED the sequence reaches the report at 13800 / 0.88846 = 15532ms. At
+ *  STRIP_SPEED it is 10873ms. */
+const STRIP_SPEED = SPEED / 0.7
+
+/** How long the birds hold the report before going back to the facts. */
+const STRIP_HOLD = 1400
+
+/** A strip: four wireframes in a row with one flock travelling across them.
+ *  setLit moves the prominence as the part changes; stop puts it away. */
+export interface StripHandle { setLit(stage: Stage | null): void; stop(): void }
+
+/**
+ * The four stages in a row, drawn the whole time, with ONE flock crossing
+ * them (18.3).
+ *
+ * WHAT IT IS. Four cells, a quarter of the canvas each: the documents, the
+ * facts, the wires the facts are filed on, and the mark they are retrieved
+ * into. The wireframes never leave - they are the shape of the business, and
+ * a shape that appears and disappears is an animation rather than a bearing.
+ * The birds are the thing that moves: they start in the documents, leave and
+ * fly, settle on the wires, and move into the mark.
+ *
+ * WHERE IT GOES AFTERWARDS. Back to the facts, and it murmurates there for as
+ * long as the screen is open. The hero freezes on the report because the page
+ * is the end of the story it tells; this sits above a screen somebody works
+ * on for an hour, where a frozen picture reads as something broken.
+ *
+ * THE FACTS CELL DRAWS NO WIREFRAME, and that is not an omission. The other
+ * three have a form - a document, a wire, a page - and the facts do not: the
+ * facts ARE the birds, which is what the home page spends five seconds
+ * saying. The cell is where they end up and stay.
+ *
+ * WHICH CELL IS PROMINENT is drawn rather than declared, because one canvas
+ * cannot carry four CSS classes: the lit cell's wireframe is painted at full
+ * strength and the others at LIT_DIM. The mapping is the part's own stage -
+ * Document types 0, Facts 2, Report sections 3 - so the facts part lights the
+ * wires its facts are filed on, not the swarm.
+ *
+ * ONE SCENE PER CELL, built at the cell's own size, so a document here is the
+ * document in the hero at the same width. The particles take their three
+ * homes from three different cells: where they start from cell 0, where they
+ * land from cell 2, where they end from cell 3.
+ */
+export function mountStrip(
+  cv: HTMLCanvasElement,
+  lit: Stage | null = null,
+): StripHandle | null {
+  const ctx = cv.getContext('2d')
+  if (!ctx) return null
+
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  const N = 520
+  const CELLS = 4
+  const LIT_DIM = 0.4
+
+  let W = 0, H = 0, cw = 0
+  let cells: Scene[] = []
+  let pts: Pt[] = []
+  let raf = 0, t0: number | null = null
+  let stopped = false
+  let returning: number | null = null
+  let swarmClock = 0, lastDrift = 0
+  let current: Stage | null = lit
+  let pal: Palette = readPalette(cv)
+
+  const off = (i: number) => i * cw
+
+  function build(): boolean {
+    W = cv.clientWidth; H = cv.clientHeight
+    if (!W || !H) return false
+    cw = W / CELLS
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr)
+    ctx!.setTransform(dpr, 0, 0, dpr, 0, 0)
+    pal = readPalette(cv)
+
+    // The same seed every time, so the wireframes are the same drawing on
+    // every arrival; only the birds' journey is new.
+    cells = [0, 1, 2, 3].map((i) =>
+      buildScene(cw, H, N, seeded(20260920 + i), i === 3))
+
+    // One flock, three homes. Index for index, so a particle keeps its own
+    // document, its own wire and its own line of the mark.
+    pts = cells[0].pts.map((p, i) => ({
+      ...p,
+      x: p.x + off(0),
+      sx: p.sx + off(0),
+      lx: cells[2].pts[i].lx + off(2), ly: cells[2].pts[i].ly,
+      px: cells[3].pts[i].px + off(3), py: cells[3].pts[i].py,
+    }))
+    return true
+  }
+
+  /** The four wireframes, every frame. The lit one at full strength. */
+  function wireframes() {
+    const at = (i: number) => (current === i ? 1 : LIT_DIM)
+    ctx!.save(); ctx!.translate(off(0), 0)
+    paintDocs(ctx!, cells[0].docs, pal, at(0)); ctx!.restore()
+    ctx!.save(); ctx!.translate(off(2), 0)
+    paintWires(ctx!, cells[2].wires, pal, at(2)); ctx!.restore()
+    ctx!.save(); ctx!.translate(off(3), 0)
+    paintPage(ctx!, cells[3].page, pal, at(3)); ctx!.restore()
+  }
+
+  /** Where a particle is heading at engine time ms. */
+  function target(p: Pt, ms: number): [number, number] {
+    if (ms < P.leave) return [p.sx, p.sy]
+    if (ms < P.swarm) return swarmAt(p, ms, W, H)
+    if (ms < P.report) {
+      return (ms - P.swarm) / LAND < p.land ? swarmAt(p, ms, W, H) : [p.lx, p.ly]
+    }
+    return [p.px, p.py]
+  }
+
+  /** Home, in the facts cell, turning over for as long as the screen is
+   *  open. Computed in the cell's own width and moved into place, so the
+   *  body is the size of the cell rather than of the strip. */
+  function home(p: Pt): [number, number] {
+    const [x, y] = swarmAt(p, swarmClock, cw, H, 0.5)
+    return [x + off(1), y]
+  }
+
+  function birds(ease: number, alpha: number,
+                 to: (p: Pt) => [number, number]) {
+    ctx!.fillStyle = pal.birds
+    ctx!.globalAlpha = alpha
+    for (const p of pts) {
+      const [tx, ty] = to(p)
+      p.x += (tx - p.x) * ease * p.lag
+      p.y += (ty - p.y) * ease * p.lag
+      ctx!.fillRect(p.x, p.y, 1.3, 1.3)
+    }
+    ctx!.globalAlpha = 1
+  }
+
+  function frame(ts: number) {
+    if (stopped) return
+
+    if (returning !== null) {
+      swarmClock += (lastDrift ? ts - lastDrift : 0) * DRIFT_RATE
+      lastDrift = ts
+      ctx!.clearRect(0, 0, W, H)
+      wireframes()
+      birds(0.05, 0.85, home)
+      raf = requestAnimationFrame(frame)
+      return
+    }
+
+    if (t0 === null) t0 = ts
+    const ms = (ts - t0) * STRIP_SPEED
+
+    ctx!.clearRect(0, 0, W, H)
+    wireframes()
+    const ease = ms < P.swarm ? 0.036 : ms < P.swarm + LAND + 500 ? 0.05
+      : ms < P.report ? 0.09 : 0.075
+    birds(ease, smooth(ms / P.docsIn) * 0.85, (p) => target(p, ms))
+
+    if (ms > P.report + STRIP_HOLD) {
+      returning = ts
+      swarmClock = SWARM_MOMENT
+      lastDrift = 0
+    }
+    raf = requestAnimationFrame(frame)
+  }
+
+  /** What somebody who has asked for less motion sees: the four wireframes
+   *  and the birds already home in the facts, drawn once and never touched
+   *  again. No animation is started at all. */
+  function still() {
+    swarmClock = SWARM_MOMENT
+    ctx!.clearRect(0, 0, W, H)
+    wireframes()
+    ctx!.fillStyle = pal.birds; ctx!.globalAlpha = 0.85
+    for (const p of pts) {
+      const [x, y] = home(p)
+      ctx!.fillRect(x, y, 1.3, 1.3)
+    }
+    ctx!.globalAlpha = 1
+  }
+
+  if (!build()) return null
+
+  let rt = 0
+  const onResize = () => {
+    window.clearTimeout(rt)
+    rt = window.setTimeout(() => {
+      if (!build()) return
+      if (reduce) still()
+    }, 180)
+  }
+  window.addEventListener('resize', onResize)
+
+  if (reduce) still()
+  else raf = requestAnimationFrame(frame)
+
+  return {
+    setLit(stage) {
+      current = stage
+      // While anything is moving the wireframes are repainted on the next
+      // frame anyway, and something always is - the murmuration never stops.
+      // Under reduced motion nothing moves, so it is redrawn here.
+      if (reduce) still()
+    },
+    stop() {
+      stopped = true
+      cancelAnimationFrame(raf)
+      window.clearTimeout(rt)
+      window.removeEventListener('resize', onResize)
+    },
+  }
+}
+
 /**
  * One stage, still, in miniature.
  *
@@ -455,6 +677,10 @@ export function drawStage(
   stage: Stage,
   count = 300,
   seed = 20260920,
+  /** How heavily the wireframe is stroked. One is the hero's hairline, which
+   *  is right for a picture the size of the hero; the side icon asks for
+   *  more, because a hairline at that size reads as a scratch (18.3). */
+  weight = 1,
 ): StageHandle | null {
   const ctx = cv.getContext('2d')
   if (!ctx) return null
@@ -485,9 +711,9 @@ export function drawStage(
     const pal = readPalette(cv)
     ctx!.clearRect(0, 0, W, H)
 
-    if (stage === 0) paintDocs(ctx!, scene.docs, pal, 1)
-    if (stage === 2) paintWires(ctx!, scene.wires, pal, 1)
-    if (stage === 3) paintPage(ctx!, scene.page, pal, 1)
+    if (stage === 0) paintDocs(ctx!, scene.docs, pal, 1, weight)
+    if (stage === 2) paintWires(ctx!, scene.wires, pal, 1, weight)
+    if (stage === 3) paintPage(ctx!, scene.page, pal, 1, weight)
 
     // A dot small enough that a hundred of them read as a body rather than a
     // rash, and never thinner than the device can draw.

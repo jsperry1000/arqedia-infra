@@ -1159,7 +1159,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       {/* Where the part on screen sits in the whole business: the same four
           stages the home page runs through, still and in miniature, with the
           one this part stands for brought forward (3.2). */}
-      <StageStrip />
+      <StageStrip lit={litStage} />
 
       {/* The working controls and the band of parts beneath them, held at the
           top together while the page scrolls (UX-02). Measured as ONE block,
