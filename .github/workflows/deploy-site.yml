@@ -12,6 +12,12 @@ on:
       # ran, because nothing under site/ had moved.
       - "ui/src/**"
       - "brand/**"
+      # And the plan table, which is now rendered from here at build (18.5).
+      # Without this a price change is committed, the migration moves the
+      # database, and the page that sells it never rebuilds - which is the
+      # drift the whole exercise exists to close, reintroduced by a path
+      # filter.
+      - "config/plans.json"
       - ".github/workflows/deploy-site.yml"
   workflow_dispatch:
     inputs:
