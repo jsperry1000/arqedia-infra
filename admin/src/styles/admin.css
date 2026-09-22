@@ -223,6 +223,22 @@ p.error {
   cursor: default;
 }
 
+/* The QR code, centred on white.
+ *
+ * WHITE UNDER IT IS NOT DECORATION. A QR reader needs the quiet zone and the
+ * light modules to be light; the card is already --paper, and this says so
+ * rather than inheriting it by luck, so a future change to the card's
+ * background cannot quietly make the code unreadable. qrcode.react draws at
+ * the size it is given and does not scale, which is why nothing here sets a
+ * width on the svg. */
+.qr {
+  display: flex;
+  justify-content: center;
+  background: var(--paper);
+  padding: 8px;
+  margin: 0 0 14px;
+}
+
 /* The shared secret, offered for an authenticator that cannot scan. */
 .secret {
   display: block;
