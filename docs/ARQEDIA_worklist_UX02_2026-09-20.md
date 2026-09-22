@@ -13,6 +13,12 @@
 
 **Numbering.** Groups are numbered 1–19. Items are numbered within their group (2.3 is Group 2, item 3). Each group has one prompt for Code, named by its group. Nothing else is numbered.
 
+**Next up:** 19.2 — nothing warns a tenant that the trial is ending, and
+nothing announces that it has ended. Today the only place the countdown
+appears is Account > Subscription; no screen a person works on shows it, and
+no email exists. A tenant loses the ability to file with no notice. Build the
+banner before the first paying tenant.
+
 ---
 
 ## Conflicts with standing decisions — flagged, not resolved
@@ -314,7 +320,7 @@ Raised 22 September 2026, walking the trial after 18.5.
 | # | Item |
 |---|---|
 | 19.1 | **Closed 22 September 2026 (trial-length, layer 41, applied and walked):** every customer-facing place says 14 days, from config/plans.json, and standing() reports trial_ended instead of trial for ever |
-| 19.2 | Not built: nothing warns a tenant before the trial ends, and nothing announces that it has. No email, no banner on any working screen. Filing simply starts refusing once the trial money expires. Build a banner at 7, 3 and 1 day, and a plain ended state; email later |
+| 19.2 | Not built: nothing warns a tenant before the trial ends, and nothing announces that it has. No email, no banner on any working screen. Filing simply starts refusing once the trial money expires. Build a banner at 7, 3 and 1 day, and a plain ended state; email later. **Confirmed 22 September 2026:** no scheduled job watches trial_ends_at — the three EventBridge rules are envelope_written, docs_created and reconcile, and none touches trials; no code anywhere compares trial_ends_at to a clock; mail.py sends exactly one thing, the seat invitation. The only surface carrying the countdown is Account.tsx's Subscription tab, which a person has to navigate to. Tenant 9 on dev sits eight days out, with its trial bucket moved to the same instant, so the countdown can be watched |
 | 19.3 | Not built: on the ended-trial screen no plan is preselected. Preselect Small Business, which the tenant can change before paying |
 
 ## Rolled into existing backlog
