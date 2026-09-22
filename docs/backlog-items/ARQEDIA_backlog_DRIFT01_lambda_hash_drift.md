@@ -316,3 +316,81 @@ not committed** — it is a workaround for one build, not a fix.
 Fixing it. The honest repair is `.gitattributes` covering `*.svg` and `*.css`,
 then one commit that normalises those four files and rebuilds `web/` — which
 touches the front end while another session has it open.
+
+---
+
+## Addendum, 22 September 2026 · a fifth source, `ui/index.html`
+
+Found on `ux-cite-links` while building 18.1. The list of four above is
+incomplete; nothing in it is wrong.
+
+### The source
+
+```
+ui/index.html            CRLF in the working copy, LF in the repository
+```
+
+Vite does not hash `index.html` - it is emitted by name - so this one does not
+show up as a renamed asset. It is worse than that: **Vite copies the
+template's line endings straight into `web/index.html`**, so the whole file is
+rewritten rather than the two lines that actually moved.
+
+```
+$ git cat-file blob $(git rev-parse origin/main:web/index.html) | count
+CRLF 0 LF 17
+$ git cat-file blob $(git rev-parse HEAD:web/index.html) | count      # first build here
+CRLF 15 LF 17
+```
+
+`core.autocrlf` is `true` in this worktree and did **not** normalise it on
+add. `.gitattributes` names `*.tf`, `*.py` and `*.sql` and nothing else, so
+there is no attribute to fall back on.
+
+### Measured, all five
+
+The list of four above says "CRLF in the repository". Measured on the blobs
+rather than on the working copy, it is the other way round - and the defect is
+identical either way, because what a build reads is the working copy:
+
+```
+$ git cat-file blob $(git rev-parse origin/main:<path>) | count
+brand/logo-deep.svg    stored: CRLF 0 LF 9
+brand/logo-white.svg   stored: CRLF 0 LF 9
+ui/src/index.css       stored: CRLF 0 LF 1587
+ui/src/tokens.css      stored: CRLF 0 LF 66
+ui/index.html          stored: CRLF 0 LF 16
+```
+
+All five are LF in the repository and CRLF on disk, smudged by
+`core.autocrlf = true` on checkout. The list stands as written; this is the
+measurement behind it.
+
+### Why it hides
+
+`git diff` shows two changed lines, because it compares text. `git show
+--stat` shows the truth:
+
+```
+web/index.html                        |  34 ++++++-------      first build, LF -> CRLF
+web/index.html                        |   4 +--                rebuilt from an LF template
+```
+
+A person reading the diff sees the two asset names they expect and commits.
+The rest of the file went with it. The CLAUDE.md rule - "a resource that plans
+as changed with no code difference is line endings, not code" - has a second
+form here: **a file whose stat says every line changed and whose diff says two
+did is line endings.**
+
+### What was done about it on `ux-cite-links`
+
+All five sources were normalised to LF for the build and restored afterwards.
+The first commit was amended, not left standing: `web/index.html` is now LF
+and four lines against `main`, proved with `git cat-file` on the blob rather
+than with `git diff`, which hides exactly this. The normalisation was not
+committed, for the same reason the addendum above gives.
+
+### Still not in scope
+
+Fixing it. The repair named above - `.gitattributes` covering `*.svg` and
+`*.css` - must cover `*.html` as well, and the one normalising commit must
+include `ui/index.html`, making it five files and not four.
