@@ -36,6 +36,11 @@ export const PLANS_FILE = resolve(HERE, '..', 'config', 'plans.json')
  *  opens in a browser on its own while somebody edits the prose around it. */
 const MARKER = '<!-- @plans-table -->'
 
+/** And the trial length, wherever the prose states it. A token rather than a
+ *  second marker comment, because it appears mid-sentence and inside a
+ *  <meta> attribute - "{{TRIAL_DAYS}} days, full use, no card." */
+const TRIAL_TOKEN = /\{\{TRIAL_DAYS\}\}/g
+
 /** A plan's numbers are numbers; Enterprise carries the page's own words, and
  *  a null price is the one thing that must never be a number. */
 type Cell = number | string | null
@@ -74,7 +79,8 @@ class PlansError extends Error {
  * did not run: the first is published and read by somebody deciding whether to
  * buy, and the second is noticed in thirty seconds.
  */
-export function readPlans(file = PLANS_FILE): { plans: Plan[]; topup: number } {
+export function readPlans(file = PLANS_FILE):
+    { plans: Plan[]; topup: number; trialDays: number } {
   let text: string
   try {
     text = readFileSync(file, 'utf-8')
@@ -92,6 +98,13 @@ export function readPlans(file = PLANS_FILE): { plans: Plan[]; topup: number } {
 
   if (!Array.isArray(doc?.plans) || doc.plans.length === 0) {
     throw new PlansError('has no "plans" array, or it is empty.')
+  }
+
+  // The trial length. Not inside a plan: it is the same fourteen days on every
+  // plan, and signup.TRIAL_DAYS - which is what actually writes
+  // tenant.trial_ends_at - knows nothing about plans either.
+  if (typeof doc.trial_days !== 'number' || doc.trial_days <= 0) {
+    throw new PlansError('has no positive numeric trial_days.')
   }
 
   for (const plan of doc.plans) {
@@ -115,7 +128,8 @@ export function readPlans(file = PLANS_FILE): { plans: Plan[]; topup: number } {
     throw new PlansError('has no numeric topup_increment_cents.')
   }
 
-  return { plans: doc.plans as Plan[], topup: doc.topup_increment_cents }
+  return { plans: doc.plans as Plan[], topup: doc.topup_increment_cents,
+           trialDays: doc.trial_days as number }
 }
 
 // --- the two money formats the page already uses ---------------------------
@@ -238,8 +252,12 @@ export function plansTable(): Plugin {
     transformIndexHtml: {
       order: 'pre',
       handler(html: string) {
-        if (!html.includes(MARKER)) return html
-        return html.replace(MARKER, renderPlansTable())
+        // THE TRIAL LENGTH IS REPLACED ON EVERY PAGE; the table only where a
+        // page asks for one. index.html states the length and has no table.
+        const { trialDays } = readPlans()
+        const said = html.replace(TRIAL_TOKEN, String(trialDays))
+        if (!said.includes(MARKER)) return said
+        return said.replace(MARKER, renderPlansTable())
       },
     },
   }

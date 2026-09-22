@@ -6,6 +6,10 @@
     "module": "esnext",
     "types": ["vite/client"],
     "allowArbitraryExtensions": true,
+    /* config/plans.json is the one place a trial length is stated, and
+       ui/src/trial.ts imports it so the app and the marketing site cannot
+       disagree (18.5 follow-up). */
+    "resolveJsonModule": true,
     "skipLibCheck": true,
 
     /* Bundler mode */

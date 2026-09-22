@@ -41,6 +41,14 @@ Canonical component numbering. Cross-references in every spec resolve here.
 Billable: `document\\\\\\\_filed` $0.25 · `memo\\\\\\\_generated` $1.00 · provider call (phase 2, TBD).
 Allowances, sealed from real balance: `test` $1/day · `classify` per plan.
 Trial: 30 days, seats free, $5 metered cap, expiring to `capped`.
+
+> **Corrected 22 September 2026.** The trial is **14 days**, not 30. It was
+> changed by the Paddle decision record of 16 September
+> (`paddle_subscription_decisions_2026-09-16.md`, "Trial is 14 days in all
+> cases (was 30, Wallet §2)") and `signup.TRIAL_DAYS` has said 14 since. The
+> line above is left standing because it is what this document said; the
+> published figure now lives in `config/plans.json` as `trial_days`, which
+> the marketing site and the application both render at build.
 Top-up: $5 × seats, on consent, prompted at $5, hard stop at $0.
 Cash expires 30 days per tranche; credit forfeits at anniversary; spend order is
 soonest expiry first.

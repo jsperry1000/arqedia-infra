@@ -4,6 +4,7 @@ import { api } from "./api";
 import { Working } from "./shell";
 import { config } from "./config";
 import { REGIONS, JURISDICTIONS } from "./mock";
+import { TRIAL_DAYS } from "./trial";
 
 /**
  * Signing up. Unattended: no queue, no manual approval, no card.
@@ -160,7 +161,8 @@ export function SignUp({ onSignIn, onSignedUp }: {
       <div className="signup-head">
         <h1>ARQEDIA</h1>
         <p className="muted">
-          30 days, full use, no card. $5.00 of metered credit while you look.
+          {TRIAL_DAYS} days, full use, no card. $5.00 of metered credit
+          while you look.
         </p>
         {/* A way out, on every step (5.3). Nothing has been created at any
             point before the code is answered, so leaving costs nothing and
@@ -279,7 +281,8 @@ export function SignUp({ onSignIn, onSignedUp }: {
             <h4>What begins when you finish</h4>
             <table className="docs">
               <tbody>
-                <tr><td>Trial</td><td className="ref">30 days, full use</td></tr>
+                <tr><td>Trial</td>
+                    <td className="ref">{TRIAL_DAYS} days, full use</td></tr>
                 <tr><td>Metered credit</td><td className="ref">$5.00</td></tr>
                 <tr><td>Card</td><td className="ref">none held</td></tr>
                 <tr><td>Organisation</td><td className="ref">{org || "not set"}</td></tr>

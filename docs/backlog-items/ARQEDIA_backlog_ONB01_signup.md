@@ -45,6 +45,14 @@ none is there for completeness.
 **No card at any step.** Thirty days, full use, $5.00 of metered credit. A card
 wall at the front contradicts the positioning and cuts trial starts.
 
+> **Corrected 22 September 2026.** The trial is **14 days**, not 30. It was
+> changed by the Paddle decision record of 16 September
+> (`paddle_subscription_decisions_2026-09-16.md`, "Trial is 14 days in all
+> cases (was 30, Wallet §2)") and `signup.TRIAL_DAYS` has said 14 since. The
+> line above is left standing because it is what this document said; the
+> published figure now lives in `config/plans.json` as `trial_days`, which
+> the marketing site and the application both render at build.
+
 **Region is the only irreversible choice**, and the screen says so plainly.
 Moving a tenant afterwards means re-filing every document, and every memorandum
 already written would name a revision whose documents are no longer behind it.

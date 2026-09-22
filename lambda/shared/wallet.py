@@ -111,7 +111,8 @@ def _money(cents):
 #
 # Derived on every charge, never stored (Wallet section 4).
 #
-#   trial           no subscription row - the tenant has not checked out
+#   trial           no subscription row, and the trial has not run out
+#   trial_ended     no subscription row, and trial_ends_at has passed
 #   active          a subscription in good standing
 #   purchased_only  payment has failed (past_due), or the subscription was
 #                   cancelled and its paid period is over. Filing and
@@ -124,13 +125,34 @@ def _money(cents):
 # InsufficientFunds in every standing.
 
 TRIAL = "trial"
+# An ended trial (18.5 follow-up). WHAT IT IS NOT: it is not a fourth rule
+# about money. standing() is read in exactly two places that spend -
+# quote() and charge(), both asking `== PURCHASED_ONLY` and nothing else - so
+# a value that is not PURCHASED_ONLY cannot change what may be spent. The
+# bucket already stops the spending: the trial credit carries trial_ends_at
+# as its own expires_at, and every query that selects spendable money
+# requires `expires_at > NOW()`.
+#
+# WHAT IT IS: an answer to "is this tenant still on trial", which the API had
+# no way to give. standing() read the subscription table alone and returned
+# `trial` for a tenant with no subscription FOR EVER, so a workspace six
+# months past its trial reported the same standing as one on its first day,
+# and the screen went on calling it a trial.
+TRIAL_ENDED = "trial_ended"
 ACTIVE = "active"
 PURCHASED_ONLY = "purchased_only"
 
 
-def classify_standing(has_subscription, paddle_status, period_over):
+def classify_standing(has_subscription, paddle_status, period_over,
+                      trial_over=False):
+    """The table, as a pure function. Every rule lives here and standing()
+    only supplies the facts.
+
+    trial_over DEFAULTS TO FALSE so that every caller written before it
+    existed - and the test that asserts this table - keeps its meaning
+    exactly."""
     if not has_subscription:
-        return TRIAL
+        return TRIAL_ENDED if trial_over else TRIAL
     if paddle_status == "past_due":
         return PURCHASED_ONLY
     if paddle_status == "canceled" and period_over:
@@ -152,9 +174,26 @@ def standing(tenant_id):
         """,
         [_p("t", tenant_id)],
     ).get("records", [])
-    if not rows:
-        return TRIAL
-    return classify_standing(True, _col(rows[0], 0), bool(_col(rows[0], 1)))
+    if rows:
+        return classify_standing(True, _col(rows[0], 0), bool(_col(rows[0], 1)))
+
+    # No subscription, so this is a trial - live or run out. THE SECOND QUERY
+    # RUNS ONLY HERE, on the one path that needs it: a tenant who has checked
+    # out never reaches this line, and a trial tenant pays one extra indexed
+    # lookup on the primary key.
+    #
+    # trial_ends_at IS NULL is NOT over. Tenants made before signup existed
+    # carry no date, and reading a missing date as an expired trial would end
+    # a trial nobody ever started.
+    found = _sql(
+        """
+        SELECT trial_ends_at IS NOT NULL AND trial_ends_at <= NOW()
+        FROM tenant WHERE tenant_id = :t
+        """,
+        [_p("t", tenant_id)],
+    ).get("records", [])
+    over = bool(_col(found[0], 0)) if found else False
+    return classify_standing(False, None, False, trial_over=over)
 
 
 # --- what things cost ------------------------------------------------------

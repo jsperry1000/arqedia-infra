@@ -183,7 +183,12 @@ export type Quote = {
 // active, or purchased_only where only unexpired top-up cash works.
 // paddle_status is Paddle's own word for the subscription, and is null when
 // there is no subscription at all.
-export type Standing = "trial" | "active" | "purchased_only";
+// trial_ended joined them on 22 September: standing read the subscription
+// table alone, so a tenant with no subscription was reported as being on
+// trial for ever. It changes nothing about what may be spent - the trial
+// credit expires on the same date and the wallet already refuses it.
+export type Standing =
+  "trial" | "trial_ended" | "active" | "purchased_only";
 
 export type Plan = {
   plan_key: string;
