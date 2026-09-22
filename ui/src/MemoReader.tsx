@@ -58,9 +58,30 @@ export function parseRefs(raw: string, byFilename: Record<string, number>):
   return out;
 }
 
+/**
+ * What makes two citations the same footnote (18.1).
+ *
+ * THERE IS NO FOOTNOTE NUMBER in a memorandum. The mark in the text is the
+ * COUNT of references in that run, not an ordinal, and a run is keyed by its
+ * position in a block - so two blocks citing the same page share nothing at
+ * all today. A footnote's identity therefore has to be made from what a
+ * citation actually carries: the source and the place in it.
+ *
+ * THE PLACE IS PART OF IT. accounts.pdf, page 4 and accounts.pdf, page 9 are
+ * two different footnotes, because the thing a person is following is a
+ * passage rather than a file. A citation with no page - "accounts.pdf" alone -
+ * is its own third thing and matches only other bare mentions of that file.
+ *
+ * Lower-cased, because the filename is a key here and not a display.
+ */
+export function refKey(ref: Ref): string {
+  return ref.filename.toLowerCase() + "#" + (ref.unit ?? "");
+}
+
 /** The mark a run of citations leaves in the text when they are put away, and
  *  the references themselves when they are out. */
-function Citations({ refs, shown, onToggle, byFilename, gone, onOpen }: {
+function Citations({ refs, shown, onToggle, byFilename, gone, onOpen,
+                     lit, onLight }: {
   refs: string[];
   shown: boolean;
   onToggle: () => void;
@@ -70,12 +91,25 @@ function Citations({ refs, shown, onToggle, byFilename, gone, onOpen }: {
    *  so it is drawn as spent rather than quietly turned back into prose. */
   gone?: Set<string>;
   onOpen: (ref: Ref) => void;
+  /** The footnote being followed, as refKey writes it, or null. */
+  lit: string | null;
+  onLight: (key: string) => void;
 }) {
   if (!shown) {
+    /* A PUT-AWAY RUN STILL LIGHTS UP (18.1). Most of a memo's runs are away -
+       that is the point of them - so a footnote followed in one paragraph
+       would otherwise appear to be used nowhere else, which is worse than not
+       answering at all. The mark shows that the answer is behind it, and the
+       count it already carries says how many are there. */
+    const here = lit !== null && refs.some((raw) =>
+      parseRefs(raw, byFilename).some(
+        (p) => typeof p !== "string" && refKey(p) === lit));
     return (
-      <button type="button" className="cite-mark" onClick={onToggle}
-              title={refs.length === 1 ? "Show the source"
-                                       : `Show ${refs.length} sources`}>
+      <button type="button" className={here ? "cite-mark lit" : "cite-mark"}
+              onClick={onToggle}
+              title={here ? "The same source is cited here. Show it"
+                          : refs.length === 1 ? "Show the source"
+                                              : `Show ${refs.length} sources`}>
         {refs.length}
       </button>
     );
@@ -89,14 +123,32 @@ function Citations({ refs, shown, onToggle, byFilename, gone, onOpen }: {
             typeof p === "string" ? (
               <span key={k}>{p}</span>
             ) : gone?.has(p.filename) ? (
-              <span key={k} className="cite gone"
+              /* A DELETED SOURCE LIGHTS AND IS LIT, AND STILL DOES NOT OPEN
+                 (18.1). It is found like any other - memo_source keeps the
+                 document_id through the delete, so byFilename holds it and
+                 refKey resolves it - and a memorandum resting on a document
+                 that has since gone is exactly the one somebody needs to
+                 see the reach of. Opening is the part that cannot happen:
+                 there is nothing behind it. So onLight, and no onOpen. */
+              <span key={k}
+                    className={refKey(p) === lit ? "cite gone lit" : "cite gone"}
+                    onClick={() => onLight(refKey(p))}
                     title={p.filename + " has been deleted. The memorandum is "
-                           + "unchanged; there is nothing left to open."}>
+                           + "unchanged; there is nothing left to open. Click "
+                           + "to mark where else it is cited."}>
                 {p.text}
               </span>
             ) : (
-              <span key={k} className="cite" onClick={() => onOpen(p)}
-                    title={"Open " + p.filename}>{p.text}</span>
+              <span key={k}
+                    className={refKey(p) === lit ? "cite lit" : "cite"}
+                    // FOLLOWING AND OPENING ARE THE SAME CLICK. A second
+                    // control beside each citation would be two marks on
+                    // every reference in a document made of them; and a
+                    // person who has just opened a passage is exactly the
+                    // person who wants to know where else it was relied on.
+                    onClick={() => { onLight(refKey(p)); onOpen(p); }}
+                    title={"Open " + p.filename
+                           + ", and show where else it is cited"}>{p.text}</span>
             ))}
           ]
         </em>
@@ -107,7 +159,8 @@ function Citations({ refs, shown, onToggle, byFilename, gone, onOpen }: {
   );
 }
 
-function Inlines({ nodes, blockId, shown, onToggle, byFilename, gone, onOpen }: {
+function Inlines({ nodes, blockId, shown, onToggle, byFilename, gone, onOpen,
+                  lit, onLight }: {
   nodes: Inline[];
   blockId: string;
   shown: Record<string, boolean>;
@@ -115,6 +168,8 @@ function Inlines({ nodes, blockId, shown, onToggle, byFilename, gone, onOpen }: 
   byFilename: Record<string, number>;
   gone?: Set<string>;
   onOpen: (ref: Ref) => void;
+  lit: string | null;
+  onLight: (key: string) => void;
 }) {
   return (
     <>
@@ -126,7 +181,8 @@ function Inlines({ nodes, blockId, shown, onToggle, byFilename, gone, onOpen }: 
         return (
           <Citations key={i} refs={n.refs} shown={!!shown[key]}
                      onToggle={() => onToggle(key)}
-                     byFilename={byFilename} gone={gone} onOpen={onOpen} />
+                     byFilename={byFilename} gone={gone} onOpen={onOpen}
+                     lit={lit} onLight={onLight} />
         );
       })}
     </>
@@ -276,6 +332,50 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
   const [shown, setShown] = useState<Record<string, boolean>>({});
   const toggle = (key: string) =>
     setShown((prev) => ({ ...prev, [key]: !prev[key] }));
+
+  /**
+   * The footnote being followed (18.1), as refKey writes it.
+   *
+   * WHAT IT ANSWERS. A memorandum is an argument, and the question a person
+   * checking one asks of a citation is not only what does that say but WHERE
+   * ELSE DID THIS COME IN. A source relied on in one paragraph is ordinary; a
+   * source carrying four paragraphs and a table row is the thing the whole
+   * memo turns on, and that is not visible by reading down the page.
+   *
+   * IT IS A HIGHLIGHT AND NOT A SELECTION. Nothing is stored, nothing is
+   * counted, no control appears. It goes as soon as attention moves, which is
+   * the next click anywhere that is not a citation - see below.
+   */
+  const [lit, setLit] = useState<string | null>(null);
+
+  /** CLEARED BY THE NEXT CLICK ELSEWHERE, wherever that click lands.
+   *
+   *  On the document rather than on the article, because "elsewhere" includes
+   *  the rest of the screen - the passage that has just been opened beside it,
+   *  the rail, the header - and a highlight that survived those would be a
+   *  selection left lying about.
+   *
+   *  On mousedown, which runs before React's click: a click on another
+   *  citation is let through here by the .cite test and then lights the new
+   *  one, so following a second footnote is one click and not two.
+   *
+   *  A MARK IS LET THROUGH TOO. The lit mark's whole purpose is that there is
+   *  something behind it, and clearing the highlight on the click that opens
+   *  it would show the reader exactly what they went looking for with the
+   *  answer taken off it.
+   *
+   *  Listening only while something is lit. Nothing is bound to the document
+   *  while the memo is merely being read. */
+  useEffect(() => {
+    if (lit === null) return;
+    const clear = (e: MouseEvent) => {
+      const at = e.target as Element | null;
+      if (at?.closest?.(".cite, .cite-mark")) return;
+      setLit(null);
+    };
+    document.addEventListener("mousedown", clear);
+    return () => document.removeEventListener("mousedown", clear);
+  }, [lit]);
 
   // Which block is open. One at a time: two carets in one document is a way
   // to lose track of which change went where.
@@ -468,7 +568,8 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
 
   const inlinesOf = (block: Block, nodes: Inline[]) => (
     <Inlines nodes={nodes} blockId={block.id} shown={shown} onToggle={toggle}
-             byFilename={byFilename} gone={gone} onOpen={onOpen} />
+             byFilename={byFilename} gone={gone} onOpen={onOpen}
+             lit={lit} onLight={setLit} />
   );
 
   /** The per-block controls. Always there, so they are never hunted for. */
