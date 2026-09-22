@@ -336,11 +336,30 @@ p.warn { color: #b45309; }
 
 /* A drawer's own head, held at the top of it while its list passes under
    (2.6). `.panel` is the scrolling box, so this holds against the panel
-   rather than against the window. */
+   rather than against the window.
+ *
+ * FLUSH WITH THE TOP OF THAT BOX (18.2). It held 28px below it, and the list
+ * scrolled up through the gap and showed above the head - a strip of moving
+ * facts between the head and the masthead.
+ *
+ * THE CAUSE was .panel's own `padding: 28px 32px`. In a scrolling box the
+ * top padding is part of the scrollable area, ABOVE the first child; a
+ * sticky child is held against the scrollport but never rises above where
+ * its own box begins, and this one begins under that padding. So the head
+ * stopped 28px down and the list went past it.
+ *
+ * The head now reaches out through the padding on three sides and takes it
+ * back inside itself, so its box begins at the drawer's very top edge and
+ * spans the full width. Stuck at top: 0 there is nothing above it to show
+ * through. The panel keeps its padding for everything else.
+ *
+ * Close moves inside the head with it: the head covers the band Close used
+ * to sit in, and a Close behind an opaque head is a drawer that cannot be
+ * shut. */
 .panel-head {
   position: sticky; top: 0; z-index: 2;
   background: var(--paper);
-  padding: 2px 0 8px; margin-bottom: 6px;
+  margin: -28px -32px 6px; padding: 28px 32px 8px;
   border-bottom: 1px solid var(--line);
 }
 .panel-head h3 { margin-bottom: 6px; }
@@ -1111,36 +1130,45 @@ a.add:hover { background: var(--paper); text-decoration: none; }
   .parts-band i { display: none; }
 }
 
-/* The band, with the part in use drawn beside it (18.3). A row rather than a
-   grid: the icon is a fixed box and the tabs take what is left, which is
-   what .parts-band button already expects with its flex: 1 1 0. */
-.band-row { display: flex; align-items: stretch; }
-.band-row .parts-band { flex: 1 1 auto; min-width: 0; }
-
-/* The strip's miniature, enlarged. Its canvas is 48px tall, so 84 is 1.75
-   times it - inside the 1.5 to 2 asked for, and close enough to the band's
-   own height that the two read as one row rather than as a picture stuck
-   beside it.
-   IT DECLARES NO PALETTE. The strip dulls the three stages not in use, which
-   is what makes the fourth read as chosen; there is only one here and it is
-   the chosen one, so it inherits ARQEDIA's own colours - never the tenant's.
-   The ground is the band's own lit ground, so the icon and the tab it
-   belongs to sit on one surface. */
+/* THE PART IN USE, DRAWN IN THE MARGIN (18.3).
+ *
+ * In the empty canvas to the left of the content column, level with the
+ * band, changing with the part. It was a 132px box inside the band, which
+ * made a fourth column out of a bearing.
+ *
+ * POSITIONED AGAINST .config-top, the sticky block that holds the bar and
+ * the band. So it travels with the band instead of scrolling away from it.
+ * Anchored by its FOOT to the foot of that block, which is the band's own
+ * bottom edge - that is what "level with the band" means here, and it needs
+ * no transform to say it. The picture then rises into the margin beside the
+ * bar, which is empty.
+ *
+ * `right: calc(100% + 24px)` puts its right edge 24px clear of the content
+ * column. No background and no border: it is a drawing in the margin, and
+ * a box around it would make it a panel of the page.
+ *
+ * WHEN IT SHOWS. The margin is what is left over after the rail and the
+ * content: on this page main is 1560 and the rail is 200, so each margin is
+ * (100vw - 1760) / 2. The icon is 240 wide and stands 24 clear of the
+ * content on one side and of the rail on the other, so it needs 288 - which
+ * arrives at 100vw = 1760 + 576 = 2336. Rounded up to 2340, below which it
+ * is not drawn at all rather than crowded or clipped.
+ *
+ * IT DECLARES NO PALETTE. The strip dulls the three stages not in use,
+ * which is what makes the fourth read as chosen; there is one here and it
+ * is the chosen one, so it inherits ARQEDIA's own colours - never the
+ * tenant's. */
 .stage-icon {
-  flex: 0 0 auto; width: 132px;
-  display: flex; align-items: center;
-  padding: 4px 10px;
-  background: var(--wash);
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  border-right: 1px solid var(--line);
+  display: none;
+  position: absolute; bottom: 0; right: calc(100% + 24px);
+  width: 240px;
 }
-.stage-icon canvas { display: block; width: 100%; height: 84px; }
+/* Much larger than the strip's 48: this is the picture, not a bearing in a
+   row of four. */
+.stage-icon canvas { display: block; width: 100%; height: 180px; }
 
-/* Hidden on the same rule as the strip: where the tabs are down to their
-   names there is no room for a bearing. */
-@media (max-width: 900px) {
-  .stage-icon { display: none; }
+@media (min-width: 2340px) {
+  .stage-icon { display: block; }
 }
 
 /* --- the four stages, above the bar --------------------------------------- */
