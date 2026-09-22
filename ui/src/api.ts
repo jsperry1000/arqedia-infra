@@ -10,10 +10,36 @@ async function authHeaders(): Promise<Record<string, string>> {
   return { Authorization: token, "content-type": "application/json" };
 }
 
+/** A refusal, carrying the status as well as the sentence.
+ *
+ *  WHY THE STATUS TRAVELS. A screen has to tell "there is no such thing"
+ *  from "that did not work", and the only other way to know is to match on
+ *  the words the server chose - a second copy of the server's wording, in
+ *  TypeScript, drifting the first time somebody rewrites a message. The
+ *  status is the server's own answer to that question.
+ *
+ *  .message is still the response body, so every existing catch that reads
+ *  it is untouched. */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, body: string) {
+    super(body);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/** The status of a refusal, or 0 for anything that is not one - a network
+ *  failure, a parse error, something thrown by our own code. */
+export function statusOf(err: unknown): number {
+  return err instanceof ApiError ? err.status : 0;
+}
+
 async function call(path: string, init: RequestInit = {}) {
   const headers = await authHeaders();
   const res = await fetch(config.apiUrl + path, { ...init, headers });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new ApiError(res.status, await res.text());
   return res.json();
 }
 
