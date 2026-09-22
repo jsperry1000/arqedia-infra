@@ -16,6 +16,7 @@ import { Amplify } from "aws-amplify";
 import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession,
          resetPassword, confirmResetPassword } from "aws-amplify/auth";
 import { config } from "./config";
+import { useRole } from "./upgrade";
 import { api, type Engagement } from "./api";
 // The mark lives in one place, /brand, and both the application and the
 // marketing site reference it from there. Replace those two files and both
@@ -298,6 +299,8 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
 // --- engagements -----------------------------------------------------------
 
 function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
+  const navigate = useNavigate();
+  const role = useRole();
   const [rows, setRows] = useState<Engagement[]>([]);
   const [newName, setNewName] = useState("");
   const [cleaned, setCleaned] = useState("");
@@ -311,6 +314,30 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
   // list; on, the archived ones join it MARKED rather than mixed in, and can
   // be restored from where they left.
   const [showArchived, setShowArchived] = useState(false);
+
+  /** Whether this workspace has ever published a configuration (18.8).
+   *
+   *  THE LANDING SCREEN WAS TELLING NEW TENANTS TO DO THE WRONG THING. "Name
+   *  an engagement below to start" is right for a workspace that is set up
+   *  and wrong for one that is not: following it leads to an upload against
+   *  no facts and no document types, a type dropdown with nothing in it, and
+   *  a refusal to file that cannot be acted on. Get started is the only door,
+   *  and nothing after signing up mentioned it again.
+   *
+   *  THE SAME TEST THE OTHER TWO SCREENS USE - revisions.length === 0, as in
+   *  Welcome.tsx and Configure.tsx - so the three agree about what "nothing
+   *  configured yet" means.
+   *
+   *  NULL ON A FAILED READ, and the old sentence stands. Not knowing is not a
+   *  reason to tell somebody their workspace is empty. GET /config is open to
+   *  any seat; only the forking and publishing behind Get started are not,
+   *  which is what the control below answers for. */
+  const [published, setPublished] = useState<boolean | null>(null);
+  useEffect(() => {
+    api.configState()
+      .then((s) => setPublished(s.revisions.length > 0))
+      .catch(() => setPublished(null));
+  }, []);
 
   async function load(archived = showArchived) {
     setLoading(true);
@@ -355,7 +382,36 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
   return (
     <div>
       <h2>Engagements</h2>
-      {rows.length === 0 && (
+      {/* IN PLACE OF "Nothing yet", not beside it (18.8). A workspace with no
+          published configuration has one thing to do and it is not naming an
+          engagement. Composed from .revision-note and .form-actions, the
+          shape UpgradePrompt already uses. No new CSS.
+
+          THE CONTROL IS ADMINISTRATOR-ONLY because what it leads to is:
+          POST /config/fork and POST /config/publish are both behind
+          _require_admin (CLAUDE.md, 17.7). A member is shown the same
+          sentence and told whom it is for, rather than a button that answers
+          403 - which is the rule UpgradePrompt was written to. */}
+      {rows.length === 0 && published === false && (
+        <div className="revision-note">
+          <span>
+            Choose your memoranda first &mdash; they decide what is read out
+            of your documents.
+          </span>
+          <div className="form-actions">
+            <button disabled={role === "member"}
+                    onClick={() => navigate("/welcome")}>
+              Get started
+            </button>
+            {role === "member" && (
+              <span className="muted small">
+                Setting up the configuration is an administrator&rsquo;s.
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+      {rows.length === 0 && published !== false && (
         <p className="muted">Nothing yet. Name an engagement below to start.</p>
       )}
       {/* The subject sits beside the name, because the name is a label

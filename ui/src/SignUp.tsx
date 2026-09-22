@@ -14,9 +14,25 @@ import { REGIONS, JURISDICTIONS } from "./mock";
  *   1  email and password      one trial per email domain
  *   2  organisation            the declared jurisdiction binds, not the IP
  *   3  region                  suggested, confirmed, and then immutable
- *   4  a second administrator  the cheapest account recovery is the one
- *                              nobody ever has to invoke
- *   5  the code                nothing is created until the address answers
+ *   4  the code                nothing is created until the address answers
+ *
+ * THE SECOND-ADMINISTRATOR STEP IS GONE (18.8). It was step 4, it was
+ * optional, it had no bearing on reaching a first memorandum, and it was the
+ * likeliest place to lose somebody - four screens in, being asked for a
+ * colleague's address before they had seen the product.
+ *
+ * IT ALSO DID NOTHING. The address travelled to the server and was written to
+ * pending_signup.second_admin, and nothing ever read that column: verify()
+ * selects it and never uses it, no seat_invitation was created, no email was
+ * sent. Somebody who typed a colleague in was told "They will be invited as
+ * an administrator" and no invitation existed. Checked on dev before this was
+ * touched - every pending_signup row has it NULL.
+ *
+ * So it moves to Get started, where a first sign-in lands, as a prompt
+ * pointing at the seats screen - which is the one place in the product that
+ * really does invite somebody. The server is unchanged: the field is simply
+ * no longer sent, the column stays as it is, and nothing that read it has to
+ * be found, because nothing did.
  *
  * THE CODE MOVED TO THE END. It was second, which meant a person waited for
  * an email before they had told us anything - and every refusal we could have
@@ -48,14 +64,14 @@ const STEPS = [
   "Your details",
   "Organisation",
   "Region",
-  "Second administrator",
   "Verify",
 ];
 
 // The last step, and the one before it. Named because the flow turns on them
 // in five places - the guard, the two buttons, the panel and where `begin`
 // lands - and five bare integers shifted by one is where an off-by-one lives.
-const VERIFY = 4;
+// This is the whole cost of removing a step: one number (18.8).
+const VERIFY = 3;
 const LAST_BEFORE_VERIFY = VERIFY - 1;
 
 export function SignUp({ onSignIn, onSignedUp }: {
@@ -73,7 +89,6 @@ export function SignUp({ onSignIn, onSignedUp }: {
   const [org, setOrg] = useState("");
   const [jurisdiction, setJurisdiction] = useState(JURISDICTIONS[0]);
   const [region, setRegion] = useState(REGIONS[0].code);
-  const [second, setSecond] = useState("");
 
   const domain = email.includes("@") ? email.split("@")[1] : "";
 
@@ -97,7 +112,6 @@ export function SignUp({ onSignIn, onSignedUp }: {
     try {
       await api.signup({
         email, org_name: org, jurisdiction, region,
-        second_admin: second || undefined,
       });
       setStep(VERIFY);
     } catch (err) {
@@ -130,7 +144,6 @@ export function SignUp({ onSignIn, onSignedUp }: {
     try {
       await api.signup({
         email, org_name: org, jurisdiction, region,
-        second_admin: second || undefined,
       });
     } catch (err) {
       setError(message(err));
@@ -258,27 +271,11 @@ export function SignUp({ onSignIn, onSignedUp }: {
               memorandum already written would name a revision that no longer
               has the documents behind it.
             </p>
-          </>
-        )}
 
-        {step === 3 && (
-          <>
-            <h3>A second administrator</h3>
-            <p className="muted small">
-              Optional, and worth the thirty seconds. An administrator can
-              restore access if you lose yours. Without one, recovery is a
-              manual request to us and takes days.
-            </p>
-            <label className="row">
-              <span>Their email</span>
-              <input placeholder="colleague@yourfirm.com" value={second}
-                     onChange={(e) => setSecond(e.target.value)} />
-              <span className="muted small">
-                They will be invited as an administrator. The seat is not taken
-                until they accept.
-              </span>
-            </label>
-
+            {/* THE SUMMARY CAME WITH THE STEP THAT WENT (18.8). It sat under
+                the second administrator, which was the last step before the
+                code; this is that step now, and a person should read what
+                they are about to start immediately before starting it. */}
             <h4>What begins when you finish</h4>
             <table className="docs">
               <tbody>
@@ -290,9 +287,11 @@ export function SignUp({ onSignIn, onSignedUp }: {
                 <tr><td>Region</td><td className="ref">{region}</td></tr>
               </tbody>
             </table>
-            {/* No memorandum row. Which memoranda a tenant gets is chosen on
-                Get started, after signing in, and saying anything about it
-                here would be promising something this screen does not do. */}
+            {/* No memorandum row, and no second-administrator row. Which
+                memoranda a tenant gets is chosen on Get started, after
+                signing in; so now is a colleague, for the reason at the head
+                of this file. Saying anything about either here would be
+                promising something this screen does not do. */}
           </>
         )}
 

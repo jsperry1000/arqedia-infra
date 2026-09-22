@@ -65,7 +65,12 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [memos, setMemos] = useState<MemoRef[]>([]);
   const [types, setTypes] = useState<DocType[]>([]);
-  const [templates, setTemplates] = useState<Template[]>([]);
+  // NULL UNTIL THE READ ANSWERS, and null again if it failed (18.12). An
+  // empty array now MEANS something - this workspace has no memorandum, so
+  // generating is impossible and the screen says so - and [] as a starting
+  // value would say that for the moment before the read lands, and for ever
+  // if it never did. A failure is not an assertion about what is published.
+  const [templates, setTemplates] = useState<Template[] | null>(null);
   const [template, setTemplate] = useState("");
   const [choices, setChoices] = useState<Record<number, Choice>>({});
   const [busy, setBusy] = useState("");
@@ -292,7 +297,10 @@ export function EngagementView({ id, onBack, onMemo }: {
     api.templates().then((r) => {
       setTemplates(r.templates);
       if (r.templates.length > 0) setTemplate(r.templates[0].key);
-    }).catch(() => setTemplates([]));
+    // Left null rather than emptied. It was setTemplates([]), which under
+    // 18.6's gate drew nothing and was harmless; under 18.12's it would tell
+    // a person their workspace has no memorandum because a request failed.
+    }).catch(() => undefined);
   }, []);
   // Reloads when the tick changes, because the archived rows were never sent
   // and there is nothing on the screen to filter.
@@ -315,6 +323,11 @@ export function EngagementView({ id, onBack, onMemo }: {
   const waitingFiles = expected?.names.length ?? 0;
   const blocked = busy !== "" || reading > 0 || unfiled > 0
     || generating !== null;
+
+  // No memorandum published, so the press would be refused (18.12). Only
+  // where the read answered - null is "we have not been told", and a screen
+  // must not disable the one act this page exists for on a failed request.
+  const nothingToWrite = templates !== null && templates.length === 0;
 
   // The screen updates itself (UX-11). It asks while any row is unfinished -
   // a file not yet read, a scan being read, a document being extracted, a
@@ -749,6 +762,36 @@ export function EngagementView({ id, onBack, onMemo }: {
   // push the thing a person came here to do - upload, and file what came
   // back - off the bottom of the screen.
   const [shut, setShut] = useState<Set<string>>(new Set(["filed", "memos"]));
+
+  /** MEMOS OPENS THE MOMENT A MEMORANDUM CAN BE WRITTEN (18.8).
+   *
+   *  Generate lives inside this part, and the part started shut - so a person
+   *  who had just paid to file eighteen documents was shown an upload box, a
+   *  "Filed" heading and a "Memos" heading, and NO GENERATE BUTTON at all.
+   *  The collapse is right for the Filed list, which is fifty rows nobody
+   *  asked for; it was wrong for the one control the whole journey aims at.
+   *
+   *  THE CONDITION IS THE BUTTON'S OWN. It opens exactly when Generate would
+   *  be pressable - documents in use and nothing in flight - so the two
+   *  cannot drift into saying different things about the same moment. Filed
+   *  is untouched and still starts shut.
+   *
+   *  ONCE. The ref is set when it opens, so a person who shuts Memos again
+   *  keeps it shut through every poll that follows. Somebody who arrives with
+   *  work already in flight gets it on the first tick that clears, rather
+   *  than never - which is why this watches rather than seeding useState,
+   *  where neither count is known yet. */
+  const openedMemos = useRef(false);
+  useEffect(() => {
+    if (openedMemos.current || activeCount === 0 || blocked) return;
+    openedMemos.current = true;
+    setShut((prev) => {
+      if (!prev.has("memos")) return prev;
+      const next = new Set(prev);
+      next.delete("memos");
+      return next;
+    });
+  }, [activeCount, blocked]);
   const part = (key: string, label: string, count: string) => (
     <h3>
       <a onClick={() => {
@@ -925,6 +968,24 @@ export function EngagementView({ id, onBack, onMemo }: {
       {toFile.length > 0 && (
         <>
           <h3>Ready to file</h3>
+          {/* AN EMPTY TYPE DROPDOWN SAYS WHY IT IS EMPTY (18.8).
+              With no configuration the list offers "Not classified" and
+              nothing else, and the server then refuses the filing with
+              "Choose a type for x.pdf before filing" - an instruction that
+              cannot be obeyed, because there is no type to choose and the
+              screen never says where types come from.
+
+              ONCE, ABOVE THE LIST, rather than beside each dropdown. It is
+              one fact about the workspace, not about any document; repeated
+              under twenty rows it is noise, and noise teaches people to stop
+              reading. Nothing new in CSS - .why warn, which this block uses
+              for the scan warning already. */}
+          {types.length === 0 && (
+            <p className="why warn">
+              No document types yet. They come with a memorandum &mdash;
+              Template Catalogue.
+            </p>
+          )}
           <div className="filters">{allBox(toFile, "of these")}</div>
           {toFile.map((p) => {
             const choice = choices[p.document_id] ??
@@ -1245,7 +1306,32 @@ export function EngagementView({ id, onBack, onMemo }: {
           there is no choice for it to answer - it would be explaining an
           alternative that does not exist. Composed from .filters and
           .inline-check, as it already was: no new CSS. */}
-      {templates.length > 0 && (
+      {/* NOTHING PUBLISHED, SO NOTHING TO GENERATE (18.12). The same
+          sentence the server refuses with, said before the click rather than
+          after it - and in place of the strip, because a memorandum chooser
+          with nothing in it is not a thing to draw. Reached by signing up and
+          leaving Get started without ticking anything, which is allowed: the
+          base brings the facts and the document types, and which memoranda a
+          tenant holds is their own choice.
+
+          .revision-note with a .form-actions inside it, which is what
+          UpgradePrompt is made of and what the subject block above already
+          composes from. No new CSS. */}
+      {templates !== null && templates.length === 0 && (
+        <div className="revision-note">
+          <span className="warn">
+            This workspace has no published memorandum, so there is nothing to
+            generate. Take one under Template Catalogue and publish it.
+          </span>
+          <div className="form-actions">
+            <button onClick={() => navigate("/catalogue")}>
+              Template Catalogue
+            </button>
+          </div>
+        </div>
+      )}
+
+      {templates !== null && templates.length > 0 && (
         <div className="filters">
           <label className="inline-check">
             Write
@@ -1290,7 +1376,7 @@ export function EngagementView({ id, onBack, onMemo }: {
           Filing has shown its cost before the click since the wallet was
           built - this is that, for the other act that spends. */}
       <button onClick={() => setConfirming(true)}
-              disabled={blocked || activeCount === 0
+              disabled={blocked || activeCount === 0 || nothingToWrite
                         || (memoQuote ? !memoQuote.affordable : false)}>
         {reading > 0
           ? `Wait \u2014 reading ${reading} ${reading === 1 ? "document" : "documents"}`
@@ -1398,7 +1484,7 @@ export function EngagementView({ id, onBack, onMemo }: {
               <p className="muted small">
                 {activeCount} {activeCount === 1 ? "document" : "documents"} in
                 use{template
-                  ? `, written as ${templates.find((t) => t.key === template)
+                  ? `, written as ${templates?.find((t) => t.key === template)
                       ?.label ?? template}` : ""}. One charge, whatever its
                 length and however many documents it draws on.
               </p>

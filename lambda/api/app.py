@@ -355,6 +355,22 @@ SUBJECT_REQUIRED = (
 # page for a typo (13.3 stage 4).
 NO_SUCH_ENGAGEMENT = "no engagement called %s"
 
+# Generating where the tenant holds no memorandum at all (18.12).
+#
+# NOT THE SAME FAULT AS A WRONG KEY, and it used to answer as though it were:
+# TEMPLATE_KEY is None with nothing published, the default flowed into the
+# validation, and a person who had never chosen a memorandum was told "no such
+# template: None" - a machine identifier, the word None, and nothing they could
+# act on. A tenant reaches this by signing up and leaving Get started without
+# ticking anything, which fork_base allows on purpose: the base is the facts
+# and the document types, and which memoranda a tenant holds is their choice.
+#
+# Says where to go, because the answer is one screen away and naming it is the
+# whole difference between a refusal and a dead end.
+NO_TEMPLATE_PUBLISHED = (
+    "This workspace has no published memorandum, so there is nothing to "
+    "generate. Take one under Template Catalogue and publish it.")
+
 
 def engagement_subject(tenant_id, name):
     """The subject recorded for an engagement, or None.
@@ -2106,8 +2122,18 @@ def generate(tenant_id, email, engagement, template_key=None,
     The template is validated HERE rather than left to composition. The
     invocation is asynchronous, so a bad key would otherwise fail four minutes
     later in a log nobody is watching, having returned 202 to a caller that
-    thinks a memo is being written."""
+    thinks a memo is being written.
+
+    TWO REFUSALS, NOT ONE (18.12). Nothing published and a key that does not
+    exist are different faults and read differently: the first is a workspace
+    that has not been set up, the second is a bad request. Both are 400 and
+    neither charges - the money moves below."""
     registry_now = config.for_tenant(tenant_id)
+
+    # Asked for nothing, and there is no default to fall back on.
+    if not template_key and registry_now.TEMPLATE_KEY is None:
+        raise ValueError(NO_TEMPLATE_PUBLISHED)
+
     template_key = template_key or registry_now.TEMPLATE_KEY
 
     if not registry_now.has_template(template_key):

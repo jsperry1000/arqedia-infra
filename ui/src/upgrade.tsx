@@ -40,6 +40,10 @@ export const ENTERPRISE_MAILTO =
  *  a control elsewhere can land on the right one (11.1). */
 export const PLANS = "/account?tab=subscription";
 export const BALANCE = "/account?tab=balance";
+/** Where a colleague is actually invited. Named here with the other two
+ *  because the second-administrator prompt on Get started points at it
+ *  (18.8), and an address written into a screen is an address that drifts. */
+export const SEATS = "/account?tab=seats";
 
 const MEMBER_REASON =
   "Changing the plan is an administrator's. You can see what each one holds.";
