@@ -90,14 +90,68 @@ resource "aws_iam_role_policy" "github_deploy" {
 # nothing with the customer path; a deploy role is exactly the kind of thing
 # that gets shared because it already exists.
 #
-# The trust is the same federation - the same repository, through the same
-# OIDC provider. Narrowing it further, to one workflow or one branch, is a
-# real option and is not done here: it would be the first place in this stack
-# to do it, and doing it for one role and not the others is a decision rather
-# than a tidy-up.
+# ITS TRUST IS NARROWER THAN THE OTHER ROLE'S, and deliberately the only one
+# in this stack that is. github_assume above trusts any ref in the
+# repository, which is right for the two customer surfaces: a branch that
+# publishes the marketing site early is a mess, not a breach. This role can
+# write the console that reads every tenant, so it is trusted from main and
+# from nothing else - not a branch, not a tag, not a pull request.
+#
+# THE SUBJECT CLAIM HAS TWO FORMATS AND THIS REPOSITORY USES THE SECOND.
+# Checked against GitHub's OIDC reference rather than remembered:
+#
+#   repo:OWNER/REPO:ref:refs/heads/main                  before 15 July 2026
+#   repo:OWNER@<owner id>/REPO@<repo id>:ref:refs/heads/main   after it
+#
+# "The @ separator is used between names and IDs because @ cannot appear in
+# GitHub usernames or repository names." A repository created after 15 July
+# 2026 gets the immutable format by default; one created before it keeps the
+# old format unless an administrator opts in. jsperry1000/arqedia-infra was
+# created on 26 August 2026 - api.github.com/repos/jsperry1000/arqedia-infra,
+# owner id 278752205, repository id 1347589209 - so the SECOND line is the
+# one matching today and the first is there for a repository that is ever
+# recreated or restored under the old format.
+#
+# The ids are written out rather than wildcarded, unlike github_assume's
+# "repo:jsperry1000@*/arqedia-infra@*:*". An id is never reassigned, which is
+# the whole point of the immutable format; a wildcard would trust any future
+# repository that happened to be called arqedia-infra under any account
+# called jsperry1000.
+#
+# StringEquals, not StringLike: there is no wildcard left to match.
+#
+# THE COST, ACCEPTED: a manual run of deploy-admin.yml from a branch other
+# than main cannot assume this role. Dispatching it from main still can.
+data "aws_iam_policy_document" "github_assume_admin" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values = [
+        "repo:jsperry1000/arqedia-infra:ref:refs/heads/main",
+        "repo:jsperry1000@278752205/arqedia-infra@1347589209:ref:refs/heads/main",
+      ]
+    }
+  }
+}
+
 resource "aws_iam_role" "github_deploy_admin" {
   name               = "${local.name_prefix}-github-deploy-admin"
-  assume_role_policy = data.aws_iam_policy_document.github_assume.json
+  assume_role_policy = data.aws_iam_policy_document.github_assume_admin.json
 
   tags = { Name = "${local.name_prefix}-github-deploy-admin" }
 }
