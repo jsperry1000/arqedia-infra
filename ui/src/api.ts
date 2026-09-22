@@ -193,6 +193,16 @@ export type Plan = {
   monthly_credit_cents: number;
   /** Null is unlimited, not zero. */
   share_allowance: number | null;
+  /** The three the pricing page sells and the database has held since
+   *  migration 033 (18.5). NULL IS NOT ZERO in any of them: a plan that has
+   *  not been given a limit has not been given one, and a plan limited to
+   *  zero sections could render no memorandum. The screen shows a dash.
+   *
+   *  Enterprise is absent from this list altogether - it is not a plan row,
+   *  for the reason ENTERPRISE_COLUMN in upgrade.tsx sets out. */
+  field_sets_per_type: number | null;
+  sections_per_template: number | null;
+  daily_classification_cents: number | null;
 };
 
 export type SubscriptionView = {
@@ -210,6 +220,11 @@ export type SubscriptionView = {
   checkout_offered_at: string | null;
   /** The plan rows, active ones only, cheapest first. */
   plans: Plan[];
+  /** What one top-up increment costs, from the constant the server multiplies
+   *  by when it charges (18.5). It was written down again in Account.tsx as
+   *  TOPUP_CENTS, so the confirmation and the charge were two numbers that
+   *  happened to agree. */
+  topup_increment_cents: number;
 };
 
 export type SignupBegun = {

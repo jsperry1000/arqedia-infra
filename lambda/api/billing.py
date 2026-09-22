@@ -81,16 +81,41 @@ def _require_admin(role):
 # --- reading ---------------------------------------------------------------
 
 def _plans():
+    """Every active plan, with everything the two surfaces show about one.
+
+    THE THREE LIMITS ARRIVED WITH MIGRATION 033 (18.5). Field sets per
+    document type, sections per template and the daily classification
+    allowance were sold on the pricing page and held nowhere - so the
+    application could not show them at all, and the page that sold them was
+    the only record. They are columns now, and this is what puts them on the
+    screen a tenant actually pays from.
+
+    NULL IS NOT ZERO in any of the three. A plan that has not been given a
+    limit has not been given one; a plan limited to zero sections could render
+    no memorandum. The screen shows a dash for null rather than a number.
+
+    ENTERPRISE IS NOT HERE, and cannot be: seat_count, monthly_price_cents and
+    monthly_credit_cents are NOT NULL, so a row for it could only exist by
+    inventing three numbers, and a negotiated price must not be a release
+    (CLAUDE.md, Money). This is also what decides what may be bought - see
+    _known_plan - so a row would make it purchasable at a made-up price. Its
+    column on the plan table is the marketing page's words, held in
+    ui/src/upgrade.tsx beside the address it already keeps."""
     rows = _sql(
         """
         SELECT plan_key, name, seat_count, monthly_price_cents,
-               monthly_credit_cents, share_allowance
+               monthly_credit_cents, share_allowance,
+               field_sets_per_type, sections_per_template,
+               daily_classification_cents
         FROM plan WHERE active = 1 ORDER BY monthly_price_cents
         """).get("records", [])
     return [{"plan_key": _col(r, 0), "name": _col(r, 1),
              "seat_count": _col(r, 2), "monthly_price_cents": _col(r, 3),
              "monthly_credit_cents": _col(r, 4),
-             "share_allowance": _col(r, 5)} for r in rows]
+             "share_allowance": _col(r, 5),
+             "field_sets_per_type": _col(r, 6),
+             "sections_per_template": _col(r, 7),
+             "daily_classification_cents": _col(r, 8)} for r in rows]
 
 
 def _plan(plan_key):
@@ -143,6 +168,21 @@ def subscription_view(tenant_id):
         "signup_intent": _col(t, 2) if t else None,
         "checkout_offered_at": _col(t, 3) if t else None,
         "plans": _plans(),
+        # WHAT A TOP-UP INCREMENT COSTS, from the constant that charges it
+        # (18.5). top_up() multiplies by exactly this, so the confirmation the
+        # browser shows and the amount the card is billed cannot disagree -
+        # which they could while the figure was written down again as
+        # TOPUP_CENTS in Account.tsx.
+        #
+        # ON THIS ENDPOINT RATHER THAN ON /wallet, deliberately. The constant
+        # lives in billing, and the alternative was moving it into wallet.py -
+        # which ships in the docprocessing layer, so every deploy of it needs
+        # build-layer.ps1 first or the Lambdas keep whatever the layer had
+        # (CLAUDE.md). A number on the wrong endpoint is a smaller price than
+        # a layer nobody remembers to rebuild. The Balance tab reads it here;
+        # topping up needs an active subscription in any case, so it is the
+        # same subsystem.
+        "topup_increment_cents": TOPUP_INCREMENT_CENTS,
     }
 
 

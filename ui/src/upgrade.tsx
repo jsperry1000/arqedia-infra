@@ -36,6 +36,45 @@ export const ENTERPRISE_MAILTO =
   "mailto:" + ENTERPRISE_EMAIL + "?subject=" +
   encodeURIComponent("ARQEDIA Enterprise enquiry");
 
+/**
+ * What the Enterprise column says (18.5 stage 3).
+ *
+ * A SECOND COPY, AND THE ONLY ONE IN THIS BRANCH. Everything else on the plan
+ * table now comes from the API, which reads the plan table, which migration
+ * 033 fills from config/plans.json. Enterprise cannot take that route:
+ * plan.seat_count, monthly_price_cents and monthly_credit_cents are NOT NULL,
+ * so it is deliberately not a row - and config/plans.json is at the repository
+ * root while the API bundle is lambda/api, so the Lambda cannot read it
+ * either:
+ *
+ *     data "archive_file" "api" { source_dir = "${path.module}/lambda/api" }
+ *
+ * So these words live here, beside the address, on the same reasoning the
+ * address already carries: the marketing site keeps its single copy in its own
+ * HTML, and the application is not built from the site's files. One copy per
+ * codebase, each declared.
+ *
+ * THE HONEST ALTERNATIVE is to get config/plans.json into the API bundle and
+ * have /billing/subscription return Enterprise too, at which point this goes.
+ * That is a build change and a decision; it is not taken here.
+ *
+ * The values are the pricing page's own, and config/plans.json records them as
+ * the source of record for all three surfaces.
+ */
+export const ENTERPRISE_COLUMN = {
+  name: "Enterprise",
+  /** Rendered where the others show a price. A negotiated price must not be a
+   *  release (CLAUDE.md, Money), so there is no number to render. */
+  price: "negotiated",
+  seats: "as contracted",
+  monthly_credit: "as contracted",
+  shares: "as contracted",
+  field_sets: "10 by default",
+  sections: "50 by default",
+  daily_classification: "negotiated",
+  topup: "$5",
+} as const;
+
 /** Where the plans are, and where a top-up is. The tab is in the address so
  *  a control elsewhere can land on the right one (11.1). */
 export const PLANS = "/account?tab=subscription";
