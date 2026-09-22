@@ -364,13 +364,26 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
    *  it would show the reader exactly what they went looking for with the
    *  answer taken off it.
    *
+   *  AND SO IS THE PASSAGE PANEL. One click does two things - it opens the
+   *  cited passage and marks where else that passage was relied on - and
+   *  reading the passage is how a person uses the second half. Every way out
+   *  of that panel was a click somewhere that is not a citation: Close, the
+   *  scrim, the link to the original. So the panel answered the question and
+   *  then took the answer away on the way out, which made the highlight
+   *  reachable only by not using it.
+   *
+   *  .cite-panel is a marker and carries no style rule. Named rather than
+   *  .panel-backdrop, which every drawer in the product wears: this exemption
+   *  belongs to the one panel a citation opens, and a drawer added to this
+   *  screen later should clear the highlight like anything else.
+   *
    *  Listening only while something is lit. Nothing is bound to the document
    *  while the memo is merely being read. */
   useEffect(() => {
     if (lit === null) return;
     const clear = (e: MouseEvent) => {
       const at = e.target as Element | null;
-      if (at?.closest?.(".cite, .cite-mark")) return;
+      if (at?.closest?.(".cite, .cite-mark, .cite-panel")) return;
       setLit(null);
     };
     document.addEventListener("mousedown", clear);

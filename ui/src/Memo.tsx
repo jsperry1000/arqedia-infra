@@ -708,13 +708,21 @@ export function MemoView({ memoId, onBack, onOpen }: {
   );
 }
 
-/** What the system read at the cited page, and a link to the document. */
+/** What the system read at the cited page, and a link to the document.
+ *
+ *  `cite-panel` carries no style rule. It marks this drawer as the one a
+ *  citation opens, so the footnote highlight survives every way out of it -
+ *  Close, the scrim, the link to the original (18.1). Without it the panel
+ *  answered where else the passage was used and then cleared the answer on
+ *  the way out. The exemption is read in MemoReader's clearing listener; it
+ *  is on this drawer and not on .panel-backdrop, which every drawer in the
+ *  product wears. */
 function PassagePanel({ passage, onClose }: {
   passage: Passage;
   onClose: () => void;
 }) {
   return (
-    <div className="panel-backdrop" onClick={onClose}>
+    <div className="panel-backdrop cite-panel" onClick={onClose}>
       <aside className="panel" onClick={(e) => e.stopPropagation()}>
         <a onClick={onClose} className="panel-close">Close</a>
         <h3>{passage.filename}</h3>
