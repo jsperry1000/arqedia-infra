@@ -263,6 +263,16 @@ export type Pending = {
   // and the sentence to show for it. Null on everything else.
   refusal_code: string | null;
   refusal_reason: string | null;
+  /** The folder the file was sitting in when it was picked (18.7,
+   *  migration 032). Provenance: recorded and shown beside the filename, and
+   *  never read by the classifier - letting it hint would put a
+   *  counterparty's filing habits into our classification.
+   *
+   *  Null on every document filed before 032, and on every upload that was
+   *  not a directory: webkitRelativePath is empty unless the input is a
+   *  directory picker. Absent means "not a directory upload", not "the
+   *  root". */
+  source_folder: string | null;
 };
 
 export type Doc = {
@@ -1066,18 +1076,39 @@ export const api = {
   upload: async (engagement: string, file: File): Promise<{
     engagement: string; filename: string;
   }> => {
-    const { url, uploaded_by, engagement: storedIn, filename: storedAs } =
+    // THE FOLDER, WHERE THERE IS ONE (18.7). webkitRelativePath is
+    // "2024 statutory/accounts.pdf" for a file picked through a directory
+    // input and "" for every other upload, so everything before the last
+    // slash is the folder and nothing at all is the ordinary case. The
+    // property is not on the DOM's File type, which is why it is read off a
+    // cast rather than declared.
+    const relative = (file as File & { webkitRelativePath?: string })
+      .webkitRelativePath ?? "";
+    const cut = relative.lastIndexOf("/");
+    const folder = cut > 0 ? relative.slice(0, cut) : "";
+
+    const { url, uploaded_by, engagement: storedIn, filename: storedAs,
+            source_folder } =
       await call("/uploads", {
         method: "POST",
-        body: JSON.stringify({ engagement, filename: file.name }),
+        body: JSON.stringify({
+          engagement, filename: file.name,
+          ...(folder ? { source_folder: folder } : {}),
+        }),
       });
 
+    // WHAT WAS SIGNED IS WHAT IS SENT. Every header a presigned PUT was
+    // signed with must come back or S3 refuses the request, so this echoes
+    // the server's own cleaned value and sends the header exactly when the
+    // server put one in the signature. It does not re-derive it: a second
+    // copy of the cleaning rule in TypeScript is 17.4 all over again.
     const put = await fetch(url, {
       method: "PUT",
       body: file,
       headers: {
         "x-amz-server-side-encryption": "aws:kms",
         "x-amz-meta-uploaded-by": uploaded_by,
+        ...(source_folder ? { "x-amz-meta-source-folder": source_folder } : {}),
       },
     });
 

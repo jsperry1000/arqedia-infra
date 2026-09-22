@@ -1,0 +1,112 @@
+-- 032_document_source_folder.sql
+--
+-- Where a document came from on the person's own machine.
+-- PROPOSED, and not applied.
+--
+-- WHY. CLAUDE.md has recorded this as a settled decision since the product
+-- was described:
+--
+--   "A folder name is provenance. Recorded and displayed; the classifier
+--    never reads it."
+--
+-- The second half is true and the first half is not built. Nothing in the
+-- schema holds a folder, and grep over the whole repository finds the word
+-- only in three comments:
+--
+--   $ grep -rn "source_folder\|folder" db/migrations/*.sql lambda/ ui/src/
+--   lambda/composition/app.py:165:# them knew only a folder name and the id
+--   lambda/composition/cleanup.py:233:  the alternative for those is a cleaned
+--   ui/src/App.tsx:362:  somebody typed for a folder and the subject is the
+--
+-- So a decision that reads as settled describes a column that does not exist.
+-- This is that column (18.7).
+--
+-- NOT THE ENGAGEMENT. The engagement is a label somebody typed into a form
+-- and it is already recorded; this is the directory the file was actually
+-- sitting in when they picked it, which is a different fact and often the
+-- more useful one - "2024 statutory" against "correspondence" says what a
+-- counterparty thought the file was.
+--
+-- IT REACHES NO PROMPT, AND THAT IS THE POINT. Letting a folder hint would
+-- put a counterparty's filing habits into our classification, and two tenants
+-- would get different answers from the same document. The file NAME is a hint
+-- as of 18.13 and travels in segment.segment's prompt; the folder does not and
+-- is not passed to it at all.
+--
+-- 031 IS APPLIED. Checked before writing this, not assumed:
+--
+--   SELECT filename, applied_at FROM schema_migration
+--    WHERE filename = '031_engagement_subject.sql'
+--
+--   SELECT COUNT(*) FROM document
+--
+-- Both read at the moment of applying rather than copied from here.
+--
+-- ADDITIVE AND NULLABLE. One column on one table. Nothing is dropped, nothing
+-- already recorded is altered, and no row is written by this migration.
+
+-- --- the folder --------------------------------------------------------------
+--
+-- NULL ON EVERY EXISTING ROW, and no backfill. There is nowhere to get it
+-- from: the S3 key is tenants/<id>/docs/<engagement>/<filename> and carries no
+-- folder, and the objects already in the bucket have no source-folder
+-- metadata. Deriving one from the engagement name would put a guess in the one
+-- column whose whole purpose is to record what was actually there - the same
+-- argument migration 031 made against backfilling subject_name from name.
+--
+-- NULL ALSO ON EVERY ORDINARY UPLOAD FROM NOW ON. webkitRelativePath is empty
+-- unless the input is a directory picker, so a file chosen one at a time has
+-- no folder to record and records none. Absent means "not a directory upload",
+-- not "the root".
+--
+-- 255, MATCHING engagement.subject_name and the other free-text columns here.
+-- Stored close to verbatim rather than through _clean(): this is provenance a
+-- person reads, not a storage key, so "2024 Statutory Accounts" must not
+-- become "2024-Statutory-Accounts".
+--
+-- BOUNDED TWICE BEFORE IT ARRIVES, and the tighter bound is not this column.
+-- The value travels as S3 user metadata, which AWS documents as US-ASCII only
+-- and capped at 2 KB across all keys and values together, so the API strips it
+-- to printable ASCII and cuts it to 255 before signing. A folder named in
+-- Greek or Chinese therefore arrives thinner than it went in or not at all,
+-- and that is a real limitation of the route rather than of the column. It is
+-- recorded here because the next person will find a stripped folder name and
+-- look for the defect in the wrong place.
+--
+-- NOT INDEXED. Nothing queries by it and nothing should: it is displayed
+-- beside a filename on one screen. An index would be a claim that this is a
+-- way of finding documents, which it is not.
+
+ALTER TABLE document
+  ADD COLUMN source_folder VARCHAR(255) NULL AFTER filename;
+
+-- Verification
+--
+--   SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
+--     FROM information_schema.COLUMNS
+--    WHERE TABLE_SCHEMA = 'arqedia' AND TABLE_NAME = 'document'
+--      AND COLUMN_NAME = 'source_folder'
+--
+-- Expect one row: source_folder | varchar(255) | YES.
+--
+--   SELECT COUNT(*) FROM document WHERE source_folder IS NOT NULL
+--
+-- Expect 0. This migration writes no value into it.
+--
+--   SELECT COUNT(*) FROM document
+--
+-- Expect the count read immediately before applying, unchanged.
+--
+--   SELECT filename FROM schema_migration
+--    WHERE filename = '032_document_source_folder.sql'
+--
+-- Expect one row.
+--
+--
+-- DEPLOY ORDER. THIS MIGRATION FIRST, THE CODE SECOND, AND IT IS NOT
+-- OPTIONAL. Both INSERT statements in lambda/normalizer/app.py name this
+-- column, and list_pending in lambda/api/app.py selects it. Applying the code
+-- against a database without it does not degrade - it fails EVERY document
+-- insert and every pending read, which means every upload, for every tenant.
+--
+-- The branch carrying that code must not be applied until this has been.

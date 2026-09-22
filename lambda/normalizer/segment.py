@@ -134,7 +134,7 @@ def _valid_parts(proposed, page_count, registry):
     return cleaned
 
 
-def segment(raw_text, units, registry):
+def segment(raw_text, units, registry, filename=None):
     """Returns (parts, usage).
 
     Each part carries part_index, page_from, page_to, document_type,
@@ -145,7 +145,23 @@ def segment(raw_text, units, registry):
     descriptions authored in the editor are what the model reads to tell one
     type from another - they are functional, not decorative, and Stage 1 showed
     the same document classified differently as a PDF and as a Word file until
-    every type carried a sentence describing itself."""
+    every type carried a sentence describing itself.
+
+    `filename` IS A HINT AND NOT AN ANSWER (18.13). A person who calls a file
+    "Cocoa-Empire-Articles-of-Association.pdf" has told us something, and until
+    this the classifier was forbidden to hear it - which was the right rule
+    when the alternative was typing FROM the name, and the wrong one once the
+    name sits beside four thousand characters of the document's own text. The
+    prompt says plainly that it may mislead and that the content decides.
+
+    THE FOLDER IS NOT PASSED AND MUST NOT BE. It is recorded and displayed -
+    document.source_folder, migration 032 - and letting it hint would put a
+    counterparty's filing habits into our classification, so two tenants would
+    get different answers from the same document. That decision is unchanged
+    (CLAUDE.md, Documents coming in).
+
+    Optional, and the default is None, because the scan path does not call
+    this at all and because a caller that cannot say has to be able not to."""
     page_count = len(units)
 
     if not MODEL_ID or not (raw_text or "").strip() or page_count < 1:
@@ -160,10 +176,17 @@ def segment(raw_text, units, registry):
 
     word = units[0]["kind"]
 
+    # The name, said once at the top so it is read alongside the excerpts, and
+    # qualified once in the rules below. Absent where the caller could not say,
+    # and then the prompt is character for character what it was before 18.13.
+    named = (filename or "").strip()
+    naming = ('The file is named "' + named + '".\n\n') if named else ""
+
     prompt = (
         "A file may hold one document or several bound together - a corporate "
         "pack, a mail thread export, a set of statements scanned in one pass.\n\n"
-        "Below is an excerpt from each " + word + " of a file with "
+        + naming
+        + "Below is an excerpt from each " + word + " of a file with "
         + str(page_count) + " " + word + "s, numbered 1 to " + str(page_count)
         + ". Read every excerpt before answering. Decide how many documents it "
         "holds, where each begins and ends, and what each one is.\n\n"
@@ -225,7 +248,21 @@ def segment(raw_text, units, registry):
         "belongs in \"boundary\" and is worthless to a reader choosing a type.\n"
         "- \"boundary\" is one short sentence on what marks the start of this "
         "part. For a single-part answer covering the whole file, say so.\n"
-        "Return only the JSON object.\n\n"
+        + ("\nThe file name:\n"
+           "- IT IS A HINT AND NOT AN ANSWER. Somebody named this file, and "
+           "what they called it is evidence about what they believed it "
+           "holds. Read it. Then weigh it against what the excerpts actually "
+           "say, and WHERE THE TWO DISAGREE THE CONTENT WINS - a name is a "
+           "label somebody typed, and it may be stale, copied from another "
+           "file, generic (scan001.pdf), or simply wrong.\n"
+           "- ONE NAME CANNOT DESCRIBE SEVERAL DOCUMENTS. A file holding four "
+           "documents still has one name, so the name can be right about at "
+           "most one of them and is evidence about none of the others. NEVER "
+           "let it argue against a boundary the excerpts show.\n"
+           "- IT NEVER CREATES A TYPE. A name matching nothing on the list "
+           "above is not a reason to return anything but null.\n"
+           if named else "")
+        + "Return only the JSON object.\n\n"
         "--- FILE START ---\n"
         + _page_samples(raw_text, units)
         + "\n--- FILE END ---"

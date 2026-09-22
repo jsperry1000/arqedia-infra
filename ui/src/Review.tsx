@@ -329,6 +329,21 @@ export function EngagementView({ id, onBack, onMemo }: {
   // must not disable the one act this page exists for on a failed request.
   const nothingToWrite = templates !== null && templates.length === 0;
 
+  /** The directory picker's own element (18.7).
+   *
+   *  `webkitdirectory` is a real attribute on every browser this product
+   *  supports and is absent from React's InputHTMLAttributes, so setting it
+   *  in JSX needs either a cast at the call site or a global declaration.
+   *  Set on the node instead: one effect, no type surgery, and nothing about
+   *  the rest of the codebase has to learn a new attribute. */
+  const folderInput = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    const el = folderInput.current;
+    if (!el) return;
+    el.setAttribute("webkitdirectory", "");
+    el.setAttribute("directory", "");
+  }, []);
+
   // The screen updates itself (UX-11). It asks while any row is unfinished -
   // a file not yet read, a scan being read, a document being extracted, a
   // memo being written - and stops once every row has reached a state that
@@ -893,6 +908,30 @@ export function EngagementView({ id, onBack, onMemo }: {
       </div>
 
       <input type="file" multiple onChange={(e) => upload(e.target.files)} />
+      {/* A WHOLE FOLDER, AND THE FOLDER IS RECORDED (18.7). A second input
+          rather than webkitdirectory on the one above, because that attribute
+          makes an input directory-ONLY: a person with three files to send
+          would have to put them in a folder first.
+
+          THE FOLDER IS ONLY KNOWN FROM HERE. webkitRelativePath is populated
+          by the directory picker and by nothing else - an ordinary pick, and
+          a drag-and-drop, both give "" - so this control is what makes
+          document.source_folder ever hold a value. Uploading is otherwise
+          identical: the same upload(), the same charge, the same review.
+
+          webkitdirectory is not in React's HTML types. It is set through a
+          ref, which is the way that does not require declaring a global
+          attribute this codebase uses nowhere else. */}
+      <label className="inline-check" style={{ marginTop: 8 }}>
+        <span className="muted small">or a whole folder:</span>
+        <input type="file" multiple ref={folderInput}
+               onChange={(e) => upload(e.target.files)} />
+      </label>
+      <p className="muted small">
+        A folder upload records which folder each file came out of, and shows
+        it beside the file. It is provenance only: it is never read when
+        proposing what a document is.
+      </p>
       {working && <Working what={working} />}
       {gaveUp && !busy && (
         <p className="muted small">
@@ -996,6 +1035,19 @@ export function EngagementView({ id, onBack, onMemo }: {
                 <div className="review-head">
                   {pickBox(p)}
                   <strong>{p.filename}</strong>
+                  {/* WHERE IT CAME FROM (18.7). Beside the name, because that
+                      is what it qualifies: four cards reading "Accounts.pdf"
+                      are told apart by the folder and by nothing else on the
+                      row. Absent on an ordinary upload, and nothing is drawn
+                      then - "no folder" is not a fact worth a line. */}
+                  {p.source_folder && (
+                    <span className="muted small"
+                          title="The folder this file came out of. Recorded
+                                 and shown; never read when proposing what the
+                                 document is.">
+                      {p.source_folder}
+                    </span>
+                  )}
                   <span className="muted">
                     {p.page_from
                       ? `pages ${p.page_from}\u2013${p.page_to}`
@@ -1054,6 +1106,22 @@ export function EngagementView({ id, onBack, onMemo }: {
                     <span className="warn">will be read by OCR</span>
                   )}
                 </div>
+
+                {/* WHAT THE PROPOSAL WAS MADE FROM (18.7/18.13). A person
+                    overriding a type is usually doing it because the name
+                    told them something, so they are owed the knowledge that
+                    the name was read - and that the folder was not.
+
+                    ONLY WHERE THERE IS A PROPOSAL. A scan arrives with no
+                    type because nothing was read from it, and telling
+                    somebody what a reading weighed when there was no reading
+                    would be untrue. Its own sentence is below. */}
+                {p.proposed_type && (
+                  <p className="why">
+                    Proposed from what the document says and its file name,
+                    weighed together. Not from its folder.
+                  </p>
+                )}
 
                 {p.why && <p className="why">{p.why}</p>}
                 {p.thin_text && (

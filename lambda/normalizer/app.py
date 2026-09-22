@@ -279,7 +279,8 @@ def _refusal_code(reason):
 
 
 def _record_refusal(tenant_id, engagement, filename, src_bucket, src_key,
-                    version_id, sha, byte_size, uploaded_by, code):
+                    version_id, sha, byte_size, uploaded_by, code,
+                    source_folder=None):
     """A document nobody could read, recorded so somebody can see it.
 
     THE POINT OF STAGE 1. Every exit below the fetch used to return a dict to
@@ -316,12 +317,12 @@ def _record_refusal(tenant_id, engagement, filename, src_bucket, src_key,
         """
         INSERT INTO document
           (tenant_id, engagement_id, s3_bucket, s3_key, s3_version_id,
-           sha256, filename, byte_size, state, refusal_code, refusal_reason,
-           uploaded_by, config_revision)
+           sha256, filename, source_folder, byte_size, state, refusal_code,
+           refusal_reason, uploaded_by, config_revision)
         VALUES
           (:tenant_id, :engagement_id, :s3_bucket, :s3_key, :s3_version_id,
-           :sha256, :filename, :byte_size, 'unreadable', :code, :reason,
-           :uploaded_by, :config_revision)
+           :sha256, :filename, :source_folder, :byte_size, 'unreadable',
+           :code, :reason, :uploaded_by, :config_revision)
         """,
         [
             _p("tenant_id", tenant_id),
@@ -331,6 +332,10 @@ def _record_refusal(tenant_id, engagement, filename, src_bucket, src_key,
             _p("s3_version_id", version_id),
             _p("sha256", sha),
             _p("filename", filename),
+            # A file nobody could read still came from somewhere, and where it
+            # came from is part of what a person needs to decide what to do
+            # with it.
+            _p("source_folder", source_folder),
             _p("byte_size", byte_size),
             _p("code", code),
             _p("reason", _REFUSAL_TEXT.get(code, _REFUSAL_TEXT["error"])),
@@ -345,7 +350,8 @@ def _record_document(envelope):
         """
         INSERT INTO document
           (tenant_id, engagement_id, s3_bucket, s3_key, s3_version_id,
-           sha256, filename, page_count, part_index, page_from, page_to,
+           sha256, filename, source_folder, page_count, part_index,
+           page_from, page_to,
            extraction_method, document_type,
            state, thin_text, char_count, byte_size,
            type_confidence, type_reason,
@@ -353,7 +359,8 @@ def _record_document(envelope):
            uploaded_by, config_revision)
         VALUES
           (:tenant_id, :engagement_id, :s3_bucket, :s3_key, :s3_version_id,
-           :sha256, :filename, :page_count, :part_index, :page_from, :page_to,
+           :sha256, :filename, :source_folder, :page_count, :part_index,
+           :page_from, :page_to,
            :extraction_method, :document_type,
            :state, :thin_text, :char_count, :byte_size,
            :type_confidence, :type_reason,
@@ -375,6 +382,9 @@ def _record_document(envelope):
             _p("s3_version_id", envelope["source_version_id"]),
             _p("sha256", envelope["sha256_source"]),
             _p("filename", envelope["filename"]),
+            # Provenance (18.7, migration 032). Recorded and displayed; never
+            # read by the classifier.
+            _p("source_folder", envelope.get("source_folder")),
             # Measured where the caller measured them. A scan has real pages
             # and a real (tiny) character count, and its envelope is empty -
             # deriving these from the envelope would say 0 pages about a file
@@ -434,10 +444,21 @@ def lambda_handler(event, context):
     # this function does not, so the answer arrives with the object.
     uploaded_by = (obj.get("Metadata") or {}).get("uploaded-by")
 
+    # THE FOLDER THE FILE CAME OUT OF (18.7), by the same route and for the
+    # same reason: the browser knows it, this function does not, and the key
+    # does not carry it - the key is tenant/docs/engagement/filename and the
+    # engagement is a name somebody typed, not the folder on their disk.
+    #
+    # PROVENANCE, NEVER A SIGNAL. It is written to the row and displayed
+    # beside the filename, and it is not passed to segment.segment. Absent on
+    # an ordinary file upload, because webkitRelativePath is empty unless the
+    # input is a directory picker.
+    source_folder = (obj.get("Metadata") or {}).get("source-folder")
+
     def refuse(code, log_reason):
         _record_refusal(tenant_id, engagement, filename, src_bucket, src_key,
                         obj.get("VersionId"), sha, len(body), uploaded_by,
-                        code)
+                        code, source_folder)
         print("[unreadable] key=%s reason=%s code=%s" % (
             src_key, log_reason, code))
         return {"status": "unreadable", "reason": log_reason, "code": code,
@@ -472,6 +493,7 @@ def lambda_handler(event, context):
             "uploaded_by": uploaded_by,
             "engagement": engagement,
             "filename": filename,
+            "source_folder": source_folder,
             "source_bucket": src_bucket,
             "source_key": src_key,
             "source_version_id": obj.get("VersionId"),
@@ -497,7 +519,7 @@ def lambda_handler(event, context):
 
     try:
         return _analyse(src_bucket, src_key, tenant_id, engagement, filename,
-                        obj, body, sha, uploaded_by)
+                        obj, body, sha, uploaded_by, source_folder)
     except extractors.UnreadableDocument as exc:
         if exc.reason == "no_text_layer":
             return scan(exc)
@@ -521,7 +543,7 @@ def lambda_handler(event, context):
 
 
 def _analyse(src_bucket, src_key, tenant_id, engagement, filename, obj, body,
-             sha, uploaded_by):
+             sha, uploaded_by, source_folder=None):
     """Read the document and record what it is. Everything below the fetch.
 
     Split out so lambda_handler can wrap the whole of it in one try: an exit
@@ -534,7 +556,12 @@ def _analyse(src_bucket, src_key, tenant_id, engagement, filename, obj, body,
     revision = config.active_revision(tenant_id)
     registry = config.load(tenant_id, revision)
 
-    parts, usage = segment.segment(raw_text, units, registry)
+    # THE FILE NAME GOES WITH IT (18.13). The prompt says it is a hint that
+    # may mislead and that the content decides; see segment.segment. The
+    # FOLDER does not go, and must not - it is recorded and shown, and letting
+    # it hint would put a counterparty's filing habits into our classification
+    # (CLAUDE.md, Documents coming in).
+    parts, usage = segment.segment(raw_text, units, registry, filename)
 
     # A scanned page cannot be sent to OCR on its own: Textract's asynchronous
     # API takes an object, not a page range. Splitting a file that holds one
@@ -572,6 +599,7 @@ def _analyse(src_bucket, src_key, tenant_id, engagement, filename, obj, body,
             "uploaded_by": uploaded_by,
             "engagement": engagement,
             "filename": filename,
+            "source_folder": source_folder,
             "source_bucket": src_bucket,
             "source_key": src_key,
             "source_version_id": obj.get("VersionId"),
