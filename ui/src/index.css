@@ -448,6 +448,34 @@ p.warn { color: #b45309; }
 }
 .cite.gone:hover { color: var(--ink-2); }
 
+/* THE FOOTNOTE BEING FOLLOWED, AND EVERY OTHER PLACE IT IS USED (18.1).
+   Clicking a citation marks it and every other citation of the same source
+   at the same page, so what a memorandum leans on is visible instead of
+   having to be remembered down four screens of prose.
+
+   THE BRAND LIGHT AS A GROUND, which is what this palette already uses to
+   say IN USE - the rail's current page, a pill, the put-away mark. The
+   dotted rule closes up at the same time: dotted says there is something
+   behind this, solid says this is the one.
+
+   THE TINT IS A SHADOW, not padding. Horizontal padding on an inline element
+   moves the words either side of it, so a highlight would shift the
+   sentence it is in as it went on and off. A spread shadow paints the same
+   two pixels and moves nothing.
+
+   IT DOES NOT REACH .cite.gone. A deleted document is absent from
+   byFilename, so its citations never resolve to a reference and can neither
+   light nor be lit - see refKey. Stated because it is a gap and not a
+   nicety: a memo resting on a document that has since gone is exactly the
+   memo somebody wants this for. */
+.cite.lit, .cite.lit:hover {
+  color: var(--deep);
+  background: var(--light);
+  border-bottom: 1px solid var(--deep);
+  border-radius: 2px;
+  box-shadow: 0 0 0 2px var(--light);
+}
+
 .passage {
   background: var(--wash); border: 1px solid var(--line); border-radius: 3px;
   padding: 14px 16px; margin: 12px 0 16px;
@@ -627,6 +655,17 @@ p.warn { color: #b45309; }
 .cite-mark:hover { background: var(--medium); color: var(--paper); }
 .cite-mark.shown { vertical-align: baseline; margin-left: 4px; }
 .cite-run { display: inline; }
+
+/* A PUT-AWAY RUN THAT HOLDS THE FOOTNOTE BEING FOLLOWED (18.1). Most of a
+   memo's runs are away, so without this a source relied on in six places
+   would appear to be used in one. The mark reverses out into the deep - a
+   step beyond its own resting light and beyond the medium it takes under the
+   pointer, so the three states are told apart at 10px.
+
+   It keeps the ordinary hover answer. A control that stops responding to the
+   pointer reads as disabled, and this one still opens. See .cite.lit. */
+.cite-mark.lit { background: var(--deep); color: var(--paper); }
+.cite-mark.lit:hover { background: var(--medium); color: var(--paper); }
 
 /* The per-block control: Sources, and Edit.
    READABLE BEFORE THE POINTER REACHES IT (7.1). They sat at 45% of eleven
