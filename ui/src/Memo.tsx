@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Memo, type Passage, type Rewrite } from "./api";
 import { MemoDocument, type Ref } from "./MemoReader";
-import { useBackAction, usePinTop } from "./shell";
+import { useBackAction, usePinTop, Working } from "./shell";
 
 /**
  * Reading and revising a memo.
@@ -515,6 +515,14 @@ export function MemoView({ memoId, onBack, onOpen }: {
                       : `Go \u2014 rewrite ${ready.length} ${
                           ready.length === 1 ? "section" : "sections"}`}
                 </button>
+                {/* NOT the shared Working indicator, deliberately (6.3).
+                     This sits in a row beside the Go and Save buttons, and
+                     .working is a 240px-minimum card with its own margins
+                     and a bar - dropped in here it would push the buttons
+                     apart every time a rewrite ran. A span beside a button
+                     is the right shape for a count that changes while the
+                     row stays still. Held with the two below it as one
+                     question rather than changed unseen. */}
                 {inFlight > 0 && (
                   <span className="busy">
                     {inFlight} {inFlight === 1 ? "section" : "sections"} rewriting
@@ -572,7 +580,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
       )}
 
       {saveError && <p className="error">{saveError}</p>}
-      {loadingRef && <p className="busy">Opening source&hellip;</p>}
+      {loadingRef && <Working what="Opening source" />}
 
       {mode === "rewrite" ? (
         <div className="rewrite">
@@ -640,6 +648,13 @@ export function MemoView({ memoId, onBack, onOpen }: {
                 )}
 
                 <div className="rewrite-actions">
+                  {/* NOT the shared Working indicator, deliberately (6.3).
+                      .rewrite-actions is a 13px flex row of links, gap 16px;
+                      .working is a 240px-minimum card with margin 12px 0
+                      16px and a bar under it. One of these renders per
+                      section being rewritten, so the card would stack the
+                      row into a column. The span is what keeps Accept and
+                      Discard where they were. */}
                   {run && !result && (
                     <span className="busy">Rewriting&hellip;</span>
                   )}

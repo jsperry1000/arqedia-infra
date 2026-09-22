@@ -17,17 +17,16 @@ import { useNavigate } from "react-router-dom";
 import { useBackAction, Working } from "./shell";
 import { BALANCE, UpgradePrompt } from "./upgrade";
 
-/** The name a file is stored under: the API's _clean, whitespace to a dash
- *  and anything else unsafe dropped. Compared on both sides, so a row whose
- *  filename was or was not cleaned still matches the file that was sent. */
-function stored(name: string) {
-  return (name || "").trim()
-    .replace(/\s+/g, "-")
-    .replace(/[^A-Za-z0-9._-]/g, "")
-    .replace(/-{2,}/g, "-")
-    .replace(/^[-.]+|[-.]+$/g, "")
-    .slice(0, 120);
-}
+/* stored() is gone (17.4).
+ *
+ * It copied the server's _clean - whitespace to a dash, anything else unsafe
+ * dropped - so that a name this screen was waiting for matched the row that
+ * arrived. Two implementations of the rule that decides where a file is
+ * kept, agreeing character for character and one edit away from not, which
+ * is exactly how 17.3 arrived. POST /uploads answers with the name it stored
+ * the file under, and the row carries that same name because the normalizer
+ * reads it off the key - so there is nothing left to compute here.
+ */
 
 function money(cents: number) {
   return "$" + (cents / 100).toLocaleString(undefined, {
@@ -179,9 +178,12 @@ export function EngagementView({ id, onBack, onMemo }: {
     // A sent file is seen once a row it produced is on screen.
     setExpected((e) => {
       if (!e) return e;
+      // Compared as they are. Both sides are the server's: the name came
+      // back from POST /uploads and the row's filename was read off the key
+      // the same call built (17.4).
       const rows = [...p.pending, ...d.documents];
       const left = e.names.filter((n) => !rows.some(
-        (r) => !e.known.has(r.document_id) && stored(r.filename) === n));
+        (r) => !e.known.has(r.document_id) && r.filename === n));
       return left.length ? { ...e, names: left } : null;
     });
     // A memo asked for is ready once the list has grown.
@@ -365,9 +367,12 @@ export function EngagementView({ id, onBack, onMemo }: {
     for (let i = 0; i < list.length; i++) {
       setBusy(`Uploading ${i + 1} of ${list.length} \u2014 ${list[i].name}`);
       try {
-        landedIn = await api.upload(id, list[i]) || id;
-        const name = stored(list[i].name);
-        setExpected((e) => ({ names: [...(e?.names ?? []), name],
+        // BOTH NAMES COME BACK (17.4). The engagement decides which screen
+        // this is, and the filename is what the row will carry - neither is
+        // worked out here any more.
+        const put = await api.upload(id, list[i]);
+        landedIn = put.engagement || id;
+        setExpected((e) => ({ names: [...(e?.names ?? []), put.filename],
                               known: e?.known ?? known }));
       } catch (err) {
         // A failure used to leave "Uploading" on screen indefinitely, which

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { signIn } from "aws-amplify/auth";
 import { api } from "./api";
+import { Working } from "./shell";
 import { config } from "./config";
 import { REGIONS, JURISDICTIONS } from "./mock";
 
@@ -174,7 +175,7 @@ export function SignUp({ onSignIn, onSignedUp }: {
 
       <div className="signup-card">
         {error && <p className="error">{error}</p>}
-        {busy && <p className="busy">{busy}&hellip;</p>}
+        {busy && <Working what={busy} />}
 
         {step === 0 && (
           <>

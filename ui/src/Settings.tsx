@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Settings } from "./api";
-import { useBackAction } from "./shell";
+import { useBackAction, Working } from "./shell";
 import { EnterpriseLink, UpgradePrompt } from "./upgrade";
 
 /**
@@ -139,7 +139,7 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
       )}
 
       {error && <p className="error">{error}</p>}
-      {busy && <p className="busy">{busy}&hellip;</p>}
+      {busy && <Working what={busy} />}
       {saved && !error && !busy && <p className="saved">Saved.</p>}
 
       <h3>Logo</h3>

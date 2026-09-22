@@ -33,7 +33,7 @@ resource "aws_cloudfront_function" "www_to_apex" {
   runtime = "cloudfront-js-2.0"
   publish = true
 
-    code = <<-JS
+  code = <<-JS
     function handler(event) {
       var req  = event.request;
       var host = req.headers.host.value;

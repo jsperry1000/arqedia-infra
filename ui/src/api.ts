@@ -1053,15 +1053,24 @@ export const api = {
   // Every header the link was signed with must be sent back, or S3 refuses
   // the request. The uploader's email is one of them: the API knows who is
   // asking and the normalizer does not, so it travels with the object.
-  /** Returns the engagement name the file was actually stored under, which
-   *  is not always the one that went in: the server cleans it for the key
-   *  ("TEST - 2" becomes "TEST-2"). A screen that keeps the typed name polls
-   *  an engagement that exists nowhere (17.3). */
-  upload: async (engagement: string, file: File): Promise<string> => {
-    const { url, uploaded_by, engagement: stored } = await call("/uploads", {
-      method: "POST",
-      body: JSON.stringify({ engagement, filename: file.name }),
-    });
+  /** Returns BOTH names the file was actually stored under, neither of
+   *  which is always the one that went in: the server cleans each for the
+   *  key ("TEST - 2" becomes "TEST-2").
+   *
+   *  The engagement, because a screen that keeps the typed name polls an
+   *  engagement that exists nowhere (17.3). The filename, because the screen
+   *  watches for the row the upload produces and has to match on the name
+   *  that row will carry - and it used to work that out with a copy of the
+   *  server's _clean in TypeScript (17.4). The rule lives in one place now
+   *  and this asks for the answer. */
+  upload: async (engagement: string, file: File): Promise<{
+    engagement: string; filename: string;
+  }> => {
+    const { url, uploaded_by, engagement: storedIn, filename: storedAs } =
+      await call("/uploads", {
+        method: "POST",
+        body: JSON.stringify({ engagement, filename: file.name }),
+      });
 
     const put = await fetch(url, {
       method: "PUT",
@@ -1076,7 +1085,7 @@ export const api = {
       throw new Error(
         `${file.name} was refused by storage (${put.status}).`);
     }
-    return stored as string;
+    return { engagement: storedIn as string, filename: storedAs as string };
   },
 
   /** What a typed engagement name would be stored as.

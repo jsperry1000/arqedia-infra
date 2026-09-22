@@ -83,6 +83,74 @@ class UploadNameTest(unittest.TestCase):
         self.assertEqual(out["uploaded_by"], EMAIL)
 
 
+class UploadFilenameTest(unittest.TestCase):
+    """The FILE's cleaned name goes back too (17.4).
+
+    Review.tsx carried its own copy of _clean in TypeScript so that a file it
+    was waiting for matched the row that arrived. Two implementations of the
+    rule that decides where a file is kept, agreeing character for character
+    and one edit away from not - which is 17.3, in the other half of the
+    key. The screen is told instead."""
+
+    def setUp(self):
+        self.app = load_api()
+
+    def upload(self, filename, engagement="Meridian"):
+        with mock.patch.object(self.app, "_sql",
+                               lambda s, p=None, tx=None: rows((7,))), \
+                mock.patch.object(self.app, "_s3") as s3:
+            s3.generate_presigned_url.return_value = "https://signed"
+            return self.app.upload_url(TENANT, EMAIL, engagement, filename)
+
+    def test_the_cleaned_filename_comes_back(self):
+        out = self.upload("KCCA Trade Licence 2026.pdf")
+        self.assertEqual(out["filename"], "KCCA-Trade-Licence-2026.pdf")
+
+    # Real names, and what _clean makes of them. Written out rather than
+    # composed from the engagement table above: "  padded  " + ".pdf" cleans
+    # to "padded-.pdf", because the space before the extension becomes a dash
+    # like any other. I composed it first and this caught me - which is the
+    # same argument as the "Smith & Co." note above, one row lower down.
+    FILENAMES = [
+        ("KCCA Trade Licence 2026.pdf", "KCCA-Trade-Licence-2026.pdf"),
+        ("Articles.pdf", "Articles.pdf"),
+        ("Board Minutes (2026).pdf", "Board-Minutes-2026.pdf"),
+        ("  padded  .pdf", "padded-.pdf"),
+        ("Café Noir.pdf", "Caf-Noir.pdf"),
+        ("a/b.pdf", "ab.pdf"),
+    ]
+
+    def test_it_is_the_name_in_the_key(self):
+        """What the caller is told and where the file goes are the same
+        string, read from the same variable - as for the engagement."""
+        for typed, expected in self.FILENAMES:
+            out = self.upload(typed)
+            self.assertEqual(out["filename"], expected, typed)
+            self.assertTrue(out["key"].endswith("/" + expected), out["key"])
+
+    def test_it_is_clean_itself_and_not_a_second_rule(self):
+        """If _clean changes, this answer changes with it. Asserted by
+        calling both rather than by restating the rule."""
+        for typed, _ in self.FILENAMES:
+            out = self.upload(typed)
+            self.assertEqual(out["filename"], self.app._clean(typed), typed)
+
+    def test_a_filename_needing_no_cleaning_comes_back_unchanged(self):
+        out = self.upload("Articles.pdf")
+        self.assertEqual(out["filename"], "Articles.pdf")
+
+    def test_a_filename_that_cleans_away_to_nothing_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.upload("///")
+
+    def test_this_is_the_name_the_row_will_carry(self):
+        """The screen matches the returned name against document.filename,
+        and the normalizer reads that off the key. So the two agree by
+        construction: both are the last segment of this key."""
+        out = self.upload("Board Minutes (2026).pdf")
+        self.assertEqual(out["key"].rsplit("/", 1)[1], out["filename"])
+
+
 class CleanedNameRouteTest(unittest.TestCase):
     """GET /engagements?name= - what the field asks while somebody types.
 
