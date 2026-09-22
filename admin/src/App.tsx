@@ -19,6 +19,29 @@ import {
   signIn,
   signOut,
 } from "aws-amplify/auth";
+// THE QR CODE IS DRAWN HERE, IN THE PAGE. qrcode.react encodes a string into
+// SVG elements React renders; there is no image service, no canvas sent
+// anywhere, and no network call of any kind. That matters more than usual:
+// the string being encoded is the TOTP secret, and a QR "generator" that
+// posts it somewhere to get a picture back would hand the second factor to a
+// third party.
+//
+// WHY THIS ONE, of the four looked at on 22 September:
+//   qrcode.react 4.2.0  ZERO runtime dependencies, peers name React 19
+//                       explicitly, types bundled, SVG as React elements.
+//   react-qr-code 2.2.0 published more recently, but pulls prop-types and
+//                       qrcode-generator - two more packages in a page that
+//                       renders a secret, and prop-types is dead weight on
+//                       React 19.
+//   uqr 0.1.3           zero deps too, but pre-1.0 and returns an SVG
+//                       string, which would mean dangerouslySetInnerHTML on
+//                       this of all screens.
+//   qrcode 1.5.4        a server and CLI library: pngjs, yargs, dijkstrajs.
+//
+// Its last release is December 2024. That is a complete library against a
+// fixed specification rather than an abandoned one - QR encoding has not
+// changed - and zero dependencies is the property worth having here.
+import { QRCodeSVG } from "qrcode.react";
 
 import { api, type SeatsPage, type SignupsPage, type Tenant } from "./api";
 import { config } from "./config";
@@ -45,8 +68,9 @@ Amplify.configure({
  *   password    the temporary one from the invitation email
  *   new         a password meeting the staff policy: 14 characters, upper,
  *               lower, a digit and a symbol
- *   totp-setup  the secret, shown as a link an authenticator can take and as
- *               characters it can be typed from, then the first code it makes
+ *   totp-setup  the secret as a QR code to scan, as a link for an app on
+ *               this device and as characters to type, then the first code
+ *               the app makes
  *   totp        every sign-in after the first: the code, and nothing else
  *
  * Amplify names these steps and we follow them rather than guessing which
@@ -166,13 +190,22 @@ function SignIn({ onDone }: { onDone: () => void }) {
 
       {step === "totp-setup" && (
         <>
-          <p className="note">Add ARQEDIA to your authenticator app, then
+          <p className="note">Scan this with your authenticator app, then
             enter the code it shows. This is asked once; afterwards the code
             is all you need.</p>
-          {/* The link an authenticator takes directly, and the characters it
-              can be typed from - a phone set up on a laptop cannot scan
-              anything, and a QR image would be a dependency for one case. */}
-          <p><a href={setupUri}>Open in your authenticator app</a></p>
+          {/* THE QR CODE FIRST, because that is what the phone is looking
+              for. An authenticator app opens a camera and expects a square;
+              a string of characters is the fallback, not the instruction.
+              Drawn in this page from the otpauth URI - nothing is fetched
+              and the secret does not leave the browser. */}
+          <div className="qr">
+            <QRCodeSVG value={setupUri} size={180} level="M"
+                       title="ARQEDIA staff authenticator setup" />
+          </div>
+          {/* Both ways out kept. The link is for an authenticator on this
+              same device, which has no camera pointed at its own screen;
+              the key is for one that cannot scan or take a link at all. */}
+          <p><a href={setupUri}>Open in an app on this device</a></p>
           <p className="note">Or enter this key by hand:</p>
           <code className="secret">{secret}</code>
           <label htmlFor="code">Code from the app</label>
