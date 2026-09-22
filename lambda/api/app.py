@@ -12,6 +12,7 @@ of an act matters as much as the act.
 
 Routes:
   GET  /engagements                      what this tenant has
+  POST /engagements                      open one by name, creating its row
   GET  /engagements/{id}/pending         analysed, awaiting confirmation
   POST /engagements/{id}/file            confirm types and file
 
@@ -434,6 +435,46 @@ def engagement_named(tenant_id, engagement):
             "engagement": _col(found[0], 1),
             "subject_name": (_col(found[0], 2) or "").strip() or None,
             "status": _col(found[0], 3)}
+
+
+def open_engagement(tenant_id, email, engagement):
+    """Open an engagement by name, creating its row where there is none.
+
+    WHY THIS EXISTS (13.3 stage 4). The reads now ask engagement_id, so a
+    name with no row is a 404 - which is right for an address somebody typed
+    wrongly and wrong for the form that opens a new engagement. Before stage
+    4 the reads grepped storage keys and answered an empty list for any name
+    at all, so the form could simply navigate and the screen opened onto
+    nothing. It cannot any more, and the honest fix is to make opening an
+    engagement CREATE it rather than to make a missing one look empty again.
+
+    THE SAME engagement_id() /uploads USES. One name is one row, and this is
+    the second door into the same rule rather than a second rule - a new
+    engagement opened here and then uploaded into lands in the row it
+    already has.
+
+    IDEMPOTENT, because engagement_id() is find-or-create. Opening the same
+    name twice is one row and answers the same id both times.
+
+    THE STORED NAME COMES BACK. The caller navigates to what this returns,
+    not to what somebody typed, so the address and the row agree from the
+    first moment (17.3)."""
+    name = _clean(engagement)
+    if not name:
+        raise ValueError("an engagement needs a name")
+
+    found = engagement_named(tenant_id, name)
+    if found:
+        return dict(found, created=False)
+
+    opened = engagement_id(tenant_id, name, email)
+    if opened is None:
+        raise ValueError("that engagement could not be opened")
+
+    print("[engagement-opened] tenant=%s engagement=%s by=%s" % (
+        tenant_id, name, email))
+    return {"engagement_id": int(opened), "engagement": name,
+            "subject_name": None, "status": "open", "created": True}
 
 
 def list_engagements(tenant_id):
@@ -2298,6 +2339,14 @@ def _dispatch(event, context):
             if asked:
                 answer["cleaned"] = _clean(asked)
             return _reply(200, answer)
+
+        # Opening an engagement from the form. A POST because it creates a
+        # row; GET /engagements answers what exists and must never make
+        # something exist.
+        if route == "POST /engagements":
+            body = json.loads(event.get("body") or "{}")
+            return _reply(201, open_engagement(
+                tenant_id, email, body.get("engagement", "")))
 
         if route == "DELETE /documents/{document_id}":
             removing = int((event.get("pathParameters") or {})

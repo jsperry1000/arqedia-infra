@@ -302,6 +302,107 @@ class PendingCarriesTheSubjectTest(unittest.TestCase):
         self.assertEqual(len(resolves), 1)
 
 
+class OpenEngagementTest(unittest.TestCase):
+    """Opening one from the form creates its row.
+
+    The reads answer 404 for a name with no row, which is right for an
+    address typed wrongly and wrong for the form that opens a new
+    engagement. Before stage 4 the reads grepped storage keys and answered
+    an empty list for any name at all, so the form could navigate and the
+    screen opened onto nothing."""
+
+    def setUp(self):
+        self.app = load_api()
+
+    class Db:
+        """The resolve, then engagement_id's find-insert-find."""
+
+        def __init__(self, exists=False):
+            self.exists = exists
+            self.statements = []
+
+        def sql(self, statement, params=None, tx=None):
+            s = " ".join(statement.split())
+            self.statements.append((s, sent(params)))
+            if s.startswith("INSERT INTO engagement"):
+                self.exists = True
+                return {"records": []}
+            if s.startswith("SELECT engagement_id, name, subject_name, status"):
+                return rows((ENGAGEMENT_ID, NAME, None, "open")) \
+                    if self.exists else rows()
+            if s.startswith("SELECT engagement_id FROM engagement"):
+                return rows((ENGAGEMENT_ID,)) if self.exists else rows()
+            return rows()
+
+        def kinds(self):
+            return [s.split(" ", 2)[0] + " " + s.split(" ", 2)[1]
+                    for s, _ in self.statements]
+
+    def open(self, name=NAME, exists=False):
+        db = self.Db(exists=exists)
+        with mock.patch.object(self.app, "_sql", db.sql):
+            out = self.app.open_engagement(TENANT, "a@firm.com", name)
+        return out, db
+
+    def test_a_new_name_is_created(self):
+        out, db = self.open()
+        self.assertTrue(out["created"])
+        self.assertEqual(out["engagement"], NAME)
+        self.assertEqual(out["engagement_id"], ENGAGEMENT_ID)
+        self.assertIsNone(out["subject_name"])
+        self.assertIn("INSERT INTO", db.kinds())
+
+    def test_it_is_stored_under_the_cleaned_name(self):
+        """The row carries the cleaned name, and the caller navigates to
+        what comes back - so the address and the row agree from the first
+        moment rather than from the first upload (17.3)."""
+        out, db = self.open(TYPED)
+        self.assertEqual(out["engagement"], NAME)
+        inserted = [p for s, p in db.statements if s.startswith("INSERT")]
+        self.assertEqual(inserted[0]["n"], NAME)
+
+    def test_opening_one_that_exists_creates_nothing(self):
+        """Idempotent, because one name is one row. Opening the same name
+        twice must not mint a second."""
+        out, db = self.open(exists=True)
+        self.assertFalse(out["created"])
+        self.assertEqual(out["engagement_id"], ENGAGEMENT_ID)
+        self.assertNotIn("INSERT INTO", db.kinds())
+
+    def test_it_reuses_the_rule_uploads_uses(self):
+        """engagement_id() is the one place a name becomes a row when it has
+        to exist. A second create here would be a second rule."""
+        _, db = self.open()
+        self.assertTrue(any(
+            s.startswith("INSERT INTO engagement (tenant_id, name, created_by)")
+            for s, _ in db.statements))
+
+    def test_a_name_that_cleans_to_nothing_is_refused(self):
+        for typed in ("", "   ", "...", "---"):
+            with self.assertRaises(ValueError, msg=typed):
+                self.open(typed)
+
+    def test_the_route_answers_201_with_the_stored_name(self):
+        db = self.Db()
+        ev = event("POST /engagements")
+        ev["pathParameters"] = None
+        ev["body"] = json.dumps({"engagement": TYPED})
+        with mock.patch.object(self.app, "_sql", db.sql):
+            reply = self.app._dispatch(ev, None)
+        self.assertEqual(reply["statusCode"], 201)
+        self.assertEqual(json.loads(reply["body"])["engagement"], NAME)
+
+    def test_a_typed_address_for_a_name_never_opened_is_still_404(self):
+        """Creating on OPEN must not make every read create. A bookmark for
+        an engagement that does not exist stays a 404."""
+        db = Recorder(engagement=None)
+        with mock.patch.object(self.app, "_sql", db.sql):
+            reply = self.app._dispatch(
+                event("GET /engagements/{id}/documents", "Never-Opened"), None)
+        self.assertEqual(reply["statusCode"], 404)
+        self.assertNotIn("INSERT", db.every_statement())
+
+
 class GenerateTest(unittest.TestCase):
     """Composition is told which engagement by id, and is not charged for a
     name that does not exist."""

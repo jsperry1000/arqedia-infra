@@ -198,6 +198,9 @@ export type SignupDone = {
 };
 
 export type Engagement = {
+  /** The row's own id (13.3 stage 4). The name is what a person reads and
+   *  what the address carries; this is what the reads are keyed on. */
+  engagement_id: number;
   engagement: string;
   documents: number;
   last_activity: string;
@@ -837,6 +840,24 @@ export const api = {
 
   engagements: (): Promise<{ engagements: Engagement[] }> =>
     call("/engagements"),
+
+  /** Open an engagement by name, creating its row if there is none.
+   *
+   *  THE SCREEN CANNOT JUST NAVIGATE ANY MORE. The reads ask engagement_id
+   *  (13.3 stage 4), so a name with no row answers 404 - right for an
+   *  address typed wrongly, wrong for the form that opens a new engagement.
+   *  This makes the row exist first.
+   *
+   *  Returns the name it was STORED under, which is what the caller should
+   *  navigate to: the server cleans, and the address and the row then agree
+   *  from the first moment rather than from the first upload (17.3). */
+  openEngagement: (name: string): Promise<{
+    engagement_id: number; engagement: string;
+    subject_name: string | null; created: boolean;
+  }> => call("/engagements", {
+    method: "POST",
+    body: JSON.stringify({ engagement: name }),
+  }),
 
   // The subject travels with the pending list because the screen showing
   // that list is the one that has to hold File and say why.
