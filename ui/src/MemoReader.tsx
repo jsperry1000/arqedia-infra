@@ -123,9 +123,19 @@ function Citations({ refs, shown, onToggle, byFilename, gone, onOpen,
             typeof p === "string" ? (
               <span key={k}>{p}</span>
             ) : gone?.has(p.filename) ? (
-              <span key={k} className="cite gone"
+              /* A DELETED SOURCE LIGHTS AND IS LIT, AND STILL DOES NOT OPEN
+                 (18.1). It is found like any other - memo_source keeps the
+                 document_id through the delete, so byFilename holds it and
+                 refKey resolves it - and a memorandum resting on a document
+                 that has since gone is exactly the one somebody needs to
+                 see the reach of. Opening is the part that cannot happen:
+                 there is nothing behind it. So onLight, and no onOpen. */
+              <span key={k}
+                    className={refKey(p) === lit ? "cite gone lit" : "cite gone"}
+                    onClick={() => onLight(refKey(p))}
                     title={p.filename + " has been deleted. The memorandum is "
-                           + "unchanged; there is nothing left to open."}>
+                           + "unchanged; there is nothing left to open. Click "
+                           + "to mark where else it is cited."}>
                 {p.text}
               </span>
             ) : (
