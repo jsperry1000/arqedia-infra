@@ -87,11 +87,11 @@ resource "aws_lambda_function" "composition" {
 
   environment {
     variables = {
-      CURATED_BUCKET = aws_s3_bucket.data["curated"].id
-      CLUSTER_ARN    = aws_rds_cluster.main.arn
-      SECRET_ARN     = aws_rds_cluster.main.master_user_secret[0].secret_arn
-      DATABASE       = "arqedia"
-      MODEL_ID       = var.composition_model_id
+      CURATED_BUCKET  = aws_s3_bucket.data["curated"].id
+      CLUSTER_ARN     = aws_rds_cluster.main.arn
+      SECRET_ARN      = aws_rds_cluster.main.master_user_secret[0].secret_arn
+      DATABASE        = "arqedia"
+      MODEL_ID        = var.composition_model_id
       RENDER_FUNCTION = aws_lambda_function.render.function_name
     }
   }
