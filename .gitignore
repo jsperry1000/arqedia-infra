@@ -38,3 +38,21 @@ __pycache__/
 
 __pycache__/
 *.pyc
+
+# Scratch at the repository root (17.5)
+#
+# Every `>` redirect in this working copy lands here, and five had accumulated
+# by 22 September: a UTF-16 dump of lambda/composition/cleanup.py taken before
+# SUBJ-01 changed it, three query results from that investigation, and an empty
+# log. None had ever been committed, and none held anything the repository did
+# not already have in a newer form.
+#
+# ANCHORED TO THE ROOT with a leading slash, deliberately. A bare *.txt would
+# also catch lambda/layers/docprocessing/requirements.txt, which is tracked and
+# is what the docprocessing layer is built from - ignoring it would not
+# untrack it, but it would hide a real edit to it from `git status`, which is
+# the one place that edit has to be visible.
+#
+# A .txt at the root that IS worth keeping can be forced in with `git add -f`,
+# or given its own negation below.
+/*.txt
