@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { updatePassword } from "aws-amplify/auth";
 import { useSearchParams } from "react-router-dom";
-import { useBackAction } from "./shell";
+import { useBackAction, Working } from "./shell";
 import { EnterpriseLink, UpgradePrompt } from "./upgrade";
 import { api, chargeKey, type Wallet, type LedgerEntry,
          type Seats as SeatState, type Invited,
@@ -255,7 +255,7 @@ function Subscription() {
   return (
     <>
       {error && <p className="error">{error}</p>}
-      {busy && <p className="busy">{busy}&hellip;</p>}
+      {busy && <Working what={busy} />}
       {waiting && <p className="revision-note">{waiting}</p>}
 
       {onTrial && (
@@ -804,7 +804,7 @@ function Seats() {
   return (
     <>
       {error && <p className="error">{error}</p>}
-      {busy && <p className="busy">{busy}&hellip;</p>}
+      {busy && <Working what={busy} />}
 
       <p className="muted">
         {state.taken} of {state.bought} seats taken

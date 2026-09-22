@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Memo, type Passage, type Rewrite } from "./api";
 import { MemoDocument, type Ref } from "./MemoReader";
-import { useBackAction, usePinTop } from "./shell";
+import { useBackAction, usePinTop, Working } from "./shell";
 
 /**
  * Reading and revising a memo.
@@ -572,7 +572,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
       )}
 
       {saveError && <p className="error">{saveError}</p>}
-      {loadingRef && <p className="busy">Opening source&hellip;</p>}
+      {loadingRef && <Working what="Opening source" />}
 
       {mode === "rewrite" ? (
         <div className="rewrite">
