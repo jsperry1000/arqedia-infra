@@ -277,8 +277,17 @@ export function EngagementView({ id, onBack, onMemo }: {
       .then(setMemoQuote).catch(() => setMemoQuote(null));
   }, [docs.length, memos.length, pending.length]);
 
-  // Which memoranda this tenant can write. One is the ordinary case and needs
-  // no choosing; the selector appears only when there is a choice to make.
+  // Which memoranda this tenant can write, and which one is about to be
+  // written. The first is preselected, so the choice is always made and never
+  // has to be made twice.
+  //
+  // SHOWN WHETHER THERE IS A CHOICE OR NOT (18.6). It used to appear only
+  // where there was more than one, on the reasoning that one needs no
+  // choosing - which is true of choosing and false of knowing. A person
+  // about to spend on a memorandum was told how many documents it would draw
+  // on and what it would cost, and not what it was going to be. With one
+  // template the control says what will be written; with several it also
+  // changes it.
   useEffect(() => {
     api.templates().then((r) => {
       setTemplates(r.templates);
@@ -1224,21 +1233,44 @@ export function EngagementView({ id, onBack, onMemo }: {
 
       {!shut.has("memos") && (<>
 
-      {templates.length > 1 && (
+      {/* WHAT IS ABOUT TO BE WRITTEN, ALWAYS (18.6). The gate was
+          templates.length > 1, so a tenant with the one memorandum most of
+          them have saw the count of documents and the price and no name for
+          the thing they were buying. The control is the same either way,
+          which is also what makes it read the same way on the day a second
+          template is published.
+
+          The sentence beside it is not. "The same documents, read a
+          different way" is an answer to a choice, and with one template
+          there is no choice for it to answer - it would be explaining an
+          alternative that does not exist. Composed from .filters and
+          .inline-check, as it already was: no new CSS. */}
+      {templates.length > 0 && (
         <div className="filters">
           <label className="inline-check">
             Write
+            {/* NOT disabled where there is one. A disabled select greys, and
+                grey says NOT AVAILABLE where what is meant is THIS IS THE
+                ONE - the value is the answer, and it has to read at full
+                strength. A select holding a single option is inert enough
+                on its own. */}
             <select value={template}
-                    onChange={(e) => setTemplate(e.target.value)}>
+                    onChange={(e) => setTemplate(e.target.value)}
+                    title={templates.length === 1
+                      ? "The only memorandum published. Configure is where "
+                        + "another is added."
+                      : "Which memorandum to write from these documents."}>
               {templates.map((t) => (
                 <option key={t.key} value={t.key}>{t.label}</option>
               ))}
             </select>
           </label>
-          <span className="muted small">
-            The same documents, read a different way. Each memorandum is
-            charged separately.
-          </span>
+          {templates.length > 1 && (
+            <span className="muted small">
+              The same documents, read a different way. Each memorandum is
+              charged separately.
+            </span>
+          )}
         </div>
       )}
 
@@ -1357,9 +1389,15 @@ export function EngagementView({ id, onBack, onMemo }: {
             <div className="form">
               <h4>Generate a memorandum</h4>
 
+              {/* THE NAME OF WHAT IS BEING BOUGHT, whether there was a
+                  choice or not (18.6). This is the last sentence before the
+                  press that spends, and it named the memorandum only where
+                  there was more than one - so the tenant with a single
+                  template read the count and the price and never the thing
+                  itself. */}
               <p className="muted small">
                 {activeCount} {activeCount === 1 ? "document" : "documents"} in
-                use{templates.length > 1 && template
+                use{template
                   ? `, written as ${templates.find((t) => t.key === template)
                       ?.label ?? template}` : ""}. One charge, whatever its
                 length and however many documents it draws on.
