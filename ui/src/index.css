@@ -1171,43 +1171,32 @@ a.add:hover { background: var(--paper); text-decoration: none; }
   .stage-icon { display: block; }
 }
 
-/* --- the four stages, above the bar --------------------------------------- */
+/* --- the sequence, above the bar ------------------------------------------ */
 
-/* The same four stages the home page runs through, still and in miniature
-   (3.2). They say where the part on screen sits in the whole business:
-   documents arrive, facts are made of them, facts are filed, a report is
-   retrieved.
-   THE COLOUR IS DECLARED HERE AND READ BY THE CANVAS. flock.ts takes its
-   palette from the element it draws on, so a dulled stage is these four
-   variables and not a line of code. The stage in use declares nothing and so
-   inherits ARQEDIA's own palette - never the tenant's; this is chrome. */
-.stage-strip { display: flex; gap: 10px; margin: 0 0 16px; }
+/* THE HOME PAGE'S SEQUENCE, RUN ONCE ON ARRIVAL. It was four still
+   miniatures in a row, each 48px tall inside its own rounded box, with the
+   stage in use brought forward and the other three dulled. They said where a
+   part sat in the sequence without ever showing the sequence.
 
-/* No box and no caption. Four small drawings in a row, and the band beneath
-   already names the part in use - a border round each and a word under each
-   made a control out of something that is only a bearing. */
-.stage-mini {
-  flex: 1 1 0; min-width: 0; margin: 0;
-  padding: 4px 6px;
-  background: var(--paper); border-radius: var(--pill-radius);
-  transition: background 220ms ease-out;
+   ONE CANVAS NOW, because one sequence cannot be four boxes: full width of
+   the content column, 150px tall against the four boxes' 48, on the paper
+   ground the hero's own frame uses. The hero runs at clamp(230px, 32vw,
+   380px); this is shorter because it sits above a working screen rather than
+   being the thing somebody came to look at, and the drawing scales to the box
+   it is given.
+
+   NO PALETTE IS DECLARED. The four miniatures dulled three of themselves to
+   show which was chosen, and there is nothing to choose between in one
+   picture - so it inherits ARQEDIA's own colours, never the tenant's; this is
+   chrome. Which part is in use is said by the band beneath and drawn by the
+   icon in the margin. */
+.stage-strip {
+  margin: 0 0 16px;
+  background: var(--paper);
+  border: 1px solid var(--line); border-radius: var(--pill-radius);
+  overflow: hidden;
 }
-.stage-mini:not(.on) {
-  --medium: var(--dull-ink);
-  --rule:   var(--dull-line);
-  --light:  var(--dull-line);
-  --deep:   var(--dull-deep);
-}
-/* The stage in use: the same four, darkened rather than left at full brand
-   strength, so it comes forward without competing with the work. */
-.stage-mini.on {
-  background: var(--wash);
-  --medium: var(--lit-ink);
-  --rule:   var(--lit-rule);
-  --light:  var(--lit-light);
-  --deep:   var(--lit-deep);
-}
-.stage-mini canvas { display: block; width: 100%; height: 48px; }
+.stage-strip canvas { display: block; width: 100%; height: 150px; }
 
 @media (max-width: 900px) {
   .stage-strip { display: none; }

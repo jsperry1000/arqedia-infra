@@ -1,67 +1,41 @@
 import { useEffect, useRef, useState } from "react";
-import { drawStage, type Stage, type StageHandle } from "./flock";
+import { drawStage, mountFlock, type Stage, type StageHandle } from "./flock";
 
 /**
- * The four stages of the home page's sequence, still, in miniature, above the
- * configuration bar.
+ * The home page's sequence, above the configuration bar.
  *
- * It is the same engine the hero runs on - one file, imported by both - so a
- * stage here is the same picture as that stage there. No box and no caption:
- * four small drawings in a row, and the band beneath names the part in use.
+ * THE SAME ENGINE, THE SAME SEQUENCE, THE SAME TIMINGS. mountFlock, the
+ * function the hero on arqedia.com calls, runs here too: documents arrive,
+ * dissolve into facts, the facts are filed, and a report is retrieved. Same
+ * birds, same boundaries, same SPEED - there is one implementation of it and
+ * both surfaces call it.
  *
- * STAGE 1 IS NEVER LIT. It is the work the model does between a document
- * arriving and a fact being filed, and no part of the configuration screen
- * corresponds to it. It is also the one stage with no still form - a swarm
- * frozen is a smudge - so it alone moves, continuously and slowly, and not at
- * all where less motion has been asked for. The other three never move.
+ * IT DOES NOT FREEZE ON THE REPORT. The hero does, because the page is the
+ * end of the story it tells. This sits above a screen somebody works on for
+ * an hour, and a frozen picture at the top of it reads as something that has
+ * broken - so it asks mountFlock for its other ending, thenSwarm: the
+ * particles leave the page and go back to the swarm, which turns over slowly
+ * for as long as the screen is open.
  *
- * STAGE 3 IS THE MARK. What is retrieved is an ARQEDIA memorandum, and at
- * 48px the mark's three bars are a thing a person recognises where fourteen
- * lines of text are a smear.
+ * NO CAPTIONS. mountFlock lights the hero's four descriptions through a
+ * .stages element beside its canvas; there is none here, so it lights
+ * nothing. The part in use is named by the band beneath and drawn by the
+ * StageIcon in the margin - neither of which this touches.
  *
- * THE SEQUENCE PLAYS ONCE ON ARRIVAL (18.3). Four still drawings in a row
- * say where a part sits in the business; they do not say that the business
- * RUNS left to right, which is the thing the home page spends fifteen
- * seconds making. So on opening Configure the highlight walks the four in
- * order, once, and then settles on the part in use. Nothing is redrawn that
- * was not redrawn before - the walk moves a class, and the class is the
- * palette.
+ * WHAT IT REPLACED: four still miniatures in a row, one per stage, with the
+ * one in use brought forward. They said where a part sat in the sequence
+ * without ever showing the sequence. One canvas cannot be four boxes, so the
+ * strip is now a single drawing the width of the page - see .stage-strip.
  *
- * The swarm keeps moving afterwards because it always did: stage 1 drifts on
- * its own clock in flock.ts and is never stopped by anything here.
- *
- * NOT AT ALL WHERE LESS MOTION HAS BEEN ASKED FOR. The strip then opens on
- * the part in use, as it does today, and the swarm does not start either -
- * that is flock.ts's own check, and this is a second one for the walk.
+ * NOTHING MOVES WHERE LESS MOTION HAS BEEN ASKED FOR. mountFlock's own check
+ * paints the final frame once and starts no animation at all.
  *
  * The colours are a matter of CSS: flock.ts reads its palette from the canvas
- * element, and .stage-mini shadows the four it reads - dulled, or the lit set
- * for the stage in use.
+ * element.
  */
 
-/** How long each stage holds during the opening walk. Four of them, so the
- *  whole thing is under two seconds - long enough to read as a sequence,
- *  short enough that somebody who came to configure a report is not waiting
- *  for a picture. */
-const STEP_MS = 420;
-
-// The names are no longer drawn; they are kept because the order is the
-// sequence and a bare list of numbers says nothing to whoever reads this next.
-const STAGES: { stage: Stage; name: string }[] = [
-  { stage: 0, name: "Documents" },
-  { stage: 1, name: "Facts" },
-  { stage: 2, name: "Filed" },
-  { stage: 3, name: "Report" },
-];
-
-export function StageStrip({ lit }: { lit: Stage | null }) {
-  const canvases = useRef<(HTMLCanvasElement | null)[]>([]);
-  const handles = useRef<(StageHandle | null)[]>([]);
-  // Which stage the opening walk is on, or null once it has finished - and
-  // null from the start where less motion has been asked for, so the strip
-  // opens on the part in use and never moves.
-  const [walking, setWalking] = useState<number | null>(() =>
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches ? null : 0);
+export function StageStrip() {
+  const canvas = useRef<HTMLCanvasElement | null>(null);
   // Set where drawing threw. This is decoration; the screen behind it is the
   // work.
   const [failed, setFailed] = useState(false);
@@ -74,74 +48,29 @@ export function StageStrip({ lit }: { lit: Stage | null }) {
    *  off undefined, and the Configure screen rendered blank. The cause is
    *  fixed in flock.ts; this is the guard that stops any future one mattering
    *  at all. It catches, puts the strip away, and leaves the screen alone. */
-  const guard = (what: string, run: () => void) => {
+  useEffect(() => {
     if (failed) return;
+    const cv = canvas.current;
+    if (!cv) return;
+    let handle: { stop(): void } | null = null;
     try {
-      run();
+      handle = mountFlock(cv, { thenSwarm: true });
     } catch (err) {
-      // Logged once, and said plainly: a picture is missing, nothing else.
-      console.error("[stage-strip] %s failed; the strip is hidden", what, err);
-      handles.current.forEach((h) => { try { h?.stop(); } catch { /* going */ } });
-      handles.current = [];
+      console.error("[stage-strip] the sequence failed; the strip is hidden",
+                    err);
       setFailed(true);
+      return;
     }
-  };
+    return () => { try { handle?.stop(); } catch { /* going */ } };
+  }, [failed]);
 
-  // Mounted once. Each canvas keeps its own geometry, and the swarm keeps its
-  // own clock and runs itself from here on.
-  useEffect(() => {
-    guard("drawing", () => {
-      handles.current = STAGES.map((s, i) => {
-        const cv = canvases.current[i];
-        return cv ? drawStage(cv, s.stage) : null;
-      });
-    });
-    return () => {
-      handles.current.forEach((h) => { try { h?.stop(); } catch { /* going */ } });
-      handles.current = [];
-    };
-    // guard closes over `failed`, which only ever goes false to true; the
-    // strip is drawn once and this must not run again.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // The walk: one stage at a time, left to right, then done. Cleared on
-  // unmount, so leaving the screen mid-walk leaves no timer behind.
-  useEffect(() => {
-    if (walking === null) return;
-    const timer = window.setTimeout(
-      () => setWalking(walking + 1 < STAGES.length ? walking + 1 : null),
-      STEP_MS);
-    return () => window.clearTimeout(timer);
-  }, [walking]);
-
-  // Which one is bright: the walk while it runs, the part in use afterwards.
-  const shown = walking === null ? lit : STAGES[walking].stage;
-
-  // A change of highlight moves a class, which changes the palette the canvas
-  // reads - so every stage is repainted. This runs after the class is on the
-  // element, which is what makes the repaint pick up the new colours. The
-  // swarm repaints itself anyway; the other three would not.
-  useEffect(() => {
-    guard("repainting", () => {
-      handles.current.forEach((h) => h?.paint());
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shown]);
-
-  // Nothing at all rather than four broken boxes.
+  // Nothing at all rather than a broken box.
   if (failed) return null;
 
   return (
-    // Decorative: the band beneath already names the part in use, and a
-    // screen reader being told about four canvases would learn nothing.
+    // Decorative: the band beneath names the part in use in words.
     <div className="stage-strip" aria-hidden="true">
-      {STAGES.map((s, i) => (
-        <div key={s.stage}
-             className={"stage-mini" + (shown === s.stage ? " on" : "")}>
-          <canvas ref={(el) => { canvases.current[i] = el; }} />
-        </div>
-      ))}
+      <canvas ref={canvas} />
     </div>
   );
 }

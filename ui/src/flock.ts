@@ -254,7 +254,27 @@ function paintPage(ctx: CanvasRenderingContext2D, page: Page, pal: Palette, a: n
   ctx.strokeRect(page.x, page.y, page.w, page.h); ctx.restore()
 }
 
-export function mountFlock(cv: HTMLCanvasElement): FlockHandle | null {
+/** What mountFlock does when the sequence has finished.
+ *
+ *  The hero holds on the report: the page is the end of the story it tells,
+ *  and a marketing page that keeps moving after its point is made is a
+ *  distraction. The configuration strip cannot hold there - it sits above a
+ *  screen somebody works on for an hour, and a frozen picture at the top of
+ *  it reads as a thing that has broken. So it asks for the other ending: the
+ *  particles leave the page and go back to the swarm, which then turns over
+ *  for as long as the screen is open.
+ *
+ *  DEFAULT OFF. The hero calls mountFlock(canvas) with nothing else and gets
+ *  exactly what it got before - same boundaries, same SPEED, same freeze. */
+export interface FlockOptions {
+  /** Return to the swarm when the sequence ends, instead of freezing. */
+  thenSwarm?: boolean
+}
+
+export function mountFlock(
+  cv: HTMLCanvasElement,
+  opts: FlockOptions = {},
+): FlockHandle | null {
   const ctx = cv.getContext('2d')
   if (!ctx) return null
 
@@ -273,6 +293,13 @@ export function mountFlock(cv: HTMLCanvasElement): FlockHandle | null {
   let raf = 0, t0: number | null = null
   let stopped = false, frozen = false
   let pal: Palette = readPalette(cv)
+
+  // The return to the swarm: when it began on the wall clock, the swarm's own
+  // clock while it turns over, and the frame time the drift last advanced
+  // against. All three stay untouched unless thenSwarm was asked for.
+  let returning: number | null = null
+  let swarmClock = SWARM_MOMENT
+  let lastDrift = 0
 
   function build() {
     const scene = buildScene(W, H, N, Math.random)
@@ -311,8 +338,40 @@ export function mountFlock(cv: HTMLCanvasElement): FlockHandle | null {
     return [p.px, p.py]
   }
 
+  /** The other ending (thenSwarm). The page fades, the particles ease off it
+   *  and back onto the swarm, and the swarm keeps turning at the same
+   *  DRIFT_RATE the strip's still stage used - slow enough to read as
+   *  breathing rather than as an animation.
+   *
+   *  It is the sequence's own machinery: swarmAt, the same easing and the
+   *  same particles. Nothing is rebuilt, so the body that arrives in the
+   *  swarm is the body that was in the page. */
+  function drift(ts: number) {
+    const since = ts - (returning as number)
+    swarmClock += (lastDrift ? ts - lastDrift : 0) * DRIFT_RATE
+    lastDrift = ts
+
+    ctx!.clearRect(0, 0, W, H)
+    paintPage(ctx!, page, pal, 1 - smooth(since / 700))
+
+    ctx!.fillStyle = pal.birds
+    ctx!.globalAlpha = 0.85
+    for (const p of pts) {
+      const [tx, ty] = swarmAt(p, swarmClock, W, H)
+      p.x += (tx - p.x) * 0.05 * p.lag
+      p.y += (ty - p.y) * 0.05 * p.lag
+      ctx!.fillRect(p.x, p.y, 1.4, 1.4)
+    }
+    ctx!.globalAlpha = 1
+  }
+
   function frame(ts: number) {
     if (stopped) return
+    if (returning !== null) {
+      drift(ts)
+      raf = requestAnimationFrame(frame)
+      return
+    }
     if (t0 === null) t0 = ts
     const ms = (ts - t0) * SPEED
 
@@ -337,7 +396,11 @@ export function mountFlock(cv: HTMLCanvasElement): FlockHandle | null {
     }
     ctx!.globalAlpha = 1
 
-    if (ms > P.report + 3300) { frozen = true; return }
+    if (ms > P.report + 3300) {
+      // The hero stops here, as it always has. The strip turns round.
+      if (!opts.thenSwarm) { frozen = true; return }
+      returning = ts
+    }
     raf = requestAnimationFrame(frame)
   }
 
