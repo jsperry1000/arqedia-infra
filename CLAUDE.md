@@ -226,6 +226,24 @@ administrator who would have to explain it.
 shares. An Administrator additionally changes the plan, the card, the brand and
 the seats. Anything finer is a permission system and nobody has asked for one.
 
+**Corrected 22 September 2026 (17.7).** The line above was written before the
+code was, and the code does not do what it says: configuring and publishing
+are ADMINISTRATOR ONLY. `_require_admin` guards every draft, editor, publish
+and active-revision route in `lambda/api/app.py`, and has since those routes
+existed. A Member uploads, files, generates and shares. It is left standing
+above rather than rewritten, because it is what was argued and decided, and
+because the gap between a decision and its code is the thing worth being able
+to see.
+
+Which of the two is right is not settled here. What is settled is that the
+document said one thing and the product did another, and that anybody
+reading either alone would have been wrong.
+
+**An administrator can make a Member an administrator.** `PUT /seats/{seat_id}`
+sets a seat's role, behind `_require_seats_admin`. So the distinction is not a
+wall: a tenant that wants a second person configuring promotes them, which is
+one click and is recorded. The last administrator cannot be demoted, as above.
+
 ### Documents coming in
 
 **A folder name is provenance.** Recorded and displayed; the classifier never
