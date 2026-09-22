@@ -13,6 +13,7 @@ of an act matters as much as the act.
 Routes:
   GET  /engagements                      what this tenant has
   POST /engagements                      open one by name, creating its row
+  PUT  /engagements/{id}/state           archive it, or bring it back
   GET  /engagements/{id}/pending         analysed, awaiting confirmation
   POST /engagements/{id}/file            confirm types and file
 
@@ -36,6 +37,7 @@ names the file a reader was given. See db/migrations/011_document_parts.sql.
 Editing a section names the memorandum it belongs to, in the path. Two
 memoranda may each carry a section called "summary".
   GET  /memos/{memo_id}                  a memo, its PDF link and its sources
+  PUT  /memos/{memo_id}/state            archive the revision line, or restore it
 
 A section of a memo may be rewritten by the model at a person's prompt. The
 rewrite is recorded, and nothing changes until it is saved as a revision.
@@ -217,6 +219,17 @@ def _reply(status, body):
         "headers": {"content-type": "application/json"},
         "body": json.dumps(body),
     }
+
+
+def _asked_for_archived(query):
+    """Whether Show archived is ticked (14.3).
+
+    A query string carries text, and "false" and "0" are both text that is
+    true in Python. Read positively instead: the tick is on for the values a
+    screen sends when it is on, and off for everything else including
+    absent."""
+    return str((query or {}).get("archived", "")).lower() in (
+        "1", "true", "yes", "on")
 
 
 # --- what the ARQEDIA workspace may not do ---------------------------------
@@ -477,7 +490,108 @@ def open_engagement(tenant_id, email, engagement):
             "subject_name": None, "status": "open", "created": True}
 
 
-def list_engagements(tenant_id):
+# --- archiving (Group 14) --------------------------------------------------
+#
+# NOTHING IS DELETED, EVER, BY ANY OF THIS. Archiving sets a column and
+# records who did it and when; restoring clears the same three. An archived
+# engagement keeps its documents, its values and its memoranda; an archived
+# memorandum keeps its text, its sources and its claims. The only thing that
+# changes is which lists it appears in.
+#
+# ARCHIVING AN ENGAGEMENT DOES NOT ARCHIVE ITS MEMORANDA (decided in 13.3).
+# A memorandum is a document somebody may have sent to a lender; tidying the
+# matter it came out of must not quietly withdraw it from the list it is
+# read from. The two are archived separately and deliberately.
+#
+# WHO MAY DO IT IS NOT DECIDED. Every act here is open to any seat, which is
+# what filing, generating and setting a document aside already are. See the
+# report accompanying this branch: the alternative is _require_admin, and it
+# is one line per route.
+
+ENGAGEMENT_STATUSES = ("open", "archived")
+MEMO_STATES = ("live", "archived")
+
+
+def set_engagement_state(tenant_id, email, engagement, status):
+    """Archive an engagement, or bring it back.
+
+    Its memoranda are untouched: an archived engagement's memoranda stay live
+    and stay in their own list, because a memorandum is a thing that has left
+    the building.
+
+    RESOLVED WITHOUT REGARD TO STATUS, so an archived engagement can be
+    restored - a resolver that only found open ones would make archiving a
+    one-way door."""
+    if status not in ENGAGEMENT_STATUSES:
+        raise ValueError("an engagement is open or archived, not %r" % status)
+
+    found = engagement_named(tenant_id, engagement)
+    if found is None:
+        return None
+
+    if status == "archived":
+        _sql("UPDATE engagement SET status = 'archived', archived_by = :who, "
+             "archived_at = UTC_TIMESTAMP() "
+             "WHERE tenant_id = :t AND engagement_id = :e",
+             [_p("who", email), _p("t", tenant_id),
+              _p("e", int(found["engagement_id"]))])
+    else:
+        # Cleared, not left behind. A restored engagement that still said who
+        # archived it would read as archived to anybody looking at the row.
+        _sql("UPDATE engagement SET status = 'open', archived_by = NULL, "
+             "archived_at = NULL "
+             "WHERE tenant_id = :t AND engagement_id = :e",
+             [_p("t", tenant_id), _p("e", int(found["engagement_id"]))])
+
+    print("[engagement-%s] tenant=%s engagement=%s by=%s" % (
+        status, tenant_id, found["engagement"], email))
+    return {"engagement_id": found["engagement_id"],
+            "engagement": found["engagement"], "status": status}
+
+
+def set_memo_state(tenant_id, email, memo_id, state):
+    """Archive a memorandum, or bring it back. THE WHOLE REVISION LINE.
+
+    A memorandum and its revisions are one document to the person who wrote
+    it - revise_memo already inherits the parent's state for that reason, so
+    a revision of something archived does not quietly reappear. Archiving one
+    revision and leaving its siblings would put half a line in the list and
+    half out of it, which is not a state anybody asked for.
+
+    The line is found through parent_memo_id: the root is the memo's parent
+    where it has one, itself where it does not, and every row whose parent is
+    that root travels with it."""
+    if state not in MEMO_STATES:
+        raise ValueError("a memorandum is live or archived, not %r" % state)
+
+    found = _sql("SELECT parent_memo_id FROM memo "
+                 "WHERE tenant_id = :t AND memo_id = :m",
+                 [_p("t", tenant_id), _p("m", int(memo_id))]).get("records", [])
+    if not found:
+        return None
+    root = _col(found[0], 0) or int(memo_id)
+
+    if state == "archived":
+        result = _sql(
+            "UPDATE memo SET state = 'archived', archived_by = :who, "
+            "archived_at = UTC_TIMESTAMP() "
+            "WHERE tenant_id = :t AND (memo_id = :root OR parent_memo_id = :root)",
+            [_p("who", email), _p("t", tenant_id), _p("root", int(root))])
+    else:
+        result = _sql(
+            "UPDATE memo SET state = 'live', archived_by = NULL, "
+            "archived_at = NULL "
+            "WHERE tenant_id = :t AND (memo_id = :root OR parent_memo_id = :root)",
+            [_p("t", tenant_id), _p("root", int(root))])
+
+    revisions = result.get("numberOfRecordsUpdated", 0)
+    print("[memo-%s] tenant=%s memo=%s root=%s revisions=%s by=%s" % (
+        state, tenant_id, memo_id, root, revisions, email))
+    return {"memo_id": int(memo_id), "root_memo_id": int(root),
+            "state": state, "revisions": revisions}
+
+
+def list_engagements(tenant_id, include_archived=False):
     """What this tenant has, and what each one is about.
 
     FROM THE ENGAGEMENT TABLE, not from the documents' storage keys (13.3
@@ -498,33 +612,43 @@ def list_engagements(tenant_id):
     MySQL sorts last in DESC - so the one just created would appear at the
     bottom of the list, which is the opposite of useful.
 
-    'open' ONLY. Archiving is a decision recorded on the row (migration 030);
-    an archived engagement is out of the way rather than deleted, and comes
-    back by setting status, not by restoring anything."""
+    'open' ONLY, UNLESS ASKED OTHERWISE (14.2, 14.3). Archiving is a
+    decision recorded on the row (migration 030); an archived engagement is
+    out of the way rather than deleted, and Show archived brings it back into
+    view so it can be restored. The status travels on every row, so the list
+    can mark the archived ones rather than mixing them in unannounced."""
     result = _sql(
         """
         SELECT e.engagement_id,
                e.name,
                e.subject_name,
                COUNT(d.document_id) AS documents,
-               MAX(d.filed_at)      AS last_activity
+               MAX(d.filed_at)      AS last_activity,
+               e.status,
+               e.archived_by,
+               e.archived_at
         FROM engagement e
         LEFT JOIN document d
                ON d.tenant_id = e.tenant_id
               AND d.engagement_id = e.engagement_id
         WHERE e.tenant_id = :tenant_id
-          AND e.status = 'open'
-        GROUP BY e.engagement_id, e.name, e.subject_name, e.created_at
+          AND (e.status = 'open' OR :include_archived)
+        GROUP BY e.engagement_id, e.name, e.subject_name, e.created_at,
+                 e.status, e.archived_by, e.archived_at
         ORDER BY COALESCE(MAX(d.filed_at), e.created_at) DESC
         """,
-        [_p("tenant_id", tenant_id)],
+        [_p("tenant_id", tenant_id),
+         _p("include_archived", bool(include_archived))],
     )
     return [
         {"engagement_id": _col(r, 0),
          "engagement": _col(r, 1),
          "subject_name": _col(r, 2),
          "documents": _col(r, 3),
-         "last_activity": _col(r, 4)}
+         "last_activity": _col(r, 4),
+         "status": _col(r, 5),
+         "archived_by": _col(r, 6),
+         "archived_at": _col(r, 7)}
         for r in result.get("records", [])
     ]
 
@@ -1154,15 +1278,19 @@ def document_passage(tenant_id, document_id, unit):
 
 # --- memos -----------------------------------------------------------------
 
-def list_memos(tenant_id, engagement_id):
+def list_memos(tenant_id, engagement_id, include_archived=False):
     """Memos for one engagement, each named as it was when it was written.
 
-    BY engagement_id AND state 'live' (13.3 stage 4). The engagement comes
-    from the column rather than from the memo's storage key; the state keeps
-    an archived memorandum out of the list without deleting it, which is what
-    archiving is for. A revision inherits its parent's state, so archiving a
-    line archives all of it and revising something archived does not put it
-    back (see revise_memo).
+    BY engagement_id AND state 'live' (13.3 stage 4, 14.2). The engagement
+    comes from the column rather than from the memo's storage key; the state
+    keeps an archived memorandum out of the list without deleting it, which
+    is what archiving is for. A revision inherits its parent's state, so
+    archiving a line archives all of it and revising something archived does
+    not put it back (see revise_memo).
+
+    Show archived asks for them anyway, so a line can be restored from the
+    list it left. The state travels on every row for the same reason it does
+    on an engagement: an archived memorandum shown unmarked is a lie.
 
     THE NAME COMES FROM THE MEMO'S OWN REVISION, not from the tenant's active
     one. A memorandum renamed in September must not rename the memo somebody
@@ -1177,15 +1305,16 @@ def list_memos(tenant_id, engagement_id):
         """
         SELECT memo_id, template_key, generated_at, generated_by,
                parent_memo_id, revision, modified_by, modified_at, pdf_key,
-               config_revision
+               config_revision, state, archived_by, archived_at
         FROM memo
         WHERE tenant_id = :tenant_id
           AND engagement_id = :engagement_id
-          AND state = 'live'
+          AND (state = 'live' OR :include_archived)
         ORDER BY COALESCE(parent_memo_id, memo_id) DESC, revision DESC
         """,
         [_p("tenant_id", tenant_id),
-         _p("engagement_id", int(engagement_id))],
+         _p("engagement_id", int(engagement_id)),
+         _p("include_archived", bool(include_archived))],
     )
     return [
         {"memo_id": _col(r, 0),
@@ -1202,7 +1331,10 @@ def list_memos(tenant_id, engagement_id):
          "modified_by": _col(r, 6),
          "modified_at": _col(r, 7),
          "label": "%s.%s" % (_col(r, 4) or _col(r, 0), _col(r, 5)),
-         "has_pdf": bool(_col(r, 8))}
+         "has_pdf": bool(_col(r, 8)),
+         "state": _col(r, 10),
+         "archived_by": _col(r, 11),
+         "archived_at": _col(r, 12)}
         for r in result.get("records", [])
     ]
 
@@ -2335,10 +2467,22 @@ def _dispatch(event, context):
             # answering one more question needs no Terraform, and a new
             # route for a string transformation is a route to maintain.
             asked = (query.get("name") or "").strip()
-            answer = {"engagements": list_engagements(tenant_id)}
+            answer = {"engagements": list_engagements(
+                tenant_id, _asked_for_archived(query))}
             if asked:
                 answer["cleaned"] = _clean(asked)
             return _reply(200, answer)
+
+        # Archiving an engagement, and bringing it back. One route for both:
+        # restoring is the same act with the other value, and a pair of
+        # routes would be two things to keep in step (14.1, 14.3).
+        if route == "PUT /engagements/{id}/state":
+            body = json.loads(event.get("body") or "{}")
+            changed = set_engagement_state(tenant_id, email, engagement,
+                                           body.get("status", ""))
+            if changed is None:
+                return _reply(404, {"error": NO_SUCH_ENGAGEMENT % engagement})
+            return _reply(200, changed)
 
         # Opening an engagement from the form. A POST because it creates a
         # row; GET /engagements answers what exists and must never make
@@ -2413,7 +2557,20 @@ def _dispatch(event, context):
             if found is None:
                 return _reply(404, {"error": NO_SUCH_ENGAGEMENT % engagement})
             return _reply(200, {"memos": list_memos(
-                tenant_id, found["engagement_id"])})
+                tenant_id, found["engagement_id"],
+                _asked_for_archived(query))})
+
+        # Archiving a memorandum, and bringing it back. The whole revision
+        # line moves, because a memorandum and its revisions are one document
+        # to the person who wrote it (14.1).
+        if route == "PUT /memos/{memo_id}/state":
+            body = json.loads(event.get("body") or "{}")
+            changed = set_memo_state(tenant_id, email,
+                                     params.get("memo_id"),
+                                     body.get("state", ""))
+            if changed is None:
+                return _reply(404, {"error": "not found"})
+            return _reply(200, changed)
 
         if route == "POST /engagements/{id}/generate":
             body = json.loads(event.get("body") or "{}")

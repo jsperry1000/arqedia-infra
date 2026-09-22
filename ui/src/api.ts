@@ -236,6 +236,12 @@ export type Engagement = {
    *  the SUBJECT's facts and cannot tell which company that is unless it is
    *  told. */
   subject_name: string | null;
+  /** open or archived (14.1). An archived engagement keeps its documents,
+   *  its values and its memoranda - only which list it appears in changes,
+   *  and its memoranda stay in theirs. */
+  status: string;
+  archived_by: string | null;
+  archived_at: string | null;
 };
 
 export type Pending = {
@@ -313,6 +319,12 @@ export type MemoRef = {
   modified_at: string | null;
   label: string;
   has_pdf: boolean;
+  /** live or archived (14.1). The whole revision line shares one state: a
+   *  memorandum and its revisions are one document to the person who wrote
+   *  it. */
+  state: string;
+  archived_by: string | null;
+  archived_at: string | null;
 };
 
 export type Memo = {
@@ -864,8 +876,20 @@ export const api = {
 
   documentTypes: (): Promise<{ types: DocType[] }> => call("/document-types"),
 
-  engagements: (): Promise<{ engagements: Engagement[] }> =>
-    call("/engagements"),
+  engagements: (archived = false): Promise<{ engagements: Engagement[] }> =>
+    call("/engagements" + (archived ? "?archived=1" : "")),
+
+  /** Archive an engagement, or bring it back.
+   *
+   *  ITS MEMORANDA ARE UNTOUCHED (decided in 13.3). A memorandum may have
+   *  been sent to a lender; tidying the matter it came out of must not
+   *  quietly withdraw it. They are archived separately, and deliberately. */
+  setEngagementState: (id: string, status: "open" | "archived"): Promise<{
+    engagement_id: number; engagement: string; status: string;
+  }> => call(`/engagements/${encodeURIComponent(id)}/state`, {
+    method: "PUT",
+    body: JSON.stringify({ status }),
+  }),
 
   /** Open an engagement by name, creating its row if there is none.
    *
@@ -938,8 +962,22 @@ export const api = {
   documentValues: (documentId: number): Promise<DocumentDetail> =>
     call(`/documents/${documentId}/values`),
 
-  memos: (id: string): Promise<{ memos: MemoRef[] }> =>
-    call(`/engagements/${encodeURIComponent(id)}/memos`),
+  memos: (id: string, archived = false): Promise<{ memos: MemoRef[] }> =>
+    call(`/engagements/${encodeURIComponent(id)}/memos`
+      + (archived ? "?archived=1" : "")),
+
+  /** Archive a memorandum, or bring it back. THE WHOLE REVISION LINE moves:
+   *  a memorandum and its revisions are one document, and half a line in
+   *  the list and half out of it is not a state anybody asked for.
+   *
+   *  Nothing is deleted. The text, the sources and the claims are where
+   *  they were; only which list it appears in changes. */
+  setMemoState: (memoId: number, state: "live" | "archived"): Promise<{
+    memo_id: number; root_memo_id: number; state: string; revisions: number;
+  }> => call(`/memos/${memoId}/state`, {
+    method: "PUT",
+    body: JSON.stringify({ state }),
+  }),
 
   templates: (): Promise<{ templates: Template[] }> => call("/templates"),
 

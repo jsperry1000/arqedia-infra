@@ -72,6 +72,11 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
+  // Show archived, for the memo list (14.3). Off by default, so the list is
+  // what is in play; on, the archived lines join it marked, and can be
+  // restored from where they left. The engagements list carries its own.
+  const [showArchived, setShowArchived] = useState(false);
+
   // Why the engagement could not be read, where it could not. Distinct from
   // `error`, which is a refusal of something somebody just did and belongs
   // beside the controls; this one means there is nothing to show controls
@@ -158,7 +163,7 @@ export function EngagementView({ id, onBack, onMemo }: {
     let p, d, m;
     try {
       [p, d, m] = await Promise.all([
-        api.pending(id), api.documents(id), api.memos(id),
+        api.pending(id), api.documents(id), api.memos(id, showArchived),
       ]);
     } catch (err) {
       setLoadFailed({ status: statusOf(err), said: reason(err) });
@@ -278,7 +283,9 @@ export function EngagementView({ id, onBack, onMemo }: {
       if (r.templates.length > 0) setTemplate(r.templates[0].key);
     }).catch(() => setTemplates([]));
   }, []);
-  useEffect(() => { refresh(); }, [id]);
+  // Reloads when the tick changes, because the archived rows were never sent
+  // and there is nothing on the screen to filter.
+  useEffect(() => { refresh(); }, [id, showArchived]);
 
   // A document being read by OCR is still in flight. Generating now would
   // produce a memo missing whatever it is about to say.
@@ -1259,6 +1266,13 @@ export function EngagementView({ id, onBack, onMemo }: {
                 + (memoQuote ? ` \u00b7 ${money(memoQuote.total_cents)}` : "")}
       </button>
 
+      {/* The tick, above the list it changes (14.3). */}
+      <label className="inline-check">
+        <input type="checkbox" checked={showArchived}
+               onChange={(e) => setShowArchived(e.target.checked)} />
+        Show archived
+      </label>
+
       <table>
         <tbody>
           {memos.map((m) => (
@@ -1273,6 +1287,47 @@ export function EngagementView({ id, onBack, onMemo }: {
                 {m.modified_by
                   ? "modified by " + m.modified_by
                   : m.generated_by ?? "\u2014"}
+              </td>
+              {/* Marked, never mixed in unannounced. */}
+              <td className="muted small">
+                {m.state === "archived" ? "Archived" : ""}
+              </td>
+              <td>
+                {/* THE WHOLE REVISION LINE moves, which is why this says the
+                    memorandum rather than this row: 9.1 and 9.2 go together,
+                    because they are one document. Nothing is deleted - the
+                    text, its sources and its claims stay, and the memo still
+                    opens from a link.
+
+                    An <a className="small">, the same low-key row action
+                    "Set it aside" uses on a filed document, rather than a
+                    button: a full-strength button on every row of a list
+                    shouts, and the classes it would need are declared only
+                    inside .memo-head and five other parents. No new CSS. */}
+                <a className="small"
+                   title={m.state === "archived"
+                     ? "Bring this memorandum and its revisions back."
+                     : "Put this memorandum and its revisions away. "
+                       + "Nothing is deleted."}
+                   onClick={async (e) => {
+                     e.stopPropagation();
+                     if (busy) return;
+                     setError("");
+                     setBusy(m.state === "archived"
+                       ? `Restoring memo ${m.label}`
+                       : `Archiving memo ${m.label}`);
+                     try {
+                       await api.setMemoState(
+                         m.memo_id,
+                         m.state === "archived" ? "live" : "archived");
+                     } catch (err) {
+                       setError(reason(err));
+                     }
+                     setBusy("");
+                     refresh();
+                   }}>
+                  {m.state === "archived" ? "Restore" : "Archive"}
+                </a>
               </td>
             </tr>
           ))}

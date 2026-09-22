@@ -43,9 +43,11 @@ def memo_row(memo_id, config_revision, template_key=TEMPLATE,
              parent=None, revision=1, pdf_key=None):
     """One row of list_memos' SELECT, in its column order:
     memo_id, template_key, generated_at, generated_by, parent_memo_id,
-    revision, modified_by, modified_at, pdf_key, config_revision."""
+    revision, modified_by, modified_at, pdf_key, config_revision, and since
+    Group 14 state, archived_by, archived_at."""
     return (memo_id, template_key, "2026-03-04 10:00:00", "a@firm.com",
-            parent, revision, None, None, pdf_key, config_revision)
+            parent, revision, None, None, pdf_key, config_revision,
+            "live", None, None)
 
 
 class MemoListTest(unittest.TestCase):
