@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { updatePassword } from "aws-amplify/auth";
 import { useSearchParams } from "react-router-dom";
 import { useBackAction, Working } from "./shell";
-import { EnterpriseLink, UpgradePrompt } from "./upgrade";
+import { ENTERPRISE_COLUMN, EnterpriseLink, UpgradePrompt } from "./upgrade";
 import { api, chargeKey, type Wallet, type LedgerEntry,
          type Seats as SeatState, type Invited,
          type SubscriptionView, type Plan } from "./api";
@@ -55,15 +55,61 @@ const KINDS: Record<string, string> = {
   daily_test: "Daily test allowance",
 };
 
-/** What one top-up increment costs, in cents.
+/* TOPUP_CENTS IS GONE (18.5 stage 3). It read:
  *
- *  NOT A METERED PRICE. Filing and generating are priced in `meter_price` and
- *  read from /wallet/quote, which is why no screen states those figures. A
- *  top-up is a Paddle price rather than a meter, so there is nothing to read:
- *  the server computes the amount and returns it on the response, and this is
- *  what the screen says beforehand. It was written twice inline; named once
- *  here so the button and the confirmation cannot disagree. */
-const TOPUP_CENTS = 500;
+ *     const TOPUP_CENTS = 500;
+ *
+ * and its own comment said the server computes the amount and returns it -
+ * which was true of the answer and not of the question. The button, the
+ * confirmation and the line about how many more memoranda it buys all stated
+ * a figure this file held, and billing.top_up() charged
+ * TOPUP_INCREMENT_CENTS * increments. Two numbers that happened to agree.
+ *
+ * /billing/subscription now reports the server's own constant as
+ * topup_increment_cents, and every figure on the Balance tab is computed from
+ * that. See the note beside it in billing.py for why it rides on that
+ * endpoint rather than on /wallet. */
+
+/** One row of the plan table: the label, what it reads for a plan, and what
+ *  it reads for Enterprise.
+ *
+ *  THE ROWS THE PRICING PAGE SHOWS, in its order. "How it starts" is not one
+ *  of them here: on the site it is how somebody signs up, and on this screen
+ *  that is the radio in the column header and the button beneath the table.
+ *
+ *  A DASH FOR NULL, and never a zero. A limit the plan has not been given is
+ *  not a limit of none - see the note on Plan in api.ts. share_allowance is
+ *  the exception and has always been: null there means unlimited, which is
+ *  what migration 018 says. */
+type PlanRow = {
+  label: string;
+  of: (plan: Plan) => string | number;
+  enterprise: string;
+};
+
+const limit = (value: number | null) => (value === null ? "—" : value);
+const cents = (value: number | null) => (value === null ? "—" : money(value));
+
+const ROWS: PlanRow[] = [
+  { label: "Seats",
+    of: (p) => p.seat_count,
+    enterprise: ENTERPRISE_COLUMN.seats },
+  { label: "Monthly credit toward metered use",
+    of: (p) => money(p.monthly_credit_cents),
+    enterprise: ENTERPRISE_COLUMN.monthly_credit },
+  { label: "Shared memoranda per month",
+    of: (p) => (p.share_allowance === null ? "unlimited" : p.share_allowance),
+    enterprise: ENTERPRISE_COLUMN.shares },
+  { label: "Field sets per document type",
+    of: (p) => limit(p.field_sets_per_type),
+    enterprise: ENTERPRISE_COLUMN.field_sets },
+  { label: "Sections per template",
+    of: (p) => limit(p.sections_per_template),
+    enterprise: ENTERPRISE_COLUMN.sections },
+  { label: "Daily classification allowance",
+    of: (p) => cents(p.daily_classification_cents),
+    enterprise: ENTERPRISE_COLUMN.daily_classification },
+];
 
 /**
  * Account management. Everything to do with money and with who may spend it.
@@ -344,46 +390,57 @@ function Subscription() {
         rather than a proration, and a downgrade is refused while more seats are
         taken or reserved than the smaller plan holds.
       </p>
-      {/* The third column of the pricing page is not in this table and will
-          not be: Enterprise is negotiated per contract and a negotiated price
-          must not be a release (CLAUDE.md, Money). Saying so here, with a way
-          to ask, is what the table was missing (11.4). */}
-      <p className="muted small">
-        Enterprise is not listed because it is negotiated rather than bought:
-        seats, credit and allowances are whatever the contract says, and it is
-        the only plan that can take the ARQEDIA line off a memorandum&rsquo;s
-        footer. <EnterpriseLink className="small" />.
-      </p>
+      {/* THE PLAN TABLE, THE WAY THE PRICING PAGE DRAWS IT (18.5 stage 3).
+          It was one row per plan and six columns of attribute; it is now one
+          column per plan and one row per attribute, which is the shape
+          somebody comparing two plans actually reads - and the shape the page
+          that sold them to this tenant used.
 
-      <table className="docs">
+          THE THREE LIMITS COME FROM THE API, which reads them from the plan
+          table, which migration 033 fills from config/plans.json. They were
+          sold on the pricing page and held nowhere, so this screen could not
+          show them at all.
+
+          ENTERPRISE IS THE THIRD COLUMN and carries no radio: it is not a
+          plan row, it cannot be bought here, and a control that answers 403
+          is worse than no control. Its words are ENTERPRISE_COLUMN - the one
+          copy in this codebase, declared there with the reason. */}
+      <table className="docs plans-table">
         <thead>
           <tr>
-            <th></th><th>Plan</th><th>Seats</th><th>Monthly credit</th>
-            <th>Shares</th><th>A month</th>
+            <th></th>
+            {view.plans.map((p: Plan) => (
+              <th key={p.plan_key} onClick={() => setChosen(p.plan_key)}
+                  className={p.plan_key === chosen ? "chosen" : undefined}>
+                <input type="radio" name="plan"
+                       checked={p.plan_key === chosen}
+                       onChange={() => setChosen(p.plan_key)} />
+                <span className="plan-name">{p.name}</span>
+                <span className="plan-price">
+                  {money(p.monthly_price_cents)} / month
+                </span>
+                {p.plan_key === view.plan && (
+                  <span className="in-use">current</span>
+                )}
+              </th>
+            ))}
+            {/* No radio, and the link the paragraph beneath the table used to
+                carry. The column says what the paragraph said. */}
+            <th className="quoted">
+              <span className="plan-name">{ENTERPRISE_COLUMN.name}</span>
+              <span className="plan-price">{ENTERPRISE_COLUMN.price}</span>
+              <EnterpriseLink className="small" />
+            </th>
           </tr>
         </thead>
         <tbody>
-          {view.plans.map((p: Plan) => (
-            <tr key={p.plan_key} onClick={() => setChosen(p.plan_key)}
-                className={p.plan_key === chosen ? "chosen" : undefined}>
-              <td style={{ width: 34 }}>
-                <input type="radio" name="plan"
-                       checked={p.plan_key === chosen}
-                       onChange={() => setChosen(p.plan_key)}
-                       style={{ width: "auto" }} />
-              </td>
-              <td>
-                <strong>{p.name}</strong>
-                {p.plan_key === view.plan && (
-                  <div className="in-use">current</div>
-                )}
-              </td>
-              <td className="ref">{p.seat_count}</td>
-              <td className="ref">{money(p.monthly_credit_cents)}</td>
-              <td className="ref">
-                {p.share_allowance === null ? "unlimited" : p.share_allowance}
-              </td>
-              <td className="ref">{money(p.monthly_price_cents)}</td>
+          {ROWS.map((row) => (
+            <tr key={row.label}>
+              <th scope="row">{row.label}</th>
+              {view.plans.map((p: Plan) => (
+                <td key={p.plan_key} className="ref">{row.of(p)}</td>
+              ))}
+              <td className="ref quoted">{row.enterprise}</td>
             </tr>
           ))}
         </tbody>
@@ -474,9 +531,24 @@ function Balance() {
   // The confirmation between pressing Top up and charging the card (4.2).
   const [confirming, setConfirming] = useState(false);
 
+  /** What one increment costs, as the server reports it (18.5 stage 3).
+   *
+   *  NULL UNTIL IT ANSWERS, and Top up is held until then. Every figure below
+   *  is this number times the count, and a screen that states a charge it has
+   *  guessed - then sends a request charging something else - is the one
+   *  outcome a confirmation exists to prevent. Waiting a moment is cheap; the
+   *  read happens with the two beside it.
+   *
+   *  FROM /billing/subscription, which is where the constant that charges is
+   *  reported. Topping up is refused without an active subscription in any
+   *  case, so this tab is already downstream of it. */
+  const [topup, setTopup] = useState<number | null>(null);
+
   useEffect(() => {
     api.wallet().then(setWallet).catch((e) => setError(String(e.message ?? e)));
     api.walletLedger(50).then((r) => setEntries(r.ledger)).catch(() => setEntries([]));
+    api.subscription().then((v) => setTopup(v.topup_increment_cents))
+      .catch(() => setTopup(null));
   }, []);
 
   /**
@@ -576,8 +648,13 @@ function Balance() {
         {/* This press opens the confirmation; the card is charged on the one
             inside it (4.2). Every other act that spends is asked for twice,
             and this is the only one that reaches a card. */}
-        <button onClick={() => setConfirming(true)} disabled={!!busy}>
-          {busy ? "Charging…" : `Top up ${money(increments * TOPUP_CENTS)}`}
+        <button onClick={() => setConfirming(true)}
+                disabled={!!busy || topup === null}
+                title={topup === null
+                  ? "Reading what an increment costs." : undefined}>
+          {busy ? "Charging…"
+            : topup === null ? "Top up"
+            : `Top up ${money(increments * topup)}`}
         </button>
         <span className="muted small">
           {said || "In $5 increments, charged to the card Paddle holds. There "
@@ -589,7 +666,7 @@ function Balance() {
       {/* The second press, and the only one that charges (4.2). The figures
           are laid out as the filing and generating quotes are, so money on
           this screen reads the same way wherever it appears. */}
-      {confirming && (
+      {confirming && topup !== null && (
         <div className="panel-backdrop" onClick={() => setConfirming(false)}>
           <div className="panel narrow" onClick={(e) => e.stopPropagation()}
                onKeyDown={(e) => { if (e.key === "Escape") setConfirming(false); }}>
@@ -601,10 +678,10 @@ function Balance() {
               <div className="quote">
                 <div>
                   <span>
-                    {increments} &times; {money(TOPUP_CENTS)}
+                    {increments} &times; {money(topup)}
                     {increments === 1 ? " increment" : " increments"}
                   </span>
-                  <b>{money(increments * TOPUP_CENTS)}</b>
+                  <b>{money(increments * topup)}</b>
                 </div>
                 <div>
                   <span>Available now</span>
@@ -613,7 +690,7 @@ function Balance() {
                 <div>
                   <span>Once it lands</span>
                   <b>{money(wallet.available_cents
-                            + increments * TOPUP_CENTS)}</b>
+                            + increments * topup)}</b>
                 </div>
               </div>
 
@@ -626,8 +703,8 @@ function Balance() {
 
               {memo && (
                 <p className="muted small">
-                  {increments * TOPUP_CENTS / memo} more{" "}
-                  {increments * TOPUP_CENTS / memo === 1
+                  {increments * topup / memo} more{" "}
+                  {increments * topup / memo === 1
                     ? "memorandum" : "memoranda"}, at today&rsquo;s price.
                 </p>
               )}
@@ -635,7 +712,7 @@ function Balance() {
               <div className="form-actions">
                 <button disabled={!!busy}
                         onClick={() => { setConfirming(false); topUp(); }}>
-                  Charge {money(increments * TOPUP_CENTS)}
+                  Charge {money(increments * topup)}
                 </button>
                 <a className="secondary"
                    onClick={() => setConfirming(false)}>Cancel</a>

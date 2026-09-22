@@ -17,8 +17,10 @@ DUPLICATE_MESSAGE = ("Duplicate entry '7-k' for key "
                      "'topup_request.uq_idempotency'; Error code: 1062; "
                      "SQLState: 23000")
 
-PLANS = rows(("base", "Base", 2, 2500, 500, 5),
-             ("business", "Small Business", 5, 6500, 1500, None))
+# Nine columns, because _plans() selects nine since migration 033 (18.5).
+# The three limits are last: field sets, sections, daily classification.
+PLANS = rows(("base", "Base", 2, 2500, 500, 5, 3, 12, 500),
+             ("business", "Small Business", 5, 6500, 1500, None, 5, 25, 1500))
 
 
 class FakeBillingDb:
@@ -180,6 +182,104 @@ class BillingTest(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 self.billing.checkout(7, "member", {"plan": "base"})
         self.paddle.create_checkout_transaction.assert_not_called()
+
+
+class PlansTest(unittest.TestCase):
+    """What the Account screen is given, and what it must never be given.
+
+    THE THREE LIMITS ARE THE POINT (18.5). They were sold on the pricing page
+    and held nowhere, so the screen a tenant pays from could not show them.
+    A test that only counted the plans would pass with all three missing."""
+
+    def setUp(self):
+        self.billing = load_billing()
+
+    def plans(self):
+        with mock.patch.object(self.billing, "_sql",
+                               lambda *a, **k: PLANS):
+            return self.billing._plans()
+
+    def test_every_plan_carries_the_three_limits(self):
+        for plan in self.plans():
+            with self.subTest(plan=plan["plan_key"]):
+                self.assertIn("field_sets_per_type", plan)
+                self.assertIn("sections_per_template", plan)
+                self.assertIn("daily_classification_cents", plan)
+
+    def test_the_limits_are_the_row_s_own_values(self):
+        base, business = self.plans()
+        self.assertEqual(
+            (base["field_sets_per_type"], base["sections_per_template"],
+             base["daily_classification_cents"]), (3, 12, 500))
+        self.assertEqual(
+            (business["field_sets_per_type"],
+             business["sections_per_template"],
+             business["daily_classification_cents"]), (5, 25, 1500))
+
+    def test_an_unlimited_share_allowance_is_still_null(self):
+        """Null is unlimited here and not zero, and widening the SELECT must
+        not have shifted a column onto it."""
+        _, business = self.plans()
+        self.assertIsNone(business["share_allowance"])
+
+    def test_only_active_plans(self):
+        with mock.patch.object(self.billing, "_sql",
+                               lambda *a, **k: PLANS) as _:
+            pass
+        # The filter is in the statement rather than in Python, so assert it
+        # is there: a screen offering an inactive plan offers a price nobody
+        # can be billed at.
+        seen = {}
+
+        def sql(statement, params=None):
+            seen["sql"] = " ".join(statement.split())
+            return PLANS
+
+        with mock.patch.object(self.billing, "_sql", sql):
+            self.billing._plans()
+        self.assertIn("WHERE active = 1", seen["sql"])
+
+    def test_enterprise_is_never_among_them(self):
+        """It is not a plan row, deliberately - plan.seat_count,
+        monthly_price_cents and monthly_credit_cents are NOT NULL, and a
+        negotiated price must not be a release. Its column on the screen is
+        ENTERPRISE_COLUMN in ui/src/upgrade.tsx."""
+        self.assertNotIn("enterprise",
+                         [p["plan_key"] for p in self.plans()])
+
+
+class TopUpFigureTest(unittest.TestCase):
+    """The confirmation states what the card will be charged (18.5).
+
+    Account.tsx held TOPUP_CENTS = 500 and billing charged
+    TOPUP_INCREMENT_CENTS * increments - two numbers that happened to agree.
+    subscription_view reports the one that charges."""
+
+    def setUp(self):
+        self.billing = load_billing()
+
+    def test_the_view_reports_the_constant_that_charges(self):
+        db = FakeBillingDb(("sub_1", "active", None, "base"))
+        with mock.patch.object(self.billing, "_sql", db.sql),              mock.patch.object(self.billing.wallet, "standing",
+                               return_value="active"):
+            view = self.billing.subscription_view(7)
+        self.assertEqual(view["topup_increment_cents"],
+                         self.billing.TOPUP_INCREMENT_CENTS)
+
+    def test_it_is_the_figure_top_up_multiplies_by(self):
+        """The test that would fail if the two ever parted."""
+        db = FakeBillingDb(("sub_1", "active", None, "base"))
+        paddle = mock.MagicMock()
+        self.billing.paddle_api = paddle
+        with mock.patch.object(self.billing, "_sql", db.sql):
+            charged = self.billing.top_up(
+                7, "a@firm.com", "admin",
+                {"increments": 3, "idempotency_key": "k"})
+        with mock.patch.object(self.billing, "_sql", db.sql),              mock.patch.object(self.billing.wallet, "standing",
+                               return_value="active"):
+            view = self.billing.subscription_view(7)
+        self.assertEqual(charged["amount_cents"],
+                         view["topup_increment_cents"] * 3)
 
 
 class PaddleApiTest(unittest.TestCase):
