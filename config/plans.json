@@ -1,0 +1,84 @@
+{
+  "note": [
+    "One source for what a plan is (18.5 / 11.3). Read by the migration that",
+    "fills the plan table, and - from stage 2 - by the marketing site's build,",
+    "so what is offered and what is marketed cannot drift.",
+    "",
+    "Nothing reads this at run time. The application reads the plan table, and",
+    "the site renders static HTML at build. A page that fetched its own prices",
+    "from JavaScript would have nothing to say with JavaScript off.",
+    "",
+    "ENTERPRISE CARRIES NULL WHERE A NUMBER WOULD BE A PRICE, and the string",
+    "the pricing page prints everywhere else. monthly_price_cents is null",
+    "because a negotiated price must not be a release (CLAUDE.md, Money); the",
+    "site's word for that null is 'negotiated'. It is also the one plan with no",
+    "paddle_price_name, because it is not bought in the product.",
+    "",
+    "ENTERPRISE IS NOT A plan ROW, and migration 033 does not make it one.",
+    "plan.seat_count, monthly_price_cents and monthly_credit_cents are all NOT",
+    "NULL, so a row for it could only exist by inventing three numbers - which",
+    "is the release the decision forbids. It lives here, and stage 2 renders it",
+    "from here."
+  ],
+
+  "sources": {
+    "plan_key": "plan table, dev, read 22 September 2026",
+    "name": "plan table",
+    "seat_count": "plan table",
+    "monthly_price_cents": "plan table, and checked against config/paddle/sandbox.json by tests/test_plans_source.py",
+    "monthly_credit_cents": "plan table",
+    "share_allowance": "plan table; NULL means unlimited, as migration 018 says",
+    "field_sets_per_type": "site/pricing/index.html ONLY - no column, no constant, nothing enforces it",
+    "sections_per_template": "site/pricing/index.html ONLY - the code's bounds are _REWRITE_MAX_SECTIONS 50 and proposer._MAX_SECTIONS 40, neither of them per plan",
+    "daily_classification_cents": "site/pricing/index.html ONLY - nothing meters or enforces it",
+    "paddle_price_name": "config/paddle/sandbox.json, product name",
+    "how_it_starts": "site/pricing/index.html, the 'How it starts' row; the Enterprise address is also in ui/src/upgrade.tsx",
+    "active": "plan table",
+    "enterprise": "site/pricing/index.html throughout - it has never been a plan row"
+  },
+
+  "plans": [
+    {
+      "plan_key": "base",
+      "name": "Base",
+      "seat_count": 2,
+      "monthly_price_cents": 2500,
+      "monthly_credit_cents": 500,
+      "share_allowance": 5,
+      "field_sets_per_type": 3,
+      "sections_per_template": 12,
+      "daily_classification_cents": 500,
+      "paddle_price_name": "ARQEDIA Base",
+      "how_it_starts": "https://app.arqedia.com/signup",
+      "active": true
+    },
+    {
+      "plan_key": "business",
+      "name": "Small Business",
+      "seat_count": 5,
+      "monthly_price_cents": 6500,
+      "monthly_credit_cents": 1500,
+      "share_allowance": null,
+      "field_sets_per_type": 5,
+      "sections_per_template": 25,
+      "daily_classification_cents": 1500,
+      "paddle_price_name": "ARQEDIA Small Business",
+      "how_it_starts": "https://app.arqedia.com/signup",
+      "active": true
+    },
+    {
+      "plan_key": "enterprise",
+      "name": "Enterprise",
+      "seat_count": "as contracted",
+      "monthly_price_cents": null,
+      "monthly_credit_cents": "as contracted",
+      "share_allowance": "as contracted",
+      "field_sets_per_type": "10 by default",
+      "sections_per_template": "50 by default",
+      "daily_classification_cents": "negotiated",
+      "paddle_price_name": null,
+      "how_it_starts": "mailto:enterprise@arqedia.com?subject=ARQEDIA%20Enterprise%20enquiry",
+      "active": true
+    }
+  ]
+}

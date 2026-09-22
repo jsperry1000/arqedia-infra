@@ -197,24 +197,72 @@ class PaddleApiTest(unittest.TestCase):
 
 
 class SeatsBoughtTest(unittest.TestCase):
+    """PLAN_SEATS and DEFAULT_SEATS are gone (18.5): the count comes from the
+    plan table on every path, and from nowhere else.
+
+    THE STUB ANSWERS BY STATEMENT, not by call order. The fallback is two
+    queries now - tenant.plan, then plan by that key - and a stub returning a
+    fixed row for "anything not the subscription" would have handed the word
+    "business" back as a seat count."""
+
     def setUp(self):
         self.seats = load_billing().seats
 
-    def test_reads_the_plan_through_the_subscription(self):
+    def db(self, subscription=None, tenant_plan=None, by_key=None,
+           cheapest=None):
+        asked = []
+
         def sql(statement, params=None):
-            if "FROM subscription" in statement:
-                return rows((5,))
-            return rows(("base",))
+            s = " ".join(statement.split())
+            asked.append(s)
+            if "FROM subscription" in s:
+                return rows(subscription) if subscription else rows()
+            if "FROM tenant" in s:
+                return rows(tenant_plan) if tenant_plan else rows()
+            if "WHERE plan_key" in s:
+                return rows(by_key) if by_key else rows()
+            if "ORDER BY monthly_price_cents" in s:
+                return rows(cheapest) if cheapest else rows()
+            return rows()
+
+        return sql, asked
+
+    def test_reads_the_plan_through_the_subscription(self):
+        sql, asked = self.db(subscription=(5,))
         with mock.patch.object(self.seats, "_sql", sql):
             self.assertEqual(self.seats.seats_bought(7), 5)
+        # And stops there: a subscription is the answer.
+        self.assertEqual(len(asked), 1)
 
     def test_falls_back_to_tenant_plan_without_a_subscription(self):
-        def sql(statement, params=None):
-            if "FROM subscription" in statement:
-                return rows()
-            return rows(("business",))
+        sql, asked = self.db(tenant_plan=("business",), by_key=(5,))
         with mock.patch.object(self.seats, "_sql", sql):
             self.assertEqual(self.seats.seats_bought(7), 5)
+        self.assertTrue(any("WHERE plan_key" in s for s in asked))
+
+    def test_the_fallback_reads_the_table_rather_than_a_map(self):
+        """The whole of the change. 2 is what PLAN_SEATS held for base; this
+        proves the answer now comes from the row."""
+        sql, _ = self.db(tenant_plan=("base",), by_key=(9,))
+        with mock.patch.object(self.seats, "_sql", sql):
+            self.assertEqual(self.seats.seats_bought(7), 9)
+
+    def test_an_unknown_plan_gets_the_smallest_active_one(self):
+        """What DEFAULT_SEATS was for, read rather than written down."""
+        sql, _ = self.db(tenant_plan=("something-nobody-has-seen",),
+                         cheapest=(2,))
+        with mock.patch.object(self.seats, "_sql", sql):
+            self.assertEqual(self.seats.seats_bought(7), 2)
+
+    def test_no_plan_table_at_all_is_zero_rather_than_a_guess(self):
+        sql, _ = self.db(tenant_plan=("base",))
+        with mock.patch.object(self.seats, "_sql", sql):
+            self.assertEqual(self.seats.seats_bought(7), 0)
+
+    def test_the_constants_are_gone(self):
+        """A map that comes back is a third place seats are recorded."""
+        self.assertFalse(hasattr(self.seats, "PLAN_SEATS"))
+        self.assertFalse(hasattr(self.seats, "DEFAULT_SEATS"))
 
 
 if __name__ == "__main__":
