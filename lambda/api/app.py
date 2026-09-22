@@ -688,7 +688,7 @@ def list_pending(tenant_id, engagement_id):
         SELECT document_id, filename, document_type, page_count,
                thin_text, char_count, type_confidence, type_reason, state,
                uploaded_by, part_index, page_from, page_to,
-               refusal_code, refusal_reason
+               refusal_code, refusal_reason, source_folder
         FROM document
         WHERE tenant_id = :tenant_id
           AND state IN ('analysed', 'reading', 'unreadable')
@@ -713,7 +713,11 @@ def list_pending(tenant_id, engagement_id):
          "page_from": _col(r, 11),
          "page_to": _col(r, 12),
          "refusal_code": _col(r, 13),
-         "refusal_reason": _col(r, 14)}
+         "refusal_reason": _col(r, 14),
+         # Provenance, shown beside the filename (18.7). Null on every row
+         # filed before migration 032 and on every upload that was not a
+         # directory.
+         "source_folder": _col(r, 15)}
         for r in result.get("records", [])
     ]
 
@@ -2054,7 +2058,36 @@ def confirm_logo(tenant_id, role, key):
 
 # --- uploads and generation ------------------------------------------------
 
-def upload_url(tenant_id, email, engagement, filename):
+_FOLDER_MAX = 255
+_NOT_ASCII_PRINTABLE = re.compile(r"[^\x20-\x7e]")
+
+
+def _folder(name):
+    """A folder name, made safe to travel as S3 user metadata (18.7).
+
+    NOT _clean(). That exists to make a string safe for a storage KEY and
+    would turn "2024 Statutory Accounts" into "2024-Statutory-Accounts". This
+    is provenance a person reads, so it keeps its spaces and its case.
+
+    WHAT IT DOES STRIP IS FORCED BY S3, not chosen here: AWS documents
+    user-defined metadata as US-ASCII only, capped at 2 KB across every key
+    and value together, and says unprintable characters are dropped and
+    counted in x-amz-missing-meta. So anything outside printable ASCII goes
+    here rather than being rejected by storage with the upload half done, and
+    the result is bounded to the column's 255 (migration 032).
+
+    A folder named in Greek or Chinese therefore arrives thinner than it went
+    in, or empty. That is a limitation of carrying it as metadata and it is
+    recorded in the migration as well, because the next person will find a
+    stripped folder name and look for the defect in the wrong place.
+
+    Empty comes back as None rather than "": absent means "not a directory
+    upload", and an empty string in the column would mean "the root"."""
+    text = _NOT_ASCII_PRINTABLE.sub("", str(name or "")).strip()
+    return text[:_FOLDER_MAX] or None
+
+
+def upload_url(tenant_id, email, engagement, filename, source_folder=None):
     """A short-lived signed link. The browser uploads straight to S3; the file
     never passes through here. The key is built from the token's tenant, so a
     caller cannot place a file in another tenant's space.
@@ -2078,12 +2111,28 @@ def upload_url(tenant_id, email, engagement, filename):
     # the problem, that an engagement with no documents did not exist at all.
     engagement_id(tenant_id, engagement, email)
 
+    # THE FOLDER TRAVELS AS METADATA, as the uploader's address already does,
+    # and for the same reason: this function knows it and the normalizer -
+    # which writes the row - does not, so the answer has to arrive with the
+    # object (18.7).
+    #
+    # SIGNED ONLY WHERE THERE IS ONE. Every header a presigned PUT was signed
+    # with must be sent back or S3 refuses the request, so the key is in the
+    # signature exactly when the browser will send it. The cleaned value goes
+    # back to the caller for that purpose - the browser echoes what was
+    # signed rather than working out the rule a second time, which is the
+    # lesson of 17.4.
+    folder = _folder(source_folder)
+    metadata = {"uploaded-by": email}
+    if folder:
+        metadata["source-folder"] = folder
+
     key = "tenants/%d/docs/%s/%s" % (tenant_id, engagement, filename)
     url = _s3.generate_presigned_url(
         "put_object",
         Params={"Bucket": DOCS_BUCKET, "Key": key,
                 "ServerSideEncryption": "aws:kms",
-                "Metadata": {"uploaded-by": email}},
+                "Metadata": metadata},
         ExpiresIn=900)
     # BOTH CLEANED NAMES GO BACK (17.3, 17.4).
     #
@@ -2102,7 +2151,11 @@ def upload_url(tenant_id, email, engagement, filename):
     # where a file is kept, agreeing today and one edit away from not. The
     # browser holds no rule now and is told.
     return {"url": url, "key": key, "uploaded_by": email,
-            "engagement": engagement, "filename": filename}
+            "engagement": engagement, "filename": filename,
+            # Null where there was none, and the browser then sends no header
+            # at all - which is what keeps the request and the signature in
+            # step (18.7).
+            "source_folder": folder}
 
 
 def templates(tenant_id):
@@ -2748,7 +2801,8 @@ def _dispatch(event, context):
             body = json.loads(event.get("body") or "{}")
             return _reply(200, upload_url(tenant_id, email,
                                           body.get("engagement", ""),
-                                          body.get("filename", "")))
+                                          body.get("filename", ""),
+                                          body.get("source_folder")))
 
         if route == "GET /settings":
             settings = get_settings(tenant_id, role)
