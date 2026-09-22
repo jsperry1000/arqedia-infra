@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api, type ConfigState, type TemplatePack, type Validation } from "./api";
 import { Working } from "./shell";
+import { SEATS } from "./upgrade";
 
 /**
  * Get started (TPL-02 step 3). The front door, and where memoranda are chosen.
@@ -61,6 +63,7 @@ export function WelcomeView({ stopAtDraft = false, onStarted }: {
   stopAtDraft?: boolean;
   onStarted: (report: Report) => void;
 }) {
+  const navigate = useNavigate();
   const [state, setState] = useState<ConfigState | null>(null);
   const [packs, setPacks] = useState<TemplatePack[] | null>(null);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
@@ -214,6 +217,31 @@ export function WelcomeView({ stopAtDraft = false, onStarted }: {
 
           <h3>What a filing costs</h3>
           <p>A filing is charged at $0.25 per document.</p>
+
+          {/* A SECOND ADMINISTRATOR, ASKED HERE RATHER THAN DURING SIGNUP
+              (18.8). It was step 4 of five, optional, before anybody had seen
+              the product - and it did nothing at all: the address was written
+              to pending_signup.second_admin and no code ever read that column,
+              so nobody typing a colleague in was ever invited.
+
+              This is first sign-in, and the control goes to the seats screen,
+              which really does invite: it reserves a seat, mints a link and
+              sends the mail. Composed from .revision-note and .form-actions.
+              No new CSS. */}
+          <h3>A second administrator</h3>
+          <div className="revision-note">
+            <span>
+              Worth the thirty seconds. Another administrator can restore your
+              access if you lose it; without one, recovery is a manual request
+              to us and takes days. The seat is not taken until they accept.
+            </span>
+            <div className="form-actions">
+              <button onClick={() => navigate(SEATS)}>Invite a colleague</button>
+              <span className="muted small">
+                You can do this at any time under Account management.
+              </span>
+            </div>
+          </div>
         </>
       ) : (
         <>
@@ -296,6 +324,28 @@ export function WelcomeView({ stopAtDraft = false, onStarted }: {
         </p>
       )}
 
+      {/* WHAT LEAVING COSTS (18.8). This screen is the only door: the button
+          is dead until something is ticked, and start() returns at once on an
+          empty tick - so a person who reads the page and presses Home has a
+          workspace with no facts, no document types and no memorandum, and
+          nothing in the product mentions it again. "Tick a memorandum to
+          begin" says what the button wants; it does not say what walking away
+          leaves behind.
+
+          FIRST RUN ONLY. Somebody adding a second memorandum a year later
+          loses nothing at all by leaving, and telling them they do would be
+          untrue. Composed from .working-note, which this screen already uses
+          twice. No new CSS. */}
+      {firstRun && ticked.size === 0 && (
+        <p className="working-note">
+          <strong>Nothing is set up until you do this.</strong> Until a
+          memorandum is chosen and published, your workspace has no facts and
+          no document types: an upload cannot be given a type, and nothing can
+          be filed or generated. Leaving now costs nothing and creates nothing
+          &mdash; you come back to this screen from Template Catalogue.
+        </p>
+      )}
+
       {busy && <Working what={busy} />}
 
       <div className="form-actions">
@@ -308,7 +358,7 @@ export function WelcomeView({ stopAtDraft = false, onStarted }: {
             Purchase ARQEDIA
           </a>
         )}
-        {ticked.size === 0 && (
+        {ticked.size === 0 && !firstRun && (
           <span className="muted small">Tick a memorandum to begin.</span>
         )}
       </div>
