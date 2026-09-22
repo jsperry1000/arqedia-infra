@@ -1,41 +1,40 @@
 import { useEffect, useRef, useState } from "react";
-import { drawStage, mountFlock, type Stage, type StageHandle } from "./flock";
+import { drawStage, mountStrip, type Stage, type StageHandle,
+         type StripHandle } from "./flock";
 
 /**
- * The home page's sequence, above the configuration bar.
+ * The four stages in a row, with one flock crossing them (18.3).
  *
- * THE SAME ENGINE, THE SAME SEQUENCE, THE SAME TIMINGS. mountFlock, the
- * function the hero on arqedia.com calls, runs here too: documents arrive,
- * dissolve into facts, the facts are filed, and a report is retrieved. Same
- * birds, same boundaries, same SPEED - there is one implementation of it and
- * both surfaces call it.
+ * THE WIREFRAMES STAY DRAWN. Documents, facts, wires, mark - the shape of the
+ * business, and a shape that appears and disappears is an animation rather
+ * than a bearing. The birds are what moves: they start in the documents,
+ * leave and fly, settle on the wires, move into the mark, and then go back to
+ * the facts and murmurate there for as long as the screen is open.
  *
- * IT DOES NOT FREEZE ON THE REPORT. The hero does, because the page is the
- * end of the story it tells. This sits above a screen somebody works on for
- * an hour, and a frozen picture at the top of it reads as something that has
- * broken - so it asks mountFlock for its other ending, thenSwarm: the
- * particles leave the page and go back to the swarm, which turns over slowly
- * for as long as the screen is open.
+ * ONE CANVAS, FOUR CELLS. The flock has to cross them, so they cannot be four
+ * canvases; the engine draws a quarter each and moves the birds between them.
  *
- * NO CAPTIONS. mountFlock lights the hero's four descriptions through a
- * .stages element beside its canvas; there is none here, so it lights
- * nothing. The part in use is named by the band beneath and drawn by the
- * StageIcon in the margin - neither of which this touches.
+ * 30% FASTER THAN THE HERO, on the strip's own scale - see STRIP_SPEED. The
+ * hero is the thing somebody came to look at; this sits above a screen they
+ * came to work on.
  *
- * WHAT IT REPLACED: four still miniatures in a row, one per stage, with the
- * one in use brought forward. They said where a part sat in the sequence
- * without ever showing the sequence. One canvas cannot be four boxes, so the
- * strip is now a single drawing the width of the page - see .stage-strip.
+ * NO CAPTIONS, no boxes. The part in use is named by the band beneath, and
+ * shown here by its own wireframe being drawn at full strength while the
+ * other two are dimmed. That mapping is the part's stage: Document types the
+ * documents, Facts the wires they are filed on, Report sections the mark.
  *
- * NOTHING MOVES WHERE LESS MOTION HAS BEEN ASKED FOR. mountFlock's own check
- * paints the final frame once and starts no animation at all.
- *
- * The colours are a matter of CSS: flock.ts reads its palette from the canvas
- * element.
+ * IT RUNS ONCE EACH TIME CONFIGURE OPENS, because the component mounts with
+ * the screen. Under prefers-reduced-motion it draws one still frame - the
+ * wireframes, and the birds already home in the facts - and starts nothing.
  */
 
-export function StageStrip() {
+export function StageStrip({ lit }: { lit: Stage | null }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
+  const handle = useRef<StripHandle | null>(null);
+  // Which cell is prominent. Held in a ref as well as passed, so the mount
+  // below can read it without taking it as a dependency - the sequence runs
+  // once on arrival and must not restart when somebody changes part.
+  const litRef = useRef<Stage | null>(lit);
   // Set where drawing threw. This is decoration; the screen behind it is the
   // work.
   const [failed, setFailed] = useState(false);
@@ -47,22 +46,35 @@ export function StageStrip() {
    *  short to hold a single line of the page made buildScene read a property
    *  off undefined, and the Configure screen rendered blank. The cause is
    *  fixed in flock.ts; this is the guard that stops any future one mattering
-   *  at all. It catches, puts the strip away, and leaves the screen alone. */
+   *  at all. It catches, puts the strip away, and leaves the screen alone.
+   *
+   *  MOUNTED ONCE. The sequence runs on arrival and must not restart every
+   *  time somebody changes part - which is why the lit stage is handed to the
+   *  handle below rather than being a dependency here. */
   useEffect(() => {
     if (failed) return;
     const cv = canvas.current;
     if (!cv) return;
-    let handle: { stop(): void } | null = null;
     try {
-      handle = mountFlock(cv, { thenSwarm: true });
+      handle.current = mountStrip(cv, litRef.current);
     } catch (err) {
       console.error("[stage-strip] the sequence failed; the strip is hidden",
                     err);
       setFailed(true);
       return;
     }
-    return () => { try { handle?.stop(); } catch { /* going */ } };
+    return () => {
+      try { handle.current?.stop(); } catch { /* going */ }
+      handle.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [failed]);
+
+  // The prominence moves without remounting anything.
+  useEffect(() => {
+    litRef.current = lit;
+    handle.current?.setLit(lit);
+  }, [lit]);
 
   // Nothing at all rather than a broken box.
   if (failed) return null;
@@ -102,7 +114,9 @@ export function StageIcon({ stage }: { stage: Stage | null }) {
     if (!cv) return;
     let handle: StageHandle | null = null;
     try {
-      handle = drawStage(cv, stage);
+      // Heavier than the hero's hairline: at this size a one-pixel stroke
+      // reads as a scratch rather than as a drawing (18.3).
+      handle = drawStage(cv, stage, 300, 20260920, 2);
     } catch (err) {
       // The same guard the strip carries, and for the same reason: this is
       // decoration, and the screen behind it is the work.
