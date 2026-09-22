@@ -17,6 +17,7 @@ import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession,
          resetPassword, confirmResetPassword } from "aws-amplify/auth";
 import { config } from "./config";
 import { useRole } from "./upgrade";
+import { TRIAL_DAYS } from "./trial";
 import { api, type Engagement } from "./api";
 // The mark lives in one place, /brand, and both the application and the
 // marketing site reference it from there. Replace those two files and both
@@ -288,7 +289,9 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
             existed the sign-in card was the end of the road for them. */}
         {mode === "in" && (
           <p className="muted small" style={{ textAlign: "center", margin: 0 }}>
-            No account? <a onClick={onCreate}>Start a 30-day trial</a>
+            No account? <a onClick={onCreate}>
+              Start a {TRIAL_DAYS}-day trial
+            </a>
           </p>
         )}
       </form>

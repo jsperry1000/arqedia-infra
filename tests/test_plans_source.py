@@ -30,6 +30,7 @@ Nothing reaches AWS: this reads two committed files and nothing else.
 """
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -125,6 +126,67 @@ class PriceAgreementTest(unittest.TestCase):
         self.assertEqual(catalogue["environment"], "sandbox")
 
 
+class TrialLengthTest(unittest.TestCase):
+    """The published figure against the one that enforces it.
+
+    THE TWO ARE DIFFERENT THINGS, deliberately. config/plans.json is what the
+    marketing site and the application render at build; signup.TRIAL_DAYS is
+    what computes tenant.trial_ends_at, and the signup Lambda bundles
+    lambda/signup only, so it cannot read the file. This is what stops them
+    parting - the same arrangement the plan prices have with Paddle.
+
+    IT HAS PARTED BEFORE. Every customer-facing surface said 30 while the code
+    said 14, from 17 to 22 September, including the summary shown immediately
+    before somebody committed to a signup."""
+
+    def setUp(self):
+        self.doc = json.loads(PLANS.read_text(encoding="utf-8"))
+
+    def enforced(self):
+        """TRIAL_DAYS as the signup Lambda holds it, read from the source
+        rather than imported: signup/app.py opens boto3 clients and reads six
+        environment variables at import, and none of that is needed to read
+        one integer."""
+        text = (ROOT / "lambda" / "signup" / "app.py").read_text(
+            encoding="utf-8")
+        found = re.search(r"^TRIAL_DAYS\s*=\s*(\d+)\s*$", text, re.M)
+        self.assertIsNotNone(found, "signup/app.py has no TRIAL_DAYS")
+        return int(found.group(1))
+
+    def test_the_file_states_a_trial_length(self):
+        self.assertIsInstance(self.doc["trial_days"], int)
+        self.assertGreater(self.doc["trial_days"], 0)
+
+    def test_it_agrees_with_what_signup_enforces(self):
+        self.assertEqual(
+            self.doc["trial_days"], self.enforced(),
+            "config/plans.json publishes a trial length the signup Lambda "
+            "does not write")
+
+    def test_it_is_outside_the_plans(self):
+        """Every plan has the same trial. A per-plan field would be three
+        copies of one number."""
+        for plan in self.doc["plans"]:
+            with self.subTest(plan=plan["plan_key"]):
+                self.assertNotIn("trial_days", plan)
+
+    def test_no_customer_facing_file_states_a_length_of_its_own(self):
+        """The six places that said 30 now carry a token or an import. A
+        number typed back into any of them is what this catches."""
+        surfaces = [
+            ROOT / "site" / "index.html",
+            ROOT / "site" / "pricing" / "index.html",
+            ROOT / "ui" / "src" / "App.tsx",
+            ROOT / "ui" / "src" / "SignUp.tsx",
+        ]
+        for path in surfaces:
+            text = path.read_text(encoding="utf-8")
+            for phrase in ("30 days, full use", "30-day trial",
+                           "30 days free"):
+                with self.subTest(file=path.name, phrase=phrase):
+                    self.assertNotIn(phrase, text)
+
+
 class ShapeTest(unittest.TestCase):
     """Guards on the file, so the comparison above cannot pass by accident."""
 
@@ -183,7 +245,8 @@ class ShapeTest(unittest.TestCase):
             # topup_increment_cents is not one of a plan's fields - it sits
             # beside them, for the reason the file's own note gives - so it
             # is in "sources" without being in FIELDS.
-            sorted(FIELDS + ("enterprise", "topup_increment_cents")))
+            sorted(FIELDS + ("enterprise", "topup_increment_cents",
+                             "trial_days")))
         for field in ("field_sets_per_type", "sections_per_template",
                       "daily_classification_cents"):
             self.assertIn("site/pricing/index.html", doc["sources"][field])

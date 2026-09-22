@@ -289,7 +289,12 @@ function Subscription() {
   if (!view) return <p className="muted">Loading&hellip;</p>;
 
   const status = view.paddle_status;
-  const onTrial = !status;
+  // FROM standing, NOT FROM THE ABSENCE OF A PADDLE STATUS. A tenant whose
+  // trial ran out has no paddle_status either, so `!status` called it a
+  // live trial for ever and the banner went on counting down to a date in
+  // the past (18.5 follow-up).
+  const onTrial = view.standing === "trial";
+  const trialOver = view.standing === "trial_ended";
   const active = status === "active";
   const pastDue = status === "past_due" || status === "paused";
   const canceled = status === "canceled";
@@ -322,6 +327,21 @@ function Subscription() {
         </p>
       )}
 
+      {/* SAID, RATHER THAN LEFT TO BE DISCOVERED. Before this the screen
+          went on calling it a trial, and the first a person knew was File
+          answering "Not enough balance" (18.5 follow-up). Nothing here
+          changes what may be spent: the trial credit carries the same date
+          as its own expiry and the wallet already refuses it. */}
+      {trialOver && (
+        <p className="revision-note">
+          <strong>Trial ended {on(view.trial_ends_at)}.</strong>{" "}
+          The metered credit that came with it has expired, so filing and
+          generating stop until you subscribe. Everything already filed or
+          generated stays readable and downloadable, and your configuration is
+          untouched. Subscribing starts the plan from that moment.
+        </p>
+      )}
+
       {pastDue && (
         <p className="revision-note">
           <strong>
@@ -350,6 +370,7 @@ function Subscription() {
           <span className="lbl">Status</span>
           <span className="big serif">
             {onTrial ? "Trial"
+              : trialOver ? "Trial ended"
               : active ? "Active"
               : status === "past_due" ? "Payment failed"
               : status === "paused" ? "Paused"
@@ -357,6 +378,7 @@ function Subscription() {
           </span>
           <span className="muted small">
             {onTrial ? `Ends ${on(view.trial_ends_at)}`
+              : trialOver ? `Ended ${on(view.trial_ends_at)}`
               : canceled ? `Paid to ${on(view.current_period_ends_at)}`
               : `Renews ${on(view.current_period_ends_at)}`}
           </span>
@@ -374,12 +396,15 @@ function Subscription() {
           <span className="big serif">
             {view.standing === "active" ? "Everything"
               : view.standing === "trial" ? "Trial credit"
+              : trialOver ? "Nothing"
               : "Top-up only"}
           </span>
           <span className="muted small">
             {view.standing === "purchased_only"
               ? "Cash you bought, until it expires"
-              : "Filing and generating, against the balance"}
+              : trialOver
+                ? "Nothing left to spend until you subscribe"
+                : "Filing and generating, against the balance"}
           </span>
         </div>
       </div>

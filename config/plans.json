@@ -35,8 +35,26 @@
     "how_it_starts": "site/pricing/index.html, the 'How it starts' row; the Enterprise address is also in ui/src/upgrade.tsx",
     "active": "plan table",
     "enterprise": "site/pricing/index.html throughout - it has never been a plan row",
-    "topup_increment_cents": "billing.TOPUP_INCREMENT_CENTS and paddle_processor's copy of it, both 500, and the 'ARQEDIA Top-up' price in config/paddle/sandbox.json"
+    "topup_increment_cents": "billing.TOPUP_INCREMENT_CENTS and paddle_processor's copy of it, both 500, and the 'ARQEDIA Top-up' price in config/paddle/sandbox.json",
+    "trial_days": "signup.TRIAL_DAYS, which is what writes tenant.trial_ends_at. Bound to it by tests/test_plans_source.py"
   },
+
+  "trial_days": 14,
+  "trial_days_note": [
+    "How long a trial runs. THE SITE AND THE APP BOTH RENDER THIS NUMBER at",
+    "build - the marketing pages through site/plans-table.ts, the application",
+    "through ui/src/trial.ts - so there is one number and no prose to keep in step.",
+    "",
+    "IT DOES NOT DECIDE ANYTHING. signup.TRIAL_DAYS is what computes",
+    "tenant.trial_ends_at, and the signup Lambda bundles lambda/signup only, so it",
+    "cannot read this file. This is the PUBLISHED figure and that is the ENFORCED",
+    "one; tests/test_plans_source.py fails if they differ, which is the same",
+    "arrangement the plan prices have with the Paddle catalogue.",
+    "",
+    "It read 30 everywhere a customer could see it and 14 in the code, from 17",
+    "September until 22 September - including the summary shown immediately before",
+    "somebody committed to a signup."
+  ],
 
   "topup_increment_cents": 500,
   "topup_increment_note": [

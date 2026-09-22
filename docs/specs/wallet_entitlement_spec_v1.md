@@ -37,6 +37,14 @@ Billable events: `document_filed` $0.25 · `memo_generated` $1.00 ·
 `provider_call` (phase 2, price TBD).
 
 Trial: 30 days, seats free, $5.00 metered credit, expiring at `trial_ends_at`.
+
+> **Corrected 22 September 2026.** The trial is **14 days**, not 30. It was
+> changed by the Paddle decision record of 16 September
+> (`paddle_subscription_decisions_2026-09-16.md`, "Trial is 14 days in all
+> cases (was 30, Wallet §2)") and `signup.TRIAL_DAYS` has said 14 since. The
+> line above is left standing because it is what this document said; the
+> published figure now lives in `config/plans.json` as `trial_days`, which
+> the marketing site and the application both render at build.
 Trial-generated memos remain downloadable after expiry.
 
 Seats are a fixed plan attribute. Adding a seat is a plan change, not a
