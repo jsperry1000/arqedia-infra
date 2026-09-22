@@ -227,8 +227,10 @@ class EngagementListTest(unittest.TestCase):
         self.app = load_api()
 
     def listing(self, subject):
+        # Since stage 4 the list comes FROM the engagement table, so the
+        # columns are the row's own: id, name, subject, count, last activity.
         def sql(statement, params=None, tx=None):
-            return rows((NAME, 3, "2026-09-21 10:00:00", subject))
+            return rows((42, NAME, subject, 3, "2026-09-21 10:00:00"))
         with mock.patch.object(self.app, "_sql", sql):
             return self.app.list_engagements(TENANT)
 
@@ -236,12 +238,13 @@ class EngagementListTest(unittest.TestCase):
         self.assertEqual(self.listing(SUBJECT)[0]["subject_name"], SUBJECT)
 
     def test_an_engagement_without_one_is_listed_anyway(self):
-        """LEFT join. Every engagement opened before migration 031 has none,
-        and a list that dropped them would hide the ones that need one."""
+        """Every engagement opened before migration 031 has no subject, and a
+        list that dropped them would hide the ones that need one."""
         row = self.listing(None)[0]
         self.assertIsNone(row["subject_name"])
         self.assertEqual(row["engagement"], NAME)
         self.assertEqual(row["documents"], 3)
+        self.assertEqual(row["engagement_id"], 42)
 
 
 # --- the prompts ------------------------------------------------------------

@@ -335,6 +335,12 @@ SUBJECT_REQUIRED = (
     "memoranda are about. Every document is read for the subject's facts, "
     "and nothing in the file says which company that is.")
 
+# A read naming an engagement that has no row. 404 rather than an empty list:
+# "this engagement has nothing in it" and "there is no such engagement" are
+# different answers, and a screen that cannot tell them apart shows an empty
+# page for a typo (13.3 stage 4).
+NO_SUCH_ENGAGEMENT = "no engagement called %s"
+
 
 def engagement_subject(tenant_id, name):
     """The subject recorded for an engagement, or None.
@@ -401,51 +407,101 @@ def set_subject(tenant_id, email, engagement, subject_name):
             "subject_name": subject}
 
 
+def engagement_named(tenant_id, engagement):
+    """The engagement row behind a name in the address, or None.
+
+    THE ONE PLACE A NAME BECOMES A ROW (13.3 stage 4). Every read below
+    takes an engagement_id; this is what turns the name in the URL into one,
+    so the address a person can bookmark stays a name and the queries stop
+    depending on where a file happens to be stored.
+
+    IT DOES NOT CREATE. engagement_id() above creates, because uploading into
+    a new name is how an engagement begins. A read must not: asking to see an
+    engagement that does not exist is a 404, and a create here would make
+    every typo a new empty engagement.
+
+    BY THE CLEANED NAME, for the reason engagement_subject gives - the row
+    carries the cleaned name because upload_url cleans before creating it, so
+    a lookup on the raw path parameter misses every name typed with a space
+    in it."""
+    found = _sql(
+        "SELECT engagement_id, name, subject_name, status FROM engagement "
+        "WHERE tenant_id = :t AND name = :n",
+        [_p("t", tenant_id), _p("n", _clean(engagement))]).get("records", [])
+    if not found:
+        return None
+    return {"engagement_id": _col(found[0], 0),
+            "engagement": _col(found[0], 1),
+            "subject_name": (_col(found[0], 2) or "").strip() or None,
+            "status": _col(found[0], 3)}
+
+
 def list_engagements(tenant_id):
     """What this tenant has, and what each one is about.
 
-    THE SUBJECT COMES FROM THE ENGAGEMENT ROW, joined on the same name the
-    grouping derives from the key. LEFT, because an engagement whose row
-    predates migration 031 - which is all thirty of them - has none yet,
-    and a list that dropped them would hide the very engagements that need
-    one. MAX() over a column that is constant within the group, because
-    the join key IS the group key; it satisfies ONLY_FULL_GROUP_BY and
-    picks nothing."""
+    FROM THE ENGAGEMENT TABLE, not from the documents' storage keys (13.3
+    stage 4). The list used to be GROUP BY over a substring of s3_key, which
+    meant an engagement existed only as long as a file did: naming a subject
+    and then changing your mind about the first upload left a row nothing
+    would ever show. An engagement with no documents now appears, with a
+    count of zero, which is what somebody who has just opened one expects to
+    see.
+
+    LEFT JOIN, so that zero is a zero rather than a missing row. COUNT of
+    d.document_id rather than COUNT(*), because COUNT(*) over a LEFT JOIN
+    counts the engagement's own row and reports one document where there are
+    none.
+
+    ORDERED BY ACTIVITY, FALLING BACK TO WHEN IT WAS OPENED. A brand new
+    engagement has no filed_at at all, and MAX() of nothing is NULL, which
+    MySQL sorts last in DESC - so the one just created would appear at the
+    bottom of the list, which is the opposite of useful.
+
+    'open' ONLY. Archiving is a decision recorded on the row (migration 030);
+    an archived engagement is out of the way rather than deleted, and comes
+    back by setting status, not by restoring anything."""
     result = _sql(
         """
-        SELECT
-          SUBSTRING_INDEX(SUBSTRING_INDEX(d.s3_key, '/docs/', -1), '/', 1) AS engagement,
-          COUNT(*)            AS documents,
-          MAX(d.filed_at)     AS last_activity,
-          MAX(e.subject_name) AS subject_name
-        FROM document d
-        LEFT JOIN engagement e
-               ON e.tenant_id = d.tenant_id
-              AND e.name = SUBSTRING_INDEX(
-                    SUBSTRING_INDEX(d.s3_key, '/docs/', -1), '/', 1)
-        WHERE d.tenant_id = :tenant_id
-        GROUP BY engagement
-        ORDER BY last_activity DESC
+        SELECT e.engagement_id,
+               e.name,
+               e.subject_name,
+               COUNT(d.document_id) AS documents,
+               MAX(d.filed_at)      AS last_activity
+        FROM engagement e
+        LEFT JOIN document d
+               ON d.tenant_id = e.tenant_id
+              AND d.engagement_id = e.engagement_id
+        WHERE e.tenant_id = :tenant_id
+          AND e.status = 'open'
+        GROUP BY e.engagement_id, e.name, e.subject_name, e.created_at
+        ORDER BY COALESCE(MAX(d.filed_at), e.created_at) DESC
         """,
         [_p("tenant_id", tenant_id)],
     )
     return [
-        {"engagement": _col(r, 0),
-         "documents": _col(r, 1),
-         "last_activity": _col(r, 2),
-         "subject_name": _col(r, 3)}
+        {"engagement_id": _col(r, 0),
+         "engagement": _col(r, 1),
+         "subject_name": _col(r, 2),
+         "documents": _col(r, 3),
+         "last_activity": _col(r, 4)}
         for r in result.get("records", [])
     ]
 
 
-def list_pending(tenant_id, engagement):
+def list_pending(tenant_id, engagement_id):
     """Analysed but not yet filed: the proposed type, how sure, and why.
 
     'unreadable' travels with them. It is not fileable and the screen must not
     offer it as though it were - but it has to ARRIVE, because a file sent and
     never seen as a row is what left the review screen waiting ten minutes for
     something no process would ever create. The row is what clears that wait
-    (decision record, 18 September, item 1)."""
+    (decision record, 18 September, item 1).
+
+    BY engagement_id (13.3 stage 4), not by a LIKE on the storage key. The
+    column is what says which engagement a document belongs to; the key says
+    where its bytes are, and the two were the same thing only by convention.
+    A LIKE on '%/docs/NAME/%' also matched a name that was a prefix of
+    another, and could not be indexed."""
     result = _sql(
         """
         SELECT document_id, filename, document_type, page_count,
@@ -455,11 +511,11 @@ def list_pending(tenant_id, engagement):
         FROM document
         WHERE tenant_id = :tenant_id
           AND state IN ('analysed', 'reading', 'unreadable')
-          AND s3_key LIKE :prefix
+          AND engagement_id = :engagement_id
         ORDER BY document_id
         """,
         [_p("tenant_id", tenant_id),
-         _p("prefix", "%/docs/" + engagement + "/%")],
+         _p("engagement_id", int(engagement_id))],
     )
     return [
         {"document_id": _col(r, 0),
@@ -836,9 +892,12 @@ def remove_document(tenant_id, document_id):
     return {"removed": document_id}
 
 
-def list_documents(tenant_id, engagement):
+def list_documents(tenant_id, engagement_id):
     """Filed documents. `reading` documents are included so the screen can see
-    that something is in flight and hold the generate action."""
+    that something is in flight and hold the generate action.
+
+    BY engagement_id (13.3 stage 4). See list_pending for why the storage key
+    stopped being the answer to which engagement a document is in."""
     result = _sql(
         """
         SELECT document_id, filename, document_type, page_count,
@@ -851,11 +910,11 @@ def list_documents(tenant_id, engagement):
         FROM document d
         WHERE tenant_id = :tenant_id
           AND state IN ('filed', 'reading')
-          AND s3_key LIKE :prefix
+          AND engagement_id = :engagement_id
         ORDER BY document_id
         """,
         [_p("tenant_id", tenant_id),
-         _p("prefix", "%/docs/" + engagement + "/%")],
+         _p("engagement_id", int(engagement_id))],
     )
     return [
         {"document_id": _col(r, 0),
@@ -1054,8 +1113,15 @@ def document_passage(tenant_id, document_id, unit):
 
 # --- memos -----------------------------------------------------------------
 
-def list_memos(tenant_id, engagement):
+def list_memos(tenant_id, engagement_id):
     """Memos for one engagement, each named as it was when it was written.
+
+    BY engagement_id AND state 'live' (13.3 stage 4). The engagement comes
+    from the column rather than from the memo's storage key; the state keeps
+    an archived memorandum out of the list without deleting it, which is what
+    archiving is for. A revision inherits its parent's state, so archiving a
+    line archives all of it and revising something archived does not put it
+    back (see revise_memo).
 
     THE NAME COMES FROM THE MEMO'S OWN REVISION, not from the tenant's active
     one. A memorandum renamed in September must not rename the memo somebody
@@ -1073,11 +1139,12 @@ def list_memos(tenant_id, engagement):
                config_revision
         FROM memo
         WHERE tenant_id = :tenant_id
-          AND s3_key LIKE :prefix
+          AND engagement_id = :engagement_id
+          AND state = 'live'
         ORDER BY COALESCE(parent_memo_id, memo_id) DESC, revision DESC
         """,
         [_p("tenant_id", tenant_id),
-         _p("prefix", "%/memos/" + engagement + "/%")],
+         _p("engagement_id", int(engagement_id))],
     )
     return [
         {"memo_id": _col(r, 0),
@@ -1863,8 +1930,18 @@ def generate(tenant_id, email, engagement, template_key=None,
     if not registry_now.has_template(template_key):
         raise ValueError("no such template: %s" % template_key)
 
-    # Charged before composition is invoked, and after the template is
-    # validated. A bad key must not take a dollar on its way to failing.
+    # THE ENGAGEMENT IS RESOLVED HERE, BEFORE THE CHARGE, and its id travels
+    # in the payload (13.3 stage 4). Composition reads its values by
+    # engagement_id and holds no copy of _clean; the name stays in the
+    # payload because the memo's storage key is built from it and because
+    # every log line about a memo names it.
+    #
+    # Before the charge for the same reason the template is: an engagement
+    # that does not exist must not take a dollar on its way to failing.
+    found = engagement_named(tenant_id, engagement)
+    if found is None:
+        raise ValueError(NO_SUCH_ENGAGEMENT % engagement)
+
     wallet.charge(
         tenant_id, email, "memo_generated", 1,
         reference=registry_now.label_for_template(template_key)
@@ -1875,6 +1952,7 @@ def generate(tenant_id, email, engagement, template_key=None,
         FunctionName=COMPOSITION_FUNCTION,
         InvocationType="Event",
         Payload=json.dumps({"tenant_id": tenant_id, "engagement": engagement,
+                            "engagement_id": found["engagement_id"],
                             "template_key": template_key,
                             "generated_by": email}))
     return {"status": "started", "engagement": engagement,
@@ -2234,11 +2312,15 @@ def _dispatch(event, context):
         if route == "GET /engagements/{id}/pending":
             # The subject travels with the pending list because the screen
             # that shows the list is the screen that has to hold the File
-            # button and say why. One SELECT on a call it already makes,
-            # rather than a second round trip for one string.
+            # button and say why. It comes off the row this route already
+            # resolved, so naming the subject costs no second query at all
+            # now - it used to cost one.
+            found = engagement_named(tenant_id, engagement)
+            if found is None:
+                return _reply(404, {"error": NO_SUCH_ENGAGEMENT % engagement})
             return _reply(200, {
-                "pending": list_pending(tenant_id, engagement),
-                "subject_name": engagement_subject(tenant_id, engagement)})
+                "pending": list_pending(tenant_id, found["engagement_id"]),
+                "subject_name": found["subject_name"]})
 
         if route == "POST /engagements/{id}/file":
             body = json.loads(event.get("body") or "{}")
@@ -2252,8 +2334,11 @@ def _dispatch(event, context):
                                            body.get("subject_name")))
 
         if route == "GET /engagements/{id}/documents":
-            return _reply(200, {"documents": list_documents(tenant_id,
-                                                            engagement)})
+            found = engagement_named(tenant_id, engagement)
+            if found is None:
+                return _reply(404, {"error": NO_SUCH_ENGAGEMENT % engagement})
+            return _reply(200, {"documents": list_documents(
+                tenant_id, found["engagement_id"])})
 
         if route == "POST /documents/{document_id}/active":
             body = json.loads(event.get("body") or "{}")
@@ -2275,7 +2360,11 @@ def _dispatch(event, context):
             return _reply(200, passage)
 
         if route == "GET /engagements/{id}/memos":
-            return _reply(200, {"memos": list_memos(tenant_id, engagement)})
+            found = engagement_named(tenant_id, engagement)
+            if found is None:
+                return _reply(404, {"error": NO_SUCH_ENGAGEMENT % engagement})
+            return _reply(200, {"memos": list_memos(
+                tenant_id, found["engagement_id"])})
 
         if route == "POST /engagements/{id}/generate":
             body = json.loads(event.get("body") or "{}")
