@@ -304,12 +304,25 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState("");
+  // Which row is being archived or restored, so two clicks cannot race.
+  const [busy, setBusy] = useState("");
 
-  useEffect(() => {
-    api.engagements()
-      .then((r) => setRows(r.engagements))
-      .finally(() => setLoading(false));
-  }, []);
+  // Show archived (14.3). Off by default, so the working list is the working
+  // list; on, the archived ones join it MARKED rather than mixed in, and can
+  // be restored from where they left.
+  const [showArchived, setShowArchived] = useState(false);
+
+  async function load(archived = showArchived) {
+    setLoading(true);
+    try {
+      const r = await api.engagements(archived);
+      setRows(r.engagements);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void load(showArchived); }, [showArchived]);
 
   /** What the name being typed would be stored as (17.3).
    *
@@ -350,6 +363,15 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
           memoranda are about - and an engagement without one files
           nothing. Said here as well as on the engagement's own screen, so
           it is answerable before anybody opens one and uploads into it. */}
+      {/* The tick, above the list it changes (14.3). It reloads rather than
+          filtering what is already here: the archived rows were never sent,
+          so there is nothing to filter. */}
+      <label className="inline-check">
+        <input type="checkbox" checked={showArchived}
+               onChange={(e) => setShowArchived(e.target.checked)} />
+        Show archived
+      </label>
+
       <table>
         <tbody>
           {rows.map((r) => (
@@ -360,6 +382,45 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
               </td>
               <td className="muted">{r.documents} documents</td>
               <td className="muted">{r.last_activity}</td>
+              {/* MARKED, never mixed in unannounced. An archived engagement
+                  shown as though it were open is a lie the list would be
+                  telling every time the tick is on. */}
+              <td className="muted small">
+                {r.status === "archived" ? "Archived" : ""}
+              </td>
+              <td>
+                {/* Nothing is deleted by either of these. Archiving an
+                    engagement leaves its documents, its values AND its
+                    memoranda where they are - 13.3's decision, because a
+                    memorandum may already have been sent to a lender.
+
+                    An <a className="small">, the low-key row action this
+                    codebase already uses inside a table, rather than a
+                    button. No new CSS. */}
+                <a className="small"
+                   title={r.status === "archived"
+                     ? "Bring this engagement back into the list."
+                     : "Put this engagement away. Nothing is deleted, and "
+                       + "its memoranda stay where they are."}
+                   onClick={async (e) => {
+                     e.stopPropagation();
+                     if (busy) return;
+                     setBusy(r.engagement);
+                     setOpenError("");
+                     try {
+                       await api.setEngagementState(
+                         r.engagement,
+                         r.status === "archived" ? "open" : "archived");
+                       await load();
+                     } catch (err) {
+                       setOpenError(String((err as Error)?.message ?? err));
+                     } finally {
+                       setBusy("");
+                     }
+                   }}>
+                  {r.status === "archived" ? "Restore" : "Archive"}
+                </a>
+              </td>
             </tr>
           ))}
         </tbody>

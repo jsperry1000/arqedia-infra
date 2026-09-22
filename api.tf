@@ -219,6 +219,10 @@ locals {
     # exist rather than navigate to one that does not.
     "POST /engagements",
 
+    # Archiving one, and bringing it back. One route for both: restoring is
+    # the same act with the other value (14.1, 14.3).
+    "PUT /engagements/{id}/state",
+
     "GET /engagements/{id}/documents",
     "GET /engagements/{id}/pending",
 
@@ -233,6 +237,11 @@ locals {
     "GET /memos/{memo_id}",
     "GET /memos/{memo_id}/pdf",
     "POST /memos/{memo_id}/revise",
+
+    # Archiving a memorandum archives its whole revision line, because a
+    # memorandum and its revisions are one document to the person who wrote
+    # it (14.1).
+    "PUT /memos/{memo_id}/state",
 
     # Rewriting a section at a person's prompt. Started here, run by
     # composition, polled for. Saved only through revise.

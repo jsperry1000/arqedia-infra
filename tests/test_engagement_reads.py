@@ -140,7 +140,8 @@ class ListEngagementsTest(unittest.TestCase):
         keys, so an engagement existed only as long as a file did: naming a
         subject and then thinking better of the first upload left a row
         nothing would ever show."""
-        [row], _ = self.listing((51, "Brand-New", None, 0, None))
+        [row], _ = self.listing(
+            (51, "Brand-New", None, 0, None, "open", None, None))
         self.assertEqual(row["engagement"], "Brand-New")
         self.assertEqual(row["documents"], 0)
         self.assertIsNone(row["last_activity"])
@@ -177,13 +178,19 @@ class ListEngagementsTest(unittest.TestCase):
 
     def test_every_field_the_screen_reads(self):
         [row], _ = self.listing(
-            (ENGAGEMENT_ID, NAME, SUBJECT, 3, "2026-09-21 10:00:00"))
+            (ENGAGEMENT_ID, NAME, SUBJECT, 3, "2026-09-21 10:00:00",
+             "open", None, None))
         self.assertEqual(row, {
             "engagement_id": ENGAGEMENT_ID,
             "engagement": NAME,
             "subject_name": SUBJECT,
             "documents": 3,
             "last_activity": "2026-09-21 10:00:00",
+            # Group 14. Carried so the list can mark an archived one rather
+            # than mixing it in unannounced.
+            "status": "open",
+            "archived_by": None,
+            "archived_at": None,
         })
 
 
