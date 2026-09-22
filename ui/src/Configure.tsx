@@ -13,7 +13,7 @@ import {
   type Validation,
 } from "./api";
 import { ProposeView } from "./Propose";
-import { StageStrip } from "./StageStrip";
+import { StageStrip, StageIcon } from "./StageStrip";
 import type { Stage } from "./flock";
 import type { Report as StartReport } from "./Welcome";
 import {
@@ -626,8 +626,12 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // was five long collapsible parts, and a person twenty rows into one had to
   // scroll back up to reach another. Changing part closes the open section.
   const wantedPart = params.get("part");
+  // DOCUMENTS BY DEFAULT (18.3). It opened on Report sections, which is
+  // where the work ends; the band now reads in the order the business runs
+  // and the screen opens at its start. An address carrying a part still
+  // wins, so a link into a tab lands in that tab.
   const part = PARTS.some(([key]) => key === wantedPart)
-    ? wantedPart as string : "sections";
+    ? wantedPart as string : "documents";
   const setPart = (key: string) => place({ part: key, section: null });
 
   /** Put a section at a position and renumber the rest.
@@ -1258,16 +1262,24 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           (3.1). They were three 13px links in the bar, the same weight as
           Discard. The tab pattern is Account management's, widened to carry a
           line about each part and how much of it there is. */}
-      <nav className="tabs parts-band">
-        {PARTS.map(([key, label, note]) => (
-          <button key={key} className={part === key ? "on" : undefined}
-                  onClick={() => setPart(key)}>
-            <b>{label}</b>
-            <span className="count">{partCount(key)}</span>
-            <i>{note}</i>
-          </button>
-        ))}
-      </nav>
+      {/* The part in use, drawn larger, to the left of the tabs (18.3). The
+          strip above says where every part sits in the sequence; this says
+          which one is on screen, in the same picture. It hides below 900px
+          on the same rule as the strip - there is no room for a bearing
+          where the tabs themselves are down to their names. */}
+      <div className="band-row">
+        <StageIcon stage={litStage} />
+        <nav className="tabs parts-band">
+          {PARTS.map(([key, label, note]) => (
+            <button key={key} className={part === key ? "on" : undefined}
+                    onClick={() => setPart(key)}>
+              <b>{label}</b>
+              <span className="count">{partCount(key)}</span>
+              <i>{note}</i>
+            </button>
+          ))}
+        </nav>
+      </div>
       </div>
 
       {/* Renaming, under the band rather than inside the sections part: the
