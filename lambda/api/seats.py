@@ -90,30 +90,50 @@ def _sha(text):
 
 
 # --- how many a plan buys --------------------------------------------------
-
-# From the settled plan table. Enterprise is contracted rather than fixed, so
-# it is absent and falls through to the default.
 #
-# "business" is what tenant.plan actually holds for the Small Business plan -
-# read from the database rather than assumed from the specification, which
-# calls it small_business. Both are accepted, because renaming a live column
-# to tidy a map is not worth a migration.
-PLAN_SEATS = {
-    "base": 2,
-    "business": 5,
-    "small_business": 5,
-}
-
-# What an unrecognised plan gets. Two rather than zero: a tenant whose plan
-# string we do not know should be inconvenienced, not locked out of its own
-# workspace.
-DEFAULT_SEATS = 2
+# PLAN_SEATS AND DEFAULT_SEATS ARE GONE (18.5). They were a second copy of
+# plan.seat_count in Python:
+#
+#     PLAN_SEATS = {"base": 2, "business": 5, "small_business": 5}
+#     DEFAULT_SEATS = 2
+#
+# Worse than a duplicate, because it had a key the table does not - there has
+# never been a plan row called small_business, and tenant.plan has never held
+# that string either:
+#
+#     SELECT plan, COUNT(*) FROM tenant GROUP BY plan
+#     -> base | 2
+#     -> business | 3
+#
+# So the alias covered a value nothing has ever written, and the two numbers
+# agreed with the table only because nobody had changed a plan yet. CLAUDE.md
+# has had this open as "Seat counts as data" since the wallet was built; this
+# closes it.
 
 
 def seats_bought(tenant_id):
-    """subscription.plan_id is the plan (CLAUDE.md, Money): its seat_count
-    decides. tenant.plan and PLAN_SEATS are read only when there is no
-    subscription row - a trial."""
+    """How many seats this tenant has, read from the plan table and nowhere
+    else.
+
+    subscription.plan_id IS THE PLAN (CLAUDE.md, Money). Its seat_count
+    decides, and that is the first query.
+
+    tenant.plan is the fallback and is only reached on a trial, where there is
+    no subscription row. It is a plan_key, so it is now resolved THROUGH the
+    table rather than through a map beside it - which is the whole of this
+    change. The folding is kept exactly as it was ("Small Business" ->
+    small_business) so that a value written by an older path still resolves as
+    far as it ever did.
+
+    AN UNKNOWN PLAN GETS THE SMALLEST ACTIVE ONE, which is what DEFAULT_SEATS
+    was for and is now read rather than written down. A tenant whose plan
+    string we do not recognise should be inconvenienced, not locked out of its
+    own workspace - and hard-coding the number was how that intention became a
+    third place seats were recorded.
+
+    Zero only where the plan table holds no active row at all, which migration
+    018 seeds and nothing deletes. It is not a lock-out: existing seats keep
+    working, and what it refuses is inviting somebody new."""
     rows = _sql(
         "SELECT p.seat_count FROM subscription s "
         "JOIN plan p ON p.plan_id = s.plan_id WHERE s.tenant_id = :t",
@@ -124,7 +144,18 @@ def seats_bought(tenant_id):
     rows = _sql("SELECT plan FROM tenant WHERE tenant_id = :t",
                 [_p("t", tenant_id)]).get("records", [])
     plan = (_col(rows[0], 0) if rows else "base") or "base"
-    return PLAN_SEATS.get(plan.strip().lower().replace(" ", "_"), DEFAULT_SEATS)
+    key = plan.strip().lower().replace(" ", "_")
+
+    rows = _sql(
+        "SELECT seat_count FROM plan WHERE plan_key = :k AND active = 1",
+        [_p("k", key)]).get("records", [])
+    if rows:
+        return int(_col(rows[0], 0))
+
+    rows = _sql(
+        "SELECT seat_count FROM plan WHERE active = 1 "
+        "ORDER BY monthly_price_cents LIMIT 1").get("records", [])
+    return int(_col(rows[0], 0)) if rows else 0
 
 
 # --- reading ---------------------------------------------------------------
