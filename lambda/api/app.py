@@ -2069,14 +2069,24 @@ def upload_url(tenant_id, email, engagement, filename):
                 "ServerSideEncryption": "aws:kms",
                 "Metadata": {"uploaded-by": email}},
         ExpiresIn=900)
-    # THE CLEANED NAME GOES BACK (17.3). _clean turned "TEST - 2" into
-    # "TEST-2" here and the screen kept what was typed, so it polled an
-    # engagement that existed nowhere: the pending list matched no rows, the
-    # upload sat on "analysing" for ever, and two perfectly good documents
-    # waited under a name nobody was looking at. The caller is told what the
-    # name became, and navigates to that.
+    # BOTH CLEANED NAMES GO BACK (17.3, 17.4).
+    #
+    # The engagement, because _clean turned "TEST - 2" into "TEST-2" here and
+    # the screen kept what was typed: it polled an engagement that existed
+    # nowhere, the pending list matched no rows, the upload sat on
+    # "analysing" for ever, and two perfectly good documents waited under a
+    # name nobody was looking at. The caller is told what the name became,
+    # and navigates to that.
+    #
+    # The filename for the same reason one step later. The screen watches for
+    # the row an upload produces, and matching needs the name the row will
+    # carry - which is this one, because the normalizer reads the filename
+    # off the key. It used to work that name out itself, with a copy of
+    # _clean in TypeScript: two implementations of the rule that decides
+    # where a file is kept, agreeing today and one edit away from not. The
+    # browser holds no rule now and is told.
     return {"url": url, "key": key, "uploaded_by": email,
-            "engagement": engagement}
+            "engagement": engagement, "filename": filename}
 
 
 def templates(tenant_id):
