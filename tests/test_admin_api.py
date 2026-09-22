@@ -348,6 +348,31 @@ class ReadOnlyTest(unittest.TestCase):
                        "lambda:InvokeFunction", "kms:"):
             self.assertNotIn(action, block, "%s is granted" % action)
 
+    def test_the_role_can_read_the_reader_secret_and_not_the_master(self):
+        """16.9. The actions above permit a write to be ATTEMPTED; what
+        refuses it is the identity this role can present. A role that can
+        read the master secret can be arqedia_admin, and arqedia_admin can
+        write anything."""
+        block = re.search(
+            r'data "aws_iam_policy_document" "admin" \{(.*?)\n\}\n',
+            TERRAFORM, re.S).group(1)
+        self.assertIn("aws_secretsmanager_secret.admin_reader.arn", block)
+        self.assertNotIn("master_user_secret", block)
+
+    def test_the_function_reads_the_database_as_the_reader(self):
+        block = re.search(
+            r'resource "aws_lambda_function" "admin" \{(.*?)\n\}\n',
+            TERRAFORM, re.S).group(1)
+        said = " ".join(block.split())
+        self.assertIn(
+            "SECRET_ARN = aws_secretsmanager_secret.admin_reader.arn", said)
+        self.assertNotIn("master_user_secret", block)
+
+    def test_the_master_secret_appears_nowhere_in_this_file(self):
+        """Not in the role, not in the environment, not anywhere else it
+        could be reintroduced by a later resource."""
+        self.assertNotIn("master_user_secret", CODE)
+
     def test_every_route_is_a_get(self):
         block = re.search(r"admin_routes = \[(.*?)\]", TERRAFORM, re.S).group(1)
         declared = re.findall(r'"([A-Z]+) ([^"]+)"', block)
