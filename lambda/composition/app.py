@@ -111,8 +111,15 @@ def _col(record, i):
     return None
 
 
-def _load_values(tenant_id, engagement):
-    """Every extracted value for the engagement, with its source document."""
+def _load_values(tenant_id, engagement_id):
+    """Every extracted value for the engagement, with its source document.
+
+    BY d.engagement_id (13.3 stage 4), not by a LIKE on the storage key. The
+    id arrives in the payload, resolved by the API from the name in the
+    address - so this function holds no copy of the naming rule and cannot
+    drift from it. The LIKE it replaces matched on where a file was stored,
+    which is a different question from which engagement it belongs to, and
+    answered it wrongly for any name that was a prefix of another."""
     result = _sql(
         """
         SELECT v.value_id, v.field_id, v.value, v.locator_kind,
@@ -123,12 +130,12 @@ def _load_values(tenant_id, engagement):
         WHERE v.tenant_id = :tenant_id
           AND d.state = 'filed'
           AND d.active = 1
-          AND d.s3_key LIKE :engagement_prefix
+          AND d.engagement_id = :engagement_id
         ORDER BY v.document_id, v.value_id
         """,
         [
             _p("tenant_id", tenant_id),
-            _p("engagement_prefix", "%/docs/{}/%".format(engagement)),
+            _p("engagement_id", int(engagement_id)),
         ],
     )
 
@@ -152,24 +159,12 @@ def _load_values(tenant_id, engagement):
     ]
 
 
-def _engagement_of(values):
-    """The engagement a memo belongs to, taken from the documents it is
-    written from (migration 030).
-
-    Not looked up by name: these values reached here through one LIKE on one
-    engagement's document keys, so they all carry the same id and the first
-    one that has it is it. Written this way rather than asserting they agree,
-    because a memo that refuses to be written over a disagreement about a
-    folder name would be a worse outcome than a memo filed in the first of
-    them.
-
-    NULL where the documents predate the migration and were never backfilled.
-    The migration's own verification exists to catch that; here it is
-    recorded as it stands rather than guessed at."""
-    for v in values:
-        if v.get("engagement_id") is not None:
-            return v["engagement_id"]
-    return None
+# _engagement_of is gone with the LIKE it existed for (13.3 stage 4).
+#
+# It read the engagement back OFF the values, because the query that fetched
+# them knew only a folder name and the id had to be recovered from somewhere.
+# The id is now what the query was given, so recovering it from the rows would
+# be asking the documents to confirm the question they were selected by.
 
 
 def _subject_of(tenant_id, engagement_id):
@@ -784,7 +779,17 @@ def lambda_handler(event, context):
                 "template_key": template_key,
                 "available": [t["key"] for t in registry.template_list()]}
 
-    values = _load_values(tenant_id, engagement)
+    # WHICH ENGAGEMENT, AS AN ID (13.3 stage 4). The API resolves the name in
+    # the address to a row and sends the id; this function no longer derives
+    # it from anything. An event without one is refused rather than guessed
+    # at - it can only be an invocation made by hand, or one queued before
+    # this was deployed, and quietly composing over a LIKE would be worse
+    # than saying so.
+    engagement_id = event.get("engagement_id")
+    if engagement_id is None:
+        return {"status": "no-engagement-id", "engagement": engagement}
+
+    values = _load_values(tenant_id, engagement_id)
     if not values:
         return {"status": "no-values", "engagement": engagement}
 
@@ -796,7 +801,6 @@ def lambda_handler(event, context):
     # draft, the consolidation and the front matter, so all three say the
     # same thing. None where the engagement never named one, and every
     # prompt is then exactly what it was.
-    engagement_id = _engagement_of(values)
     subject_name = _subject_of(tenant_id, engagement_id)
 
     # 1. Assemble the deterministic sections. They are the context for the rest.

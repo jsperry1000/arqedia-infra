@@ -302,6 +302,8 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
   const [newName, setNewName] = useState("");
   const [cleaned, setCleaned] = useState("");
   const [loading, setLoading] = useState(true);
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState("");
 
   useEffect(() => {
     api.engagements()
@@ -363,19 +365,40 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
         </tbody>
       </table>
 
-      {/* Opened under the name it will be STORED under, not the one typed.
-          Until this, typing "TEST - 2" opened /engagements/TEST - 2 while
-          every file went to TEST-2, and the screen polled an engagement
-          that existed nowhere (17.3). The cleaned name is the server's; with
-          none - nothing typed yet, or the lookup failed - the typed one is
-          used and POST /uploads corrects it on the first file. */}
-      <form className="inline" onSubmit={(e) => { e.preventDefault();
-              const open = cleaned || newName.trim();
-              if (open) onOpen(open); }}>
+      {/* OPENING CREATES THE ROW, and opens under the name the server
+          stored (13.3 stage 4, 17.3).
+
+          It used to navigate and nothing else, because the reads grepped
+          storage keys and answered an empty list for any name at all. They
+          ask engagement_id now, so a name with no row is a 404 - and the
+          screen would have opened onto a refusal instead of onto an empty
+          engagement. The row is made first, and the address comes from the
+          answer rather than from what was typed, so the two agree from the
+          first moment rather than from the first upload.
+
+          A refusal leaves the form as it is and says why. Opening an
+          engagement is the one thing on this screen that has to work before
+          anything else can. */}
+      <form className="inline" onSubmit={async (e) => {
+              e.preventDefault();
+              const typed = newName.trim();
+              if (!typed || opening) return;
+              setOpening(true);
+              setOpenError("");
+              try {
+                const row = await api.openEngagement(typed);
+                onOpen(row.engagement);
+              } catch (err) {
+                setOpenError(String((err as Error)?.message ?? err));
+              } finally {
+                setOpening(false);
+              }
+            }}>
         <input placeholder="New engagement name" value={newName}
                onChange={(e) => setNewName(e.target.value)} />
-        <button>Open</button>
+        <button disabled={opening}>{opening ? "Opening..." : "Open"}</button>
       </form>
+      {openError && <p className="error">{openError}</p>}
       {differs && (
         <p className="muted small" style={{ marginTop: 6 }}>
           Will be saved as <strong>{cleaned}</strong> &mdash; spaces and

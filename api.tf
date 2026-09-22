@@ -212,6 +212,13 @@ resource "aws_apigatewayv2_integration" "api" {
 locals {
   api_routes = [
     "GET /engagements",
+
+    # Opening one from the form. A POST because it creates the row: since
+    # the reads ask engagement_id (13.3 stage 4), a name with no row is a
+    # 404, and the form that opens a new engagement has to make the row
+    # exist rather than navigate to one that does not.
+    "POST /engagements",
+
     "GET /engagements/{id}/documents",
     "GET /engagements/{id}/pending",
 

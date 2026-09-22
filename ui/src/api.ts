@@ -10,10 +10,36 @@ async function authHeaders(): Promise<Record<string, string>> {
   return { Authorization: token, "content-type": "application/json" };
 }
 
+/** A refusal, carrying the status as well as the sentence.
+ *
+ *  WHY THE STATUS TRAVELS. A screen has to tell "there is no such thing"
+ *  from "that did not work", and the only other way to know is to match on
+ *  the words the server chose - a second copy of the server's wording, in
+ *  TypeScript, drifting the first time somebody rewrites a message. The
+ *  status is the server's own answer to that question.
+ *
+ *  .message is still the response body, so every existing catch that reads
+ *  it is untouched. */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, body: string) {
+    super(body);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/** The status of a refusal, or 0 for anything that is not one - a network
+ *  failure, a parse error, something thrown by our own code. */
+export function statusOf(err: unknown): number {
+  return err instanceof ApiError ? err.status : 0;
+}
+
 async function call(path: string, init: RequestInit = {}) {
   const headers = await authHeaders();
   const res = await fetch(config.apiUrl + path, { ...init, headers });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new ApiError(res.status, await res.text());
   return res.json();
 }
 
@@ -198,6 +224,9 @@ export type SignupDone = {
 };
 
 export type Engagement = {
+  /** The row's own id (13.3 stage 4). The name is what a person reads and
+   *  what the address carries; this is what the reads are keyed on. */
+  engagement_id: number;
   engagement: string;
   documents: number;
   last_activity: string;
@@ -837,6 +866,24 @@ export const api = {
 
   engagements: (): Promise<{ engagements: Engagement[] }> =>
     call("/engagements"),
+
+  /** Open an engagement by name, creating its row if there is none.
+   *
+   *  THE SCREEN CANNOT JUST NAVIGATE ANY MORE. The reads ask engagement_id
+   *  (13.3 stage 4), so a name with no row answers 404 - right for an
+   *  address typed wrongly, wrong for the form that opens a new engagement.
+   *  This makes the row exist first.
+   *
+   *  Returns the name it was STORED under, which is what the caller should
+   *  navigate to: the server cleans, and the address and the row then agree
+   *  from the first moment rather than from the first upload (17.3). */
+  openEngagement: (name: string): Promise<{
+    engagement_id: number; engagement: string;
+    subject_name: string | null; created: boolean;
+  }> => call("/engagements", {
+    method: "POST",
+    body: JSON.stringify({ engagement: name }),
+  }),
 
   // The subject travels with the pending list because the screen showing
   // that list is the one that has to hold File and say why.

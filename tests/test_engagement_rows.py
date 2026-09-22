@@ -232,27 +232,38 @@ class ReviseInheritsTest(unittest.TestCase):
 
 
 class CompositionTest(unittest.TestCase):
-    """A memo belongs where the documents it was written from belong."""
+    """A memo belongs to the engagement it was asked for.
+
+    _engagement_of is gone with stage 4 (see lambda/composition/app.py). It
+    read the engagement back off the values because the query that fetched
+    them knew only a folder name; the id is now what the query is GIVEN, so
+    the four tests that exercised that recovery went with the function. What
+    replaces them is below and in test_engagement_reads.py."""
 
     def setUp(self):
         self.app = load_composition()
 
-    def test_it_takes_the_engagement_from_its_documents(self):
-        values = [{"document_id": 1, "engagement_id": ENGAGEMENT_ID},
-                  {"document_id": 2, "engagement_id": ENGAGEMENT_ID}]
-        self.assertEqual(self.app._engagement_of(values), ENGAGEMENT_ID)
+    def test_values_are_selected_by_engagement_id(self):
+        asked = {}
 
-    def test_a_document_without_one_does_not_stop_the_memo(self):
-        values = [{"document_id": 1, "engagement_id": None},
-                  {"document_id": 2, "engagement_id": ENGAGEMENT_ID}]
-        self.assertEqual(self.app._engagement_of(values), ENGAGEMENT_ID)
+        def sql(statement, params=None):
+            asked["sql"] = " ".join(statement.split())
+            asked["params"] = sent(params)
+            return rows()
 
-    def test_none_of_them_having_one_is_recorded_as_none(self):
-        values = [{"document_id": 1, "engagement_id": None}]
-        self.assertIsNone(self.app._engagement_of(values))
+        with mock.patch.object(self.app, "_sql", sql):
+            self.app._load_values(TENANT, ENGAGEMENT_ID)
 
-    def test_no_values_at_all(self):
-        self.assertIsNone(self.app._engagement_of([]))
+        self.assertIn("d.engagement_id = :engagement_id", asked["sql"])
+        self.assertNotIn("LIKE", asked["sql"])
+        self.assertEqual(asked["params"]["engagement_id"], ENGAGEMENT_ID)
+        # Still only filed, still only active. Stage 4 changed which
+        # engagement, not which documents.
+        self.assertIn("d.state = 'filed'", asked["sql"])
+        self.assertIn("d.active = 1", asked["sql"])
+
+    def test_the_function_that_guessed_it_is_gone(self):
+        self.assertFalse(hasattr(self.app, "_engagement_of"))
 
 
 class NormalizerTest(unittest.TestCase):

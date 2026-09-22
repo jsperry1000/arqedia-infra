@@ -62,7 +62,9 @@ class MemoListTest(unittest.TestCase):
         with mock.patch.object(self.app, "_sql",
                                lambda s, p=None: rows(*memo_rows)), \
                 mock.patch.object(self.app.config, "load", load):
-            return self.app.list_memos(7, "Meridian")
+            # An engagement_id since stage 4; _sql is faked, so the value
+            # only has to be the shape the function now takes.
+            return self.app.list_memos(7, 42)
 
     def test_a_memo_is_named_from_its_own_revision(self):
         [memo] = self.listing(memo_row(11, 3))

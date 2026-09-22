@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   chargeKey,
+  statusOf,
   type Pending,
   type DocType,
   type Decision,
@@ -71,6 +72,13 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
+  // Why the engagement could not be read, where it could not. Distinct from
+  // `error`, which is a refusal of something somebody just did and belongs
+  // beside the controls; this one means there is nothing to show controls
+  // for, and replaces the screen.
+  const [loadFailed, setLoadFailed] =
+    useState<{ status: number; said: string } | null>(null);
+
   // The company these memoranda are about (SUBJ-01). Null until somebody
   // names one, which is every engagement opened before migration 031.
   // Nothing is filed without it, because extraction reads a document for
@@ -133,10 +141,31 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [deleting, setDeleting] = useState<DocumentDetail | null>(null);
   const [typedName, setTypedName] = useState("");
 
+  /** Read the engagement, or say why not.
+   *
+   *  IT USED TO SAY NOTHING. The three reads answer 404 for a name with no
+   *  row (13.3 stage 4), and this function is called from an effect that
+   *  does not hold its promise - so a 404 rejected into nobody's hands, not
+   *  one of the setState calls below ran, and the screen rendered its
+   *  initial state: no documents, no memoranda, no subject and an empty
+   *  error line. An engagement that does not exist looked exactly like an
+   *  empty one that does.
+   *
+   *  The failure is kept rather than thrown on, because every other caller
+   *  of refresh() - after an upload, a removal, a filing - is in the middle
+   *  of something and must not have an exception land in it. */
   async function refresh() {
-    const [p, d, m] = await Promise.all([
-      api.pending(id), api.documents(id), api.memos(id),
-    ]);
+    let p, d, m;
+    try {
+      [p, d, m] = await Promise.all([
+        api.pending(id), api.documents(id), api.memos(id),
+      ]);
+    } catch (err) {
+      setLoadFailed({ status: statusOf(err), said: reason(err) });
+      return;
+    }
+    setLoadFailed(null);
+
     setPending(p.pending);
     setDocs(d.documents);
     setMemos(m.memos);
@@ -711,6 +740,28 @@ export function EngagementView({ id, onBack, onMemo }: {
       <span className="muted small">{count}</span>
     </h3>
   );
+
+  // NOTHING TO SHOW, AND SAYING SO. A 404 means the name in the address is
+  // not an engagement: a typo, an old link, one deleted. Anything else -
+  // a refusal, a network failure - is shown as itself. Either way this
+  // replaces the screen rather than sitting above an empty one, because
+  // every control below would be operating on nothing.
+  //
+  // The way out is the list. Back would work too, but somebody who arrived
+  // by pasting an address has nowhere behind them.
+  if (loadFailed) {
+    return (
+      <div>
+        <h2>{id}</h2>
+        <p className="error">
+          {loadFailed.status === 404
+            ? `There is no engagement called ${id}.`
+            : loadFailed.said}
+        </p>
+        <p><a onClick={() => navigate("/")}>Back to Engagements</a></p>
+      </div>
+    );
+  }
 
   return (
     <div>
