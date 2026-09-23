@@ -1,3 +1,14 @@
+# LF in the repository, whatever a checkout smudges it to.
+#
+# The first three were here because a CRLF .py or .tf makes Terraform plan a
+# resource as changed on every run, for ever. The next three are the same
+# defect in the front end: vite hashes an asset by its bytes, a line ending
+# is a byte, and a build from a CRLF source emits a differently-named asset
+# for a file nobody edited. DRIFT-01 records both.
+
 *.tf text eol=lf
 *.py text eol=lf
 *.sql text eol=lf
+*.svg text eol=lf
+*.css text eol=lf
+*.html text eol=lf
