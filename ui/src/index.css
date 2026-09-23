@@ -372,6 +372,67 @@ p.warn { color: #b45309; }
 .panel h3 { margin-top: 0; text-transform: none; letter-spacing: 0;
             color: var(--deep); font-size: 16px; }
 
+/* CORRECTED 23 September 2026. The fix above is left standing because its
+ * account of the CAUSE is right and worth keeping. Its remedy is not: it did
+ * not hold, and the word it turns on is "begins".
+ *
+ * A sticky child is clamped to its CONTAINING BLOCK - the scrolling box's
+ * content box - and that box begins after the padding whatever the child's
+ * own margins say. The negative margin moved where the head is PAINTED. It
+ * did not move where sticky will let the head rise to. Rendered and measured
+ * in the drawer: the panel's top edge at 46, the head pinned at 74. Twenty-
+ * eight down, which is the padding, which is the gap 18.2 set out to close -
+ * and a strip of scrolling facts still showed between the head and the
+ * masthead.
+ *
+ * THE REMEDY IS TO STOP THE DRAWER SCROLLING AT ALL. A head cannot be carried
+ * past a box that does not move. The panel becomes a column of two: the head,
+ * which simply sits at the top, and .panel-body, which takes the rest and
+ * does the scrolling. Nothing is sticky, so nothing can be clamped.
+ *
+ * This is not a new idea here. .unbound-facts (below) does exactly this for a
+ * section's facts, and its comment gives the same reason: a sticky child
+ * holds against the nearest scrolling ancestor, so make the ancestor the box
+ * you want it held against.
+ *
+ * AND IT FIXES THE SECOND FAULT WITH THE FIRST. The head's negative top
+ * margin also painted its own box 22px over the top of the list - one
+ * heading's height - so the column headings were behind it from the moment
+ * the drawer opened. With the head outside the scrolling box there is nothing
+ * to be behind, and the headings can hold at the top of the list where a
+ * person reading down a column needs them.
+ *
+ * SCOPED BY :has(.panel-head), which is the exact condition - the drawers
+ * that carry a head. The form drawers (.panel.narrow) keep the padding and
+ * the scroll they have always had. main:has(.wide-page) already selects this
+ * way. */
+.panel:has(.panel-head) {
+  display: flex; flex-direction: column;
+  overflow: hidden; padding: 0;
+}
+/* The padding the panel gave up, taken back by the head itself. */
+.panel:has(.panel-head) .panel-head {
+  position: static; flex: 0 0 auto;
+  margin: 0; padding: 28px 32px 8px;
+}
+/* NO TOP PADDING. Top padding on a scrolling box is scrollable area above
+   the first child, and a sticky child never rises into it - which is the
+   whole defect above, and it would come straight back as a strip of rows
+   showing over the headings. Rendered: with 6px here, it did. The breathing
+   room goes inside the heading instead, where it scrolls with nothing. */
+.panel:has(.panel-head) .panel-body {
+  flex: 1 1 auto; overflow: auto; padding: 0 32px 28px;
+}
+/* The column headings, held at the top of the list they head. The ground is
+   the drawer's own so the rows pass behind them rather than through them,
+   and z-index 1 keeps them over the rows and under nothing else - there is
+   nothing else in this box. */
+.panel-body .binder-groups h5 {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--paper);
+  padding: 10px 0 5px;
+}
+
 /* --- memo ---------------------------------------------------------------- */
 
 .memo {

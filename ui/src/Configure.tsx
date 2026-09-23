@@ -1858,6 +1858,13 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
               </div>
             </div>
 
+            {/* THE LIST SCROLLS, NOT THE DRAWER (18.2, corrected). The head
+                above is held at the top by sitting OUTSIDE this box rather
+                than by being sticky inside it, and the group headings hold at
+                the top of this box because it is their nearest scrolling
+                ancestor. The same arrangement .unbound-facts uses on a
+                section's facts, and for the same reason. */}
+            <div className="panel-body">
             <div className="binder-groups">
               {byGroup.map((g) => (
                 <div key={g.key}>
@@ -1890,6 +1897,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                   })}
                 </div>
               ))}
+            </div>
             </div>
 
           </aside>
