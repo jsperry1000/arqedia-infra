@@ -394,3 +394,140 @@ committed, for the same reason the addendum above gives.
 Fixing it. The repair named above - `.gitattributes` covering `*.svg` and
 `*.css` - must cover `*.html` as well, and the one normalising commit must
 include `ui/index.html`, making it five files and not four.
+
+---
+
+## Addendum, 23 September 2026 · fixed, and three things above superseded
+
+Branch `drift01-normalise`. `.gitattributes` now carries `*.svg`, `*.css` and
+`*.html` beside the three lines it always had. Everything above stands as the
+record of how this was found; four statements in it are no longer true and are
+marked here rather than edited out.
+
+### The repair was not a renormalisation. Nothing in the repository was wrong.
+
+This is the correction that matters, because two sessions got it backwards -
+including the audit of 22 September that asked for this branch.
+
+```
+                         blob CR bytes    working copy CR bytes
+brand/logo-deep.svg                  0                        9
+brand/logo-white.svg                 0                        9
+ui/src/index.css                     0                     1708
+ui/src/tokens.css                    0                       66
+ui/index.html                        0                       16
+web/index.html                       0                       17
+```
+
+Counted as bytes with `od -An -tx1 | grep -c '^0d$'`, on the blob reached
+through `git cat-file blob $(git rev-parse HEAD:<path>)`. **Every one is LF in
+the repository and CRLF only on disk**, smudged by `core.autocrlf = true` at
+checkout. `git add --renormalize .` across the whole tree stages **nothing**:
+there is nothing stored wrongly to correct.
+
+So the attribute does not repair the history. It repairs the **checkout**:
+`text eol=lf` overrides `core.autocrlf`, so these files now arrive LF and a
+build reads LF. Re-checking out the 26 tracked files the new rules cover took
+4,193 CR bytes on disk to 0, and `git status` stayed clean throughout, which
+is the proof that the stored bytes never moved.
+
+**SUPERSEDED — the 21 September addendum, "The four sources":**
+
+> ```
+> brand/logo-deep.svg      CRLF in the repository
+> ```
+
+Wrong. CRLF on disk, LF in the repository. The defect it describes is real and
+the consequence is exactly as written; only the location is misstated.
+
+**STANDS — the 22 September addendum, "Measured, all five":** it says "All
+five are LF in the repository and CRLF on disk, smudged by `core.autocrlf =
+true` on checkout", and it is right. The audit of 22 September contradicted it
+using `git show`, which applies EOL conversion and cannot be used to measure a
+blob. `git cat-file blob` can.
+
+### Proof the fix works
+
+A build from a clean checkout now reproduces what `main` already carries, name
+for name and byte for byte:
+
+```
+emitted                              committed on main
+web/assets/logo-deep-Cc-XAy_2.svg    web/assets/logo-deep-Cc-XAy_2.svg
+web/assets/logo-white-BjJcKX-d.svg   web/assets/logo-white-BjJcKX-d.svg
+web/assets/index-DhQ35KU1.css        web/assets/index-DhQ35KU1.css
+web/assets/index-XhtGmyUp.js         web/assets/index-XhtGmyUp.js
+```
+
+`git status` after the rebuild: clean. The whole branch against `main` is
+`.gitattributes`, 11 insertions, 0 deletions. **The renames this document was
+written about cannot happen again on a checkout that honours the attributes.**
+
+### SUPERSEDED · Cause 1 is closed
+
+> ```
+>                  c:\terraform\arqedia   fresh worktree
+> proposer                            1                0
+> composition                         1                0
+> normalizer                          1                0
+> ```
+
+and
+
+> `normalizer` is untouched and still drifts.
+
+Neither holds. Counted 23 September across every directory under
+`c:\terraform\arqedia\lambda\`: **0 CRLF `.py` files.** `normalizer` included.
+
+### SUPERSEDED · Cause 2 is closed
+
+> **It is still present in `c:\terraform\arqedia\lambda\render\` and is still
+> git-ignored**, so the next apply from that working copy puts it back into
+> the function.
+
+`lambda/render/` now holds `app.py` and `style.py` and nothing else.
+`sample.pdf` is gone from the working copy as well as from the deployed
+bundle. Cause 2 is closed at both ends.
+
+### SUPERSEDED · a fifth cause: a stale copied `build/layer-docprocessing.zip`
+
+> `aws_lambda_layer_version.docprocessing` does **not** drift. It refreshes at
+> version 39 and stays out of every change set
+
+That control no longer holds, and the reason is the copying this document
+recommends. The layer is read by filename and hash from a git-ignored zip, so
+a worktree's copy is a snapshot of whenever it was copied:
+
+```
+deployed layer version 41, created 2026-09-22T20:29:08Z
+build/layer-docprocessing.zip in this worktree, copied 2026-09-20 07:30
+its sha256                     Lokj4sbXl4E20E+qJLKmoXb6epCTzsfiKbjE8eOpeTk=
+```
+
+A plan run here on 22 September read:
+
+```
+# aws_lambda_layer_version.docprocessing must be replaced
+~ source_code_hash = "jNJUbq3M6+WZU0JxQU2yJZKRJ+T4HUUROps3SGP47bc="
+                  -> "Lokj4sbXl4E20E+qJLKmoXb6epCTzsfiKbjE8eOpeTk="  # forces replacement
+```
+
+That second value is this worktree's two-day-old copy. **An apply from here
+would have rolled the layer back to the 20 September build**, publishing a new
+version over a newer one, silently, from a file nobody edited. It is the same
+shape as every other cause in this document - a git-ignored input that a
+worktree carries and nobody compares - and it is the most dangerous, because
+`filebase64sha256` gives no hint that the zip is old.
+
+Nothing in the standing checks catches it. A worktree that has copied the zip
+must re-copy or re-build it before any plan, or not plan at all.
+
+### One thing the new rules still do not cover: `*.js`
+
+`web/assets/index-*.js` is stored LF and is not matched by `*.svg`, `*.css` or
+`*.html`, so `core.autocrlf` still smudges it to CRLF on checkout. It does not
+produce a rename - vite writes the bundle itself and hashes what it wrote - so
+it is not the defect above. What it does mean is that a checkout that is never
+rebuilt has a CRLF bundle on disk, and `deploy-frontend.yml` syncs the disk.
+**Recorded, not fixed:** adding `*.js` was outside what this branch was asked
+to change.
