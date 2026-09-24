@@ -124,9 +124,18 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [sortDown, setSortDown] = useState(false);
   const [nameFilter, setNameFilter] = useState("");
   const [showInactive, setShowInactive] = useState(true);
-  // Which group of the filed list is open. One at a time and none on arrival,
-  // as on the configuration screens.
-  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  // Which groups of the filed list are open. A SET, NOT ONE KEY (21.4): each
+  // opens and closes on its own and opening one never closes another, as on
+  // the configuration screens. None on arrival.
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+
+  // The pending list's own search, order and filter (21.3). What is SHOWN
+  // only: they never change what is ticked, and never what File sends - File
+  // still files every row waiting, hidden or not.
+  const [pendingSearch, setPendingSearch] = useState("");
+  const [pendingSort, setPendingSort] =
+    useState<"upload" | "name" | "type" | "confidence">("upload");
+  const [needsLook, setNeedsLook] = useState(false);
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [passage, setPassage] = useState<Passage | null>(null);
   const [bounds, setBounds] = useState<[number, number]>([1, 1]);
@@ -768,6 +777,59 @@ export function EngagementView({ id, onBack, onMemo }: {
     return acc;
   }, {});
 
+  /** The pending list as shown (21.3). A batch of fifty-seven, across
+   *  fourteen types, took a quarter of an hour to categorise on dev with no
+   *  way to find a row but scrolling.
+   *
+   *  THE TYPE IS THE ONE IN THE DROPDOWN - the person's choice where they
+   *  made one, the proposal where they did not - because that is what the row
+   *  says and what File will send.
+   *
+   *  Everything here narrows or orders what is SHOWN. The ticks live in
+   *  `picked` and File sends `toFile`, and neither reads this. */
+  const typeOf = (p: Pending) =>
+    (choices[p.document_id] ?? { type: p.proposed_type }).type;
+  const typeLabel = (key: string | null) => key
+    ? (types.find((t) => t.key === key)?.label ?? key) : "Not classified";
+  // Unclassified, or proposed with low confidence: the rows worth a second
+  // look before paying to file them.
+  const doubtful = (p: Pending) => !typeOf(p) || p.confidence === "low";
+  // Least certain first. No confidence at all is a scan nothing was read
+  // from, which is the least certain of all.
+  const rank = (p: Pending) =>
+    ({ low: 1, medium: 2, high: 3 } as Record<string, number>)[
+      p.confidence ?? ""] ?? 0;
+
+  const pendingNeedle = pendingSearch.trim().toLowerCase();
+  const shownToFile = toFile
+    .filter((p) => (!needsLook || doubtful(p)) && (!pendingNeedle
+      || [p.filename, p.source_folder ?? "", typeLabel(typeOf(p))]
+           .some((s) => s.toLowerCase().includes(pendingNeedle))))
+    .sort((a, b) =>
+      pendingSort === "name" ? a.filename.localeCompare(b.filename)
+      : pendingSort === "type"
+        ? typeLabel(typeOf(a)).localeCompare(typeLabel(typeOf(b)))
+          || a.filename.localeCompare(b.filename)
+      : pendingSort === "confidence"
+        ? rank(a) - rank(b) || a.filename.localeCompare(b.filename)
+      : a.document_id - b.document_id);
+
+  // How many of each type, over the whole batch rather than what the search
+  // leaves, so the count does not move as somebody types. Largest first.
+  const perType = Object.entries(toFile.reduce<Record<string, number>>(
+    (acc, p) => {
+      const label = typeLabel(typeOf(p));
+      acc[label] = (acc[label] ?? 0) + 1;
+      return acc;
+    }, {}))
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
+  // Ticked and out of sight. Said, so a Remove selected that reaches rows
+  // the search is hiding is never a surprise.
+  const shownIds = new Set(shownToFile.map((p) => p.document_id));
+  const hiddenPicked = pickedIn(toFile)
+    .filter((p) => !shownIds.has(p.document_id)).length;
+
   function arrow(key: SortKey) {
     if (key !== sortKey) return "";
     return sortDown ? " \u2193" : " \u2191";
@@ -1025,8 +1087,56 @@ export function EngagementView({ id, onBack, onMemo }: {
               Template Catalogue.
             </p>
           )}
-          <div className="filters">{allBox(toFile, "of these")}</div>
-          {toFile.map((p) => {
+          {/* What the batch is made of, and a way through it (21.3). The
+              same .filters row and .inline-check the Filed list and the
+              template choice already use: no new CSS. */}
+          <p className="muted small">
+            {perType.map(([label, n]) => `${label} ${n}`).join(" · ")}
+          </p>
+          <div className="filters">
+            <input placeholder="Search by name, folder or type"
+                   value={pendingSearch}
+                   onChange={(e) => setPendingSearch(e.target.value)} />
+            {pendingSearch && (
+              <a className="small" onClick={() => setPendingSearch("")}>Clear</a>
+            )}
+            <label className="inline-check">
+              Sort
+              <select value={pendingSort}
+                      onChange={(e) => setPendingSort(
+                        e.target.value as typeof pendingSort)}>
+                <option value="upload">Upload order</option>
+                <option value="name">Name</option>
+                <option value="type">Type</option>
+                <option value="confidence">Confidence, least sure first</option>
+              </select>
+            </label>
+            <label className="inline-check"
+                   title="Not classified, or proposed with low confidence.">
+              <input type="checkbox" checked={needsLook}
+                     onChange={(e) => setNeedsLook(e.target.checked)} />
+              Needs a look &middot; {toFile.filter(doubtful).length}
+            </label>
+            <span className="muted">
+              {shownToFile.length} of {toFile.length} shown
+            </span>
+          </div>
+          {/* Select all is over the whole batch, as it always was: the
+              search narrows what is shown and never what is ticked. */}
+          <div className="filters">
+            {allBox(toFile, "of these")}
+            {hiddenPicked > 0 && (
+              <span className="muted small">
+                {hiddenPicked} ticked and hidden by the search
+              </span>
+            )}
+          </div>
+          {shownToFile.length === 0 && (
+            <p className="muted">
+              Nothing waiting matches. Filing still files all {toFile.length}.
+            </p>
+          )}
+          {shownToFile.map((p) => {
             const choice = choices[p.document_id] ??
               { type: p.proposed_type, include: true };
             const chosen = types.find((t) => t.key === choice.type);
@@ -1240,14 +1350,19 @@ export function EngagementView({ id, onBack, onMemo }: {
             </thead>
             <tbody>
               {groups.map((g) => {
-                // A filter opens every group it matched.
-                const open = nameFilter.trim() !== "" || openGroup === g.key;
+                // A filter opens every group it matched. Clearing it returns
+                // to the groups that were open, which it never wrote to.
+                const open = nameFilter.trim() !== "" || openGroups.has(g.key);
                 return (
               <Fragment key={g.key}>
                 <tr>
                   <td colSpan={7}>
-                    <a onClick={() =>
-                      setOpenGroup(openGroup === g.key ? null : g.key)}>
+                    <a onClick={() => setOpenGroups((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(g.key)) next.delete(g.key);
+                      else next.add(g.key);
+                      return next;
+                    })}>
                       {open ? "\u25be" : "\u25b8"} {g.label}
                     </a>{" "}
                     <span className="muted small">
