@@ -260,6 +260,11 @@ locals {
     "GET /templates",
     "GET /document-types",
     "DELETE /documents/{document_id}",
+
+    # The type chosen for a document while it waits to be filed, saved as it
+    # is chosen so leaving the screen keeps it (21.1). On the document rather
+    # than the person: two colleagues on one batch see the same choices.
+    "PUT /documents/{document_id}/type",
     "GET /config",
     "GET /config/{revision}",
     "PUT /config/active",

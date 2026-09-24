@@ -24,6 +24,7 @@ SUBJECT's facts and cannot tell which company that is unless it is told.
   GET  /engagements/{id}/documents       filed documents
   POST /documents/{document_id}/active   include or exclude from future memos
   DELETE /documents/{document_id}         discard one not yet filed
+  PUT  /documents/{document_id}/type     the type chosen while it waits
 
 One uploaded file may hold several documents. Each is a row of its own
 sharing the file's s3_key and carrying its page range, so a citation still
@@ -688,7 +689,7 @@ def list_pending(tenant_id, engagement_id):
         SELECT document_id, filename, document_type, page_count,
                thin_text, char_count, type_confidence, type_reason, state,
                uploaded_by, part_index, page_from, page_to,
-               refusal_code, refusal_reason, source_folder
+               refusal_code, refusal_reason, source_folder, chosen_type
         FROM document
         WHERE tenant_id = :tenant_id
           AND state IN ('analysed', 'reading', 'unreadable')
@@ -717,9 +718,65 @@ def list_pending(tenant_id, engagement_id):
          # Provenance, shown beside the filename (18.7). Null on every row
          # filed before migration 032 and on every upload that was not a
          # directory.
-         "source_folder": _col(r, 15)}
+         "source_folder": _col(r, 15),
+         # What a person chose while it waits (21.1, migration 034). Null is
+         # nobody has chosen, and the screen shows the proposal; "" is a
+         # choice of "Not classified". Beside proposed_type, never in place
+         # of it.
+         "chosen_type": _col(r, 16)}
         for r in result.get("records", [])
     ]
+
+
+def set_document_type(tenant_id, email, document_id, type_key):
+    """Record the type chosen for a document waiting to be filed (21.1).
+
+    SAVED AS IT IS CHOSEN, so the choice outlives the screen. It lived in the
+    browser until File was pressed, and leaving to top up threw away a
+    quarter of an hour's work on a batch of fifty-seven.
+
+    ON THE DOCUMENT, NOT THE PERSON. Two colleagues working through one batch
+    see the same choices (decision of 24 September 2026). Any seat may
+    choose, as any seat may file.
+
+    NEVER THE PROPOSAL'S COLUMN. document_type keeps what the classifier
+    proposed; this writes chosen_type beside it.
+
+    "" OR None IS A CHOICE OF "NOT CLASSIFIED", stored as "" so that it is
+    told apart from nobody having chosen (NULL). A key must be a document
+    type in the tenant's configuration now in use - the one filing reads.
+
+    ONLY WHILE IT WAITS. A document being read, filed or refused has had its
+    type settled or has none to settle; changing it there would be a record
+    that says something nobody can act on. Returns None where there is no
+    such document, which the route answers as 404."""
+    found = _sql("SELECT state FROM document "
+                 "WHERE tenant_id = :t AND document_id = :d",
+                 [_p("t", tenant_id), _p("d", int(document_id))]
+                 ).get("records", [])
+    if not found:
+        return None
+    if _col(found[0], 0) != "analysed":
+        raise ValueError("this document is no longer waiting to be filed, "
+                         "so its type cannot be changed here")
+
+    chosen = (type_key or "").strip()
+    if chosen and chosen not in config.for_tenant(tenant_id).DOCUMENT_TYPES:
+        raise ValueError("%s is not one of this workspace's document types"
+                         % chosen)
+
+    # The state is in the WHERE as well: a filing that lands between the read
+    # above and this write must not have a choice written under it. The
+    # updated-row count is NOT checked - MySQL reports zero for a row whose
+    # value did not change, so choosing the same type twice would read as a
+    # refusal.
+    _sql("UPDATE document SET chosen_type = :c "
+         "WHERE tenant_id = :t AND document_id = :d AND state = 'analysed'",
+         [_p("c", chosen), _p("t", tenant_id), _p("d", int(document_id))])
+
+    print("[type-chosen] tenant=%s doc=%s type=%s by=%s" % (
+        tenant_id, document_id, chosen or "-", email))
+    return {"document_id": int(document_id), "chosen_type": chosen}
 
 
 def _in_list(values, prefix="id"):
@@ -850,21 +907,36 @@ def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
     wanted = [int(d["document_id"]) for d in decisions
               if d.get("document_id") is not None]
     known = {}
+    # What each document's type is, where the decision does not say (21.1):
+    # the type a person chose while it waited, else the proposal.
+    held_type = {}
     if wanted:
         names, params = _in_list(wanted)
-        known = {
-            _col(r, 0): (_col(r, 1), _col(r, 2))
-            for r in _sql(
-                "SELECT document_id, filename, state FROM document "
+        for r in _sql(
+                "SELECT document_id, filename, state, chosen_type, "
+                "document_type FROM document "
                 "WHERE tenant_id = :t AND document_id IN (%s)" % names,
-                [_p("t", tenant_id)] + params).get("records", [])
-        }
+                [_p("t", tenant_id)] + params).get("records", []):
+            known[_col(r, 0)] = (_col(r, 1), _col(r, 2))
+            chosen = _col(r, 3)
+            # "" is a choice of "Not classified" and must stay one, so it is
+            # not the same as NULL and does not fall back to the proposal.
+            held_type[_col(r, 0)] = (chosen if chosen is not None
+                                     else _col(r, 4))
 
         blocked = [n for _id, (n, st) in known.items() if st == "unreadable"]
         if blocked:
             raise ValueError(
                 "one of these could not be read and cannot be filed: %s"
                 % ", ".join(sorted(blocked)))
+
+    def type_of(d):
+        """The decision's own type where it names one, else what the
+        document holds. A decision is what a person pressed File on; the
+        chosen type is what they picked on the way there."""
+        if "document_type" in d:
+            return (d.get("document_type") or "").strip() or None
+        return (held_type.get(int(d["document_id"])) or "").strip() or None
 
     # A SCAN ARRIVES WITH NO TYPE, and the read mode comes from the confirmed
     # type - so _start_ocr would fail on a null, AFTER the charge. Refused
@@ -874,7 +946,7 @@ def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
         known.get(int(d["document_id"]), (str(d.get("document_id")), None))[0]
         for d in included
         if d.get("document_id") is not None
-        and not (d.get("document_type") or "").strip())
+        and not type_of(d))
     if typeless:
         raise ValueError(
             "Choose a type for %s before filing. A scan has no type until "
@@ -902,7 +974,7 @@ def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
             rejected += 1
             continue
 
-        document_type = d.get("document_type") or None
+        document_type = type_of(d)
 
         row = _sql("SELECT s3_key, thin_text, page_from, part_index "
                    "FROM document "
@@ -2590,6 +2662,17 @@ def _dispatch(event, context):
             if "refused" in outcome:
                 return _reply(409, {"error": outcome["refused"]})
             return _reply(200, outcome)
+
+        # The type chosen for a document while it waits to be filed (21.1).
+        # Saved on each change, so leaving the screen keeps it.
+        if route == "PUT /documents/{document_id}/type":
+            body = json.loads(event.get("body") or "{}")
+            chosen = set_document_type(tenant_id, email,
+                                       params.get("document_id"),
+                                       body.get("type"))
+            if chosen is None:
+                return _reply(404, {"error": "no such document"})
+            return _reply(200, chosen)
 
         if route == "GET /engagements/{id}/pending":
             # The subject travels with the pending list because the screen

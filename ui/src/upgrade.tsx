@@ -79,6 +79,24 @@ export const ENTERPRISE_COLUMN = {
  *  a control elsewhere can land on the right one (11.1). */
 export const PLANS = "/account?tab=subscription";
 export const BALANCE = "/account?tab=balance";
+
+/** The top-up link, carrying why somebody is going there (21.2): how much
+ *  they are short, what for, and where to come back to.
+ *
+ *  IT SETS A STARTING POINT AND NOTHING ELSE. Balance presets the increments
+ *  from `need` and states it; what is charged is still increments times the
+ *  increment the server reports, so nothing written into this address can
+ *  change a charge. `need` is the server's own shortfall - the quote's total
+ *  less what is available - worked out on the screen that was refused. */
+export function balanceFor(needCents: number, what: string, back: string) {
+  const q = new URLSearchParams({
+    tab: "balance",
+    need: String(Math.max(0, Math.round(needCents))),
+    for: what,
+    back,
+  });
+  return "/account?" + q.toString();
+}
 /** Where a colleague is actually invited. Named here with the other two
  *  because the second-administrator prompt on Get started points at it
  *  (18.8), and an address written into a screen is an address that drifts. */
