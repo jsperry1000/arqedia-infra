@@ -7,8 +7,7 @@ every response and every commit, without being restated.
 
 ## Rules of Engagement
 
-- Rules of Engagement are printed in full at the head of every response, not
-  summarised.
+- Rules of Engagement are applied to every response, not printed in it.
 - Schema-faithful. Where something is missing from the schema, flag it as
   proposed rather than inventing it.
 - Additive and non-destructive. Nothing already recorded is overwritten or
