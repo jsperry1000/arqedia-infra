@@ -351,8 +351,9 @@ Raised 24 September 2026 on the walk.
 | 21.3 | No way to search or sort uploaded files while categorising them. A large upload becomes unworkable |
 | 21.4 | The document-type groups shut themselves. Open each one individually, and opening another must not close the first |
 | 21.5 | A tenant's templates do not show which ARQEDIA template revision they were taken from, so nobody can tell whether a newer one exists |
-| 21.6 | Printing a PDF should offer a diagonal watermark: Draft — Confidential, or Confidential |
+| 21.6 | Printing a PDF asks before it prints: None (the default), Draft, Confidential, or Confidential Draft, as a diagonal watermark. Decided 24 September 2026 |
 | 21.7 | Offer a DOCX download as well as PDF |
+| 21.8 | A memo downloaded by a share recipient carries their email address and the time, burned in, whatever the tenant chose above. That is the share spec's own rule (§5) and it is not a choice; it belongs with the viewer work in 12.6, which is unbuilt |
 
 ## Rolled into existing backlog
 
