@@ -11,12 +11,14 @@ inconsistent: a schema exists before anything routes to it, a field exists
 before a template binds it. Blocking every save would make the editors
 unusable.
 
-Four faults are FATAL and refuse the publish:
+Six faults are FATAL and refuse the publish:
 
     a template binding a field that does not exist
     a table with no group key
     a table with no columns
     a column whose key does not begin with its table
+    a composed section reading no section                    (CFG-02)
+    a composed section reading a composed one written later  (CFG-02)
 
 The first is not a matter of taste. It is the Stage 1 defect: a template
 naming a field the pack did not define produced a memo that confidently
@@ -442,6 +444,56 @@ def validate(tenant_id, revision=DRAFT):
             "detail": "'%s' is extracted but no memo section renders it."
                       % _col(r, 1),
         })
+
+    # FATAL (CFG-02). A composed section is written from the sections it
+    # names, and nothing else. Naming none, it comes out empty - silently, as
+    # a Gap nobody configured. Naming a composed section that sorts at or
+    # after it, it names one composition has not written yet, which is
+    # skipped without a word. Both are checked together from one read.
+    listed = rows(
+        """
+        SELECT s.template_key, s.section_key, s.title, s.kind, s.sort_order,
+               s.context_sections, t.label
+        FROM config_section s
+        LEFT JOIN config_template t
+          ON t.tenant_id = s.tenant_id AND t.revision = s.revision
+         AND t.template_key = s.template_key
+        WHERE s.tenant_id = :t AND s.revision = :r
+        ORDER BY s.template_key, s.sort_order
+        """
+    )
+    by_key = {(_col(r, 0), _col(r, 1)): r for r in listed}
+    for r in listed:
+        if _col(r, 3) != "composed":
+            continue
+        memo = _col(r, 6) or _col(r, 0)
+        title = _col(r, 2) or _col(r, 1)
+        reads = [k for k in (_col(r, 5) or "").split(",") if k]
+
+        if not reads:
+            fatal.append({
+                "kind": "composed-without-context",
+                "section": _col(r, 1),
+                "detail": "In %s, '%s' is written from other sections, but "
+                          "none are ticked, so it would come out empty. Tick "
+                          "at least one section for it to read."
+                          % (memo, title),
+            })
+            continue
+
+        for k in reads:
+            other = by_key.get((_col(r, 0), k))
+            if (other is not None and _col(other, 3) == "composed"
+                    and (_col(other, 4) or 0) >= (_col(r, 4) or 0)):
+                name = _col(other, 2) or k
+                fatal.append({
+                    "kind": "composed-reads-later-section",
+                    "section": _col(r, 1),
+                    "detail": "In %s, '%s' reads '%s', which now comes after "
+                              "it and is written later, so it cannot be "
+                              "read. Move '%s' above it or untick it."
+                              % (memo, title, name, name),
+                })
 
     return {
         "revision": revision,

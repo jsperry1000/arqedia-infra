@@ -478,6 +478,10 @@ export type ConfigSection = {
   // it goes to zero, and a memorandum whose sections all sit at zero comes
   // out in whatever order the database happens to return.
   sort_order: number;
+  // What a composed section is written from: other sections of the same
+  // memorandum, by key. Sent only when changed - the server keeps what the
+  // row had when it is absent, and checks it when it is not (CFG-02).
+  context_sections: string[];
 };
 
 export type ConfigColumn = {

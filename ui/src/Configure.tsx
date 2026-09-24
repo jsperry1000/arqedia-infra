@@ -334,8 +334,10 @@ function CategoryForm({ initial, onSave, onCancel, onDelete }: {
   );
 }
 
-function SectionForm({ initial, onSave, onCancel, onDelete }: {
+function SectionForm({ initial, others, onSave, onCancel, onDelete }: {
   initial?: ConfigSection;
+  /** The memorandum's other sections, in the order it reads. */
+  others: ConfigSection[];
   onSave: (s: Partial<ConfigSection>) => void;
   onCancel: () => void;
   onDelete?: () => void;
@@ -355,6 +357,22 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
   });
   const key = s.key ?? slugKey(s.title);
 
+  // What a composed section is written from (CFG-02). Held apart from the
+  // rest and sent only when changed: the server keeps the stored value when
+  // it is absent, so a save of the wording alone can never empty it again.
+  const [reads, setReads] = useState<string[]>(initial?.context_sections ?? []);
+  const readsChanged =
+    reads.join(",") !== (initial?.context_sections ?? []).join(",");
+
+  // What it may read. Any assembled section, wherever it sits - composition
+  // assembles all of them first. A composed section only if it comes BEFORE
+  // this one: composed sections are written in order, so a later one does
+  // not exist yet. One already ticked is always shown, so a tick that a
+  // reorder has made unreadable can be seen and taken off.
+  const mine = initial?.sort_order ?? 0;
+  const readable = others.filter((o) => o.kind !== "composed"
+    || o.sort_order < mine || reads.includes(o.key));
+
   // How it should read grows with what is written, to a ceiling of 25 lines,
   // and then scrolls inside itself (UX-09). The field card's description box
   // does the same, through the same hook.
@@ -363,7 +381,8 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
   const dirty = s.numeral !== (initial?.numeral ?? "")
     || s.title !== (initial?.title ?? "")
     || s.kind !== (initial?.kind ?? "extract")
-    || s.prompt !== (initial?.prompt ?? "");
+    || s.prompt !== (initial?.prompt ?? "")
+    || readsChanged;
 
   const leave = () => {
     if (dirty && !window.confirm(
@@ -420,11 +439,54 @@ function SectionForm({ initial, onSave, onCancel, onDelete }: {
               + "prose or a table, what to leave out."} />
       </label>
 
+      {s.kind === "composed" && (
+        <div className="row">
+          <span>What it is written from</span>
+          <div>
+            {readable.length === 0 && (
+              <p className="muted small">
+                No section it can read. Add one, or move this section below an
+                assembled one.
+              </p>
+            )}
+            {readable.map((o) => {
+              const on = reads.includes(o.key);
+              const late = o.kind === "composed" && o.sort_order >= mine;
+              return (
+                <label className="bind" key={o.key}>
+                  <input type="checkbox" checked={on}
+                    // Rebuilt from the memorandum's own sections, in its
+                    // order - the order composition reads them in. A key
+                    // left by a deleted section drops out here rather than
+                    // being sent back and refused.
+                    onChange={() => setReads(others.map((x) => x.key)
+                      .filter((k) => k === o.key ? !on : reads.includes(k)))} />
+                  {" "}{o.numeral}. {o.title}
+                  {late && (
+                    <span className="warn small">
+                      {" "}comes after this one &mdash; cannot be read
+                    </span>
+                  )}
+                </label>
+              );
+            })}
+            {reads.length === 0 && (
+              <p className="warn small">
+                Nothing ticked, so it would come out empty. Publishing is
+                refused until at least one is.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       <KeyLine value={key} />
 
       <div className="form-actions">
         <button disabled={!s.title.trim()}
-                onClick={() => onSave({ ...s, key })}>Save</button>
+                onClick={() => onSave({ ...s, key,
+                  ...(s.kind === "composed" && readsChanged
+                    ? { context_sections: reads } : {}) })}>Save</button>
         {/* Asked before an edit is thrown away. Clicking Edit on another
             section closes this one, and without the check a rewritten
             instruction would go with it silently. */}
@@ -651,7 +713,13 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     act("Reordering", async () => {
       for (let i = 0; i < ordered.length; i++) {
         if (ordered[i].sort_order === i + 1) continue;
-        await api.saveSection({ ...ordered[i], sort_order: i + 1 });
+        // Without what it reads, so the server keeps it and does not check
+        // it. Sent, a composed section moved above one it reads would be
+        // refused part-way through the renumbering; publishing says so
+        // instead, once the order is whole (CFG-02).
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { context_sections, ...row } = ordered[i];
+        await api.saveSection({ ...row, sort_order: i + 1 });
       }
     });
   };
@@ -1395,6 +1463,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       {editSection !== null && (
         <SectionForm
           initial={sections.find((x) => x.key === editSection)}
+          others={sections.filter((x) => x.key !== editSection)}
           onCancel={() => setEditSection(null)}
           onSave={(body) => act("Saving", async () => {
             await api.saveSection({ ...body,
@@ -1448,7 +1517,18 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             <span className="muted small">
               {s.kind === "composed" ? "written by the model" : "assembled"}
             </span>
-            {/* Pills (UX-06). The count lives on Fields itself. */}
+            {/* Pills (UX-06). The count lives on Fields itself.
+                NOT ON A COMPOSED SECTION (CFG-02). Composition reads the
+                sections it names and never its bound facts, so the list was
+                a control that did nothing. Hidden only: any bindings it
+                already has stay stored. What it reads is set under Edit. */}
+            {s.kind === "composed" ? (
+              <span className={"small " + (s.context_sections.length
+                ? "muted" : "warn")}>
+                reads {s.context_sections.length}{" "}
+                {s.context_sections.length === 1 ? "section" : "sections"}
+              </span>
+            ) : (
             <a className="pill" onClick={() => {
               // The search and the open group belong to whichever section is
               // open, so both are cleared as it changes.
@@ -1458,6 +1538,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             }}>
               {openSection === s.key ? "Close" : `Fields · ${s.fields.length}`}
             </a>
+            )}
             <a className="pill" onClick={() => {
               // One thing open at a time. Editing a section with
               // another section's field list open left both on screen
@@ -1467,7 +1548,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             }}>Edit</a>
           </div>
 
-          {openSection === s.key && (
+          {openSection === s.key && s.kind !== "composed" && (
             // The open section's facts. What it already renders, the rule and
             // the search are held beneath its heading while the facts it
             // could render scroll past (UX-20).

@@ -253,6 +253,16 @@ def save_section(tenant_id, body):
             raise ValueError("say which memorandum this section belongs to")
         template_key = _col(rows[0], 0)
 
+    # WHICH SECTIONS A COMPOSED ONE READS, only where the caller said (CFG-02).
+    # It was written on every save, so a form that did not carry it - the
+    # section drawer never did - set it to NULL, and a composed section edited
+    # for its wording came out empty from then on. Absent now means "leave it
+    # as it is", the same rule sort_order follows below.
+    sent = "context_sections" in body
+    context = _context_sections(
+        tenant_id, template_key, key, body.get("kind") or "extract",
+        body.get("sort_order"), body.get("context_sections")) if sent else None
+
     _sql("""
         INSERT INTO config_section
           (tenant_id, revision, template_key, section_key, numeral, title,
@@ -261,7 +271,7 @@ def save_section(tenant_id, body):
                 :context, COALESCE(:sort, 0))
         ON DUPLICATE KEY UPDATE
           numeral = :num, title = :title, kind = :kind, prompt = :prompt,
-          context_sections = :context,
+          """ + ("context_sections = :context," if sent else "") + """
           sort_order = COALESCE(:sort, sort_order)
         """, [
         _p("t", tenant_id), _p("r", DRAFT), _p("tpl", template_key),
@@ -273,7 +283,7 @@ def save_section(tenant_id, body):
         # legacy column is no reason to refuse a heading a person wrote.
         _p("shape", (body.get("shape") or key)[:_MAX_SHAPE_KEY]),
         _p("prompt", body.get("prompt")),
-        _p("context", ",".join(body.get("context_sections") or []) or None),
+        _p("context", context),
         # NULL where the caller did not say, and the row keeps the order it
         # had. A form carrying a section's title and prompt but not its
         # position sent no sort_order, this defaulted it to zero, and editing
@@ -285,6 +295,70 @@ def save_section(tenant_id, body):
            else int(body.get("sort_order") or 0)),
     ])
     return {"key": key}
+
+
+# config_section.context_sections is varchar(255).
+_MAX_CONTEXT = 255
+
+
+def _context_sections(tenant_id, template_key, key, kind, sort_order, keys):
+    """The stored form of what a composed section reads, or a refusal.
+
+    Stored as composition parses it: keys joined by commas, no spaces, NULL
+    for none (config.py splits on the comma and nothing else).
+
+    Every key must be another section of THIS memorandum. A composed section
+    may read any assembled section, wherever it sits, because composition
+    assembles all of those before writing anything. It may read another
+    composed section only if that one sorts BEFORE it: composed sections are
+    written in order, and one that comes later does not exist yet when this
+    one is written, so composition would skip it without a word."""
+    if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+        raise ValueError("say which sections this one reads, as a list")
+
+    wanted = []
+    for k in keys:
+        if k not in wanted:
+            wanted.append(k)
+    if not wanted:
+        return None
+
+    if key in wanted:
+        raise ValueError("a section cannot read itself")
+
+    held = {}
+    for r in _rows(tenant_id, """
+        SELECT section_key, title, kind, sort_order FROM config_section
+        WHERE tenant_id = :t AND revision = :r AND template_key = :tpl""",
+                   [_p("tpl", template_key)]):
+        held[_col(r, 0)] = {"title": _col(r, 1), "kind": _col(r, 2),
+                            "sort": _col(r, 3) or 0}
+
+    unknown = [k for k in wanted if k not in held]
+    if unknown:
+        raise ValueError("not a section of this memorandum: "
+                         + ", ".join(unknown[:5]))
+
+    if kind == "composed":
+        # This section's position: the one being saved, else the one stored,
+        # else where a new section lands.
+        if sort_order is not None:
+            mine = int(sort_order or 0)
+        else:
+            mine = held[key]["sort"] if key in held else 0
+        later = [held[k]["title"] or k for k in wanted
+                 if held[k]["kind"] == "composed" and held[k]["sort"] >= mine]
+        if later:
+            raise ValueError(
+                "'%s' is written by the model after this section, so it "
+                "cannot be read here. Move it above this section first."
+                % later[0])
+
+    stored = ",".join(wanted)
+    if len(stored) > _MAX_CONTEXT:
+        raise ValueError("too many sections ticked for this one to read. "
+                         "Untick some.")
+    return stored
 
 
 def delete_section(tenant_id, template_key, section_key):
