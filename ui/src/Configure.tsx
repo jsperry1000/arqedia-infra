@@ -37,6 +37,14 @@ function some(names: string[]) {
   return names.slice(0, 6).join(", ") + ` and ${names.length - 6} more`;
 }
 
+/** A set of open groups with one group flipped, and nothing else touched
+ *  (21.4). A new set, so React sees the change. */
+function toggled(open: Set<string>, key: string): Set<string> {
+  const next = new Set(open);
+  if (next.has(key)) next.delete(key); else next.add(key);
+  return next;
+}
+
 /** The kinds that brought something, in the order a person meets them. A
  *  schema is the one word the configuration screen never uses, so it is not
  *  reported either - it is machinery, and every fact it carries is listed. */
@@ -617,10 +625,12 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // elsewhere on the page, which nobody could connect to what they typed.
   const [sectionSearch, setSectionSearch] = useState("");
 
-  // Which group is open in a list. One at a time, because ninety facts under
-  // five headings is not a list a person reads.
-  const [openFactGroup, setOpenFactGroup] = useState<string | null>(null);
-  const [openDocGroup, setOpenDocGroup] = useState<string | null>(null);
+  // Which groups are open in a list. A SET, NOT ONE KEY (21.4): each group
+  // opens and closes on its own, and opening one never closes another. It was
+  // one at a time, so a person comparing two groups had one shut under them
+  // every time they opened the other. All start shut, as before.
+  const [openFactGroups, setOpenFactGroups] = useState<Set<string>>(new Set());
+  const [openDocGroups, setOpenDocGroups] = useState<Set<string>>(new Set());
   const [typeSearch, setTypeSearch] = useState("");
 
   useEffect(() => {
@@ -1530,10 +1540,11 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
               </span>
             ) : (
             <a className="pill" onClick={() => {
-              // The search and the open group belong to whichever section is
-              // open, so both are cleared as it changes.
+              // The search belongs to whichever section is open, so it is
+              // cleared as that changes. The Facts tab's open groups are not
+              // touched: a section's list shows every group open, and
+              // clearing them here shut groups on another tab (21.4).
               setSectionSearch("");
-              setOpenFactGroup(null);
               setOpenSection(openSection === s.key ? null : s.key);
             }}>
               {openSection === s.key ? "Close" : `Fields · ${s.fields.length}`}
@@ -1711,15 +1722,17 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             if (shown.length === 0) return null;
 
             // Collapsible, like the document types below: a browsing list,
-            // one group at a time, and a filter opens whatever it matched.
-            const open = fieldFilter.trim() !== "" || openFactGroup === g.key;
+            // each group opened on its own, and a filter opens whatever it
+            // matched. Clearing the filter returns to the groups that were
+            // open, because the filter never wrote to them.
+            const open = fieldFilter.trim() !== "" || openFactGroups.has(g.key);
 
             return (
               <Fragment key={g.key}>
                 <tr className="group-head">
                   <td colSpan={3}>
-                    <a onClick={() => setOpenFactGroup(
-                      openFactGroup === g.key ? null : g.key)}>
+                    <a onClick={() => setOpenFactGroups(
+                      (prev) => toggled(prev, g.key))}>
                       {open ? "\u25be" : "\u25b8"} {g.label}
                     </a>
                     <span className="muted small">
@@ -1833,16 +1846,17 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
               : group.types;
             if (types.length === 0) return null;
 
-            // A search opens whatever it matched; otherwise one group at a
-            // time, and a shut one says how much is inside it.
-            const open = needle !== "" || openDocGroup === group.key;
+            // A search opens whatever it matched; otherwise each group opens
+            // and closes on its own, and a shut one says how much is inside
+            // it. Clearing the search returns to the groups that were open.
+            const open = needle !== "" || openDocGroups.has(group.key);
 
             return (
             <Fragment key={group.key}>
               <tr className="group-head">
                 <td colSpan={4}>
-                  <a onClick={() => setOpenDocGroup(
-                    openDocGroup === group.key ? null : group.key)}>
+                  <a onClick={() => setOpenDocGroups(
+                    (prev) => toggled(prev, group.key))}>
                     {open ? "\u25be" : "\u25b8"} {group.label}
                   </a>
                   <span className="muted small">
