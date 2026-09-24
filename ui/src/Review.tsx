@@ -15,7 +15,7 @@ import {
 } from "./api";
 import { useNavigate } from "react-router-dom";
 import { useBackAction, Working } from "./shell";
-import { BALANCE, UpgradePrompt } from "./upgrade";
+import { balanceFor, UpgradePrompt } from "./upgrade";
 
 /* stored() is gone (17.4).
  *
@@ -73,6 +73,11 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [templates, setTemplates] = useState<Template[] | null>(null);
   const [template, setTemplate] = useState("");
   const [choices, setChoices] = useState<Record<number, Choice>>({});
+  // Rows whose chosen type is on its way to the server (21.1). A refresh
+  // landing mid-save must not put the old choice back over the new one.
+  const saving = useRef<Set<number>>(new Set());
+  // What filing the ticked rows would cost, priced by the server (21.1).
+  const [pickQuote, setPickQuote] = useState<Quote | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
@@ -203,16 +208,56 @@ export function EngagementView({ id, onBack, onMemo }: {
     // A memo asked for is ready once the list has grown.
     setGenerating((g) => g && m.memos.length > g.before ? null : g);
 
-    // Seed a choice for anything newly analysed, without disturbing edits.
+    // THE SAVED CHOICE IS THE ANSWER (21.1). Every change is saved as it is
+    // made, so what the server holds is what somebody chose - here, or on a
+    // colleague's screen - and it replaces what this screen had. A row with
+    // no saved choice is seeded from the proposal once and left alone. A row
+    // mid-save keeps what was just picked until the save answers.
     setChoices((prev) => {
       const next = { ...prev };
       for (const row of p.pending) {
-        if (!(row.document_id in next)) {
-          next[row.document_id] = { type: row.proposed_type, include: true };
+        if (row.chosen_type !== null && !saving.current.has(row.document_id)) {
+          next[row.document_id] = seeded(row);
+        } else if (!(row.document_id in next)) {
+          next[row.document_id] = seeded(row);
         }
       }
       return next;
     });
+  }
+
+  /** What a row's dropdown shows before this screen has touched it: the
+   *  saved choice where there is one ("" being "Not classified"), else the
+   *  proposal. */
+  function seeded(row: Pending): Choice {
+    return {
+      type: row.chosen_type !== null ? (row.chosen_type || null)
+                                     : row.proposed_type,
+      include: true,
+    };
+  }
+
+  /** Choose a type, and keep it (21.1). The dropdown changes at once; the
+   *  save follows; a refusal puts back what was there and names the file. */
+  async function chooseType(p: Pending, type: string | null) {
+    const before = choices[p.document_id];
+    setChoices((prev) => ({ ...prev,
+                            [p.document_id]: { type, include: true } }));
+    saving.current.add(p.document_id);
+    setError("");
+    try {
+      await api.setDocumentType(p.document_id, type ?? "");
+    } catch (err) {
+      setChoices((prev) => {
+        const next = { ...prev };
+        if (before) next[p.document_id] = before;
+        else delete next[p.document_id];
+        return next;
+      });
+      setError(`${p.filename}: the type was not saved. ${reason(err)}`);
+    } finally {
+      saving.current.delete(p.document_id);
+    }
   }
 
   // A document nobody could read is not fileable, and this screen must not
@@ -276,7 +321,24 @@ export function EngagementView({ id, onBack, onMemo }: {
   const pickedAll = [...refused, ...toFile]
     .filter((p) => selectable(p) && picked.has(p.document_id));
 
+  // The ticked rows that can be filed (21.1). The same ticks Remove selected
+  // reads - selection is selection - less anything that could not be read,
+  // which is never fileable.
+  const pickedToFile = pickedIn(toFile);
+
   useEffect(() => { api.documentTypes().then((r) => setTypes(r.types)); }, []);
+
+  // Priced by the server, for exactly the ticked rows, and re-priced after
+  // anything is charged. Asked only where something is ticked; the figure is
+  // used only while it is for the count on screen (see pickedQuote below), so
+  // nothing here has to be cleared.
+  useEffect(() => {
+    if (pickedToFile.length === 0) return;
+    api.walletQuote("document_filed", pickedToFile.length)
+      .then(setPickQuote).catch(() => setPickQuote(null));
+  }, [pickedToFile.length, docs.length, memos.length]);
+  const pickedQuote = pickedToFile.length > 0
+    && pickQuote?.quantity === pickedToFile.length ? pickQuote : null;
 
   // Re-priced whenever the proposal changes and after anything is charged, so
   // the figure on screen is never one charge out of date.
@@ -612,10 +674,20 @@ export function EngagementView({ id, onBack, onMemo }: {
     }
   }
 
-  async function fileAll() {
-    const decisions: Decision[] = toFile.map((p) => ({
+  /** File these rows, and only these (21.1).
+   *
+   *  ROWS LEFT OUT STAY WAITING. The server files the decisions it is sent
+   *  and touches no other row, so what is not sent is simply still here
+   *  tomorrow - nothing is set aside or rejected by not being ticked.
+   *
+   *  THE TYPE IS THE ONE ON SCREEN. "Not classified" goes as null and the
+   *  server refuses it by name before the charge; it used to be swapped for
+   *  the proposal by a `??`, so a person who had chosen "Not classified"
+   *  filed the proposal without being told. */
+  async function fileRows(rows: Pending[]) {
+    const decisions: Decision[] = rows.map((p) => ({
       document_id: p.document_id,
-      document_type: choices[p.document_id]?.type ?? p.proposed_type,
+      document_type: (choices[p.document_id] ?? seeded(p)).type,
       include: true,
     }));
     setBusy("Filing");
@@ -625,7 +697,19 @@ export function EngagementView({ id, onBack, onMemo }: {
       // One key for one click. A retry of this click is refused as a repeat;
       // filing again tomorrow is a different act and gets its own.
       await api.file(id, decisions, chargeKey());
-      setChoices({});
+      // What was filed leaves the list, with its tick and its choice. What
+      // was not keeps both.
+      const gone = new Set(rows.map((p) => p.document_id));
+      setChoices((prev) => {
+        const next = { ...prev };
+        gone.forEach((d) => { delete next[d]; });
+        return next;
+      });
+      setPicked((prev) => {
+        const next = new Set(prev);
+        gone.forEach((d) => next.delete(d));
+        return next;
+      });
     } catch (err) {
       setError(charged(err));
     } finally {
@@ -633,6 +717,23 @@ export function EngagementView({ id, onBack, onMemo }: {
       refresh();
     }
   }
+
+  const fileAll = () => fileRows(toFile);
+
+  /** Where the balance covers part of the batch: tick the first N, in upload
+   *  order, and file those (21.1). The price is on the button that does it,
+   *  as it is on File, and the rest wait. */
+  const firstAffordable = fileQuote && !fileQuote.affordable
+    ? toFile.filter(selectable).slice(0, fileQuote.affordable_count) : [];
+  function fileFirstAffordable() {
+    if (firstAffordable.length === 0) return;
+    setPicked(new Set(firstAffordable.map((p) => p.document_id)));
+    fileRows(firstAffordable);
+  }
+
+  /** The top-up link from here, carrying the shortfall, what it is for and
+   *  the way back (21.2). */
+  const back = `/engagements/${encodeURIComponent(id)}`;
 
   /** A refusal for want of money, said as a sentence rather than as a status.
    *
@@ -787,8 +888,7 @@ export function EngagementView({ id, onBack, onMemo }: {
    *
    *  Everything here narrows or orders what is SHOWN. The ticks live in
    *  `picked` and File sends `toFile`, and neither reads this. */
-  const typeOf = (p: Pending) =>
-    (choices[p.document_id] ?? { type: p.proposed_type }).type;
+  const typeOf = (p: Pending) => (choices[p.document_id] ?? seeded(p)).type;
   const typeLabel = (key: string | null) => key
     ? (types.find((t) => t.key === key)?.label ?? key) : "Not classified";
   // Unclassified, or proposed with low confidence: the rows worth a second
@@ -1008,14 +1108,31 @@ export function EngagementView({ id, onBack, onMemo }: {
           only move is to remove them and upload something readable. Said
           before the fileable ones so it is not lost under a list of twenty. */}
       {/* What is ticked, across both blocks above the filed table, and the
-          one control that acts on it (8.1). Shown only once something is
-          ticked: an empty toolbar on a screen with nothing selected is a
-          control looking for a purpose. */}
+          two controls that act on it (8.1, 21.1). One selection, two acts:
+          Remove asks first because it cannot be undone; File selected states
+          its price on the button, as File does, and files only the ticked
+          rows that can be filed. Nothing ticked is nothing to press. */}
       {(refused.length > 0 || toFile.length > 0) && (
         <div className="filters">
           <button className="secondary" disabled={!!busy || pickedAll.length === 0}
                   onClick={() => setRemoving(true)}>
             Remove selected{pickedAll.length ? ` · ${pickedAll.length}` : ""}
+          </button>
+          {/* HELD UNTIL PRICED. The quote is the server's, for exactly the
+              ticked count; a button that spends must not show a figure it
+              has not been told. Rows that could not be read are ticked for
+              removal only and are never sent. */}
+          <button disabled={!!busy || !subject || pickedToFile.length === 0
+                            || !pickedQuote || !pickedQuote.affordable}
+                  onClick={() => fileRows(pickedToFile)}
+                  title={!subject ? "Name the subject of this engagement first."
+                    : pickedQuote && !pickedQuote.affordable
+                      ? `${money(pickedQuote.total_cents)} needed and `
+                        + `${money(pickedQuote.available_cents)} available.`
+                      : "File the ticked documents. The rest stay here."}>
+            File selected
+            {pickedToFile.length ? ` · ${pickedToFile.length}` : ""}
+            {pickedQuote ? ` · ${money(pickedQuote.total_cents)}` : ""}
           </button>
           {pickedAll.length > 0 && (
             <a className="small" onClick={() => setPicked(new Set())}>
@@ -1137,8 +1254,7 @@ export function EngagementView({ id, onBack, onMemo }: {
             </p>
           )}
           {shownToFile.map((p) => {
-            const choice = choices[p.document_id] ??
-              { type: p.proposed_type, include: true };
+            const choice = choices[p.document_id] ?? seeded(p);
             const chosen = types.find((t) => t.key === choice.type);
             return (
               <div className="review" key={p.document_id}>
@@ -1191,10 +1307,7 @@ export function EngagementView({ id, onBack, onMemo }: {
                 <div className="review-body">
                   <select
                     value={choice.type ?? ""}
-                    onChange={(e) => setChoices({
-                      ...choices,
-                      [p.document_id]: { ...choice, type: e.target.value || null },
-                    })}
+                    onChange={(e) => chooseType(p, e.target.value || null)}
                   >
                     <option value="">Not classified</option>
                     {Object.entries(byCategory).map(([category, list]) => (
@@ -1278,15 +1391,35 @@ export function EngagementView({ id, onBack, onMemo }: {
               holding a proposal they cannot file. It is a control now, as the
               generate drawer's already was (11.1), and it lands on Balance
               rather than on whichever tab Account happens to open. */}
+          {/* The link carries the shortfall, what it is for and the way
+              back (21.2). "Set the rest aside" is gone: there was no control
+              that did it. What the notice offers now is File N now, which
+              exists, and the rest simply wait. */}
           {fileQuote && !fileQuote.affordable && (
-            <UpgradePrompt tone="warn" action="Top up" to={BALANCE}>
+            <UpgradePrompt tone="warn" action="Top up"
+                           to={balanceFor(
+                             fileQuote.total_cents - fileQuote.available_cents,
+                             `Filing ${fileQuote.quantity} documents in ${id}`,
+                             back)}>
               {fileQuote.affordable_count === 0
                 ? "There is not enough balance to file any of these. Nothing "
-                + "has been charged, and the proposal keeps until there is."
+                + "has been charged, and your choices keep until there is."
                 : `There is enough for ${fileQuote.affordable_count} of `
-                + `${fileQuote.quantity}. Set the rest aside, or top up and `
-                + "file them together."}
+                + `${fileQuote.quantity}. File ${fileQuote.affordable_count} `
+                + "now and the rest wait here with their types, or top up "
+                + "and file them together."}
             </UpgradePrompt>
+          )}
+          {firstAffordable.length > 0 && fileQuote && (
+            <div className="form-actions">
+              <button disabled={!!busy || !subject}
+                      onClick={fileFirstAffordable}
+                      title="Ticks the first of them, in upload order, and
+                             files those.">
+                File {firstAffordable.length} now &middot;{" "}
+                {money(firstAffordable.length * fileQuote.unit_cents)}
+              </button>
+            </div>
           )}
 
           {/* Held for want of a subject, and it says so rather than going
@@ -1547,7 +1680,10 @@ export function EngagementView({ id, onBack, onMemo }: {
           button beneath is disabled for want of money, so the only thing to
           do here is the one thing this now offers. */}
       {memoQuote && !memoQuote.affordable && activeCount > 0 && (
-        <UpgradePrompt tone="warn" action="Top up" to={BALANCE}>
+        <UpgradePrompt tone="warn" action="Top up"
+                       to={balanceFor(
+                         memoQuote.total_cents - memoQuote.available_cents,
+                         `Generating a memorandum from ${id}`, back)}>
           A memorandum costs {money(memoQuote.total_cents)} and{" "}
           {money(memoQuote.available_cents)} is available. Nothing has been
           charged.
@@ -1710,7 +1846,9 @@ export function EngagementView({ id, onBack, onMemo }: {
                   // control on the screen that says "Top up" landed a person
                   // on the plan table instead of the balance. The tab is in
                   // the address now (11.1).
-                  <button onClick={() => navigate(BALANCE)}>
+                  <button onClick={() => navigate(balanceFor(
+                    memoQuote.total_cents - memoQuote.available_cents,
+                    `Generating a memorandum from ${id}`, back))}>
                     Top up
                   </button>
                 ) : (

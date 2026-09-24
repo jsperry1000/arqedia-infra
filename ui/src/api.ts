@@ -293,6 +293,11 @@ export type Pending = {
    *  directory picker. Absent means "not a directory upload", not "the
    *  root". */
   source_folder: string | null;
+  /** The type a person chose while it waits (21.1, migration 034), saved as
+   *  it was chosen so it outlives the screen. Null is nobody has chosen - show
+   *  proposed_type. "" is a choice of "Not classified". On the document, so a
+   *  colleague opening the same batch sees the same choice. */
+  chosen_type: string | null;
 };
 
 export type Doc = {
@@ -992,6 +997,16 @@ export const api = {
   // filing has started.
   removeDocument: (documentId: number) =>
     call(`/documents/${documentId}`, { method: "DELETE" }),
+
+  /** Save the type chosen for a document waiting to be filed (21.1). A key,
+   *  or "" for "Not classified". Refused once it is no longer waiting, and
+   *  for a key that is not one of the workspace's types. */
+  setDocumentType: (documentId: number, type: string):
+    Promise<{ document_id: number; chosen_type: string }> =>
+    call(`/documents/${documentId}/type`, {
+      method: "PUT",
+      body: JSON.stringify({ type }),
+    }),
 
   documentValues: (documentId: number): Promise<DocumentDetail> =>
     call(`/documents/${documentId}/values`),

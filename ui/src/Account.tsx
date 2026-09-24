@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { updatePassword } from "aws-amplify/auth";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useBackAction, Working } from "./shell";
 import { ENTERPRISE_COLUMN, EnterpriseLink, UpgradePrompt } from "./upgrade";
 import { api, chargeKey, type Wallet, type LedgerEntry,
@@ -569,12 +569,36 @@ function Balance() {
    *  case, so this tab is already downstream of it. */
   const [topup, setTopup] = useState<number | null>(null);
 
+  /** WHY SOMEBODY ARRIVED, where a screen said (21.2). The link from a
+   *  refused filing or generation carries the shortfall, what it was for and
+   *  where to go back to.
+   *
+   *  A STARTING POINT, NEVER A CHARGE. `need` presets the increments and is
+   *  stated; the amount charged is still increments times the increment the
+   *  server reports, and the confirmation shows that figure before the card
+   *  is touched. So nothing written into the address can change a charge.
+   *
+   *  `back` is followed only where it is a path inside this application. */
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const needCents = Math.max(0, parseInt(params.get("need") ?? "", 10) || 0);
+  const needFor = (params.get("for") ?? "").slice(0, 160);
+  const asked = params.get("back") ?? "";
+  const backTo = asked.startsWith("/") && !asked.startsWith("//") ? asked : "";
+
   useEffect(() => {
     api.wallet().then(setWallet).catch((e) => setError(String(e.message ?? e)));
     api.walletLedger(50).then((r) => setEntries(r.ledger)).catch(() => setEntries([]));
-    api.subscription().then((v) => setTopup(v.topup_increment_cents))
-      .catch(() => setTopup(null));
-  }, []);
+    api.subscription().then((v) => {
+      setTopup(v.topup_increment_cents);
+      // Enough increments to cover what was short, once the increment is
+      // known. Still just the box's starting value: it can be changed.
+      if (needCents > 0 && v.topup_increment_cents > 0) {
+        setIncrements(Math.min(50, Math.max(1,
+          Math.ceil(needCents / v.topup_increment_cents))));
+      }
+    }).catch(() => setTopup(null));
+  }, [needCents]);
 
   /**
    * Buy credit. The charge goes to the card Paddle already holds.
@@ -657,6 +681,28 @@ function Balance() {
         </div>
       </div>
 
+      {/* What sent them here, and the way back (21.2). The same
+          .revision-note the running-low line uses: no new CSS. */}
+      {needCents > 0 && (
+        <p className="revision-note">
+          <strong>
+            {needFor ? `${needFor} is short by` : "Short by"}{" "}
+            {money(needCents)}.
+          </strong>{" "}
+          Nothing has been charged.
+          {topup !== null && ` ${increments} × ${money(topup)} `
+            + (increments * topup >= needCents
+              ? "covers it."
+              : `leaves ${money(needCents - increments * topup)} still short.`)}
+          {backTo && (
+            <>
+              {" "}
+              <a onClick={() => navigate(backTo)}>Back to where you were</a>
+            </>
+          )}
+        </p>
+      )}
+
       {low && (
         <p className="revision-note">
           <strong>Running low.</strong> {wallet.available} left
@@ -725,6 +771,15 @@ function Balance() {
                 not instant &mdash; nothing here grants money, the webhook
                 does. Purchased credit expires 30 days after purchase.
               </p>
+
+              {needCents > 0 && (
+                <p className="muted small">
+                  {increments * topup >= needCents
+                    ? `That covers the ${money(needCents)} needed.`
+                    : `That leaves ${money(needCents - increments * topup)} `
+                      + `of the ${money(needCents)} needed still short.`}
+                </p>
+              )}
 
               {memo && (
                 <p className="muted small">

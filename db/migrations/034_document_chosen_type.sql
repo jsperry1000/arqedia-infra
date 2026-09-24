@@ -1,0 +1,75 @@
+-- 034_document_chosen_type.sql
+--
+-- The type a person has chosen for a document waiting to be filed (21.1).
+-- PROPOSED, and not applied.
+--
+-- WHY. Categorising a large upload was lost work. The choices lived in the
+-- browser's memory until File was pressed, so leaving the screen to top up
+-- threw every one away and the list came back showing the model's proposals.
+-- On dev a batch of 57 took fifteen to twenty minutes to categorise.
+--
+-- THE CHOICE BELONGS TO THE DOCUMENT, NOT TO THE PERSON (decision of 24
+-- September 2026). Two colleagues categorising one batch must see the same
+-- choices, so this is a column on the row rather than a per-person working
+-- copy in S3 of the kind a memo's unsaved edits use.
+--
+-- NEVER OVERWRITES THE PROPOSAL. document_type holds what the classifier
+-- proposed and is read back as proposed_type; this column sits beside it.
+-- Filing still writes the confirmed type into document_type, as it always
+-- has - that is unchanged by this migration.
+--
+-- THREE STATES, AND THE DIFFERENCE MATTERS:
+--
+--   NULL   nobody has chosen. The screen shows the proposal.
+--   ''     somebody chose "Not classified" over the proposal. Kept, so the
+--          choice survives leaving the screen like any other; a document in
+--          this state cannot be filed until it is given a type, which
+--          file_documents already refuses before the charge.
+--   'key'  a document type key from the tenant's configuration.
+--
+-- 128, MATCHING document.document_type, which is what a chosen type becomes
+-- at filing. Read before writing this, not assumed:
+--
+--   SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
+--     FROM information_schema.COLUMNS
+--    WHERE TABLE_SCHEMA = 'arqedia' AND TABLE_NAME = 'document'
+--      AND COLUMN_NAME = 'document_type'
+--
+--   {"COLUMN_NAME":"document_type","COLUMN_TYPE":"varchar(128)","IS_NULLABLE":"YES"}
+--
+-- 033 IS APPLIED:
+--
+--   SELECT filename FROM schema_migration ORDER BY filename DESC LIMIT 1
+--
+--   {"filename":"033_plan_limits.sql"}
+--
+-- ADDITIVE AND NULLABLE. One column on one table. Nothing is dropped, nothing
+-- already recorded is altered, and no row is written. Not indexed: it is read
+-- with the row it sits on and never searched by.
+
+ALTER TABLE document
+  ADD COLUMN chosen_type VARCHAR(128) NULL AFTER document_type;
+
+-- Verification
+--
+--   SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
+--     FROM information_schema.COLUMNS
+--    WHERE TABLE_SCHEMA = 'arqedia' AND TABLE_NAME = 'document'
+--      AND COLUMN_NAME = 'chosen_type'
+--
+-- Expect one row: chosen_type | varchar(128) | YES.
+--
+--   SELECT COUNT(*) FROM document WHERE chosen_type IS NOT NULL
+--
+-- Expect 0. This migration writes no value into it.
+--
+--   SELECT filename FROM schema_migration
+--    WHERE filename = '034_document_chosen_type.sql'
+--
+-- Expect one row.
+--
+--
+-- DEPLOY ORDER. THIS MIGRATION FIRST, THE CODE SECOND, AND IT IS NOT
+-- OPTIONAL. list_pending and file_documents in lambda/api/app.py select this
+-- column. Applying the code against a database without it fails every pending
+-- read and every filing, for every tenant.
