@@ -11,7 +11,7 @@
 | Revised | 20 September 2026 — one numbering scheme: groups and items only; admin page is Group 16 |
 | Revised | 22 September 2026 — Groups 13, 14, 16 and most of 18 closed; Group 18 added with the walk notes and every decision taken on 21 and 22 September |
 
-**Numbering.** Groups are numbered 1–20. Items are numbered within their group (2.3 is Group 2, item 3). Each group has one prompt for Code, named by its group. Nothing else is numbered.
+**Numbering.** Groups are numbered 1–21. Items are numbered within their group (2.3 is Group 2, item 3). Each group has one prompt for Code, named by its group. Nothing else is numbered.
 
 **Next up:** 19.2 — nothing warns a tenant that the trial is ending, and
 nothing announces that it has ended. Today the only place the countdown
@@ -340,6 +340,19 @@ refunded: dev.
 | 20.3 | The charge and the composition are not linked: no idempotency key and no ledger entry id reach composition, and the memo table holds neither. Carry the ledger entry id through and store it on the memo, so a charge can be traced to its result |
 | 20.4 | A transient model failure is not retried inside the run. Retry on ServiceUnavailableException before giving up |
 | 20.5 | Nothing tells the person. The API answers "started" and the memo simply never appears. The screen must show a failed generation |
+
+## Group 21 — Filing at scale, and what you get out
+Raised 24 September 2026 on the walk.
+
+| # | Item |
+|---|---|
+| 21.1 | Categorising a large upload is lost work. Reach the end without enough balance and you must leave to top up; coming back reverts everything. No way to file part of the batch now and the rest later, and no way to leave and return to where you were |
+| 21.2 | The top-up screen does not say how much is needed for the thing that sent you there |
+| 21.3 | No way to search or sort uploaded files while categorising them. A large upload becomes unworkable |
+| 21.4 | The document-type groups shut themselves. Open each one individually, and opening another must not close the first |
+| 21.5 | A tenant's templates do not show which ARQEDIA template revision they were taken from, so nobody can tell whether a newer one exists |
+| 21.6 | Printing a PDF should offer a diagonal watermark: Draft — Confidential, or Confidential |
+| 21.7 | Offer a DOCX download as well as PDF |
 
 ## Rolled into existing backlog
 
