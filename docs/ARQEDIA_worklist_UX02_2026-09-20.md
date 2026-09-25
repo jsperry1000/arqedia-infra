@@ -356,6 +356,7 @@ Raised 24 September 2026 on the walk.
 | 21.8 | A memo downloaded by a share recipient carries their email address and the time, burned in, whatever the tenant chose above. That is the share spec's own rule (§5) and it is not a choice; it belongs with the viewer work in 12.6, which is unbuilt |
 | 21.9 | Raised 24 September 2026: a screen does not call out what must be done first. Filing is blocked until the engagement has a subject, but nothing puts that in front of the person before they categorise a batch. Every screen with a precondition should say so, first and plainly, so the work is not done twice |
 | 21.10 | Raised 24 September 2026 on the walk: after filing, six rows sat saying they were filing. They never progressed, stayed on screen, and could not be clicked. Find out what they were waiting on and what left them there: whether the filing failed after the charge, whether the poll stopped, or whether the rows were left in a state the screen has no handling for |
+| 21.11 | Found 24 September 2026: a filed document with no extracted_at and no extraction_error shows "extracting…" for ever, and the engagement's banner counts it. 47 documents across 9 engagements are in that state on dev; 13 in COCOAEMPIRE were extracted on 28 August, had no type so no schema, produced nothing, and were left NULL by 007's backfill. The screen has no state for "extracted and found nothing", and no end to the wait. Give it one, and stop the banner counting rows nothing will ever move |
 
 ## Rolled into existing backlog
 
