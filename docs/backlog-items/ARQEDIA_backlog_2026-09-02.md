@@ -139,6 +139,7 @@ and a human-readable label on a revision. Both are additive columns.
 | | |
 |---|---|
 | Status | Not fixed |
+| Status | 28 September 2026: built. `05ce073` (#238) and `0eac323` (#239, which adds `docs/ARQEDIA_CFG02_code_brief.md`). Configure shows a tick list of context sections on a composed section and hides its field bindings (rows untouched); `editor.save_section` writes `context_sections` only when the body carries it; publish refuses a composed section reading nothing, or reading a composed section that sorts after it |
 | Priority | Low, but it misleads |
 | Type | Front end, or validation |
 
@@ -195,6 +196,7 @@ five on screen.
 | | |
 |---|---|
 | Status | Design only |
+| Status | 28 September 2026: built. `0cb620d` (#142). `registry.fork_template` (`lambda/shared/registry.py:898`) adds one memorandum on offer to an existing tenant's draft, additively, bringing any fact it binds that the tenant lacks from the base and reporting what it added; `registry.template_packs` (`:1177`) lists what is on offer. Routes `GET /config/templates/available` and `POST /config/templates/fork`, both behind `_require_admin` (`lambda/api/app.py`). What is on offer is a mark in `pack_offer`, per `docs/specs/revision_selection_decisions_2026-09-17.md` §2 item 7 |
 | Priority | Not now. Recorded so the constraint is not lost |
 | Type | Registry |
 

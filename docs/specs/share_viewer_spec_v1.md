@@ -144,6 +144,13 @@ The watermark is what makes an onward-distributed copy attributable. It is the
 honest substitute for control we do not have, and the product should not imply
 more than that.
 
+> **Noted 28 September 2026.** This document has no `## 5.` heading: the
+> sections run §4 then §6. Every citation of §5 — here in §0, §3, §4 and §9, and in
+> `docs/ARQEDIA_worklist_UX02_2026-09-20.md` 12.4 and 21.8 — means the text from
+> "Settled — viewers read in the app and can download a watermarked copy" to
+> this note, which sits under §4's heading. No heading is added, so no
+> section number already cited elsewhere moves.
+
 ---
 
 ## 6. Allowance, expiry, revocation, audit
@@ -286,3 +293,10 @@ expiry as a ceiling (§6); marketing — permitted once registered, subject to t
 opt-in control (§7); cached viewer delivery (§4).
 
 Items 1 and 3 are build-phase. Item 2 should start before launch, not at it.
+
+> **Corrected 28 September 2026.** Item 3 is picked: the product sends mail
+> through **Amazon SES** (`lambda/api/mail.py`, `lambda/signup/app.py`; UX02
+> 10.4–10.5). Identity is **Amazon Cognito** (`auth.tf`); payments are
+> **Paddle**. None of this component is built: sharing and the viewer are
+> mocked (`CLAUDE.md`, "What is mocked"), and no migration creates
+> `viewer_account`, `share_grant` or `share_access_log`.

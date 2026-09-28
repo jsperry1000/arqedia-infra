@@ -7,6 +7,7 @@
 | Status | Specified. Nothing built |
 | Depends on | TPL-02 steps 1 to 3, merged |
 | Raised | 16 September 2026 |
+| Revised | 28 September 2026 — moved from `docs/docs-ARQEDIA_spec_TPL04_authoring_templates.md` to `docs/specs/` (a599d23), content unchanged. There is no `tools/` directory and never has been in any commit; `revision_selection_decisions_2026-09-17.md` §1 says it is not created. Superseded in part, as the note below says: sequence step 1 (`tools/export_template.py`) and step 2 (highest revision per `pack_key`) are replaced by the on-offer mark, built as `pack_offer` and `PUT /config/offer` (#156, #163). Steps 3 (author the missing memoranda) and 4 (the site's list) and open items 1 and 3 are not answered by that record |
 
 > **Superseded in part, 17 September 2026.** Authoring happens directly in
 > tenant 0, and the export command is not built. Open item 2 below is

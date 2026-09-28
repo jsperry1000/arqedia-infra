@@ -8,6 +8,7 @@
 | Priority | Before the first real tenant. Nothing in the UX branches touches it |
 | Type | Terraform, CI, migrations, front-end config |
 | Raised | 13 September 2026 |
+| Revised | 28 September 2026 — a copy of this item under `docs/HANDOFF/` was an older subset of this file and was removed in `a599d23` ("remove HANDOFF duplicates of backlog items"); this is the copy that stands. Cross-reference to BLD-01 added under the 16 September note |
 
 ---
 
@@ -93,3 +94,9 @@ already have it.
 `lambda/shared` is not an `archive_file`: it reaches the Lambdas through the
 `docprocessing` layer built by `build-layer.ps1`. Whether that script zips
 `__pycache__` has not been read.
+
+**Added 28 September 2026.** This defect is BLD-01
+(`ARQEDIA_backlog_BLD01_pycache_in_three_lambda_zips.md`), raised 19
+September, which carries the fix. There are twelve `archive_file` blocks, not
+the ten named here: `reconcile.tf` has `excludes`, and `admin_api.tf`
+(`lambda/admin`) does not. Not fixed on 28 September.

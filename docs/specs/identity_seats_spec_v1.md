@@ -91,6 +91,16 @@ reintroduce exactly the global personal-data store this design avoids.
   to third-party identity material and the extension is what they received in
   exchange. This is friction on the conversion funnel and it is the right place
   to accept it.
+
+> **Corrected 28 September 2026.** The verified viewer's term is **2 weeks**,
+> not 30 days: decided 20 September (`docs/ARQEDIA_worklist_UX02_2026-09-20.md`,
+> "Decisions taken" and 12.1) and recorded in `share_viewer_spec_v1.md`'s
+> amendment of 21 September (#198). The registered term stays six months.
+>
+> **Also noted, 28 September 2026.** "MFA is required on every seat" is not
+> what the customer pool does: `auth.tf` sets `mfa_configuration = "OPTIONAL"`.
+> The staff pool in `admin_auth.tf` sets `"ON"`. Whether that is a gap or a
+> decision is not recorded here.
 - **Sessions are token-based** with no server-side session store, consistent
   with holding no persistent connections (*Isolation* §3).
 - **Single sign-on is an Enterprise feature**, carried on the plan row like
@@ -145,6 +155,17 @@ nothing to follow. Improvised account recovery is where the breach comes from.
 Signup should also actively push for a second admin, since the cheapest fix is
 the customer never needing this.
 
+> **Corrected 28 September 2026.** Signup no longer asks for a second
+> administrator. The step wrote `pending_signup.second_admin` and nothing read
+> it, so no invitation was ever sent; it was removed on 22 September and
+> replaced by a prompt on Get started pointing at Account > Seats
+> (`docs/ARQEDIA_worklist_UX02_2026-09-20.md` 18.8 and 18.15; #226;
+> `ui/src/SignUp.tsx` header comment). The push for a second administrator now
+> lives there, not in signup.
+>
+> **Also noted.** `admin_recovery_policy_draft.md` is not in this repository;
+> see the correction in `build_index.md`.
+
 ---
 
 ## 6. The viewer relationship
@@ -185,3 +206,9 @@ has to come out of the system rather than out of someone's memory.
    because friction there costs conversions.
 
 None of these block the design.
+
+> **Corrected 28 September 2026.** Item 1 is picked: **Amazon Cognito**
+> (`aws_cognito_user_pool` in `auth.tf` for customers, `admin_auth.tf` for
+> ARQEDIA staff). Email is **Amazon SES** (`lambda/api/mail.py`,
+> `lambda/signup/app.py`). Whether the per-region pools of §3 exist is not
+> verified by this note.

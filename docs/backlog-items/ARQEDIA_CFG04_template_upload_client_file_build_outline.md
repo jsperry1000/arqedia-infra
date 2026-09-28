@@ -3,6 +3,15 @@
 Supersedes the uncorrected outline. Phase 0 is done: `lambda/shared/config.py`,
 `lambda/shared/editor.py` and `lambda/api/app.py` read in full.
 
+**Added 28 September 2026.** The brief is
+`ARQEDIA_backlog_CFG04_config_from_own_file.md`: what the feature is and the
+decisions behind it. This outline is how it is built. The two are
+complementary. The reader and the screen have since been built: `e573006`
+(#64), `e81f9d2` (#65), `fc0c94a` (#66); `lambda/proposer/app.py` and
+`ui/src/Propose.tsx`, which accepts `.pdf` and `.docx`. Which phases are
+complete as written here, and whether each **Verify** step was run, is not
+recorded and was not verified.
+
 ---
 
 ## What phase 0 found
@@ -151,4 +160,8 @@ $0.25 a document.
 
 - **b.** Whether we guess which sections the model composes. Needs CFG-02's
   screen, not its API.
+
+  **Corrected 28 September 2026.** CFG-02's screen is built: `05ce073`
+  (#238), `0eac323` (#239). b no longer waits on it; the decision itself is
+  still open. See the brief, §7 b.
 - **c.** What formats he can drop. The sample is a PDF with selectable text.

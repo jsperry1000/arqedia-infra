@@ -5,6 +5,7 @@
 | Written | 22 September 2026 |
 | Decision | Prices and limits are changed in one committed file, reviewed and deployed. Not from the staff admin page (18.13, option A) |
 | Status | **Describes the process once 18.5 / 11.3 is built.** `config/plans.json`, the build check against Paddle and the new limit columns do not exist yet. Until they do, this document is the target, not the practice |
+| Status | 28 September 2026: 18.5 / 11.3 is built (#228, #229, #230). `config/plans.json` exists and holds the plans, Enterprise and `trial_days`. Migration `033_plan_limits.sql` adds `field_sets_per_type`, `sections_per_template` and `daily_classification_cents` to `plan`; #230 records the dev rows carrying them. The Paddle check is `tests/test_plans_source.py`. Three things this document states are not so; see the corrections below |
 
 ---
 
@@ -20,6 +21,12 @@
 The staff admin page **shows** plans and limits. It cannot change them: its database user reads six tables and writes nothing (16.9).
 
 The build fails if a plan's monthly price in `config/plans.json` disagrees with its Paddle price. That check is what stops the page, the app and the bill drifting apart.
+
+**Corrected 28 September 2026.** The check is a test, `tests/test_plans_source.py`, not a build step. No workflow in `.github/workflows/` (deploy-admin, deploy-frontend, deploy-site) runs the tests, so it fails only when somebody runs the suite (UX02 17.9).
+
+**Corrected 28 September 2026.** The three new limits are recorded, not enforced. `033_plan_limits.sql` says so ("NOT ENFORCED BY THIS MIGRATION OR BY ANY CODE"), and outside `lambda/api/billing.py`, which reads them for display, no Lambda source names them. Step B.6's "the app enforces it" is not yet true (UX02 18.13 (3)).
+
+**Corrected 28 September 2026.** There is no plans migration that reads the file. `033_plan_limits.sql` upserts the two plan rows with their values written into the SQL, and nothing under `db/` reads `config/plans.json`. Steps A.8 and B.5 therefore mean writing a new migration with the new values, as C.2 does for per-use prices.
 
 ---
 

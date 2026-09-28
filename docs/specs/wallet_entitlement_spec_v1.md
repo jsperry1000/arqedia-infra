@@ -107,6 +107,12 @@ share_grant           grant_id PK, tenant_id FK, memo_id, viewer_account_id,
                       created_at, expires_at, revoked_at, first_opened_at
 ```
 
+> **Corrected 28 September 2026.** There is no `price_book` table. Prices are
+> held in `meter_price` (`db/migrations/015_wallet.sql`), with
+> `tenant_id IS NULL` as the standard price; no migration or Lambda source
+> names `price_book`. The schema above is the design as written; the built
+> tables are in `db/migrations/`.
+
 **MySQL notes.** All money is `BIGINT` cents — never a float, never `DECIMAL`
 arithmetic in application code. Enum-like columns (`kind`, `status`,
 `event_type`) are `VARCHAR` with a lookup table rather than MySQL `ENUM`, so
@@ -142,6 +148,18 @@ balance.
 - **Ledger is append-only and monotonic.** No negative entries, no credits, no
   reversals — unreadable material is blocked before filing (§5.2), so there is
   nothing to refund.
+
+> **Corrected 28 September 2026.** The no-reversals rule is modified.
+> `unreadable_documents_decisions_2026-09-18.md` items 14–17 amend it, because
+> a text-free scan is now accepted, charged at filing and sent to OCR.
+> `wallet.refund()` in `lambda/shared/wallet.py` (#168) writes a compensating
+> ledger row (negative `amount_cents`, idempotency key `refund:<document_id>`)
+> and a new `refund` bucket with thirty days of its own; nothing is edited, so
+> the ledger stays append-only. It is called when OCR or filing fails
+> (`_fail_and_refund` in `lambda/api/app.py`, and `lambda/collector/app.py`).
+> Not refunded today: a failed memo generation (UX02 20.1) and a failed
+> extraction (`docs/backlog-items/ARQEDIA_backlog_EXT02_failed_extraction_rebate.md`,
+> "Parked. Decision approved, not built").
 
 ---
 
@@ -203,6 +221,11 @@ floor itself is a tuning number to be set against test files during build.
 No processor is named. The wallet depends only on this interface; a concrete
 adapter is written when a processor is chosen, and verified against that
 processor's live documentation at that time.
+
+> **Corrected 28 September 2026.** The processor is **Paddle**
+> (`paddle_subscription_decisions_2026-09-16.md`; `lambda/api/paddle_api.py`,
+> `lambda/api/billing.py`, `paddle.tf`, sandbox catalogue in
+> `config/paddle/sandbox.json`). Open item 4 below is closed by it.
 
 ```
 PaymentProvider

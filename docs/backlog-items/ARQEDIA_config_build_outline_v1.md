@@ -5,6 +5,10 @@ Written 30 August 2026. Companion to `config_registry_spec_v1.md` and
 `config_editors_spec_v1.md`, which remain authoritative on rules; this document
 covers sequence, what a person does, and what happens behind it.
 
+**Corrected 28 September 2026.** Neither `config_registry_spec_v1.md` nor
+`config_editors_spec_v1.md` is in the repository: `git log --all` finds no file
+of either name on any branch. The rules they held cannot be checked here.
+
 ---
 
 ## 1. What changes
@@ -103,6 +107,15 @@ and orphans nothing. Deleting a field is a genuine break and is treated as one.
 present in revision 11 and absent from revision 12 is retired going forward;
 everything filed under 11 still resolves against 11. Non-destructive by
 construction.
+
+**Corrected 28 September 2026.** There is now a retired status, on a whole
+revision rather than on a document type. `config_revision.status` (a column
+since `008_config_registry.sql`) is set to `'retired'` by
+`db/migrations/021_pack_from_tenant_2.sql:61` (tenant 0 revision 2) and
+`022_retire_base_3.sql:24` (tenant 0 revision 3), so that `packs()` and
+`template_packs()`, which list `'published'` only, stop offering them. Nothing
+is deleted and the status can be set back. A document type is still retired by
+absence, as above.
 
 **Fork copies.** A starter pack lives in a reserved pack tenant. Forking deep-
 copies a pack revision as the new tenant's revision 1. Later edits to the pack

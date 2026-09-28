@@ -28,6 +28,22 @@ Canonical component numbering. Cross-references in every spec resolve here.
 
 **All ten written.** Components 1–9 are the service; component 10 is the application over it.
 
+> **Corrected 28 September 2026.** Seven of the files named above are not in
+> this repository, on disk or in any commit on any branch (`git log --all`):
+> `config_registry_spec_v1.md`, `config_editors_spec_v1.md`,
+> `pipeline_spec_v1.md`, `provider_abstraction_spec_v1.md`,
+> `isolation_terraform_spec_v1.md`, `frontend_onboarding_spec_v1.md` and
+> `admin_recovery_policy_draft.md`. All seven exist outside it, in
+> `C:\Terraform\terraform_package\docs\build-plans\ARQEDIA DD APP\`, the folder
+> `share_viewer_spec_v1.md` was copied from (#198). A citation of components
+> 2, 3, 4, 6, 7 or 10 from inside the repository resolves to nothing here.
+>
+> **Also noted, not resolved.** This index counts ten components; three specs
+> in `docs/specs/` call themselves "of 9" (`identity_seats_spec_v1.md`
+> "Component 9 of 9", `plans_starter_packs_spec_v1.md` "Component 8 of 9",
+> `share_viewer_spec_v1.md` "Component 5 of 9"). Which count is right is not
+> decided here.
+
 \---
 
 ## Settled economics
@@ -85,6 +101,16 @@ soonest expiry first.
 |Email delivery|5|
 |Identity provider — must support per-region pools|9|
 
+> **Corrected 28 September 2026.** Three of these are picked and in use.
+> Payments: **Paddle** — `lambda/api/paddle_api.py`, `paddle.tf`,
+> `config/paddle/sandbox.json`, decision record
+> `paddle_subscription_decisions_2026-09-16.md`. Email: **Amazon SES** —
+> `lambda/api/mail.py` and `lambda/signup/app.py`, and the user pools'
+> `email_sending_account = "DEVELOPER"` in `auth.tf`. Identity: **Amazon
+> Cognito** — `aws_cognito_user_pool` in `auth.tf` (customers) and
+> `admin_auth.tf` (staff). Whether per-region pools exist is not verified by
+> this note.
+
 **Build-phase measurements**
 
 |Item|Spec|
@@ -128,6 +154,11 @@ Allowances can never draw on real balance and vice versa.
 mailbox control as the single factor.
 * **React for customers, Retool for internal tooling.** Retool's per-external-user
 pricing inverts against a $25 plan at scale; it stays where it is strong.
+
+> **Corrected 28 September 2026.** For the staff admin page this is
+> superseded: `docs/ARQEDIA_worklist_UX02_2026-09-20.md`, decisions of 20
+> September and Group 16, builds it as a separate admin path in React, live at
+> admin.arqedia.com since 22 September (16.12).
 * **Identity is regional.** A global directory maps a hashed email to a region
 and holds no addresses; real identities live in per-region pools.
 * **Fields may repeat as a row.** Grouped fields carry a row index so a

@@ -34,6 +34,18 @@ The comment at `paddle.tf:133` already names the trap — "Running the tests
 writes bytecode here; it must not change the zip" — and it is guarded in three
 places out of eleven.
 
+**Corrected 28 September 2026.** Twelve, not eleven. `admin_api.tf:18`,
+`data "archive_file" "admin"` over `lambda/admin`, has no `excludes` either.
+Counted by `grep 'data "archive_file"' *.tf`: twelve blocks, three with
+`excludes = ["__pycache__"]` (`paddle.tf` twice, `reconcile.tf`), nine
+without. Still three out of twelve on 28 September; not fixed.
+
+The same defect is recorded twice elsewhere: ENV-01's note of 16 September
+(`ARQEDIA_backlog_ENV01_dev_and_prod.md`, the deployed `signup` zip carrying
+`__pycache__/app.cpython-314.pyc`), and DRIFT-01's third cause
+(`ARQEDIA_backlog_DRIFT01_lambda_hash_drift.md`, "A third cause, found and
+cleared: `__pycache__`"), which hands the durable fix to this item.
+
 ## Why it matters more than it looks
 
 - **A plan that lies is a plan nobody reads.** A change with no code

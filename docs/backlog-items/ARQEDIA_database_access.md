@@ -72,6 +72,12 @@ one list.
 | `extracted_value` | Every value, with `field_id`, `row_ordinal`, and the locator columns |
 | `memo`, `memo_source`, `claim`, `claim_evidence` | What was written and what it was written from |
 
+**Corrected 28 September 2026.** `config_revision.status` also takes
+`retired`: `db/migrations/021_pack_from_tenant_2.sql:61` and
+`022_retire_base_3.sql:24` set it on tenant 0 revisions 2 and 3, so they are
+no longer offered as packs. A query for "what is published" should say
+`status = 'published'` rather than `status <> 'draft'`.
+
 ---
 
 ## Queries that answer the usual questions

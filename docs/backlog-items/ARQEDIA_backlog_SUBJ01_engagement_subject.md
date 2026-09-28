@@ -9,6 +9,7 @@
 | Type | Schema, extraction, composition, API, front end, configuration |
 | Raised | 21 September 2026 |
 | Branch | `feature/subj-01-engagement-subject` |
+| Status | 28 September 2026: BUILT and merged to main in b5e1409 (#206), 21 September. Items 1–6 of §Work are in that commit: `db/migrations/031_engagement_subject.sql`; `set_subject` at `lambda/api/app.py:392`; extraction reads `engagement.subject_name` and refuses a document with none (`lambda/extraction/app.py:133-146`, `:486-488`); composition passes it to the draft and consolidation prompts (`lambda/composition/app.py:804-838`, `cleanup.subject_rule`); `ui/src/Review.tsx`. Not checked: whether 031 is applied to the database (its header still reads "PROPOSED, and not applied"), whether item 7's field descriptions were published, and the acceptance test. §Open stands |
 
 ---
 

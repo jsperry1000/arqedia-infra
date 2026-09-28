@@ -8,6 +8,7 @@
 | Supersedes | The "starter pack" model as forked by `registry.fork()` |
 | Raised | 15 September 2026 |
 | Blocks | Forking the packs chosen at signup |
+| Status | 28 September 2026: sequence steps 1–4 built and merged. 1: migration `017_base_and_template.sql`, #141. 2–3: `fork_base`, `fork_template`, `template_packs` in `lambda/shared/registry.py` and the two routes in `lambda/api/app.py`, #142. 4: Get started, #143; signup stops asking, #144. Step 5, the site copy, is not done: `site/src/main.ts` still declares `PACKS`. TPL-03 (open item 4) is open. The record of the build is `docs/ARQEDIA_TPL02_implementation_record.md`. What is on offer is now set by `docs/specs/revision_selection_decisions_2026-09-17.md` (`pack_offer`), which takes precedence |
 
 ---
 
@@ -91,6 +92,8 @@ things the person has never heard of and no way forward.
 ### Schema
 
 Proposed. Nothing here exists.
+
+**Corrected 28 September 2026.** Built by migration `017_base_and_template.sql` (#141). The kind used for the old revision 1 of tenant 0 is `legacy`, beside `base` and `template` (implementation record, step 1).
 
 ```
 config_revision   ... existing columns ...

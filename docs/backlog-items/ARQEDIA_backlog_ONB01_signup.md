@@ -9,6 +9,7 @@
 | Type | Cognito, API, edge, front end |
 | Raised | 14 September 2026 |
 | Depends on | Nothing. Everything it needs is additive |
+| Status | 28 September 2026: BUILT and merged. `lambda/signup/app.py`, its own function (854279c); tenant creation (726516e, #149); invite-only allowlist (1463117, #174); screens (53ecd0f, #186). No pack is chosen or forked at signup (356ff48, #144). See §Since this was written |
 
 ---
 
@@ -28,10 +29,64 @@ mock on every screen.
 
 ---
 
+### Since this was written — 28 September 2026
+
+**Corrected 28 September 2026.** "Nothing server-side exists" is no longer
+true. `POST /signup` runs in `lambda/signup/app.py` (854279c; 726516e, #149;
+1463117, #174; 53ecd0f, #186), and the status row above lists what landed.
+
+**Self-registration, item 1 below, was not done and conflicts with a settled
+decision.** CLAUDE.md, "One door": the pool stays admin-create-only and the
+signup function is the only holder of Cognito admin permissions.
+`allow_admin_create_user_only = true` still stands at `auth.tf:96`. The
+account is made by the signup function, not by the public `SignUp` API.
+
+**No pack at signup.** Item 2's "fork the chosen pack as revision 1" is not
+what the code does. `lambda/signup/app.py:582` records that `forked_pack` is
+no longer written (TPL-02); Get started asks which memorandum instead
+(356ff48, #144). `pack` is still accepted and stored on `pending_signup`.
+
+**Rules recorded until now only in `docs/HANDOFF/ARQEDIA_HANDOFF_2026-09-19.md`**,
+each checked against the code on 28 September:
+
+- **Invite-only, temporarily.** `db/migrations/027_signup_allow.sql` adds
+  `signup_allow`. `_checks()` refuses an address not in it with `not_invited`
+  (`lambda/signup/app.py:335`), first, before anything that reveals state, and
+  `verify()` checks again (`:556`), because a `pending_signup` row lives
+  fifteen minutes. It **fails shut**: an empty table refuses everyone, and an
+  unreachable database answers 500. **Nothing is granted by domain**: there is
+  no domain column. An allowlisted address is past one-trial-per-domain; the
+  disposable list and both rate limits still apply. The handoff calls it "a
+  temporary gate, not a product decision about who may buy".
+- **Free-mail domains are never claimed.** `FREE_MAIL`
+  (`lambda/signup/app.py:101`): gmail.com, googlemail.com, outlook.com,
+  hotmail.com, live.com, yahoo.com, icloud.com, me.com, aol.com, proton.me,
+  protonmail.com. The claim is skipped, not the signup; tenant, seat, trial and
+  credit are created as before. Deliberately short; to be extended when signup
+  opens to the public.
+- **A held domain is looked at before it is written** (`:636-660`, logs
+  `[claim-held]`). Not `INSERT IGNORE`, which would silently write a truncated
+  value. The new tenant then has no `home_domain`, so nobody on its Seats
+  screen is marked as outside the firm; the handoff accepts this deliberately.
+- **The 16 September `LAST_INSERT_ID` incident.** A signup created tenant 4
+  and lost its id: `SELECT LAST_INSERT_ID()` returned 0 through the Data API,
+  so the `gmail.com` claim and the Cognito user's `custom:tenant_id` were
+  written against tenant 0. Cleaned up by hand on 19 September, dev data: the
+  claim, the `+t1` user and tenant 4 deleted, after an inventory found tenant 4
+  held only its own row and no objects. The code now takes the id from the
+  insert's `generatedFields` and refuses an id not above zero before any other
+  row is written (`lambda/signup/app.py:507-513`, `:609-612`).
+
+---
+
 ### The flow, settled
 
 From `frontend_onboarding_spec_v1.md` §8, unchanged. Each step earns its place;
 none is there for completeness.
+
+**Corrected 28 September 2026.** `frontend_onboarding_spec_v1.md` is not in
+the repository: `git log --all` finds no file of that name on any branch.
+Step 5 (starter pack) no longer happens at signup; see §Since this was written.
 
 | | Step | Why it exists |
 |---|---|---|

@@ -290,6 +290,13 @@ worst. The input that most needs OCR is the only one that cannot reach it.
   bucket returns nothing; creating a new one hands back credit with a life the
   original did not have. Undecided.
 
+  **Corrected 28 September 2026.** Decided by item 15 above: a new bucket,
+  of kind `refund`, with its own thirty-day life. Built so: `wallet.refund()`
+  in `lambda/shared/wallet.py` ("A NEW BUCKET, NOT THE OLD ONE ... the money
+  comes back with thirty days of its own"), called from `_fail_and_refund` in
+  `lambda/api/app.py` and from `lambda/collector/app.py` (#168, "Ocr failure
+  refund").
+
 - **Whether `PDF_MIN_CHARS_PER_PAGE` survives item 2.** Under one ladder it
   stops being a floor and becomes a band boundary.
 

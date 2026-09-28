@@ -7,6 +7,7 @@
 | Specification | `docs/backlog-items/ARQEDIA_spec_TPL02_base_and_templates.md` |
 | Branches | `tpl-base-split` (merged, 3f72c93, #141), `tpl-fork` |
 | Written | 15 September 2026 |
+| Revised | 28 September 2026 — the specification is at `docs/specs/ARQEDIA_spec_TPL02_base_and_templates.md`; nothing exists at the path above. This file was `docs/docs-ARQEDIA_TPL02_implementation_record.md` until a599d23. Merged: step 1 #141, step 2 `tpl-fork` #142 (0cb620d), step 3 `tpl-chooser` #143 (ee7e217), step 4 `signup-no-pack` #144 (356ff48, 16 September) |
 
 What was found in the code, what was decided because of it, and what was
 verified. Kept because the findings cost real reading and would otherwise have
@@ -283,6 +284,8 @@ where an off-by-one lands.
 ### What was built
 
 - Five steps: details, organisation, region, second administrator, verify.
+
+**Corrected 28 September 2026.** Signup now has four steps. The second-administrator step was removed on 22 September (UX02 18.8 and 18.15, #226): it wrote `pending_signup.second_admin` and nothing read it. `ui/src/SignUp.tsx`'s `STEPS` and header comment record it; the column stays.
 - **The five hard-coded indices became two named constants**, so they cannot
   drift apart.
 - The summary drops the starter-pack row.
@@ -344,6 +347,8 @@ types.
 
 Steps 1 to 3 merged. Step 4 on `signup-no-pack`, b0203ef, pushed and not
 merged.
+
+**Corrected 28 September 2026.** Step 4 is merged: "Signup no pack" #144, 356ff48, 16 September. The two `CLAUDE.md` lines named under "Still open" are no longer in it (neither "Forking the chosen packs" nor `forked_pack` appears). TPL-03 and the stray `configure_screen.tsx` at the repository root remain, and `CLAUDE.md` still lists both as open.
 
 First run now works end to end: a tenant signing up, reaching Get started,
 ticking memoranda and pressing the button ends on a published revision holding

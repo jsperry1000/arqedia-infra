@@ -7,6 +7,14 @@ tenant. Steps marked **[not built]** describe something the product needs and
 the editor does not yet offer; they are proposed, not described. Steps marked
 **[unpriced]** name a charge whose amount is not recorded anywhere I have read.
 
+**Corrected 28 September 2026.** Steps 2 to 7 and 12 are administrator only.
+`_require_admin` guards every draft, editor, publish, fork and active-revision
+route in `lambda/api/app.py` (`POST /config/draft` onward); a Member is
+refused with "only an administrator may change the configuration". CLAUDE.md
+records this as the 17.7 correction to its "Two roles" decision. Neither
+**[not built]** mark in this guide still stands (Steps 6 and 12, below), and
+generating is priced (Step 9, below).
+
 ---
 
 ## Before you start
@@ -62,6 +70,11 @@ Nothing you do here affects anything until you publish. The live revision keeps
 running, and memoranda already written keep saying what they said.
 
 **Discard** throws the draft away and leaves the live revision alone.
+
+**Corrected 28 September 2026.** Only an administrator can open a draft:
+`POST /config/draft` calls `_require_admin` (`lambda/api/app.py`). A draft
+opens from the revision selected for use, not the newest published one
+(`docs/specs/revision_selection_decisions_2026-09-17.md` §2 item 9).
 
 ---
 
@@ -140,6 +153,11 @@ offers the fact list on such a section and accepts the ticks, and they do
 nothing. There is no control yet for naming the context sections. Until both
 are fixed, author your sections to render facts.
 
+**Corrected 28 September 2026.** Built, as CFG-02: `05ce073` (#238),
+`0eac323` (#239). A composed section now shows a tick list of the sections it
+reads and hides the fact list; publish refuses a composed section that reads
+nothing, or reads a composed section placed after it.
+
 ---
 
 ## Step 7 · Publish
@@ -149,6 +167,19 @@ revision number goes up.
 
 A published revision is never edited again. That is what lets a memorandum
 written in March reproduce exactly in September.
+
+**Corrected 28 September 2026.** Publishing is administrator only
+(`POST /config/publish` calls `_require_admin`). And "publish it and it
+becomes the live revision" is not what the decision record says:
+`docs/specs/revision_selection_decisions_2026-09-17.md` §2 items 1 and 2 read
+"Publishing makes a revision available, and nothing more" and "A separate tick
+selects which published revision is in use" — `tenant.active_revision`. The
+code does both: `registry.publish` still sets `tenant.active_revision` to the
+revision it has just written (`lambda/shared/registry.py`, after `_copy` in
+`publish`), and `PUT /config/active` (`registry.select_revision`) selects any
+published revision, refused while a draft is open. So, as built today,
+publishing also puts the new revision in use, and an administrator can then
+select an earlier one. Which of the two is intended is not settled here.
 
 ---
 
@@ -161,6 +192,17 @@ from it. The document is stamped with the revision that was live when you filed
 it.
 
 **A filing is charged at $0.25 per document.**
+
+**Corrected 28 September 2026.** What the data says: migration
+`db/migrations/015_wallet.sql` seeds the standard price (`meter_price`,
+`tenant_id IS NULL`) as `document_filed` 25 cents and `memo_generated` 100
+cents; no later migration adds or changes a `meter_price` row. The unit is a
+`document` row: the filing charge's quantity is the number of documents
+included in the click (`lambda/api/app.py`, `chargeable` in
+`file_documents`). Where one uploaded file is split into parts, each part is
+its own `document` row (`011_document_parts.sql`), so the charge is $0.25 per
+part, not per uploaded file. A tenant may carry a negotiated override row; the
+live table was not queried.
 
 ---
 
@@ -176,6 +218,13 @@ You can generate as often as you like as you refine the layout.
 
 **[unpriced]** Generating spends inference. The charge is not recorded in the
 material I have read.
+
+**Corrected 28 September 2026.** Priced. `meter_price` seeds `memo_generated`
+at 100 cents, $1.00 a generation, standard (`db/migrations/015_wallet.sql`),
+charged once per generation (`wallet.charge(..., "memo_generated", 1, ...)` in
+`lambda/api/app.py`). "The live revision" here is the revision selected for
+use, `tenant.active_revision`, which composition reads
+(`docs/specs/revision_selection_decisions_2026-09-17.md` §2 item 2).
 
 ---
 
@@ -242,6 +291,12 @@ you already hold, and it reaches every document you have filed.
 **[not built]** Taking a memorandum we ship later and importing it into a
 configuration you have already customised is designed and not built.
 
+**Corrected 28 September 2026.** Built, as TPL-02: `0cb620d` (#142).
+`registry.fork_template` adds a memorandum on offer to the tenant's draft,
+additively, brings back any fact it needs, and says what it added; routes
+`GET /config/templates/available` and `POST /config/templates/fork`,
+administrator only. It lands in the draft and reaches nothing until published.
+
 ---
 
 ## The short version
@@ -262,3 +317,6 @@ configuration you have already customised is designed and not built.
 - The charge for generating is unpriced here.
 - Steps 6 and 12 describe behaviour that is not built. They are written as the
   product should read, not as it reads today.
+- **Corrected 28 September 2026.** Steps 6 and 12 are built (#238/#239,
+  #142); generating is priced at $1.00 (Step 9); Step 7's account of
+  publishing differs from the revision-selection decision record (Step 7).

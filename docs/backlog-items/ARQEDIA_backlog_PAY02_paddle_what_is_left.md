@@ -40,6 +40,11 @@ Tax is confirmed added on top: $25.00 pre-tax, 6.6% tax, $26.65 paid.
 - **The pricing page.** Public marketing site, two tiers, Trial and Subscribe
   per plan, `?plan=&intent=` carried through signup. Copy still needs the $5
   flat top-up, the 14-day trial, and "plus tax" beside every price.
+  **Corrected 28 September 2026.** The pricing page now renders from
+  `config/plans.json` (d1204c0, #229): `site/plans-table.ts` reads
+  `trial_days` (14) and `topup_increment_cents` (500) from it and draws a
+  "Top-up increment" row. Grep of `site/plans-table.ts` and
+  `site/pricing/index.html` finds no "tax", so "plus tax" is still missing.
 - **Annual pricing.** $240 Base and $624 Small Business, monthly × 12 less 20%.
   Needs the prices created in Paddle, and a `plan` table migration holding
   `annual_price_cents` and the annual price id. Blocked on the question below.
@@ -80,3 +85,8 @@ report. Three events now carry it. That is OBS-03's argument, made concrete.
 A scanned PDF with no text layer is refused silently by the normalizer: no
 document row, no message, and the Review screen polls for ten minutes before
 giving up. Being handled separately.
+
+**Corrected 28 September 2026.** Handled: `db/migrations/025_document_refusal.sql`
+(0f79551, #166, 18 September) writes a refused document as a row in state
+`unreadable` with its reason, under `unreadable_documents_decisions_2026-09-18.md`
+item 1, and item 3 accepts a text-free scan and OCRs it at filing.

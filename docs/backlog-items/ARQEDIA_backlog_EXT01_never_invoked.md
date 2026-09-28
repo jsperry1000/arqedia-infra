@@ -8,6 +8,7 @@
 | Priority | Before the first paying tenant |
 | Type | Pipeline, filing |
 | Raised | 21 September 2026 |
+| See also | 28 September 2026: UX-02 item 21.11, "extracting for ever" (`docs/ARQEDIA_worklist_UX02_2026-09-20.md`, found 24 September): a filed document with no `extracted_at` and no `extraction_error` shows "extracting…" for ever and the engagement banner counts it; 47 documents across 9 engagements on dev. The screen half of the last paragraph below. Neither item closes the other: 21.11 gives the screen an end to the wait, this item finds why extraction was never invoked |
 
 ---
 

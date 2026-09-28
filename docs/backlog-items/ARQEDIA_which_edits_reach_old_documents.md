@@ -122,6 +122,16 @@ values written and no `extracted_at`, and the screen reports it as extracting
 for ever. `--stuck` finds exactly those. A document with no values at all is
 left alone, since it may simply have yielded nothing.
 
+**Flagged 28 September 2026, not resolved.** The delete is literal:
+`db/rerun_extraction.py:93` runs `DELETE FROM extracted_value WHERE tenant_id
+= %d AND document_id = %d` before re-firing extraction. That sits against two
+settled rules: "Read once, at filing, and never again" (CLAUDE.md, Reading and
+citation), and "Additive and non-destructive. Nothing already recorded is
+overwritten or discarded" (Rules of Engagement). It also removes the rows a
+memorandum already written may cite through `claim_evidence`; whether any
+such memorandum exists for a document it was run on is not checked. Which
+rule gives way, or whether the script changes, is a decision for the owner.
+
 ---
 
 ## Filling a new field on an old document

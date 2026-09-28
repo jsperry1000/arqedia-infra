@@ -80,6 +80,16 @@ another migration until a screen exists for it.
 **No route writes `pack_offer`**, so nothing reachable by a tenant can change
 what is offered.
 
+**Note, 28 September 2026.** No decision in this record is changed by this
+note. The two paragraphs above describe 17 September. Since #163 (f6c4e91,
+"Step 2: setting what ARQEDIA offers") a route does write `pack_offer`:
+`PUT /config/offer` in `lambda/api/app.py` calls `registry.set_offer` in
+`lambda/shared/registry.py`, which deletes the marks and inserts the new set in
+one call; `GET /config/offer` reads them. Both are refused to every tenant but
+tenant 0 (`_curation_only`, per the comment beside the routes), and the PUT
+additionally requires an administrator. This is the route the 18 September note
+below proposes, and the Catalogue screen it describes was built in #162.
+
 **The curator is `admin@arqedia.com`, an administrator of tenant 0.** Created
 by hand in the Cognito pool; `custom:tenant_id` is immutable, so no other
 account can be moved to tenant 0. What stops a tenant token reaching tenant 0

@@ -8,6 +8,26 @@
 | Priority | Next. Low effort, and it is the reason upload "looks hung" |
 | Type | Front end only. No API, no schema, no cost |
 | Raised | 3 September 2026 |
+| Status | 28 September 2026: the core defect is resolved in code by UX-11 in bd3dc48 (#135, 13 September). Three points of §Behaviour are not verified. See §Since this was written |
+
+---
+
+### Since this was written — 28 September 2026
+
+**Corrected 28 September 2026.** `ui/src/Review.tsx` now polls. After each
+upload it records the rows it expects (`:118-121`, `:476-479`) and, while
+anything is unfinished - a file sent and not yet read, a scan being read, a
+document being extracted, a memo being written - refreshes every five seconds
+(`:422-445`). It stops when nothing has changed for `WAIT_CEILING_MS`, ten
+minutes (`:37`), and says so rather than going quiet. What it is waiting for
+is named in the one working indicator (`:447-459`, "Analysing 2 uploaded
+files"). Came in as UX-11 in bd3dc48 (#135).
+
+Not verified on 28 September, and so still open against §Behaviour: whether
+polling stops when the screen is not in view; whether three reads are issued
+rather than six, and one poll in flight at a time (`setInterval` does not
+itself prevent overlap); and whether a second submission of the same file is
+prevented while waiting.
 
 ---
 
