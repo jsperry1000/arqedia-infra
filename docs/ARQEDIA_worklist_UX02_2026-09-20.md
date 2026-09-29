@@ -11,7 +11,7 @@
 | Revised | 20 September 2026 — one numbering scheme: groups and items only; admin page is Group 16 |
 | Revised | 22 September 2026 — Groups 13, 14, 16 and most of 18 closed; Group 18 added with the walk notes and every decision taken on 21 and 22 September |
 
-**Numbering.** Groups are numbered 1–21. Items are numbered within their group (2.3 is Group 2, item 3). Each group has one prompt for Code, named by its group. Nothing else is numbered.
+**Numbering.** Groups are numbered 1–22. Items are numbered within their group (2.3 is Group 2, item 3). Each group has one prompt for Code, named by its group. Nothing else is numbered.
 
 **Next up:** 19.2 — nothing warns a tenant that the trial is ending, and
 nothing announces that it has ended. Today the only place the countdown
@@ -357,6 +357,20 @@ Raised 24 September 2026 on the walk.
 | 21.9 | Raised 24 September 2026: a screen does not call out what must be done first. Filing is blocked until the engagement has a subject, but nothing puts that in front of the person before they categorise a batch. Every screen with a precondition should say so, first and plainly, so the work is not done twice |
 | 21.10 | Raised 24 September 2026 on the walk: after filing, six rows sat saying they were filing. They never progressed, stayed on screen, and could not be clicked. Find out what they were waiting on and what left them there: whether the filing failed after the charge, whether the poll stopped, or whether the rows were left in a state the screen has no handling for |
 | 21.11 | Found 24 September 2026: a filed document with no extracted_at and no extraction_error shows "extracting…" for ever, and the engagement's banner counts it. 47 documents across 9 engagements are in that state on dev; 13 in COCOAEMPIRE were extracted on 28 August, had no type so no schema, produced nothing, and were left NULL by 007's backfill. The screen has no state for "extracted and found nothing", and no end to the wait. Give it one, and stop the banner counting rows nothing will ever move |
+
+## Group 22 — Front end, 25 September 2026
+
+| # | Item |
+|---|---|
+| 22.1 | A home button on every signup page, going to arqedia.com |
+| 22.2 | Filing without enough balance: the system files a set of its own choosing, by value, and clears the selection. It must stop and ask which documents to file, keeping what was chosen |
+| 22.3 | The filing list shows the accepted count at the top and all of them at the bottom. The lower control should show only the selected ones |
+| 22.4 | *Open.* Pricing: metered access should foot to the monthly fee — up to $25 of metered use on Base, up to $65 on Small Business |
+| 22.5 | *Open.* Why are field sets per document type limited? Report whether there is a cost behind it before deciding |
+| 22.6 | Templates: number the sections and order them by drag and drop |
+| 22.7 | *Open.* Sections have subsections, composed differently from a section. Needs design |
+| 22.8 | Adding a fact must be available from the drill-down fact page, not only from a document type |
+| 22.9 | Left rail: "Template Catalogue" becomes "Report Catalogue" |
 
 ## Rolled into existing backlog
 
