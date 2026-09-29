@@ -38,6 +38,11 @@ Canonical component numbering. Cross-references in every spec resolve here.
 > `share_viewer_spec_v1.md` was copied from (#198). A citation of components
 > 2, 3, 4, 6, 7 or 10 from inside the repository resolves to nothing here.
 >
+> **Corrected 29 September 2026.** All seven are now committed here, in
+> `docs/specs/`, copied unchanged from that folder (dated 23–27 August). They
+> are the design as written then; later decision records and the corrections
+> in the other specs take precedence where they differ.
+>
 > **Also noted, not resolved.** This index counts ten components; three specs
 > in `docs/specs/` call themselves "of 9" (`identity_seats_spec_v1.md`
 > "Component 9 of 9", `plans_starter_packs_spec_v1.md` "Component 8 of 9",
