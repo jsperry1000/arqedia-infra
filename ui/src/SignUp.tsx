@@ -91,6 +91,15 @@ export function SignUp({ onSignIn, onSignedUp }: {
   const [jurisdiction, setJurisdiction] = useState(JURISDICTIONS[0]);
   const [region, setRegion] = useState(REGIONS[0].code);
 
+  // What leaving would leave behind, so the Leave question can say it truly
+  // (22.1). `contacted`: begin() has been called, so signup_attempt holds a
+  // row (domain, hashed address, IP) even if it refused. `created`: verify()
+  // answered, so the tenant and the Cognito user exist even if the sign-in
+  // after it failed and left this screen up.
+  const [contacted, setContacted] = useState(false);
+  const [created, setCreated] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+
   const domain = email.includes("@") ? email.split("@")[1] : "";
 
   const ready =
@@ -110,6 +119,7 @@ export function SignUp({ onSignIn, onSignedUp }: {
   async function begin() {
     setBusy("Checking");
     setError("");
+    setContacted(true);
     try {
       await api.signup({
         email, org_name: org, jurisdiction, region,
@@ -127,6 +137,7 @@ export function SignUp({ onSignIn, onSignedUp }: {
     setError("");
     try {
       await api.signupVerify({ email, code, password, person_name: personName });
+      setCreated(true);
       // Straight in. Asking somebody to type the password they set ninety
       // seconds ago, on the screen where they set it, is a checkpoint with
       // nothing behind it.
@@ -156,6 +167,37 @@ export function SignUp({ onSignIn, onSignedUp }: {
   const next = () =>
     (step === LAST_BEFORE_VERIFY ? begin() : setStep((n) => n + 1));
 
+  /** What leaving loses, true of this moment and no other (22.1). Read from
+   *  lambda/signup/app.py and checked on dev, 29 September 2026:
+   *  - before "Send my code" nothing has left the browser;
+   *  - a refused send writes signup_attempt only;
+   *  - a sent code writes pending_signup (address, organisation,
+   *    jurisdiction, region, IP, the code's hash) and signup_attempt. Nothing
+   *    deletes an expired pending_signup row; two from 19 September are
+   *    still on dev. The name and password are never sent before verify;
+   *  - after verify the workspace exists, and leaving does not undo it. */
+  const leavingSays =
+    created
+      ? "Your workspace has been created and is kept. Leaving does not " +
+        "remove it; sign in with the address and password you have just set."
+    : step === VERIFY
+      ? "No account has been created. To send the code, your email address, " +
+        "organisation, jurisdiction and region were sent to ARQEDIA and are " +
+        "held with the unused code, together with your IP address and a " +
+        "record of the attempt. Your name and password were not sent."
+    : contacted
+      // Usually a refusal, which writes signup_attempt only. But begin()
+      // writes pending_signup BEFORE it sends, so a send that failed leaves
+      // that row too - and this screen cannot tell the two apart.
+      ? "No account has been created. What you entered was sent to ARQEDIA " +
+        "to be checked, and a record of the attempt is kept: your email " +
+        "domain, a one-way hash of your address and your IP address. If the " +
+        "check got as far as preparing a code, your address, organisation, " +
+        "jurisdiction and region are held with it. Your name and password " +
+        "were not sent."
+      : "Nothing you have entered has been sent to ARQEDIA, and none of it " +
+        "will be kept.";
+
   return (
     <div className="signup">
       <div className="signup-head">
@@ -164,18 +206,6 @@ export function SignUp({ onSignIn, onSignedUp }: {
           {TRIAL_DAYS} days, full use, no card. $5.00 of metered credit
           while you look.
         </p>
-        {/* A way out, on every step (5.3). Nothing has been created at any
-            point before the code is answered, so leaving costs nothing and
-            nothing has to be undone - but until this there was no door: the
-            only control that left the flow was "Sign in" at the very foot,
-            which reads as an answer to a different question.
-            HOME IS THE MARKETING SITE, not the sign-in card. Somebody
-            abandoning a signup has no account to sign in to, and the page
-            they came from is the one that persuaded them. The address is
-            Terraform's, through the build; see config.ts. */}
-        <a className="small signup-home" href={config.siteUrl}>
-          Leave and go home
-        </a>
       </div>
 
       <ol className="stepper">
@@ -344,8 +374,41 @@ export function SignUp({ onSignIn, onSignedUp }: {
               Start the trial
             </button>
           )}
+          {/* THE WAY OUT, on every step (5.3, 22.1). It was a small muted
+              link under the heading, "Leave and go home", and did not read
+              as a control. Now a solid button in the card's lower right, not
+              gold - gold is the act that costs money - and it asks first,
+              because the answer differs by step: see leavingSays.
+              HOME IS THE MARKETING SITE, not the sign-in card. Somebody
+              abandoning a signup has no account to sign in to, and the page
+              they came from is the one that persuaded them. The address is
+              Terraform's, through the build; see config.ts. */}
+          <button className="signup-leave" onClick={() => setLeaving(true)}>
+            Leave
+          </button>
         </div>
       </div>
+
+      {/* After the card, so it paints over it (drawer stacking follows
+          document order). Declining closes it and changes nothing else. */}
+      {leaving && (
+        <div className="panel-backdrop" onClick={() => setLeaving(false)}>
+          <div className="panel narrow" onClick={(e) => e.stopPropagation()}
+               onKeyDown={(e) => { if (e.key === "Escape") setLeaving(false); }}>
+            <a className="panel-close" onClick={() => setLeaving(false)}>Close</a>
+            <div className="form">
+              <h4>Leave sign-up?</h4>
+              <p className="muted small">{leavingSays}</p>
+              <div className="form-actions">
+                <button autoFocus onClick={() => setLeaving(false)}>
+                  Continue signing up
+                </button>
+                <a className="secondary" href={config.siteUrl}>Leave</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <p className="muted small signup-foot">
         Already have an account? <a onClick={onSignIn}>Sign in</a>

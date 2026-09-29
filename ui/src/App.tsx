@@ -828,7 +828,7 @@ export default function App() {
             with the tenant's own memoranda behind one of them; they are the
             work and the reason for the screen, so they are the screen. */}
         <a className={catalogueClass} onClick={() => navigate("/catalogue")}>
-          Template Catalogue
+          Report Catalogue
         </a>
         <a className={railClass("/shares")} onClick={() => navigate("/shares")}>Sharing</a>
         {/* Settings opens a choice, as Configure does. Two things live under
