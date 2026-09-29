@@ -362,7 +362,7 @@ Raised 24 September 2026 on the walk.
 
 | # | Item |
 |---|---|
-| 22.1 | A home button on every signup page, going to arqedia.com. **Note:** 5.3 built this and it is live as the link "Leave and go home" (ui/src/SignUp.tsx). 22.1 is about it not reading as a home button, not about it being absent |
+| 22.1 | A home button on every signup page, going to arqedia.com. **Note:** 5.3 built this and it is live as the link "Leave and go home" (ui/src/SignUp.tsx). 22.1 is about it not reading as a home button, not about it being absent. **Decided 29 September 2026:** the link becomes a button reading LEAVE, with a solid background, in the lower right corner of every signup step's panel. A click asks for confirmation before leaving; Yes goes to arqedia.com, No closes the question and the step continues exactly where it was. Proposed wording, not yet agreed: "Leave sign-up? Nothing entered so far will be kept." with "Leave" and "Continue signing up". Not gold, which is reserved for the act that costs money |
 | 22.2 | Filing without enough balance: the system files a set of its own choosing, by value, and clears the selection. It must stop and ask which documents to file, keeping what was chosen |
 | 22.3 | The filing list shows the accepted count at the top and all of them at the bottom. The lower control should show only the selected ones |
 | 22.4 | **Decided 25 September 2026:** metered credit equals the monthly fee. Base includes $25 of metered use for $25; Small Business $65 for $65. Changes monthly_credit_cents in config/plans.json and everything that reads it |
