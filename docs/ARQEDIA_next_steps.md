@@ -6,6 +6,7 @@
 | Purpose | One list of what is left to build or decide, drawn from UX02, the backlog items, the specs, CLAUDE.md "What is open" and the handoffs. For prioritising |
 | How to use | Fill **Pri** (1 = first). Each row names its source; the source holds the detail. Items the source marks as needing a decision say so, quoted where the source words it |
 | Not included | Anything verified built on main as of 28 September 2026 |
+| Revised | 29 September 2026 — done on this branch: CLAUDE (5d47d8f), SPECS (seven specs committed), EOL (`*.md text eol=lf`), FOREIGN (parse-first-upload moved to terraform_package), SEAT-DATA's stale CLAUDE.md line dropped. Filing price decided: $0.25 per split part. PROMPTS stays git-excluded by decision. UNI-01's file is on no disk and in no commit; Propose.tsx no longer carries a fact or document form (UX-21, #135), so CFG-rev D may be moot |
 
 Grouped by area, not by priority. Where a source states urgency, it is in the Work column.
 
