@@ -678,6 +678,9 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // a new fact belongs to the vocabulary and to no section in particular.
   const [bindNewTo, setBindNewTo] =
     useState<{ template_key: string; key: string } | null>(null);
+  // A fact being added from a document type's Fields sought drawer (22.8),
+  // and the document type it is to be found in once it saves.
+  const [findNewIn, setFindNewIn] = useState<string | null>(null);
   // Searching the fields a document is looked at for (2.6). Its own box, like
   // the section list's: a filter shared between two lists empties controls
   // nobody can connect to what they typed.
@@ -1932,6 +1935,17 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 <span className="muted small">
                   {typeFields.length} ticked
                 </span>
+                {/* A fact the vocabulary does not hold yet, from the document
+                    it is found in (22.8) - as a section's list already offers
+                    (2.1). The card opens over this drawer; on save the new
+                    fact is looked for in this document and ticked here. */}
+                <a className="small" onClick={() => {
+                  setBindNewTo(null);
+                  setFindNewIn(openType);
+                  setEditField("");
+                }}>
+                  Add a fact
+                </a>
               </div>
               {/* SAVE IN THE PINNED HEAD (18.2). It sat under the list, and
                   the list is every fact this tenant has grouped into columns
@@ -2114,10 +2128,16 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           document's list must be on top of that list, and stacking follows
           document order where nothing sets a z-index. */}
       {editField !== null && (
-        <div className="panel-backdrop" onClick={() => setEditField(null)}>
+        <div className="panel-backdrop" onClick={() => {
+               setBindNewTo(null); setFindNewIn(null); setEditField(null);
+             }}>
           <div className="panel narrow" onClick={(e) => e.stopPropagation()}>
+            {/* Every way out forgets where a new fact was to go, so a card
+                opened later from the Facts tab binds and ticks nothing. */}
             <a className="panel-close"
-               onClick={() => setEditField(null)}>Close</a>
+               onClick={() => {
+                 setBindNewTo(null); setFindNewIn(null); setEditField(null);
+               }}>Close</a>
             {/* The card closes as the documents open. Both are drawers, and
                 the field card is rendered last so it stacks above everything
                 - leaving it open put the documents behind it and the click
@@ -2130,7 +2150,9 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 setEditField(null);
               }}
               initial={draft?.fields.find((x) => x.key === editField)}
-              onCancel={() => { setBindNewTo(null); setEditField(null); }}
+              onCancel={() => {
+                setBindNewTo(null); setFindNewIn(null); setEditField(null);
+              }}
               onSave={(body) => act("Saving", async () => {
                 // THE KEY COMES BACK FROM THE SERVER, because a new fact no
                 // longer sends one (17.1) and the binding below needs the key
@@ -2153,6 +2175,19 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                       target.template_key, target.key, [...s.fields, added]);
                   }
                 }
+                // Added from a document type's drawer (22.8): looked for in
+                // that document, saved now, and ticked in the drawer's held
+                // list too - the drawer's own Save replaces the document's
+                // whole list, and without it would take the new fact off
+                // again. A new fact is found nowhere else yet, so its list
+                // is this one document. The key is the server's (17.1).
+                const docType = findNewIn;
+                if (docType && added && !(body as { key?: string }).key) {
+                  await api.setFieldDocuments(added, [docType]);
+                  setTypeFields((prev) =>
+                    prev.includes(added) ? prev : [...prev, added]);
+                }
+                setFindNewIn(null);
                 setBindNewTo(null);
                 setEditField(null);
               })}
