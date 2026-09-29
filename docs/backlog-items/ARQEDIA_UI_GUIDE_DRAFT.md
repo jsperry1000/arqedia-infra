@@ -204,6 +204,10 @@ its own `document` row (`011_document_parts.sql`), so the charge is $0.25 per
 part, not per uploaded file. A tenant may carry a negotiated override row; the
 live table was not queried.
 
+**Decided 29 September 2026.** $0.25 per split part is the decision, not only
+what the data does. Live `meter_price` on dev, 29 September: `document_filed`
+25 cents, standard (`tenant_id IS NULL`), no tenant override.
+
 ---
 
 ## Step 9 · Generate a memorandum

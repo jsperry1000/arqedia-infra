@@ -18,6 +18,8 @@
 | What Paddle charges for each plan | The Paddle catalogue, with its ids in `config/paddle/sandbox.json` | Paddle, at checkout and renewal |
 | Enterprise | `config/plans.json`, with `null` where a number would be a price and "as contracted" where the page prints one | The pricing page and the app, shown as a column that cannot be bought |
 
+**Decided 29 September 2026.** Filing is charged $0.25 per split part, not per uploaded file: each part of a split file is its own `document` row (`011_document_parts.sql`) and the charge counts rows. Where this document says a document, read a part. Live `meter_price` on dev, 29 September: `document_filed` 25 cents, standard (`tenant_id IS NULL`), no tenant override.
+
 The staff admin page **shows** plans and limits. It cannot change them: its database user reads six tables and writes nothing (16.9).
 
 The build fails if a plan's monthly price in `config/plans.json` disagrees with its Paddle price. That check is what stops the page, the app and the bill drifting apart.
@@ -73,6 +75,8 @@ Seats, monthly credit, share allowance, field sets per document type, sections p
 ## C. Changing a per-use price
 
 $0.25 a document filed, $1.00 a memo generated.
+
+**Decided 29 September 2026.** Filing is charged $0.25 per split part, not per uploaded file: each part of a split file is its own `document` row (`011_document_parts.sql`) and the charge counts rows. Where this says a document, read a part. Live `meter_price` on dev, 29 September: `document_filed` 25 cents, standard (`tenant_id IS NULL`), no tenant override.
 
 1. **Decide** the new price and the date.
 2. **Branch** and write a migration that inserts or updates the `meter_price` row. Never edit a price in the database by hand: a migration is reviewed and recorded.

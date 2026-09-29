@@ -154,6 +154,10 @@ One line on the screen: do this before uploading. A field created afterwards is
 empty on everything already filed, and the only remedy is filing again at
 $0.25 a document.
 
+**Decided 29 September 2026.** Filing is charged $0.25 per split part, not per
+uploaded file: each part is its own `document` row (`011_document_parts.sql`).
+Live `meter_price` on dev, 29 September: `document_filed` 25 cents, standard.
+
 ---
 
 ## Still open

@@ -55,6 +55,12 @@ Canonical component numbering. Cross-references in every spec resolve here.
 |Enterprise|negotiated|n|n|n|10 def.|50 def.|negotiated|
 
 Billable: `document\\\\\\\_filed` $0.25 · `memo\\\\\\\_generated` $1.00 · provider call (phase 2, TBD).
+
+> **Decided 29 September 2026.** `document_filed` is $0.25 per split part, not
+> per uploaded file: each part is its own `document` row
+> (`011_document_parts.sql`). Live `meter_price` on dev, 29 September:
+> `document_filed` 25 cents, standard (`tenant_id IS NULL`), no tenant override.
+
 Allowances, sealed from real balance: `test` $1/day · `classify` per plan.
 Trial: 30 days, seats free, $5 metered cap, expiring to `capped`.
 

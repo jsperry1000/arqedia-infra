@@ -165,6 +165,16 @@ revisions are not the same document and say so.
 no reversals, because unreadable material is blocked before filing rather than
 charged and refunded.
 
+**Corrected 29 September 2026.** There are reversals now. Since the
+unreadable-documents record of 18 September a scan is accepted, charged and
+sent to OCR, and the decision since is that a failed filing, extraction or
+generation is not charged. A refund is an appended `wallet.refund()` row —
+`document_filed_refund` with a negative `amount_cents`, keyed
+`refund:<document_id>` so it happens once — plus a new `refund` bucket of its
+own; the charge is never edited. Built for failed OCR and filing. Not yet
+built for failed generation (UX02 20.1) or failed extraction (EXT-02). The
+ledger stays append-only.
+
 **Debit on the click.** The price is shown and accepted before anything is
 filed. Every charge carries an idempotency key minted where the click happens;
 a retry is refused as a repeat.
@@ -311,8 +321,6 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
 - **`signup_attempt.ip` retention**, and the privacy-policy wording for it.
 - **Does CI build the app.** `web/` is committed output; the marketing site
   builds in CI. Either bring them into line or record why not.
-- **Seat counts as data.** `PLAN_SEATS` is a map in `seats.py`. It belongs in a
-  `plan` table the way `meter_price` holds prices.
 - **Recipient registration to download** a shared memorandum: gate it as a lead
   source, leave it open, or let the sender choose.
 - **`docs/HANDOFF/` and `docs/backlog-items/`** hold duplicates of four backlog
@@ -322,8 +330,9 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
 
 ## Current work
 
-`docs/ARQEDIA_backlog_UX01_mvp_ui_worklist.md` is the specification for the UI
-work to MVP. Its decisions are settled; its branch order is not to be
+`docs/ARQEDIA_worklist_UX02_2026-09-20.md` is the work list. It supersedes
+UX01 (`docs/backlog-items/ARQEDIA_backlog_UX01_mvp_ui_worklist.md`), whose
+held-back UX-07 is carried in `docs/ARQEDIA_next_steps.md`. Its decisions are settled; its branch order is not to be
 rearranged. Work one branch at a time and stop at the end of each for review.
 
 `docs/specs/` holds the design specs. Where they differ, `docs/specs/paddle_subscription_decisions_2026-09-16.md` and `docs/specs/revision_selection_decisions_2026-09-17.md` take precedence.

@@ -104,6 +104,10 @@ The distinction that drives the whole design.
 
 **One-way — wrong here costs a re-upload at $0.25 a document:**
 
+**Decided 29 September 2026.** Filing is charged $0.25 per split part, not per
+uploaded file: each part is its own `document` row (`011_document_parts.sql`).
+Live `meter_price` on dev, 29 September: `document_filed` 25 cents, standard.
+
 - A field's description. It decides what extraction looks for.
 - A document type's description. It decides how uploads are classified.
 - The list of fields itself. A field added later is empty on every document
