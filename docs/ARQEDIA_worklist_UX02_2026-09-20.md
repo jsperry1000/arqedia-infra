@@ -362,13 +362,13 @@ Raised 24 September 2026 on the walk.
 
 | # | Item |
 |---|---|
-| 22.1 | A home button on every signup page, going to arqedia.com |
+| 22.1 | A home button on every signup page, going to arqedia.com. **Note:** 5.3 built this and it is live as the link "Leave and go home" (ui/src/SignUp.tsx). 22.1 is about it not reading as a home button, not about it being absent |
 | 22.2 | Filing without enough balance: the system files a set of its own choosing, by value, and clears the selection. It must stop and ask which documents to file, keeping what was chosen |
 | 22.3 | The filing list shows the accepted count at the top and all of them at the bottom. The lower control should show only the selected ones |
-| 22.4 | *Open.* Pricing: metered access should foot to the monthly fee — up to $25 of metered use on Base, up to $65 on Small Business |
+| 22.4 | **Decided 25 September 2026:** metered credit equals the monthly fee. Base includes $25 of metered use for $25; Small Business $65 for $65. Changes monthly_credit_cents in config/plans.json and everything that reads it |
 | 22.5 | *Open.* Why are field sets per document type limited? Report whether there is a cost behind it before deciding |
 | 22.6 | Templates: number the sections and order them by drag and drop |
-| 22.7 | *Open.* Sections have subsections, composed differently from a section. Needs design |
+| 22.7 | **Decided 25 September 2026:** a subsection composes exactly like a section — its own facts, its own instructions, its own model call — and differs only in rendering: a subheading rather than a full section heading. Needs a schema decision on how a section's parent is recorded, and how the numbering in 22.6 handles it |
 | 22.8 | Adding a fact must be available from the drill-down fact page, not only from a document type |
 | 22.9 | Left rail: "Template Catalogue" becomes "Report Catalogue" |
 
