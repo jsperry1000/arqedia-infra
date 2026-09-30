@@ -371,6 +371,8 @@ Raised 24 September 2026 on the walk.
 | 22.7 | **Decided 25 September 2026:** a subsection composes exactly like a section — its own facts, its own instructions, its own model call — and differs only in rendering: a subheading rather than a full section heading. Needs a schema decision on how a section's parent is recorded, and how the numbering in 22.6 handles it |
 | 22.8 | Adding a fact must be available from the drill-down fact page, not only from a document type |
 | 22.9 | Left rail: "Template Catalogue" becomes "Report Catalogue" |
+| 22.10 | Found 29 September 2026 building 22.3: the price summary above the lower filing button still states the cost of every waiting document, so it no longer matches the button beneath it, which now files the ticked rows only |
+| 22.11 | Found 29 September 2026: an expired pending_signup row is never deleted, and the row is written before the code email is sent, so a failed send leaves one too. Two sit on dev. Each holds an address, organisation, jurisdiction, region and IP for a signup that never completed. Delete them on expiry |
 
 ## Rolled into existing backlog
 

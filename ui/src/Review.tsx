@@ -135,8 +135,8 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
 
   // The pending list's own search, order and filter (21.3). What is SHOWN
-  // only: they never change what is ticked, and never what File sends - File
-  // still files every row waiting, hidden or not.
+  // only: they never change what is ticked, and never what File selected
+  // sends - it files every ticked row, hidden or not (22.3).
   const [pendingSearch, setPendingSearch] = useState("");
   const [pendingSort, setPendingSort] =
     useState<"upload" | "name" | "type" | "confidence">("upload");
@@ -718,8 +718,6 @@ export function EngagementView({ id, onBack, onMemo }: {
     }
   }
 
-  const fileAll = () => fileRows(toFile);
-
   /** Where the balance covers part of the batch: tick the first N, in upload
    *  order, and file those (21.1). The price is on the button that does it,
    *  as it is on File, and the rest wait. */
@@ -1201,7 +1199,7 @@ export function EngagementView({ id, onBack, onMemo }: {
           {types.length === 0 && (
             <p className="why warn">
               No document types yet. They come with a memorandum &mdash;
-              Template Catalogue.
+              Report Catalogue.
             </p>
           )}
           {/* What the batch is made of, and a way through it (21.3). The
@@ -1250,7 +1248,8 @@ export function EngagementView({ id, onBack, onMemo }: {
           </div>
           {shownToFile.length === 0 && (
             <p className="muted">
-              Nothing waiting matches. Filing still files all {toFile.length}.
+              Nothing waiting matches. File selected still files every ticked
+              row, shown or not.
             </p>
           )}
           {shownToFile.map((p) => {
@@ -1425,17 +1424,29 @@ export function EngagementView({ id, onBack, onMemo }: {
           {/* Held for want of a subject, and it says so rather than going
               quiet. The server refuses this call above the charge in any
               case; this is so a person is told before the click instead of
-              after it, which is what the money gate above already does. */}
-          <button onClick={fileAll}
-                  disabled={!!busy || toFile.length === 0 || !subject
-                            || (fileQuote ? !fileQuote.affordable : false)}
-                  title={subject ? undefined
-                    : "Name the subject of this engagement first."}>
+              after it, which is what the money gate above already does.
+
+              THE SAME ACT AS File selected ABOVE (22.3). It filed every row
+              waiting, ticked or not, so the list's head offered the ticked
+              count and its foot offered all of them - two buttons a list
+              apart that did different things under the same word. It now
+              files the ticked rows, priced by the same quote, held on the
+              same conditions. Select all above ticks the whole batch. */}
+          <button onClick={() => fileRows(pickedToFile)}
+                  disabled={!!busy || !subject || pickedToFile.length === 0
+                            || !pickedQuote || !pickedQuote.affordable}
+                  title={!subject ? "Name the subject of this engagement first."
+                    : pickedToFile.length === 0
+                      ? "Tick the documents to file."
+                      : pickedQuote && !pickedQuote.affordable
+                        ? `${money(pickedQuote.total_cents)} needed and `
+                          + `${money(pickedQuote.available_cents)} available.`
+                        : "File the ticked documents. The rest stay here."}>
             {!subject
               ? "Name the subject to file"
-              : `File ${toFile.length} `
-                + `${toFile.length === 1 ? "document" : "documents"}`
-                + (fileQuote ? ` \u00b7 ${money(fileQuote.total_cents)}` : "")}
+              : "File selected"
+                + (pickedToFile.length ? ` \u00b7 ${pickedToFile.length}` : "")
+                + (pickedQuote ? ` \u00b7 ${money(pickedQuote.total_cents)}` : "")}
           </button>
         </>
       )}
@@ -1637,11 +1648,11 @@ export function EngagementView({ id, onBack, onMemo }: {
         <div className="revision-note">
           <span className="warn">
             This workspace has no published memorandum, so there is nothing to
-            generate. Take one under Template Catalogue and publish it.
+            generate. Take one under Report Catalogue and publish it.
           </span>
           <div className="form-actions">
             <button onClick={() => navigate("/catalogue")}>
-              Template Catalogue
+              Report Catalogue
             </button>
           </div>
         </div>
