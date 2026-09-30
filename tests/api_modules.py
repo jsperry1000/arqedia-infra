@@ -68,6 +68,7 @@ def load_api():
         "COMPOSITION_FUNCTION": "composition",
         "TEXTRACT_TOPIC_ARN": "arn:topic", "TEXTRACT_ROLE_ARN": "arn:role",
         "RENDER_FUNCTION": "render", "PROPOSER_FUNCTION": "proposer",
+        "REVIEWER_FUNCTION": "reviewer",
     })
     saved = list(sys.path)
     with mock.patch.dict(sys.modules, fakes), mock.patch.dict(os.environ, env):

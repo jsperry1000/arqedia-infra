@@ -62,6 +62,13 @@ charged for.
   PUT  /config/draft/working             keep what has been decided
   PUT  /config/active                    which published revision is in use
 
+AI Review of the draft (REV-01). Each is relayed to the reviewer, which holds
+the checks and the money; this adds only the administrator gate.
+  POST /config/draft/review              open a session, and start the read
+  GET  /config/draft/review              the session so far (?session=)
+  POST /config/draft/review/accept       write one suggestion into the draft
+  POST /config/draft/review/close        end the session
+
 The catalogue, in the ARQEDIA workspace and nowhere else.
   GET  /config/offer                     the revision and memoranda on offer
   PUT  /config/offer                     set them, all at once
@@ -110,6 +117,7 @@ TEXTRACT_TOPIC_ARN = os.environ["TEXTRACT_TOPIC_ARN"]
 TEXTRACT_ROLE_ARN = os.environ["TEXTRACT_ROLE_ARN"]
 RENDER_FUNCTION = os.environ["RENDER_FUNCTION"]
 PROPOSER_FUNCTION = os.environ["PROPOSER_FUNCTION"]
+REVIEWER_FUNCTION = os.environ["REVIEWER_FUNCTION"]
 # Where an invitation link sends somebody. Configured rather than built from
 # the request: the request arrives at the API's own hostname, and the person
 # has to land on the application.
@@ -2569,6 +2577,44 @@ def proposals(tenant_id):
     return {"proposals": out}
 
 
+# --- AI Review of the draft (REV-01) ----------------------------------------
+#
+# THE REVIEWER HOLDS THE RULES. Its plan gate, the draft check, the price,
+# the stale check and the charge all live in lambda/reviewer/app.py, and each
+# of its answers already carries the status it means. Deciding any of them a
+# second time here would be a second copy of a money rule, which is how two
+# copies come to disagree. This adds the one thing every draft route adds -
+# _require_admin - and relays the rest unchanged.
+#
+# SYNCHRONOUS, as render_memo and preview_branding call the renderer. Every act
+# answers in seconds: open starts the read with an asynchronous invocation of
+# its own and returns, so nothing here waits on the model.
+
+def review(tenant_id, email, role, action, **fields):
+    """One act of a review session, relayed. Returns the reply to send.
+
+    The tenant, email and role come from the token, via caller(), and go
+    last so a field from the request can never replace them."""
+    _require_admin(role)
+
+    payload = dict(fields, action=action, tenant_id=tenant_id, email=email,
+                   role=role)
+    response = _lambda.invoke(
+        FunctionName=REVIEWER_FUNCTION,
+        InvocationType="RequestResponse",
+        Payload=json.dumps(payload))
+
+    result = json.loads(response["Payload"].read())
+    # An exception the reviewer did not catch comes back as errorMessage with
+    # no status. Its text is the reviewer's internals, so it is logged and not
+    # sent.
+    if "status" not in result:
+        print("[review-relay-error] action=%s tenant=%s %r" % (
+            action, tenant_id, result))
+        raise RuntimeError("the reviewer did not answer")
+    return _reply(result["status"], result["body"])
+
+
 # --- dispatch --------------------------------------------------------------
 
 def lambda_handler(event, context):
@@ -3022,6 +3068,27 @@ def _dispatch(event, context):
             body = json.loads(event.get("body") or "{}")
             return _reply(200, save_working(
                 tenant_id, body.get("key", ""), body.get("working") or {}))
+
+        # --- AI Review of the draft (REV-01) -----------------------------
+        if route == "POST /config/draft/review":
+            return review(tenant_id, email, role, "open")
+
+        if route == "GET /config/draft/review":
+            return review(tenant_id, email, role, "poll",
+                          session_id=query.get("session", ""))
+
+        if route == "POST /config/draft/review/accept":
+            body = json.loads(event.get("body") or "{}")
+            return review(tenant_id, email, role, "accept",
+                          session_id=body.get("session", ""),
+                          suggestion_id=body.get("suggestion_id"),
+                          value=body.get("value"),
+                          bind_to=body.get("bind_to"))
+
+        if route == "POST /config/draft/review/close":
+            body = json.loads(event.get("body") or "{}")
+            return review(tenant_id, email, role, "close",
+                          session_id=body.get("session", ""))
 
         # --- editing the draft -----------------------------------------
         if route == "GET /config/draft":

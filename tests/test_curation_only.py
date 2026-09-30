@@ -26,6 +26,7 @@ ENV = {
     "COMPOSITION_FUNCTION": "composition",
     "TEXTRACT_TOPIC_ARN": "arn:topic", "TEXTRACT_ROLE_ARN": "arn:role",
     "RENDER_FUNCTION": "render", "PROPOSER_FUNCTION": "proposer",
+    "REVIEWER_FUNCTION": "reviewer",
     "PADDLE_API_BASE": "https://sandbox-api.paddle.test",
     "PADDLE_API_KEY_SECRET_ARN": "arn:paddle-key",
     "PADDLE_PRICE_BASE": "pri_base", "PADDLE_PRICE_BUSINESS": "pri_business",
