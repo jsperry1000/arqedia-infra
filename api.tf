@@ -115,12 +115,16 @@ data "aws_iam_policy_document" "api" {
   # Composition writes a memo; the proposer reads a sample memorandum and
   # proposes a configuration. Both take minutes, so both are started here and
   # polled for rather than waited on.
+  #
+  # The reviewer (REV-01) is invoked for all four of its acts: open starts
+  # its own read, and poll, accept and close answer at once.
   statement {
     effect  = "Allow"
     actions = ["lambda:InvokeFunction"]
     resources = [
       aws_lambda_function.composition.arn,
       aws_lambda_function.proposer.arn,
+      aws_lambda_function.reviewer.arn,
     ]
   }
 }
@@ -161,6 +165,7 @@ resource "aws_lambda_function" "api" {
       TEXTRACT_ROLE_ARN         = aws_iam_role.textract_publish.arn
       RENDER_FUNCTION           = aws_lambda_function.render.function_name
       PROPOSER_FUNCTION         = aws_lambda_function.proposer.function_name
+      REVIEWER_FUNCTION         = aws_lambda_function.reviewer.function_name
       PADDLE_API_BASE           = local.paddle_api_base
       PADDLE_API_KEY_SECRET_ARN = aws_secretsmanager_secret.paddle_api_key.arn
     })
@@ -314,6 +319,14 @@ locals {
     "GET /config/draft/proposals",
     "GET /config/draft/working",
     "PUT /config/draft/working",
+
+    # AI Review (REV-01). Open a session, poll it, accept one suggestion,
+    # close it. The API relays each to the reviewer. Until the handler knows
+    # them they answer 404 "unknown route", which is what they should say.
+    "POST /config/draft/review",
+    "GET /config/draft/review",
+    "POST /config/draft/review/accept",
+    "POST /config/draft/review/close",
     "POST /documents/{document_id}/active",
     "GET /documents/{document_id}/values",
     "GET /documents/{document_id}/passage",
