@@ -50,6 +50,7 @@ import time
 import uuid
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 import editor
@@ -58,7 +59,16 @@ import wallet
 
 _s3 = boto3.client("s3")
 _rds = boto3.client("rds-data")
-_bedrock = boto3.client("bedrock-runtime")
+# As composition's, and for composition's reason. botocore defaults to a
+# 60-second read timeout and legacy retries of up to 5 attempts. A memorandum's
+# section prompts take Sonnet longer than a minute to answer, so on 30
+# September the first live review timed out five times over five minutes on
+# its second call and failed with 25 suggestions already read.
+_bedrock = boto3.client(
+    "bedrock-runtime",
+    config=Config(read_timeout=300,
+                  retries={"mode": "standard", "max_attempts": 2}),
+)
 _lambda = boto3.client("lambda")
 
 REVIEW_BUCKET = os.environ["REVIEW_BUCKET"]

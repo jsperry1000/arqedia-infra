@@ -34,8 +34,11 @@ def load_reviewer():
     exceptions = types.ModuleType("botocore.exceptions")
     exceptions.ClientError = type("ClientError", (Exception,), {})
     botocore.exceptions = exceptions
+    config = types.ModuleType("botocore.config")
+    config.Config = mock.MagicMock()
+    botocore.config = config
     fakes = {"boto3": boto3, "botocore": botocore,
-             "botocore.exceptions": exceptions}
+             "botocore.exceptions": exceptions, "botocore.config": config}
     saved = list(sys.path)
     with mock.patch.dict(sys.modules, fakes), mock.patch.dict(os.environ, ENV):
         for name in ("app", "editor", "registry", "wallet"):
@@ -160,6 +163,15 @@ class CleanTest(unittest.TestCase):
              "question": "Registered or trading name?"})
         self.assertEqual(dropped, 1)
         self.assertEqual(kept[0]["question"], "Registered or trading name?")
+
+
+class BedrockClientTest(unittest.TestCase):
+    """The first live review timed out on botocore's 60-second default."""
+
+    def test_the_model_client_waits_as_long_as_compositions(self):
+        r = load_reviewer()
+        r.Config.assert_any_call(
+            read_timeout=300, retries={"mode": "standard", "max_attempts": 2})
 
 
 class AcceptTest(unittest.TestCase):
