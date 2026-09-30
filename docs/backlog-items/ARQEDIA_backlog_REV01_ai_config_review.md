@@ -332,6 +332,22 @@ another provider is a second call path, not just a credential table.
   open. Recommended: the screen closes the session when Review Mode is closed,
   and a session older than 24 hours refuses accepts.
 
+**Settled 30 September 2026.** Every recommendation above was taken:
+
+- D1: a new function, `arqedia-dev-reviewer`.
+- D2: Sonnet 4.6, `composition_model_id`.
+- D3: quote, write, then charge.
+- D4: a trial whose plan is `business` gets Review Mode.
+- D5: a `new_field` suggestion also offers binding it to a section.
+- D6: the row is `db/migrations/035_config_review_price.sql`, on this branch.
+  `db/migrate.ps1` applies every pending migration in order, not one. So
+  running it also applies anything else that is unapplied. `033_plan_limits.sql`
+  describes itself as not applied, and whether it has been applied since is
+  not verified here.
+- D7: a suggestion from a session opened more than 24 hours earlier cannot be
+  accepted; the accept is refused and nothing is written or charged. Closing
+  Review Mode ends the session.
+
 ---
 
 ### Not changed
