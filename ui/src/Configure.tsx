@@ -1248,6 +1248,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           which is what keeps --fields-top honest without a second measure. */}
       <div className={"config-top" + (stuck ? " covered" : "")}
            ref={bar} style={{ top: pinTop }}>
+      {/* The bar, the icon and the band, framed apart from the head below
+          so the icon keeps its anchor at the band's foot (18.3) now that
+          .config-top runs on past the band. Closed after the band. */}
+      <div className="config-frame">
       <div className="config-bar">
         <select aria-label="Memorandum" value={current?.key ?? ""}
                 onChange={(e) => {
@@ -1365,6 +1369,16 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       </nav>
       </div>
 
+      {/* THE HEAD OF THE PAGE HOLDS WITH THE BAR (ux-config-pin). The
+          heading, what the part is and its search rolled up out of view as
+          the list scrolled, so a person forty rows down had lost the search
+          box and the name of what they were looking at. They are inside
+          .config-top now, under the band, so the one measured height -
+          barHeight - covers them, and --fields-top and a pinned section row
+          follow it without a second measure. The stage strip above stays
+          outside: it is decoration and may scroll away. */}
+      <div className="config-head">
+
       {/* Renaming, under the band rather than inside the sections part: the
           control that opens it is in the bar now, and the bar is on every
           part. Left where it was, pressing Rename anywhere but Report
@@ -1397,6 +1411,58 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             until you publish.
           </p>
         </div>
+      </div>
+
+      {/* What the part on screen is, and its search, moved here from the
+          head of each part below so they hold with the heading. */}
+      {part === "sections" && (<>
+      <p className="muted small">
+        Each section of the memorandum, in order. A section renders the fields
+        bound to it and nothing else.
+      </p>
+
+      {/* The memorandum is chosen in the bar, and what acts on it now sits
+          beside the dropdown there - including Rename, whose box opens
+          directly under the band rather than here. */}
+
+      <p className="muted small">
+        Every memorandum draws on the same facts and the same documents. What
+        differs is which sections it has, what each renders, and how each is
+        written. A document is read once whichever memoranda you write from it.
+      </p>
+      </>)}
+
+      {part === "facts" && (<>
+      <p className="muted small">
+        Every fact the report can draw on. A field bound to no section is
+        extracted and never read; one found in no document is never extracted.
+      </p>
+
+      <div className="filters">
+        <input placeholder="Filter fields" value={fieldFilter}
+               onChange={(e) => setFieldFilter(e.target.value)} />
+        <span className="muted">
+          {sortedFields.length} of {draft?.fields.length ?? 0}
+        </span>
+      </div>
+      </>)}
+
+      {part === "documents" && (<>
+      <p className="muted small">
+        Types of documents a client may provide. The description is what the
+        system reads to tell one document from another, so it is worth
+        writing well.
+      </p>
+
+      <div className="filters">
+        <input placeholder="Search document types" value={typeSearch}
+               onChange={(e) => setTypeSearch(e.target.value)} />
+        {typeSearch && (
+          <a className="small" onClick={() => setTypeSearch("")}>Clear</a>
+        )}
+      </div>
+      </>)}
+      </div>
       </div>
 
       {started && (
@@ -1457,22 +1523,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           needs", so clicking a fact name from a section did nothing at all
           while that part was closed - which it is on arrival - and clicking
       {/* 1 --- what the report says ---------------------------------------- */}
+      {/* Its description is in the pinned head above (ux-config-pin). */}
       {part === "sections" && (<>
-      <p className="muted small">
-        Each section of the memorandum, in order. A section renders the fields
-        bound to it and nothing else.
-      </p>
-
-      {/* The memorandum is chosen in the bar, and what acts on it now sits
-          beside the dropdown there - including Rename, whose box opens
-          directly under the band rather than here. */}
-
-      <p className="muted small">
-        Every memorandum draws on the same facts and the same documents. What
-        differs is which sections it has, what each renders, and how each is
-        written. A document is read once whichever memoranda you write from it.
-      </p>
-
       {editSection !== null && (
         <SectionForm
           initial={sections.find((x) => x.key === editSection)}
@@ -1694,20 +1746,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       {/* 2 --- what it needs ----------------------------------------------- */}
       </>)}
 
+      {/* Its description and filter are in the pinned head (ux-config-pin). */}
       {part === "facts" && (<>
-      <p className="muted small">
-        Every fact the report can draw on. A field bound to no section is
-        extracted and never read; one found in no document is never extracted.
-      </p>
-
-      <div className="filters">
-        <input placeholder="Filter fields" value={fieldFilter}
-               onChange={(e) => setFieldFilter(e.target.value)} />
-        <span className="muted">
-          {sortedFields.length} of {draft?.fields.length ?? 0}
-        </span>
-      </div>
-
       <table className="docs">
         <thead>
           <tr>
@@ -1791,21 +1831,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       {/* 4 --- the documents ------------------------------------------------ */}
       </>)}
 
+      {/* Its description and search are in the pinned head (ux-config-pin). */}
       {part === "documents" && (<>
-      <p className="muted small">
-        Types of documents a client may provide. The description is what the
-        system reads to tell one document from another, so it is worth
-        writing well.
-      </p>
-
-      <div className="filters">
-        <input placeholder="Search document types" value={typeSearch}
-               onChange={(e) => setTypeSearch(e.target.value)} />
-        {typeSearch && (
-          <a className="small" onClick={() => setTypeSearch("")}>Clear</a>
-        )}
-      </div>
-
       {editType !== null && draft && (
         <TypeForm
           initial={draft.document_types.find((x) => x.key === editType)}

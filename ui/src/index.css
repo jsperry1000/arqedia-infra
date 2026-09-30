@@ -1170,6 +1170,15 @@ a.add:hover { background: var(--paper); text-decoration: none; }
    the block. */
 .config-top.covered { box-shadow: none; }
 
+/* THE BLOCK NOW RUNS ON PAST THE BAND (ux-config-pin): the page's heading,
+   the part's description and its search hold with it, so they are counted
+   in the one measured height. The bar, the icon and the band sit in a frame
+   of their own, which is what the icon is positioned against - see
+   .stage-icon - so it stays level with the band rather than dropping to
+   the foot of the head. The head takes the bar's own side inset. */
+.config-frame { position: relative; }
+.config-head { padding: 12px 16px 2px; }
+
 .config-bar {
   display: flex; align-items: center; gap: 12px;
   padding: 10px 16px;
@@ -1255,8 +1264,10 @@ a.add:hover { background: var(--paper); text-decoration: none; }
  * In the empty canvas to the left of the content column, level with the
  * band, changing with the part.
  *
- * POSITIONED AGAINST .config-top, the sticky block that holds the bar and
- * the band. So it travels with the band instead of scrolling away from it.
+ * POSITIONED AGAINST .config-frame, the bar and the band inside the sticky
+ * .config-top (ux-config-pin; it was .config-top itself until the page's
+ * head joined that block). So it travels with the band instead of scrolling
+ * away from it.
  * Anchored by its FOOT to the foot of that block, which is the band's own
  * bottom edge - that is what "level with the band" means here, and it needs
  * no transform to say it. The picture then rises into the margin beside the
