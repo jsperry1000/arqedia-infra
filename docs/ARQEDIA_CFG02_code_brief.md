@@ -4,6 +4,17 @@
 Working directory `c:\terraform\arqedia`. Terraform and Docker.
 Branch: `cfg-02-context-sections`, cut from the current main branch.
 
+| | |
+|---|---|
+| Status | 28 September 2026: built and merged — #238 (05ce073) and #239 (0eac323, which also committed this brief). Whether the layer was rebuilt and applied to dev, and whether step 3 was walked, is not recorded here |
+| Revised | 28 September 2026 — three corrections below, against what was built |
+
+**Corrected 28 September 2026.** Decision 1 was not built as written. `_context_sections` in `lambda/shared/editor.py` lets a composed section read any assembled section wherever it sits, but another composed section only where that one sorts before it, because composed sections are written in order (#238 commit message; the function's docstring). Publish refuses the out-of-order case too.
+
+**Corrected 28 September 2026.** The editor is `lambda/shared/editor.py`, not `lambda/api/editor.py`, so the change reaches the Lambdas only through the `docprocessing` layer (`build-layer.ps1`). #238 also changed `lambda/shared/registry.py` and added `tests/test_context_sections.py`.
+
+**Corrected 28 September 2026.** `ARQEDIA_database_access.md`, cited in step 3, is at `docs/backlog-items/ARQEDIA_database_access.md`.
+
 ---
 
 ## Rules of engagement

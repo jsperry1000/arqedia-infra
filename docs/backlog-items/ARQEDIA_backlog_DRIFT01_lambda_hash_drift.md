@@ -5,6 +5,7 @@
 | | |
 |---|---|
 | Status | Recorded, not fixed |
+| Status | 28 September 2026: fixed on `main` by `70365cd` (#236, branch `drift01-normalise`), as the 23 September addendum below records. `.gitattributes` carries `*.tf`, `*.py`, `*.sql`, `*.svg`, `*.css`, `*.html` as `text eol=lf`. `git ls-files --eol`, 28 September: every tracked `.py` and `.tf` is LF in the index, and every `.py` under `lambda/` is LF on disk. Still open: `*.js` (addendum below); the `__pycache__` cause, which is BLD-01; and in the working copy at `c:\terraform\arqedia`, twelve root-level files are CRLF or mixed on disk though LF in the index — `app_dns.tf`, `certs.tf`, `database.tf`, `frontend.tf`, `network.tf`, `providers.tf`, `variables.tf`, `db/load_pack.py` (CRLF); `main.tf`, `versions.tf`, `bootstrap/main.tf`, `bootstrap/versions.tf` (mixed). Whether any of them moves a plan was not checked |
 | Priority | Before the next apply |
 | Type | Build, Terraform |
 | Raised | 21 September 2026 |

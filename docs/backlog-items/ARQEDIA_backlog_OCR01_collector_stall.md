@@ -3,6 +3,7 @@
 | | |
 |---|---|
 | Status | Not built. Cause identified, not proven |
+| Status | 28 September 2026: steps 1 to 3 done, by `9b76250` (#100, 8 September). Step 1: the collector was wrong — `envelope_suffix` in `lambda/collector/app.py` says it "asked for the unsuffixed name - so a part's OCR result was read from an object that does not exist". Step 2: the collector now appends `.p<part_index>` for a part. Step 3: `textract.tf` grants the collector `s3:ListBucket` on the review bucket. Step 4 is not done: a Textract job that ends failed is now terminal and refunded (`_failed_read`, `8169385`, #168), but removing a document still refuses one in `reading` (`lambda/api/app.py`, `if state == "reading": return {"refused": state}`), so a document stuck in `reading` for any other reason still has no way out of the interface. Whether any other path clears it is UNVERIFIED |
 | Priority | **High.** It strands a document in a state the screen cannot clear |
 | Type | Collector, and the IAM policy behind its error message |
 

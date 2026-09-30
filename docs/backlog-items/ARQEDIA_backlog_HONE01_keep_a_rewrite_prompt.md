@@ -143,3 +143,19 @@ small, but it is not zero.
 - Decide whether keeping a prompt is offered only after a rewrite is accepted,
   or also on a prompt that was discarded.
 - `lambda/api/editor.py`, to see whether a section can be saved partially.
+
+**Corrected 28 September 2026.** The file is `lambda/shared/editor.py`;
+there is no `lambda/api/editor.py`. Read for this correction: `save_section`
+is not a partial save. On an existing section it sets `numeral`, `title`,
+`kind` and `prompt` from the body, defaulting absent ones (`title` to the key,
+`kind` to `extract`, `numeral` to empty, `prompt` to NULL); only `sort_order`
+and, since CFG-02 (#238), `context_sections` are kept when absent. So the
+screen would read the section first and write it back whole, or the route is
+extended — the choice this item names, still undecided.
+
+**Added 28 September 2026.** UX-02 rolls one further ask into this item:
+"Rewrites in the memo feed back into the section's configuration, live or by a
+save-after-rewrite choice" (`docs/ARQEDIA_worklist_UX02_2026-09-20.md`,
+"Rolled into existing backlog"). Whether "live" means bypassing the draft,
+against point 2 above, is not stated there; it is a question to put, not
+decided here.

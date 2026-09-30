@@ -52,6 +52,10 @@ tenant is already recorded. Neither `pipeline_spec_v1` nor
 `wallet_entitlement_spec_v1` mentions a rewrite. When it is priced,
 the charge follows the click on Go, as every other charge does.
 
+**Corrected 28 September 2026.** `pipeline_spec_v1` is not in the repository:
+`git log --all` finds no file of that name on any branch.
+`docs/specs/wallet_entitlement_spec_v1.md` is.
+
 ### 2 · Resume after a reload
 
 The screen holds a Go in memory. Refresh the page mid-rewrite and the work is
@@ -86,6 +90,10 @@ nothing either; composition writes `##` today.
 The rewrite screen renders through the same function as the reader, so its
 tables show as pipes until UI-08 is fixed.
 
+**Corrected 28 September 2026.** Stale. UI-08's cause was removed by 8aeecb6
+(#124, 11 September): `markdownOf` in `Memo.tsx` renders through
+`MemoDocument` in `MemoReader.tsx`, which draws real tables. See UI-08.
+
 ### 7 · Work in progress is lost on leaving
 
 Raised by the user on 11 September. Everything short of a saved revision is
@@ -106,3 +114,13 @@ prompt still does nothing until Go is pressed.
 Precedent: `PUT /config/draft/working` exists because a proposal's decisions,
 held only in the browser, were lost to a closed tab. Proposal and decisions
 are in the 11 September session; not built.
+
+**Corrected 28 September 2026.** Something was built: b6b6961 (#121, 11
+September), "Keep work in progress on a memo until it is saved or discarded",
+added `GET` and `PUT /memos/{memo_id}/working` (`lambda/api/app.py:1918`,
+`:1940`; `ui/src/api.ts` `memoWorking`, `keepMemoWorking`). `Memo.tsx`'s
+header comment now says the one working copy holds "the text as it stands,
+the prompts typed, the rewrites accepted and the ones still out", and that
+"Leaving - Back, a reload, another memo - keeps it, on the server". Not
+walked on 28 September. Undo within that working copy is UNDO-01, which
+depends on #121 and overlaps this item.

@@ -57,6 +57,9 @@ check `build_index.md` before citing a number.
 | Enterprise | negotiated | n | n | n | 10 def. | 50 def. | negotiated |
 
 - Billable: document filed $0.25 · memo generated $1.00 · provider call TBD.
+  - **29 Sep 2026:** filing is $0.25 per split part, not per uploaded file;
+    each part is its own `document` row. Live `meter_price` on dev:
+    `document_filed` 25 cents, standard.
 - Allowances sealed from real balance: test $1/day, classification per plan.
 - Trial: 30 days, seats free, $5 metered cap, expires to read-only.
 - Top-up: $5 × seats, on explicit consent. Soft prompt at $5, hard stop at $0.

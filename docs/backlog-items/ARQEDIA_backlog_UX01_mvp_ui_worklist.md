@@ -9,6 +9,32 @@
 | Raised | 13 September 2026 |
 | Decisions | All seven settled, 13 September 2026. See §Decisions |
 | Depends on | BR-01 (fourth brand colour), UI-03 (revision provenance) |
+| Status | 28 September 2026: SUPERSEDED by `docs/ARQEDIA_worklist_UX02_2026-09-20.md`, by the user's decision of 28 September. Kept as the record of what was argued. See §Superseded below |
+
+---
+
+## Superseded — 28 September 2026
+
+This worklist is superseded by `docs/ARQEDIA_worklist_UX02_2026-09-20.md`.
+Nothing below is rewritten; what follows records what became of it, checked
+against `git log origin/main` on 28 September.
+
+- **Merged, all on 13 September:** `ux-routing` (c1999d1, #131),
+  `br-01-brand-light` (024e9ff, #132), `ux-shell` (d21839e, #133), `ux-entry`
+  (b059325, #134), `ux-surfaces` (2e0e3bc and 3f3016c, no PR number in either
+  message) and `ux-progress` (bd3dc48, #135). The table under §Branches still
+  says `Next` for the last two; it is stale.
+- **The table contradicts itself.** It shows `ux-surfaces` as `Next` while
+  UX-17 and UX-18 say "Delivered on `ux-surfaces`". The commits settle it:
+  delivered.
+- **UX-04's dropdown is gone.** The rail's "Configure a report" became the
+  Catalogue page (`revision_selection_decisions_2026-09-17.md`, "Note — 18
+  September 2026, the Catalogue screen"; 2dd30ee, #162; `ui/src/Catalogue.tsx`).
+- **UX-07 (configurable numbering) was held back and is not carried by UX02.**
+  UX02 has no section-numbering item. It moves to `docs/ARQEDIA_next_steps.md`.
+  Still proposed, not in the schema, and not to be written without agreement.
+- **Tenant colours in the chrome, and `change_impact`**, are corrected where
+  they appear below.
 
 ---
 
@@ -84,6 +110,9 @@ Everything else is front end over interfaces that already exist.
 - Create from a report you already write is `derive_template`
   (`config_editors_spec_v1.md` §6A). **In the MVP.** The functions work; the
   screen around them is the work.
+  **Corrected 28 September 2026.** `config_editors_spec_v1.md` is not in the repository:
+  `git log --all` finds no file of that name on any branch, ever. References to
+  it cannot be checked here.
 
 **UX-05 · Say what publishing covers.**
 - A single line in the pinned header: the live revision number, that the draft
@@ -115,6 +144,13 @@ Everything else is front end over interfaces that already exist.
   Configure.
 - Tenant colour: it reads `brand_deep` the way the configuration bar does,
   including the platform fallback where no colour is set.
+- **Corrected 28 September 2026.** This conflicts with the settled rule "a
+  tenant's four colours appear on rendered output only" (CLAUDE.md). The chrome
+  moved to ARQEDIA's colours in eea0197 ("chrome takes ARQEDIA colours only",
+  14 September). Grep of `ui/src` finds no `--tenant-` variable and no
+  `brand_deep` or `brand_light` outside a comment at `ui/src/tokens.css:10-11`.
+  The same applies to UX-02's `brand_deep` pill, UX-06's `brand_light` pill and
+  UX-20's "tenant's light".
 - The `ux-shell` work left the plain Configure screens and the other views on a
   text link. This closes that.
 
@@ -215,6 +251,9 @@ Everything else is front end over interfaces that already exist.
   failing on click.
 - The confirmation names the object and says what still references it, using
   `change_impact`, which already computes this for the publish summary.
+  **Corrected 28 September 2026.** There is no `change_impact`: grep of
+  `lambda/` and `ui/src` returns nothing. What does compute the publish summary
+  is not recorded here.
 - It also says the deletion is draft-only until Publish and reaches no filed
   document, because "delete" reads as destruction and here it is not.
 
@@ -233,6 +272,9 @@ Everything else is front end over interfaces that already exist.
   filing, generating, publishing.
 - It states what is running, not merely that something is.
 - Respects reduced motion, per the quality floor in `frontend_onboarding_spec_v1.md` §6.
+  **Corrected 28 September 2026.** `frontend_onboarding_spec_v1.md` is not in the repository:
+  `git log --all` finds no file of that name on any branch, ever. References to
+  it cannot be checked here.
 
 **UX-13 · A refresh returns you where you were.**
 - Report, part and open section survive a browser refresh.
@@ -277,6 +319,10 @@ push. Nothing merges until the screen has been rendered and looked at.
 | `ux-surfaces` | UX-17, UX-18, UX-06, UX-08, UX-09, UX-10 | Next |
 | `ux-progress` | UX-21, UX-20, UX-11, UX-12, UX-14, UX-19 | Next |
 | Held back | UX-07, until its field is agreed against the schema | |
+
+**Corrected 28 September 2026.** `ux-surfaces` merged 13 September (2e0e3bc,
+3f3016c) and `ux-progress` merged 13 September (bd3dc48, #135). UX-07 was never
+built and moves to `docs/ARQEDIA_next_steps.md`.
 
 ---
 

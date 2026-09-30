@@ -56,6 +56,13 @@ What is missing is a name and a lineage: a revision has a number but no label,
 and a forked revision 1 does not record which pack revision it came from.
 Those two are additive columns, not a redesign.
 
+**Corrected 28 September 2026.** Both columns exist, and did when this was
+written. `db/migrations/008_config_registry.sql` (7037b1a, 31 August) creates
+`config_revision` with `forked_from VARCHAR(128)` and `note VARCHAR(512)`.
+`revision_selection_decisions_2026-09-17.md` records `forked_from` carrying
+`pack:<tenant>:<revision>`. What remains is whether they are filled and shown;
+not checked on 28 September.
+
 ### What to show, and where
 
 - **Memo front matter.** The template name and revision number alongside the

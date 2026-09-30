@@ -329,6 +329,16 @@ built.**
 7. **Workspace tree view** (§5A) — a consequence of lineage, not a decision.
    Belongs to component 9 or the front end, wherever the file list lives.
 
+> **Corrected 28 September 2026.** Item 2's "(§6)" should read §7: pack
+> ownership is §7, "Pack maintenance" ("Packs need an owner"); §6 is repeating
+> groups. Likewise §0's "Open items in §7" means §8, this section.
+>
+> **Also noted.** The pack model in §2 — one revision holding everything,
+> forked whole — is superseded by TPL-02 (one base, templates over it;
+> `docs/specs/ARQEDIA_spec_TPL02_base_and_templates.md`, built #141–#144) and
+> by `revision_selection_decisions_2026-09-17.md` (what is offered is a mark in
+> `pack_offer`, set in tenant 0).
+
 **Nothing in this component now blocks the build.** Item 1 does not block
 building, but it decides whether the thing built is any good.
 

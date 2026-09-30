@@ -33,6 +33,13 @@ the schema and on the screen, from one a person deliberately left out of the
 memorandum. An administrator reviewing what a tenant excluded cannot tell the
 difference, and neither can a report.
 
+**Corrected 28 September 2026.** The line numbers have moved. On main today the
+route is dispatched at `lambda/api/app.py:2708` and handled by `set_active` at
+`:1202`. In `ui/src/Review.tsx`: "extraction failed" is at `:1570`,
+`showInactive` is declared at `:131`, and "Show set aside" is at `:1464`. Still
+not built: grep finds no `set_aside` column, no `set-aside` route and no
+"Review failed extractions" link.
+
 The failed rows are real and present: 51 in COCOA-EMPIRE alone now render
 "extraction failed" (`ui/src/Review.tsx:961`), each with the values it managed
 to write before it stopped.

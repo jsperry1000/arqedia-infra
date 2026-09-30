@@ -3,6 +3,7 @@
 | | |
 |---|---|
 | Status | Closed on branch `ux-branding`, 20 September 2026 |
+| Status | 28 September 2026: on `main` by `703913a` (#192); `lambda/render/app.py` sets the pill's background to `palette["light"]`. The three points under "Still open after this branch" are not re-checked here |
 | Priority | Medium. Cosmetic, but it is the tenant's own brand |
 | Type | Migration, Settings, render |
 

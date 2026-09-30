@@ -5,6 +5,9 @@
 | Status | Not built. Decisions taken, open points listed at the end |
 | Priority | High. It is the first thing a new client does |
 | Depends on | CFG-02 for anything the model writes. Not blocking for the rest |
+| Status | 28 September 2026: the core is built, from `e573006` (#64, 3 September), `e81f9d2` (#65) and `fc0c94a` (#66): `lambda/proposer/app.py` reads the sample, `ui/src/Propose.tsx` is the screen; routes `POST /config/draft/sample`, `POST /config/draft/propose`, `GET /config/draft/proposal(s)`, `GET`/`PUT /config/draft/working` in `lambda/api/app.py`. The sample may be `.pdf` or `.docx` (`_SAMPLE_TYPES`). Open point b is still open: the proposer does not guess composed sections (no `kind` or `context_sections` in `lambda/proposer/app.py`) |
+| Status | 28 September 2026: CFG-02 now exists and is built (#238, #239), so open point b is no longer blocked on it. Route 1, "use one of ours", is built as TPL-02 (`fork_template`, #142) |
+| See also | `ARQEDIA_CFG04_template_upload_client_file_build_outline.md` — the build outline, checked against the code. This brief is the what and why; the outline is the how. They are complementary, and neither supersedes the other |
 
 ---
 
@@ -101,6 +104,10 @@ The distinction that drives the whole design.
 
 **One-way — wrong here costs a re-upload at $0.25 a document:**
 
+**Decided 29 September 2026.** Filing is charged $0.25 per split part, not per
+uploaded file: each part is its own `document` row (`011_document_parts.sql`).
+Live `meter_price` on dev, 29 September: `document_filed` 25 cents, standard.
+
 - A field's description. It decides what extraction looks for.
 - A document type's description. It decides how uploads are classified.
 - The list of fields itself. A field added later is empty on every document
@@ -138,6 +145,10 @@ memorandum has both kinds — Borrower Overview reports facts, Executive Summary
 and Principal Risks draw other sections together. Do we guess which is which,
 or propose everything as fact-rendering and let him change it? Guessing needs
 CFG-02, which does not exist.
+
+**Corrected 28 September 2026.** CFG-02 exists: `05ce073` (#238) and
+`0eac323` (#239) add the context-sections control to Configure and checks on
+save and publish. The question in b stands and is still undecided.
 
 **c. What formats he can drop.** The sample is a PDF with selectable text. A
 Word file, or a scan with no text layer, is a different job.

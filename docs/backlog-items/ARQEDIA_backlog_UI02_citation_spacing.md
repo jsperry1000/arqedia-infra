@@ -8,6 +8,21 @@
 | Priority | Readability, both PDF and browser |
 | Type | Composition, or renderer, or both |
 | Raised | 30 August 2026 |
+| Status | 28 September 2026: resolved in code on both surfaces, by the "Move them" option below. Not checked by looking at a rendered memo on 28 September. See §Since this was written |
+
+---
+
+### Since this was written — 28 September 2026
+
+**Corrected 28 September 2026.** Both renderers moved citations out of the
+prose.
+
+- **PDF.** `lambda/render/app.py:164-184`: citations are numbered in order of
+  appearance and collected at the end, one superscript per run of citations.
+  In since e0f19af (#38, 31 August), the day after this item was raised.
+- **Browser.** 8aeecb6 (#124, 11 September), "citations out of the way":
+  `ui/src/MemoReader.tsx`, header comment, "Each run of references is one small
+  mark instead, and the marks stay out of the way until somebody wants them."
 
 ---
 

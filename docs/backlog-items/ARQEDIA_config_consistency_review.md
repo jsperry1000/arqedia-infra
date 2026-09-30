@@ -174,6 +174,25 @@ finding 5 is fixed once rather than twice.
 **E · Decide what `shape_key` is for**, and delete it if the answer is
 nothing.
 
+**Corrected 28 September 2026.** A, B and C are built, all in cc0f141 (#84,
+5 September, "Refuse a configuration that cannot be read"):
+
+- **A.** `registry.validate` (`lambda/shared/registry.py:286`) refuses, as
+  FATAL, a table with no group key (`:321-345`), a table with no columns
+  (`:347-366`) and a column whose key does not begin with its table
+  (`:368-389`). The composed-section cases of finding 3 are refused too,
+  under CFG-02 (docstring, `:14-21`).
+- **B.** `editor.draft()` derives `is_group` from `cardinality`
+  (`lambda/shared/editor.py:193-200`).
+- **C.** `_save_columns` raises on a key that does not start with its group
+  (`lambda/shared/editor.py:815`).
+- **D, partly.** `ui/src/config-parts.tsx` holds pieces both screens use;
+  `Propose.tsx` imports `slugKey` and `fieldKey` from it. Whether the field
+  and document forms themselves are shared is not checked.
+- **E, open.** `shape_key` is still written (`editor.py:269-284`, now
+  truncated rather than refused) and loaded as `section["shape"]`
+  (`config.py:246`); grep finds no reader in composition or render.
+
 ---
 
 ## What I should have done differently

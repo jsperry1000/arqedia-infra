@@ -53,6 +53,14 @@ Two ways round it, both worth weighing before building:
 
 Rendered-pane highlighting is straightforward either way.
 
+**Corrected 28 September 2026.** The two-pane premise is gone. Since 8aeecb6
+(#124) and the in-place editing that followed, editing happens in the document
+itself: "There is no second pane and no markdown on screen" (`ui/src/Memo.tsx`,
+header comment, lines 26-29). The only textarea left in `Memo.tsx` is the
+rewrite prompt (`:686`). So the difficulty above, and "both panes" under
+§Behaviour and §Acceptance, no longer describe the screen. Search itself is
+still not built: grep of `Memo.tsx` and `MemoReader.tsx` finds none.
+
 ### Notes
 
 - **Do not highlight inside a citation.** A search for "page 1" would light up

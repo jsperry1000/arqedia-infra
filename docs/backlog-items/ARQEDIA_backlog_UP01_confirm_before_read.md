@@ -8,6 +8,7 @@
 | Priority | Before launch, after the pipeline works |
 | Type | Front end, pipeline, billing |
 | Raised | 3 September 2026 |
+| Revised | 28 September 2026 — §Rejection reasons corrected against `docs/specs/unreadable_documents_decisions_2026-09-18.md`, which overlaps this item and takes over its rejection half. The confirm-before-read and charging halves are not re-checked here |
 
 ---
 
@@ -60,6 +61,21 @@ half of it plus the billing rule.
 
 Both currently produce the same outcome — no row, no message, no evidence the
 file was ever uploaded.
+
+**Corrected 28 September 2026.** Three things in this table are stale.
+
+- **"Not until Textract is built" is overtaken.**
+  `unreadable_documents_decisions_2026-09-18.md` §2 item 3: "A text-free scan
+  is accepted unclassified and OCRs at filing"; item 4 separates the reasons,
+  with `no_text_layer` routed to OCR and `pdf-parse-failed` refused.
+- **UP-03 does not exist.** Grep of `docs/` finds it only in this file.
+- **"No row, no message" is no longer so.** `db/migrations/025_document_refusal.sql`
+  (0f79551, #166, 18 September) writes a refused document as a row in state
+  `unreadable` carrying its refusal code and reason, under the same decision
+  record's item 1, "No upload may end in silence".
+
+That decision record is the one to read for unreadable files; this item and it
+overlap.
 
 ### Notes
 

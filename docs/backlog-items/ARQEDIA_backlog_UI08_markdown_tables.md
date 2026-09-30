@@ -8,6 +8,7 @@
 | Priority | High for its size. It is the first thing a reader sees |
 | Type | Front end |
 | Raised | 10 September 2026, proposed. Diagnosed 11 September 2026 |
+| Status | 28 September 2026: RESOLVED IN CODE by 8aeecb6 (#124, 11 September), "real tables". The cause below no longer exists; the fix below was not the one taken. Not checked by looking at a rendered memo on 28 September. See §Cause |
 
 ---
 
@@ -36,6 +37,16 @@ table the model emitted on one line by splitting it back into rows. That makes
 the markdown correct; it does not make the renderer understand tables.
 
 Checked against the react-markdown documentation, 11 September.
+
+**Corrected 28 September 2026.** This cause no longer exists. 8aeecb6 (#124)
+removed `ReactMarkdown` from `Memo.tsx` and added `ui/src/memodoc.ts`, a
+parser that recognises a table by its header row and divider, and
+`ui/src/MemoReader.tsx`, which draws it as a real table. `markdownOf` in
+`Memo.tsx` now renders through `MemoDocument` (`Memo.tsx:460-461`), so the
+reader, the editor preview and the rewrite screen share it. Grep of `ui/src`
+finds no import of `react-markdown`, though `ui/package.json` still lists it
+as a dependency. `remark-gfm` was never added. The PDF, under §Not in scope,
+is unchecked.
 
 ### Fix
 
