@@ -216,7 +216,7 @@ export function WelcomeView({ stopAtDraft = false, onStarted }: {
           </p>
 
           <h3>What a filing costs</h3>
-          <p>A filing is charged at $0.25 per document.</p>
+          <p>A filing is charged at $0.25 per document filed.</p>
 
           {/* A SECOND ADMINISTRATOR, ASKED HERE RATHER THAN DURING SIGNUP
               (18.8). It was step 4 of five, optional, before anybody had seen
