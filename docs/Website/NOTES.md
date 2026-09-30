@@ -168,3 +168,10 @@ is built, prod takes `arqedia.com` and `app.arqedia.com`; dev moves to
 `dev.arqedia.com` and `app.dev.arqedia.com`. Two alias records and two
 distribution aliases — no rebuild, but it must be a decision rather than a
 discovery.
+
+---
+
+## 9. The site mocks
+
+**29 September 2026.** `arqedia-site-mock (1).html` is the current site mock.
+`arqedia-site-mock.html` is superseded and kept for reference.
