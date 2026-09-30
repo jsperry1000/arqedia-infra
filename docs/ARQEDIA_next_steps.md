@@ -160,7 +160,8 @@ Grouped by area, not by priority. Where a source states urgency, it is in the Wo
 | | SPECS | Seven specs cited by `build_index.md` were never committed; they exist at `C:\Terraform\terraform_package\docs\build-plans\ARQEDIA DD APP\` | Bring into the repo? | build_index |
 | | UX02 | 17.2, 18.2, 18.3, 18.4 built but not marked closed | — | UX02 |
 | | PROMPTS | `docs/prompts/` is git-excluded; COMP-01 prompt is done (#164) | Keep, commit or delete? | `.git/info/exclude` |
-| | SITE | `docs/Website/` holds two different mocks, `(1)` adds the hero graphic; `SIGNUP_NOTES.md` predates SES, seats, wallet and the allowlist | Which mock is current | Website/ |
+| | SITE | **Mock decided 29 September 2026:** `arqedia-site-mock (1).html` is the current site mock; `arqedia-site-mock.html` is superseded and kept for reference (`docs/Website/NOTES.md` §9). The `SIGNUP_NOTES.md` half stays open. `docs/Website/` holds two different mocks, `(1)` adds the hero graphic; `SIGNUP_NOTES.md` predates SES, seats, wallet and the allowlist | Which mock is current | Website/ |
+| | MOCK-COPY | **Closed 29 September 2026:** heading set to "a price per document filed". The current mock's pricing heading said "a price per document"; filing is charged per split part | Wording — decided | `docs/Website/arqedia-site-mock (1).html` |
 | | FOREIGN | `docs/HANDOFF/HANDOFF-parse-first-upload.md` is a Retool/eBL build, not ARQEDIA | Move out? | HANDOFF/ |
 | | EOL | `.gitattributes` has no rule for `.md`; the index is LF only because of `core.autocrlf` on this machine | Add `*.md text eol=lf`? | found 28 Sep |
 | | GUIDE | `ARQEDIA_UI_GUIDE_DRAFT.md` still a draft | — | backlog-items |
