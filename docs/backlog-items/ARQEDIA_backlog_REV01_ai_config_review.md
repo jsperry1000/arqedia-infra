@@ -350,6 +350,33 @@ another provider is a second call path, not just a credential table.
 
 ---
 
+### For the screen, found on dev, 30 September 2026
+
+From the first complete live session: tenant 2, session
+`48000786b62541ada6df9c404108b728`, 7 of 7 parts, 123 suggestions. Both are
+requirements on the screen, which is not built. Neither has a mechanism
+decided, and both are **PROPOSED**.
+
+**S1 · Suggestions can conflict with each other.** Each part of the read is a
+separate model call, and nothing compares what one call proposed with what
+another did. In that session `s-0026` rewrites the credit memorandum's
+executive-summary prompt to stop asking for net income, because no bound field
+holds it, while `s-0104` proposes a new Net Income field for that same
+section. Accepting either changes what the other means. The screen has to
+show related suggestions together, so that accepting one is understood in
+light of the other. How they are related - by target, by section, by the
+field a prompt names - is not decided.
+
+**S2 · Questions have no answer path.** 33 of the 123 suggestions in that
+session (27%) were questions rather than proposed changes. `accept` refuses a
+question outright ("a question has nothing to accept"), so today the screen
+can only show one. There is no way for an administrator to answer a question
+and have the answer become a suggestion they can accept. Whether that is a
+second model call, the person writing the change themselves, or something
+else is not decided.
+
+---
+
 ### Not changed
 
 - Extraction, composition, classification, and any revision other than 0.
