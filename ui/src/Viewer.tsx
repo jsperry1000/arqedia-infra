@@ -4,6 +4,7 @@ import {
   viewerApi, statusOf,
   type ViewerCredential, type ViewerPage, type ViewerShare,
 } from "./api";
+import { config } from "./config";
 import logoWhite from "../../brand/logo-white.svg";
 
 /**
@@ -50,11 +51,23 @@ function keepSession(idToken: string) {
   } catch { /* a private window; the page still works, just not on reload */ }
 }
 
+/** The bar above the memorandum, in ARQEDIA's palette.
+ *
+ *  THE MARK GOES TO THE MARKETING SITE, not to the application. Somebody who
+ *  has never heard of ARQEDIA and has just been sent a document through it
+ *  should be able to find out who we are before trusting it. In a new tab, so
+ *  the memorandum and the link that opened it stay where they are. The address
+ *  is the build's (config.siteUrl, from site_host in dns.tf), not a second
+ *  copy of it. */
 function Bar({ children }: { children?: React.ReactNode }) {
   return (
     <div className="viewer-bar">
-      <img src={logoWhite} alt="" width="20" height="20" />
-      <strong>ARQEDIA</strong>
+      <a className="viewer-mark" href={config.siteUrl}
+         target="_blank" rel="noopener noreferrer"
+         title="What ARQEDIA is (opens in a new tab)">
+        <img src={logoWhite} alt="" width="20" height="20" />
+        <strong>ARQEDIA</strong>
+      </a>
       {children}
     </div>
   );

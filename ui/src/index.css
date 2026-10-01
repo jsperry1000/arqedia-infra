@@ -1574,6 +1574,13 @@ a.add:hover { background: var(--paper); text-decoration: none; }
    the negative margin above to cancel. */
 .viewer.public { margin: 0; }
 .viewer-bar img { display: block; }
+/* The mark is a link out to the marketing site. It keeps the bar's white
+   rather than taking the page's link blue, and holds the logo and the
+   wordmark at the spacing they had as two separate items. */
+.viewer-bar a.viewer-mark {
+  display: flex; align-items: center; gap: 16px; color: #fff;
+}
+.viewer-bar a.viewer-mark:hover { text-decoration: none; opacity: 0.85; }
 .viewer-actions button { white-space: nowrap; }
 .viewer-message { max-width: 760px; margin: 40px auto; padding: 0 24px; }
 /* The watermarked PDF, as itself. Tall enough to read a page without the
