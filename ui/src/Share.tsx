@@ -1,142 +1,414 @@
-import { useState } from "react";
-import { useBackAction } from "./shell";
-import { SHAREABLE, GRANTS, GRANT_SCOPE, Inert, NotConnected } from "./mock";
+import { useEffect, useState } from "react";
+import { useBackAction, Working } from "./shell";
+import {
+  api, chargeKey, statusOf,
+  type ShareAllowance, type ShareGrant, type ShareSent,
+} from "./api";
 
 /**
- * Sharing. Who a memorandum has been sent to, what they got, and what they
- * did with it.
+ * Sharing. Who a memorandum has been sent to, what they did with it, and
+ * taking it back.
  *
- * NOT CONNECTED. There is no sharing endpoint. In the built product this
- * opens from a memorandum's own head rather than from the rail; it is a rail
- * entry here so the flow can be walked without a memo open.
+ * SENDING OPENS FROM THE MEMORANDUM'S OWN PAGE (ShareSendPanel, below, used
+ * by Memo.tsx). This screen is the list: every grant the workspace has made,
+ * revoke, and send again.
  *
- * Three things the screen has to make true, all from the share specification:
- * a grant carries the rendered memorandum and nothing else, revoking is
- * available in every state including capped, and registration - not delivery -
- * is the line at which a recipient becomes ours to contact.
+ * Three things the screen has to make true, all from the share
+ * specification: a grant carries the rendered memorandum and nothing else,
+ * revoking is available in every state including capped, and revoking cannot
+ * recall a copy already downloaded - which is said where somebody sends, not
+ * in terms nobody reads.
  */
 
-export function ShareView({ onBack, onViewer }: {
+function errorText(err: unknown): string {
+  let message = String((err as Error)?.message ?? err);
+  try {
+    message = JSON.parse(message).error ?? message;
+  } catch { /* not JSON; show it as it came */ }
+  return message;
+}
+
+const day = (iso: string | null | undefined) => (iso ?? "").slice(0, 10);
+const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+/** The allowance in one sentence, and what the next share costs once it is
+ *  used up. A trial is ten for the whole trial; a plan is per billing month. */
+export function AllowanceLine({ allowance: a }: { allowance: ShareAllowance }) {
+  if (a.capped) {
+    return (
+      <p className="warn">
+        This workspace has no balance, so it cannot share. Revoking still
+        works. Top up under Settings, Account management.
+      </p>
+    );
+  }
+  const span = a.trial ? "during the trial" : `this month (to ${day(a.period_ends_at)})`;
+  if (a.allowance === null) {
+    return <p className="muted small">{a.used} shared {span}. No limit on this plan.</p>;
+  }
+  const over = a.overage_cents === null
+    ? "Sharing past it is not priced yet, so it is refused."
+    : `Each one past it costs ${money(a.overage_cents)}.`;
+  return (
+    <p className="muted small">
+      {a.used} of {a.allowance} included shares used {span}
+      {a.remaining === 0 ? " — all of them. " : `, ${a.remaining} left. `}
+      {over} At most {a.daily_limit} a day ({a.today} today).
+    </p>
+  );
+}
+
+/** What a recipient gets, and what they do not. The scope is settled in the
+ *  share specification (section 2); this is its statement, not a figure. */
+function Scope() {
+  return (
+    <table className="docs">
+      <tbody>
+        <tr><td>The rendered memorandum, watermarked with their address</td>
+            <td className="ref" style={{ width: 60 }}>yes</td></tr>
+        <tr><td>The source documents behind each claim</td>
+            <td className="ref">no</td></tr>
+        <tr><td>Your configuration</td><td className="ref">no</td></tr>
+        <tr><td>Anything else in the engagement</td><td className="ref">no</td></tr>
+      </tbody>
+    </table>
+  );
+}
+
+/** §7.2. The tenant's own assurance, at the moment of sending. */
+function Authority({ checked, onChange }: {
+  checked: boolean; onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="affirm">
+      <input type="checkbox" checked={checked}
+             onChange={(e) => onChange(e.target.checked)} />
+      <span>
+        I am entitled to share this memorandum with this person. It carries
+        third-party identity material, and that assurance is mine to give.
+      </span>
+    </label>
+  );
+}
+
+/** Said at the point of sending, in plain words (share_viewer_spec §4). */
+function CannotRecall() {
+  return (
+    <p className="revision-note">
+      Revoking ends access in ARQEDIA. It cannot recall a copy the recipient
+      has already downloaded. Every page of that copy carries their address
+      and the time they took it.
+    </p>
+  );
+}
+
+// --- sending, from a memorandum ----------------------------------------------
+
+export function ShareSendPanel({ memoId, label, onClose }: {
+  memoId: number;
+  label: string;
+  onClose: () => void;
+}) {
+  const [allowance, setAllowance] = useState<ShareAllowance | null>(null);
+  const [to, setTo] = useState("");
+  const [expiry, setExpiry] = useState<string>("default");
+  const [affirmed, setAffirmed] = useState(false);
+  // Minted when the panel opens, and again after a send: one click, one key,
+  // so a retry of the same click is answered rather than charged twice.
+  const [key, setKey] = useState(chargeKey());
+  // The overage price, once the person has been shown it. Sent with the
+  // request; the server refuses any other figure.
+  const [accepted, setAccepted] = useState<number | null>(null);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const [sent, setSent] = useState<ShareSent | null>(null);
+
+  async function load() {
+    try {
+      setAllowance((await api.shares()).allowance);
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+  useEffect(() => { load(); }, []);
+
+  const past = !!allowance && allowance.allowance !== null && allowance.remaining === 0;
+  const price = allowance?.overage_cents ?? null;
+  const charging = past && price !== null;
+
+  async function send() {
+    setSending(true);
+    setError("");
+    try {
+      const result = await api.sendShare(memoId, {
+        recipient: to.trim(),
+        authority_affirmed: affirmed,
+        expiry_days: expiry === "default" ? null : Number(expiry),
+        idempotency_key: key,
+        accept_overage_cents: charging ? price : accepted,
+      });
+      setSent(result);
+      setTo("");
+      setAffirmed(false);
+      setAccepted(null);
+      setKey(chargeKey());
+      load();
+    } catch (err) {
+      // Past the allowance since the screen last looked: nothing was sent or
+      // charged. The price comes back with the refusal, and the next press
+      // accepts it.
+      if (statusOf(err) === 409) {
+        try {
+          const body = JSON.parse((err as Error).message);
+          if (typeof body.overage_cents === "number") {
+            setAccepted(body.overage_cents);
+            setError(body.error);
+            load();
+            return;
+          }
+        } catch { /* fall through */ }
+      }
+      setError(errorText(err));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const cost = charging ? price : accepted;
+  const ready = !!to.trim() && affirmed && !sending && !!allowance && !allowance.capped;
+
+  return (
+    <div className="panel-backdrop" onClick={onClose}>
+      <aside className="panel narrow" onClick={(e) => e.stopPropagation()}>
+        <a onClick={onClose} className="panel-close">Close</a>
+        <h3>Share memo {label}</h3>
+        <p className="muted small">
+          The recipient gets a link by email. Opening it shows this memorandum
+          and nothing else; registering keeps their access longer.
+        </p>
+
+        {allowance ? <AllowanceLine allowance={allowance} />
+                   : !error && <Working what="Reading the allowance" />}
+
+        <div className="form">
+          <label className="row">
+            <span>Recipient email</span>
+            <input placeholder="name@firm.com" value={to}
+                   onChange={(e) => setTo(e.target.value)} />
+          </label>
+
+          <label className="row">
+            <span>Access</span>
+            <select value={expiry} onChange={(e) => setExpiry(e.target.value)}>
+              {/* The default is not a date the tenant set: it is two weeks,
+                  and six months from sending once the recipient registers
+                  (share_viewer_spec §6). A chosen period is a ceiling that
+                  registering never moves. */}
+              <option value="default">
+                2 weeks, or 6 months if they register (default)
+              </option>
+              <option value="30">30 days, fixed</option>
+              <option value="90">90 days, fixed</option>
+            </select>
+          </label>
+
+          <h4>What the recipient gets</h4>
+          <Scope />
+
+          <CannotRecall />
+
+          <Authority checked={affirmed} onChange={setAffirmed} />
+
+          {cost !== null && (
+            <p className="warn">
+              This is past the shares your plan includes. Sending it costs{" "}
+              {money(cost)}, charged when you press Send.
+            </p>
+          )}
+
+          <div className="form-actions">
+            <button onClick={send} disabled={!ready}
+                    title={!affirmed ? "Confirm you are entitled to share it first."
+                                     : undefined}>
+              {sending ? "Sending…"
+                       : cost !== null ? `Send — ${money(cost)}` : "Send"}
+            </button>
+          </div>
+        </div>
+
+        {error && <p className="error">{error}</p>}
+
+        {sent && (
+          <p className="revision-note">
+            {sent.reinstated ? "Sent again, and access restored, " : "Sent "}
+            to {sent.recipient_email}. Access ends {day(sent.expires_at)}.
+            {sent.charged_cents > 0 && ` Charged ${money(sent.charged_cents)}.`}
+            {!sent.sent && " The email could not be delivered; the share stands, "
+              + "and sending it again from Sharing retries the email."}
+          </p>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+// --- the list ----------------------------------------------------------------
+
+export function ShareView({ onBack, onMemo }: {
   onBack: () => void;
-  onViewer: () => void;
+  onMemo: (memoId: number) => void;
 }) {
   useBackAction(onBack);
 
-  const [memoId, setMemoId] = useState(SHAREABLE[0].memo_id);
-  const [to, setTo] = useState("");
-  const [expiry, setExpiry] = useState("14");
+  const [grants, setGrants] = useState<ShareGrant[] | null>(null);
+  const [allowance, setAllowance] = useState<ShareAllowance | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState<string>("");
+  // The grant being sent again, and its own §7.2 box.
+  const [again, setAgain] = useState<string>("");
+  const [affirmed, setAffirmed] = useState(false);
+
+  async function load() {
+    try {
+      const listed = await api.shares();
+      setGrants(listed.grants);
+      setAllowance(listed.allowance);
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function revoke(g: ShareGrant) {
+    setBusy(g.grant_id);
+    setError("");
+    try {
+      await api.revokeShare(g.grant_id);
+      await load();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function sendAgain(g: ShareGrant) {
+    setBusy(g.grant_id);
+    setError("");
+    try {
+      // The same grant: reinstated if it was revoked, a fresh two weeks, the
+      // same link. No allowance and no charge.
+      await api.sendShare(g.memo_id, {
+        recipient: g.recipient_email,
+        authority_affirmed: affirmed,
+        expiry_days: null,
+        idempotency_key: chargeKey(),
+      });
+      setAgain("");
+      setAffirmed(false);
+      await load();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy("");
+    }
+  }
 
   return (
     <div>
       <h2>Sharing</h2>
-      <NotConnected what="Sharing" />
+      <p className="muted">
+        Every memorandum this workspace has shared. To share one, open it and
+        choose Share.
+      </p>
 
-      <h3>Send a memorandum</h3>
+      {allowance && <AllowanceLine allowance={allowance} />}
+      {error && <p className="error">{error}</p>}
+      {grants === null && !error && <Working what="Reading what has been shared" />}
 
-      <div className="form">
-        <label className="row">
-          <span>Which memorandum</span>
-          <select value={memoId} onChange={(e) => setMemoId(Number(e.target.value))}>
-            {SHAREABLE.map((m) => (
-              <option key={m.memo_id} value={m.memo_id}>
-                {m.label} &mdash; {m.subject} ({m.generated})
-              </option>
-            ))}
-          </select>
-        </label>
+      {grants !== null && grants.length === 0 && (
+        <p className="muted">Nothing has been shared yet.</p>
+      )}
 
-        <label className="row">
-          <span>Recipient email</span>
-          <input placeholder="name@firm.com" value={to}
-                 onChange={(e) => setTo(e.target.value)} />
-        </label>
-
-        <label className="row">
-          <span>Access expires</span>
-          <select value={expiry} onChange={(e) => setExpiry(e.target.value)}>
-            {/* 2 weeks is the default a verified recipient gets (12.1,
-                share_viewer_spec §6). A date set here is a CEILING: the
-                spec's extension to six months on registration applies only
-                where the tenant left the default, which is what
-                share_grant.expiry_set_by_tenant exists to tell apart. */}
-            <option value="14">2 weeks (default)</option>
-            <option value="30">30 days</option>
-            <option value="90">90 days</option>
-          </select>
-        </label>
-
-        <h4>What the recipient gets</h4>
+      {grants !== null && grants.length > 0 && (
         <table className="docs">
+          <thead>
+            <tr>
+              <th>Recipient</th><th>Memorandum</th><th>Sent</th>
+              <th>First opened</th><th>Opens</th><th>Downloads</th>
+              <th>Access ends</th><th></th>
+            </tr>
+          </thead>
           <tbody>
-            {GRANT_SCOPE.map((s) => (
-              <tr key={s.what}>
-                <td>{s.what}</td>
-                <td className="ref" style={{ width: 60 }}>{s.given ? "yes" : "no"}</td>
+            {grants.map((g) => (
+              <tr key={g.grant_id}>
+                <td>
+                  {g.recipient_email}
+                  {g.registered && <div className="in-use">registered</div>}
+                </td>
+                <td className="small">
+                  <a onClick={() => onMemo(g.memo_id)}>{g.memo_label}</a>
+                  {g.subject && <div className="muted">{g.subject}</div>}
+                </td>
+                <td className="ref">
+                  {day(g.sent_at)}
+                  <div className="muted small">{g.sent_by}</div>
+                </td>
+                <td className="ref">{g.first_opened_at ? day(g.first_opened_at) : "—"}</td>
+                <td className="ref">{g.opens}</td>
+                <td className="ref">{g.downloads}</td>
+                <td className="ref">
+                  {g.revoked
+                    ? <span className="muted">revoked {day(g.revoked_at)}
+                        <div className="small">by {g.revoked_by}</div></span>
+                    : <>
+                        {day(g.expires_at)}
+                        {g.expired && <div className="warn">ended</div>}
+                        {g.expiry_set_by_tenant && <div className="muted small">fixed</div>}
+                      </>}
+                </td>
+                <td>
+                  {again === g.grant_id ? (
+                    <div className="share-again">
+                      <Authority checked={affirmed} onChange={setAffirmed} />
+                      <button onClick={() => sendAgain(g)}
+                              disabled={!affirmed || busy === g.grant_id}>
+                        {busy === g.grant_id ? "Sending…" : "Send again"}
+                      </button>
+                      <a className="secondary"
+                         onClick={() => { setAgain(""); setAffirmed(false); }}>
+                        Cancel
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="row-tools">
+                      {!g.revoked && (
+                        <button onClick={() => revoke(g)}
+                                disabled={busy === g.grant_id}>
+                          {busy === g.grant_id ? "Revoking…" : "Revoke"}
+                        </button>
+                      )}
+                      <a className="secondary"
+                         onClick={() => { setAgain(g.grant_id); setAffirmed(false); }}>
+                        {g.revoked ? "Restore and send again" : "Send again"}
+                      </a>
+                    </div>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+      )}
 
-        <p className="muted small">
-          Sending {SHAREABLE.find((m) => m.memo_id === memoId)?.label} for{" "}
-          {SHAREABLE.find((m) => m.memo_id === memoId)?.subject}
-          {to ? ` to ${to}` : ""}, expiring in {expiry} days.
-        </p>
-
-        <div className="form-actions">
-          <Inert what="Sending">Send</Inert>
-          <a className="secondary" onClick={onViewer}>
-            See what the recipient sees
-          </a>
-        </div>
-      </div>
+      <CannotRecall />
 
       <p className="muted small">
         A recipient who only opens the link has no relationship with us &mdash;
         you collected that address and we delivered a file to it. One who
-        registers keeps access for six months and has accepted our terms
-        directly. Registration is the line, not delivery.
-      </p>
-
-      <h3>Outstanding grants</h3>
-
-      <table className="docs">
-        <thead>
-          <tr>
-            <th>Recipient</th><th>Memorandum</th><th>Sent</th>
-            <th>First opened</th><th>Opens</th><th>Downloads</th>
-            <th>Expires</th><th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {GRANTS.map((g) => (
-            <tr key={g.to + g.memo}>
-              <td>
-                {g.to}
-                {g.registered && <div className="in-use">registered</div>}
-              </td>
-              <td className="muted small">{g.memo}</td>
-              <td className="ref">{g.sent}</td>
-              <td className="ref">{g.opened ?? "\u2014"}</td>
-              <td className="ref">{g.opens}</td>
-              <td className="ref">{g.downloads}</td>
-              <td className="ref">{g.expires}</td>
-              <td><Inert what="Revoking">Revoke</Inert></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <p className="muted small">
-        Every grant records who sent it, when it was first opened, every open,
-        every download and who revoked it. Downloads carry the viewer's
-        identity, so the record says who took a copy.
-      </p>
-
-      <p className="muted small">
-        Revoking works in every state, including when the account is capped
-        &mdash; a tenant locked out for non-payment must still be able to pull a
-        memorandum back.
+        registers keeps access for six months from when it was sent and has
+        accepted our terms directly. Revoking works in every state, including
+        when the account has no balance.
       </p>
     </div>
   );

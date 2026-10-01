@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Memo, type Passage, type Rewrite } from "./api";
 import { MemoDocument, type Ref } from "./MemoReader";
 import { useBackAction, usePinTop, Working } from "./shell";
+import { ShareSendPanel } from "./Share";
 
 /**
  * Reading and revising a memo.
@@ -121,6 +122,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
   const [memo, setMemo] = useState<Memo | null>(null);
   const [passage, setPassage] = useState<Passage | null>(null);
   const [loadingRef, setLoadingRef] = useState(false);
+  // Sharing opens from here, the memorandum's own head, rather than from a
+  // list somewhere else asking which one (share-recipient).
+  const [sharing, setSharing] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -500,6 +504,16 @@ export function MemoView({ memoId, onBack, onOpen }: {
                aria-disabled={rendering}>
               {rendering ? "Rendering\u2026" : "Download PDF"}
             </a>
+            {/* What is shared is this memorandum as saved. Unsaved changes
+                are not in it, so Share waits until they are saved or
+                discarded rather than sending something other than what is
+                on the screen. */}
+            <a className="secondary"
+               onClick={hasChanges ? undefined : () => setSharing(true)}
+               aria-disabled={hasChanges}
+               title={hasChanges ? "Save or discard your changes first." : undefined}>
+              Share
+            </a>
           </>
         ) : (
           <>
@@ -703,6 +717,12 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
       {passage && (
         <PassagePanel passage={passage} onClose={() => setPassage(null)} />
+      )}
+
+      {/* After the passage drawer: drawers stack in document order. */}
+      {sharing && (
+        <ShareSendPanel memoId={memo.memo_id} label={memo.label}
+                        onClose={() => setSharing(false)} />
       )}
     </div>
   );

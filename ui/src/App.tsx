@@ -8,7 +8,7 @@ import { BackContext, BackPill } from "./shell";
 import { WelcomeView } from "./Welcome";
 import { AccountView } from "./Account";
 import { ShareView } from "./Share";
-import { ViewerView } from "./Viewer";
+import { ViewerByLink, ViewerSignedIn } from "./Viewer";
 import { SignUp } from "./SignUp";
 import { InvitationView } from "./Invitation";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
@@ -596,13 +596,11 @@ function WelcomeRoute({ onOpened }: {
                         onOpened("/configure?part=sections", { report })} />;
 }
 
-// --- not connected yet -----------------------------------------------------
+// --- account and sharing -----------------------------------------------------
 //
-// Account management, Sharing and the Viewer have no endpoints behind them.
-// They are routed and navigable so the flow can be walked and judged; every
-// figure in them comes from mock.tsx and every control is inert. Sharing will
-// open from a memorandum's own head rather than from the rail once it is real,
-// and the Viewer will be served outside this shell entirely.
+// Sharing is live (share-recipient): sending opens from a memorandum's own
+// head, and this is the list. The Viewer is not here at all - it is served
+// before the shell, below, so a recipient never meets the sign-in card.
 
 function AccountRoute() {
   return <AccountView onBack={useBack()} />;
@@ -610,11 +608,8 @@ function AccountRoute() {
 
 function ShareRoute() {
   const navigate = useNavigate();
-  return <ShareView onBack={useBack()} onViewer={() => navigate("/viewer")} />;
-}
-
-function ViewerRoute() {
-  return <ViewerView onBack={useBack()} />;
+  return <ShareView onBack={useBack()}
+                    onMemo={(memoId) => navigate(`/memos/${memoId}`)} />;
 }
 
 // --- shell -----------------------------------------------------------------
@@ -728,6 +723,19 @@ export default function App() {
       document.removeEventListener("keydown", escape);
     };
   }, [accountOpen]);
+
+  // A recipient's pages, before anything asks who is signed in. Somebody
+  // opening a shared memorandum has no account in this pool, and a tenant
+  // opening a link on their own machine should see exactly what the
+  // recipient sees - not the shell around it.
+  if (location.pathname.startsWith("/view/") || location.pathname === "/viewer") {
+    return (
+      <Routes>
+        <Route path="/view/:grantId" element={<ViewerByLink />} />
+        <Route path="/viewer" element={<ViewerSignedIn />} />
+      </Routes>
+    );
+  }
 
   if (signedIn === null) return <div className="centre"><p className="muted">...</p></div>;
   // Two entries, and they are not the same thing. Signing in goes home, to
@@ -879,7 +887,6 @@ export default function App() {
               <Route path="/settings/brand" element={<SettingsRoute />} />
               <Route path="/account" element={<AccountRoute />} />
               <Route path="/shares" element={<ShareRoute />} />
-              <Route path="/viewer" element={<ViewerRoute />} />
               {/* Get started forks and publishes, then hands what it added
                   to the configuration screen, which says so at the top.
                   Reached from the rail's panel or the first-run screen it
