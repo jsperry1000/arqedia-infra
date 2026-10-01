@@ -2584,18 +2584,29 @@ def proposals(tenant_id):
 # of its answers already carries the status it means. Deciding any of them a
 # second time here would be a second copy of a money rule, which is how two
 # copies come to disagree. This adds the one thing every draft route adds -
-# _require_admin - and relays the rest unchanged.
+# the administrator gate - and relays the rest unchanged.
 #
 # SYNCHRONOUS, as render_memo and preview_branding call the renderer. Every act
 # answers in seconds: open starts the read with an asynchronous invocation of
 # its own and returns, so nothing here waits on the model.
+
+def _require_review_admin(role):
+    """Separate from _require_admin only so the message names what was
+    refused, as _require_seats_admin is. Polling a review changes nothing, and
+    a member told "only an administrator may change the configuration" for
+    reading one is told something untrue. The wording is the reviewer's own,
+    so the two refusals read the same whichever of them answers."""
+    if role != "admin":
+        raise PermissionError("only an administrator may review the "
+                              "configuration")
+
 
 def review(tenant_id, email, role, action, **fields):
     """One act of a review session, relayed. Returns the reply to send.
 
     The tenant, email and role come from the token, via caller(), and go
     last so a field from the request can never replace them."""
-    _require_admin(role)
+    _require_review_admin(role)
 
     payload = dict(fields, action=action, tenant_id=tenant_id, email=email,
                    role=role)

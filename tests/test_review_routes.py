@@ -85,6 +85,18 @@ class ReviewRoutesTest(unittest.TestCase):
                               json.loads(reply["body"])["error"])
         self.assertEqual(self.invocations, [])
 
+    def test_the_refusal_does_not_claim_a_read_is_a_change(self):
+        """Polling changes nothing. The refusal names reviewing, on every
+        route, and is the reviewer's own sentence."""
+        for route in ROUTES:
+            with self.subTest(route=route):
+                reply = self.dispatch(route, role="member",
+                                      query={"session": SESSION})
+                error = json.loads(reply["body"])["error"]
+                self.assertNotIn("change", error)
+                self.assertEqual(error, "only an administrator may review "
+                                        "the configuration")
+
     # --- what is relayed ---------------------------------------------------
 
     def test_open_invokes_the_reviewer_and_waits_for_its_answer(self):
