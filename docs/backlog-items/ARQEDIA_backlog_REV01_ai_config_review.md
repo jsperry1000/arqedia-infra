@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Status | Proposed. Decisions below; nothing built, nothing migrated |
+| Status | Proposed. Decisions below; nothing built, nothing migrated. **Built since: see "Built, 1 October 2026" below** |
 | Priority | Jumps the UX-02 queue, by decision (30 September 2026) |
 | Type | One Lambda (or a second mode of the proposer), four API routes, one screen, one `meter_price` row |
 | Raised | 30 September 2026 |
@@ -374,6 +374,83 @@ can only show one. There is no way for an administrator to answer a question
 and have the answer become a suggestion they can accept. Whether that is a
 second model call, the person writing the change themselves, or something
 else is not decided.
+
+---
+
+### Built, 1 October 2026
+
+| What | Where | State |
+|---|---|---|
+| Reviewer Lambda: open, read, poll, accept, close | `lambda/reviewer/app.py`, `reviewer.tf` (#258) | On `main`, deployed, smoke-tested 30 September (all seven steps) |
+| Four API routes, administrator gate only | `lambda/api/app.py`, `api.tf` (#259, #261, #263) | On `main`, deployed |
+| `config_review` at 100 cents | `035_config_review_price.sql` | Applied |
+| Answering a question (S2) | reviewer `answer` / `answer_read`, `POST /config/draft/review/answer` | `feature/ai-review-screen`, **not deployed** |
+| `may_review` on `GET /settings` | `get_settings` in `lambda/api/app.py` | `feature/ai-review-screen`, **not deployed** |
+| The screen | `ui/src/ReviewMode.tsx`, a switch in `Configure.tsx` | `feature/ai-review-screen`, built into `web/`, **not deployed** |
+
+**The screen.** A Normal / AI Review switch sits below the editor's held head.
+AI Review opens over the editor in a drawer, which also keeps the editor's own
+saves out of reach while reviewing. Each suggestion shows what it is about,
+what the draft holds now, what is suggested and why. End review closes the
+session; closing the drawer does not, and the session is resumed from the
+same tab until it is ended or a day old. An accepted change re-reads the
+draft, so the editor shows it.
+
+**The price, decided 1 October 2026.** Shown before the first accept in a
+session, not on opening. This replaces the third bullet under "Charge" above,
+which said it was shown on opening as well. Reading costs the tenant nothing;
+the first accept asks for $1.00 and says every further change in the session
+is free. A repeat accept of the same suggestion shows "Already accepted", from
+the API's `"repeated": true`, and is not treated as an error.
+
+**S1, decided and built: grouped by target, and nothing more.** A suggestion
+is about a fact (`field_key`), a document type (`type_key`) or a section
+(`template_key` and `section_key`), and suggestions about the same one are
+shown together. A new fact is about the section that needs it, so `s-0026`
+and `s-0104` above fall in one group. A change produced by an answer belongs to
+its question's group. Accepting one suggestion in a group sets the group's
+other open suggestions aside.
+
+- **Setting aside is the screen's alone.** It is never sent; the reviewer keeps
+  no "declined" status, and the payload's `"declined"` above remains unbuilt.
+  It is held per session in the browser tab's storage, so another tab or a
+  cleared browser shows the suggestions again. Everything set aside can be
+  shown and restored.
+- **Declining by hand is the same act.** "Set aside" is offered on every open
+  suggestion, and is all that declining a suggestion is, screen-side only.
+- **The matching is coarse, on purpose.** A fact's description and where it is
+  sought do not conflict, but they share a target, so accepting one sets the
+  other aside. It can be restored. Nothing reads a prompt for the facts it
+  names.
+
+**S2, decided and built: one model call per answer.** A question takes a
+free-text answer of at most 2,000 characters. The reviewer records it in
+`<session>/answers/<id>.json` and runs one Sonnet call in the background, as
+the read does, because a model call can outlast the gateway's 29 seconds. It
+turns the question and the answer into exactly one suggestion, `<id>-a`. That
+suggestion goes through `clean()`, so its current value comes from the draft
+and not the model. It arrives under its question on the next poll and is
+accepted like any other.
+
+- **Answering is never charged** and writes nothing to the draft. Accepting
+  what it produced is an ordinary accept: the session's charge if it is the
+  first, free if the session is already paid for. Tested both ways.
+- **One answer per question**, unless it came to nothing (`no_change`) or
+  failed, when it may be answered again.
+- **What one answer costs us is not measured.** It is one small call on top of
+  the session's seven, and is unpriced to the tenant.
+
+**Unverified, and to be done before merge.**
+
+- **Not deployed.** The answer route needs `api.tf` applied; the reviewer and
+  API code ride the same apply; the screen ships when `web/` is merged.
+- **The screen has not been rendered or walked.** The project has no frontend
+  test runner, so the screen is checked by `tsc` and `eslint` only, and it uses
+  existing classes and no new CSS. The journey - switch, read, accept with the
+  price, set aside and restore, answer and accept, end - has to be walked on
+  dev before this merges (CLAUDE.md, "Verify the journey").
+- **The margin** still rests on one measured session (about $0.65 of Sonnet at
+  first-party rates, against $1.00).
 
 ---
 
