@@ -553,10 +553,14 @@ export function MemoView({ memoId, onBack, onOpen }: {
       </div>
 
       {mode === "read" && hasChanges && (
-        <p className="working-note">
-          You have unsaved changes to this memo. They are kept if you leave,
-          until you save or{" "}
-          <a onClick={discard}>discard them</a>.
+        // .unsaved, not the plain note Catalogue and Welcome share: this one
+        // gates an action in the head - Share - so it has to be seen, not
+        // merely present.
+        <p className="working-note unsaved">
+          <strong>You have unsaved changes to this memo.</strong> They are
+          kept if you leave, until you save or{" "}
+          <a onClick={discard}>discard them</a>. Save or discard them to
+          share this memo: what is shared is the memo as saved.
           {keeping === "keeping" && <span> Keeping&hellip;</span>}
           {keeping === "kept" && <span> Kept.</span>}
         </p>
