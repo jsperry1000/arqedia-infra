@@ -244,12 +244,41 @@ class ShapeTest(unittest.TestCase):
             sorted(doc["sources"]),
             # topup_increment_cents is not one of a plan's fields - it sits
             # beside them, for the reason the file's own note gives - so it
-            # is in "sources" without being in FIELDS.
-            sorted(FIELDS + ("enterprise", "topup_increment_cents",
-                             "trial_days")))
+            # is in "sources" without being in FIELDS. share_overage_cents
+            # likewise (migration 036).
+            sorted(FIELDS + ("enterprise", "share_overage_cents",
+                             "topup_increment_cents", "trial_days")))
         for field in ("field_sets_per_type", "sections_per_template",
                       "daily_classification_cents"):
             self.assertIn("site/pricing/index.html", doc["sources"][field])
+
+
+class ShareOverageTest(unittest.TestCase):
+    """What a share past the allowance costs, published here and enforced by
+    meter_price (migration 036). Two copies of a price, and this is what
+    compares them - as PriceAgreementTest compares a plan's price with
+    Paddle's."""
+
+    MIGRATION = ROOT / "db" / "migrations" / "036_share_allowance.sql"
+
+    def test_the_published_overage_is_the_one_the_migration_writes(self):
+        doc = json.loads(PLANS.read_text(encoding="utf-8"))
+        sql = self.MIGRATION.read_text(encoding="utf-8")
+        written = {m.group(1): int(m.group(2)) for m in re.finditer(
+            r"SELECT NULL, 'share_overage_(\w+)', (\d+)", sql)}
+        self.assertEqual(doc["share_overage_cents"], written)
+
+    def test_the_published_allowance_is_the_one_the_migration_writes(self):
+        sql = self.MIGRATION.read_text(encoding="utf-8")
+        written = {m.group(2): int(m.group(1)) for m in re.finditer(
+            r"UPDATE plan SET share_allowance = (\d+) WHERE plan_key = '(\w+)'",
+            sql)}
+        for plan in plans():
+            if plan["plan_key"] in written:
+                with self.subTest(plan=plan["plan_key"]):
+                    self.assertEqual(plan["share_allowance"],
+                                     written[plan["plan_key"]])
+        self.assertEqual(sorted(written), ["base", "business"])
 
 
 class TopUpIncrementTest(unittest.TestCase):

@@ -15,6 +15,14 @@ added to the content, so it cannot be pushed off by a long section.
 
 Invoke with:
     {"tenant_id": 1, "memo_id": 11}
+
+A SHARE is the same render, watermarked for one recipient (share mode):
+    {"tenant_id": 1, "memo_id": 11,
+     "share": {"recipient_email": "...", "shared_at": "2026-10-01T14:03:22Z",
+               "prefix": "shares/1/11/<viewer_account_id>/"}}
+
+It writes two PDFs under that prefix and touches nothing else - not the
+memo's own pdf_key, not the memo row. See _share.
 """
 
 import io
@@ -1143,6 +1151,101 @@ def _branding(tenant):
     return palette, logo, plan != "enterprise"
 
 
+# --- building --------------------------------------------------------------
+
+def _build(tenant, markdown):
+    """The memorandum as PDF bytes, branded for its tenant. Written nowhere:
+    the caller decides where a render goes, which is what lets a share render
+    the same memorandum without touching the tenant's own copy."""
+    palette, logo, show_footer = _branding(tenant)
+    styles = style.build_styles(palette)
+    _set_cite_colour(palette)
+
+    subject = _front(markdown, "Subject") or "Subject not stated"
+    engagement = _front(markdown, "Engagement")
+    generated = _front(markdown, "Generated")
+    memo_title = _title(markdown)
+
+    detail = "  ·  ".join(x for x in (engagement, generated) if x)
+    runner = "%s  ·  %s" % (subject, memo_title)
+
+    buffer = io.BytesIO()
+    doc = MemoDoc(buffer, palette, subject,
+                  memo_title, detail, runner,
+                  logo, show_footer,
+                  title=subject, author=tenant["name"])
+
+    def make_canvas(*args, **kwargs):
+        kwargs["footer_fn"] = doc.footer
+        return NumberedCanvas(*args, **kwargs)
+
+    _reset_citations()
+    flow = to_flowables(markdown, styles, palette)
+    flow.extend(_reference_section(styles, palette))
+
+    doc.build(flow, canvasmaker=make_canvas)
+    return buffer.getvalue()
+
+
+# --- sharing ---------------------------------------------------------------
+
+def _share(tenant_id, memo_id, tenant, pdf, share):
+    """Two PDFs for one recipient, rendered and watermarked once, at send.
+
+    base.pdf   the memorandum with the recipient and the tenant burned across
+               every page. Never served. The viewer function stamps a
+               download's own time onto it, every download, from the bucket
+               and nothing else.
+    view.pdf   base.pdf with the time it was shared along the foot. What the
+               recipient reads in the viewer.
+
+    NOT THE MEMO'S PDF. The ordinary render overwrites the memo's own pdf_key
+    and records it on the memo row. This writes under shares/ and touches no
+    row at all: a share is a copy for somebody else, and making one must not
+    change the tenant's own.
+
+    RENDERED NOW AND NOT AGAIN. Everything else here renders on demand so an
+    improvement reaches every memorandum. A share is the opposite: it is what
+    was sent, and it must stay what was sent (share_viewer_spec section 2).
+
+    stamp IS IMPORTED HERE, NOT AT THE TOP. It reaches this function only
+    through the docprocessing layer, and a layer nobody rebuilt is what
+    CLAUDE.md's first warning is about. At the top of the module, a stale
+    layer would stop every memorandum rendering; here, it stops only a share,
+    which says so."""
+    import stamp
+
+    prefix = str(share.get("prefix") or "")
+    # The prefix comes from the API, which built it from the token's tenant.
+    # Checked here as well, because this function writes wherever it is told.
+    if not prefix.startswith("shares/%d/%d/" % (tenant_id, memo_id)) \
+            or not prefix.endswith("/") or ".." in prefix:
+        return {"status": "bad-prefix"}
+
+    recipient = str(share.get("recipient_email") or "")
+    shared_at = str(share.get("shared_at") or "")
+    if not recipient or not shared_at:
+        return {"status": "bad-share"}
+
+    base = stamp.stamp(pdf, diagonal=stamp.diagonal_text(recipient,
+                                                         tenant["name"]))
+    view = stamp.stamp(base, line=stamp.shared_line(recipient, tenant["name"],
+                                                    shared_at))
+
+    base_key = prefix + "base.pdf"
+    view_key = prefix + "view.pdf"
+    _s3.put_object(Bucket=CURATED_BUCKET, Key=base_key, Body=base,
+                   ContentType="application/pdf")
+    _s3.put_object(Bucket=CURATED_BUCKET, Key=view_key, Body=view,
+                   ContentType="application/pdf")
+
+    print("[shared] memo=%d tenant=%d bytes=%d prefix=%s" % (
+        memo_id, tenant_id, len(view), prefix))
+
+    return {"status": "ok", "memo_id": memo_id, "base_key": base_key,
+            "view_key": view_key, "bytes": len(view)}
+
+
 # --- handler ---------------------------------------------------------------
 
 def lambda_handler(event, context):
@@ -1170,35 +1273,11 @@ def lambda_handler(event, context):
             Bucket=memo["bucket"],
             Key=memo["key"])["Body"].read().decode("utf-8")
 
-    palette, logo, show_footer = _branding(tenant)
-    styles = style.build_styles(palette)
-    _set_cite_colour(palette)
+    pdf = _build(tenant, markdown)
 
-    subject = _front(markdown, "Subject") or "Subject not stated"
-    engagement = _front(markdown, "Engagement")
-    generated = _front(markdown, "Generated")
-    memo_title = _title(markdown)
+    if not preview and event.get("share"):
+        return _share(tenant_id, memo_id, tenant, pdf, event["share"])
 
-    detail = "  \u00b7  ".join(x for x in (engagement, generated) if x)
-    runner = "%s  \u00b7  %s" % (subject, memo_title)
-
-    buffer = io.BytesIO()
-    doc = MemoDoc(buffer, palette, subject,
-                  memo_title, detail, runner,
-                  logo, show_footer,
-                  title=subject, author=tenant["name"])
-
-    def make_canvas(*args, **kwargs):
-        kwargs["footer_fn"] = doc.footer
-        return NumberedCanvas(*args, **kwargs)
-
-    _reset_citations()
-    flow = to_flowables(markdown, styles, palette)
-    flow.extend(_reference_section(styles, palette))
-
-    doc.build(flow, canvasmaker=make_canvas)
-
-    pdf = buffer.getvalue()
     pdf_key = memo["key"].rsplit(".", 1)[0] + ".pdf"
 
     if preview:
