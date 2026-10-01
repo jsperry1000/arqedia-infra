@@ -205,6 +205,13 @@ only way an account comes into being, and the `arqedia-dev-signup` function is
 the only thing in the system holding Cognito admin permissions. Enabling
 self-registration would let anyone skip every control.
 
+**Amended 1 October 2026 (share-recipient).** Two functions hold Cognito
+admin permissions, each scoped to its own pool and nothing else:
+`arqedia-dev-signup` on the customer pool, and `arqedia-dev-share-viewer` on
+the viewer pool (`share.tf`), where a recipient holding a valid share link
+registers. Both pools stay admin-create-only. Neither function can touch the
+other's pool.
+
 **Nothing is created until the emailed code comes back.** Every check runs on
 the last click, before the code is sent, so a refusal never costs a wait.
 
@@ -325,6 +332,12 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
   source, leave it open, or let the sender choose.
 - **`docs/HANDOFF/` and `docs/backlog-items/`** hold duplicates of four backlog
   items, including a `(1)` copy of HONE01.
+- **Account deletion must clear sharing too, and does not exist yet.**
+  `share.purge_tenant(tenant_id)` in `lambda/api/share.py` removes a tenant's
+  grants, their access log, its usage counters and its `shares/` PDFs from
+  DynamoDB and S3. Nothing calls it: there is no account deletion to call it
+  from. Whoever builds deletion wires it in, beside the Aurora rows and
+  `tenant_domain`.
 
 ---
 

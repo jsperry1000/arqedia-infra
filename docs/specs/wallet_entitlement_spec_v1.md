@@ -278,6 +278,14 @@ gate(tenant_id, action, job_spec?) → Allow | Deny(reason, remedy)
 `allowance` = plan share counter not exhausted (NULL = unlimited), with a rate
 limit applied regardless.
 
+> **Amended 1 October 2026 (share-recipient).** Past the allowance a share is
+> charged rather than refused - $1.00 on Base and trial, $0.25 on Small
+> Business - so `allowance` reads "within the allowance, or the overage
+> debit succeeds". The rate limit is 20 a day. A trial takes Base's allowance
+> of 10 once for the whole trial. `capped` still denies: available = 0 refuses
+> a send even within the allowance. Revoking is allowed in every state
+> (share_viewer_spec §6). Details: share_viewer_spec_v1 §6.
+
 `Deny` carries a `remedy` so the UI renders the top-up prompt from the gate's
 response rather than reimplementing the rule anywhere.
 

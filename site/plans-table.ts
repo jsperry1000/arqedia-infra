@@ -80,7 +80,8 @@ class PlansError extends Error {
  * buy, and the second is noticed in thirty seconds.
  */
 export function readPlans(file = PLANS_FILE):
-    { plans: Plan[]; topup: number; trialDays: number } {
+    { plans: Plan[]; topup: number; trialDays: number;
+      shareOverage: Record<string, number> } {
   let text: string
   try {
     text = readFileSync(file, 'utf-8')
@@ -128,8 +129,18 @@ export function readPlans(file = PLANS_FILE):
     throw new PlansError('has no numeric topup_increment_cents.')
   }
 
+  // What a share past the allowance costs, by plan_key. Not inside a plan,
+  // so the field list above is unchanged; see share_overage_note in the
+  // file. A plan with no entry - Enterprise - prints its allowance alone.
+  const overage = doc.share_overage_cents
+  if (typeof overage !== 'object' || overage === null
+      || Object.values(overage).some((v) => typeof v !== 'number')) {
+    throw new PlansError('has no share_overage_cents object of numbers.')
+  }
+
   return { plans: doc.plans as Plan[], topup: doc.topup_increment_cents,
-           trialDays: doc.trial_days as number }
+           trialDays: doc.trial_days as number,
+           shareOverage: overage as Record<string, number> }
 }
 
 // --- the two money formats the page already uses ---------------------------
@@ -198,7 +209,7 @@ function row(label: string, cells: string[]): string {
 }
 
 export function renderPlansTable(file = PLANS_FILE): string {
-  const { plans, topup } = readPlans(file)
+  const { plans, topup, shareOverage } = readPlans(file)
 
   const across = (make: (p: Plan) => string) => plans.map(make)
 
@@ -218,9 +229,14 @@ export function renderPlansTable(file = PLANS_FILE): string {
     row('Monthly credit toward metered use',
         across((p) => cell(p.monthly_credit_cents, money2, ''))),
     // Null is unlimited here, as migration 018 says - not zero, and not
-    // missing.
+    // missing. No plan carries it since migration 036; the branch stays so a
+    // null is still never printed as a number. Past the allowance a share is
+    // charged, not refused, and the cell says what it costs.
     row('Shared memoranda per month',
-        across((p) => cell(p.share_allowance, plain, 'unlimited'))),
+        across((p) => cell(p.share_allowance, (n) =>
+          p.plan_key in shareOverage
+            ? `${n}, then ${money2(shareOverage[p.plan_key])} each`
+            : plain(n), 'unlimited'))),
     row('Field sets per document type',
         across((p) => cell(p.field_sets_per_type, plain, ''))),
     row('Sections per template',
