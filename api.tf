@@ -327,6 +327,10 @@ locals {
     "GET /config/draft/review",
     "POST /config/draft/review/accept",
     "POST /config/draft/review/close",
+
+    # A question the review asked, answered (REV-01 S2). Relayed like the
+    # four above; the reviewer turns it into one suggestion in the background.
+    "POST /config/draft/review/answer",
     "POST /documents/{document_id}/active",
     "GET /documents/{document_id}/values",
     "GET /documents/{document_id}/passage",

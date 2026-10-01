@@ -68,6 +68,7 @@ the checks and the money; this adds only the administrator gate.
   GET  /config/draft/review              the session so far (?session=)
   POST /config/draft/review/accept       write one suggestion into the draft
   POST /config/draft/review/close        end the session
+  POST /config/draft/review/answer       answer a question it asked (S2)
 
 The catalogue, in the ARQEDIA workspace and nowhere else.
   GET  /config/offer                     the revision and memoranda on offer
@@ -1994,6 +1995,17 @@ def get_settings(tenant_id, role=None):
     plan = (_col(r, 1) or "base").lower()
     logo_key = _col(r, 2)
 
+    # AI Review's plan, read as the reviewer reads it (REV-01): the
+    # subscription's plan first, tenant.plan only on a trial, where there is
+    # none. Display only, as may_brand is - the reviewer's own gate is the
+    # control, and this lets the screen disable the switch and say why.
+    subscribed = _sql(
+        "SELECT p.plan_key FROM subscription s "
+        "JOIN plan p ON p.plan_id = s.plan_id WHERE s.tenant_id = :t",
+        [_p("t", tenant_id)]).get("records", [])
+    review_plan = ((_col(subscribed[0], 0) or "") if subscribed
+                   else plan).strip().lower().replace(" ", "_")
+
     logo_url = None
     if logo_key:
         try:
@@ -2011,6 +2023,7 @@ def get_settings(tenant_id, role=None):
         "role": role,
         "may_brand": plan in ("business", "enterprise"),
         "may_remove_footer": plan == "enterprise",
+        "may_review": review_plan in ("business", "enterprise"),
         "logo_key": logo_key,
         "logo_url": logo_url,
         "deep": _col(r, 3),
@@ -3171,6 +3184,16 @@ def _dispatch(event, context):
             body = json.loads(event.get("body") or "{}")
             return review(tenant_id, email, role, "close",
                           session_id=body.get("session", ""))
+
+        # A question the review asked, answered. The reviewer turns the
+        # answer into one suggestion in the background; nothing is written
+        # or charged until that suggestion is accepted.
+        if route == "POST /config/draft/review/answer":
+            body = json.loads(event.get("body") or "{}")
+            return review(tenant_id, email, role, "answer",
+                          session_id=body.get("session", ""),
+                          suggestion_id=body.get("suggestion_id"),
+                          answer=body.get("answer"))
 
         # --- editing the draft -----------------------------------------
         if route == "GET /config/draft":
