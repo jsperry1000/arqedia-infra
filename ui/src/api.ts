@@ -463,6 +463,9 @@ export type Settings = {
   role: "admin" | "member";
   may_brand: boolean;
   may_remove_footer: boolean;
+  /** AI Review is open to this plan (REV-01): Business and Enterprise, read
+   *  from the subscription. Display only - the reviewer refuses for itself. */
+  may_review: boolean;
   logo_key: string | null;
   logo_url: string | null;
   deep: string | null;
@@ -676,6 +679,79 @@ export type Proposal = {
   sections: ProposedSection[];
 };
 
+// --- AI Review of the draft (REV-01) ---------------------------------------
+//
+// A session reads the open draft and suggests changes. Nothing reaches the
+// draft without an accept, and the first accept in a session is its charge.
+
+export type ReviewTarget = {
+  field_key?: string;
+  type_key?: string;
+  template_key?: string;
+  section_key?: string;
+};
+
+/** A fact the review proposes adding, in the shape the reviewer writes. */
+export type ProposedNewField = {
+  label: string;
+  description: string;
+  is_table: boolean;
+  columns: { label: string; description: string }[];
+  found_in: string[];
+};
+
+export type ReviewSuggestion = {
+  id: string;
+  kind: "field_description" | "section_prompt" | "document_type_description"
+    | "field_found_in" | "new_field" | "question";
+  target: ReviewTarget;
+  /** What the draft held when the review read it. Null for a new fact and
+   *  for a question. */
+  current: string | string[] | null;
+  proposed: string | string[] | ProposedNewField | null;
+  reason: string;
+  question: string | null;
+  /** open, accepted or stale - from the server. Dismissing is the screen's
+   *  own and is never sent. */
+  status: "open" | "accepted" | "stale";
+  /** On a question that has been answered. */
+  answer?: {
+    status: "answering" | "ready" | "no_change" | "failed";
+    answer: string | null;
+    by: string | null;
+    at: string | null;
+    reason: string | null;
+  };
+  /** On a suggestion an answer produced: the question it came from. */
+  from_question?: string;
+};
+
+export type Review = {
+  session_id: string;
+  /** starting, reading, ready - or failed, model-unavailable. */
+  status: string;
+  reason?: string;
+  opened_at: string;
+  price_cents: number;
+  parts_done: number;
+  parts_total: number | null;
+  parts: { name: string; suggestions: number; dropped: number;
+           cut_off: boolean }[];
+  suggestions: ReviewSuggestion[];
+  closed: boolean;
+  expired: boolean;
+};
+
+export type ReviewAccepted = {
+  suggestion_id: string;
+  status: "accepted";
+  entry_id: number | null;
+  /** 100 on the session's first accept, 0 after. */
+  charged_cents: number;
+  /** The same suggestion accepted again: its first result, not an error. */
+  repeated?: boolean;
+};
+
 // --- sharing ----------------------------------------------------------------
 
 /** Where a workspace stands against its share allowance (share.allowance).
@@ -844,6 +920,44 @@ export const api = {
   // up tomorrow.
   proposals: (): Promise<{ proposals: ProposalRef[] }> =>
     call("/config/draft/proposals"),
+
+  // --- AI Review (REV-01) --------------------------------------------------
+
+  /** Start a review of the draft. Charges nothing: the read takes minutes,
+   *  and this returns at once with the session to poll. */
+  reviewOpen: (): Promise<{ session_id: string; status: string;
+                            price_cents: number }> =>
+    call("/config/draft/review", { method: "POST", body: "{}" }),
+
+  reviewPoll: (session: string): Promise<Review> =>
+    call(`/config/draft/review?session=${encodeURIComponent(session)}`),
+
+  /** Write one suggestion into the draft. The session's first accept is its
+   *  charge; a repeat of the same one returns its first result. */
+  reviewAccept: (session: string, suggestionId: string,
+                 bindTo?: { template_key: string; section_key: string }):
+    Promise<ReviewAccepted> =>
+    call("/config/draft/review/accept", {
+      method: "POST",
+      body: JSON.stringify({ session, suggestion_id: suggestionId,
+                             ...(bindTo ? { bind_to: bindTo } : {}) }),
+    }),
+
+  /** Answer a question. The change it leads to arrives on a later poll, as
+   *  a suggestion of its own; nothing is written or charged here. */
+  reviewAnswer: (session: string, suggestionId: string, answer: string):
+    Promise<{ suggestion_id: string; status: string }> =>
+    call("/config/draft/review/answer", {
+      method: "POST",
+      body: JSON.stringify({ session, suggestion_id: suggestionId, answer }),
+    }),
+
+  reviewClose: (session: string): Promise<{ session_id: string;
+                                            closed: boolean }> =>
+    call("/config/draft/review/close", {
+      method: "POST",
+      body: JSON.stringify({ session }),
+    }),
 
   openDraft: () =>
     call("/config/draft", { method: "POST", body: "{}" }),
