@@ -13,6 +13,7 @@ import {
   type Validation,
 } from "./api";
 import { ProposeView } from "./Propose";
+import { ReviewMode } from "./ReviewMode";
 import { StageStrip, StageIcon } from "./StageStrip";
 import type { Stage } from "./flock";
 import type { Report as StartReport } from "./Welcome";
@@ -619,6 +620,24 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   const [note, setNote] = useState("");
   // Publishing is asked from the bar and confirmed in a drawer.
   const [publishing, setPublishing] = useState(false);
+
+  // AI Review (REV-01): the editor's second mode, open in a drawer over it.
+  // Whether it is offered comes from the settings - the plan, read as the
+  // reviewer reads it, and the caller's role. Display only: the reviewer
+  // refuses for itself.
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewAccess, setReviewAccess] =
+    useState<{ plan: boolean; admin: boolean } | null>(null);
+  useEffect(() => {
+    api.settings()
+      .then((s) => setReviewAccess({ plan: s.may_review,
+                                     admin: s.role === "admin" }))
+      .catch(() => setReviewAccess(null));
+  }, []);
+  const reviewRefusal = !reviewAccess ? ""
+    : !reviewAccess.plan ? "AI Review is available on Business and Enterprise."
+      : !reviewAccess.admin
+        ? "Only an administrator can review the configuration." : "";
 
   // Searching a section's field list. Its own box, cleared when the section
   // closes: a filter shared with the fact table once emptied controls
@@ -1464,6 +1483,24 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       </>)}
       </div>
       </div>
+
+      {/* The mode (REV-01). Below the held head rather than in it, so the
+          block that stays put grows no taller. AI Review opens over the
+          editor; closing it returns here, and the review stays open to come
+          back to until it is ended or a day old. */}
+      <nav className="tabs">
+        <button className={reviewing ? undefined : "on"}
+                onClick={() => setReviewing(false)}>
+          Normal
+        </button>
+        <button className={reviewing ? "on" : undefined}
+                disabled={!reviewAccess || !!reviewRefusal}
+                title={reviewRefusal || undefined}
+                onClick={() => setReviewing(true)}>
+          AI Review
+        </button>
+      </nav>
+      {reviewRefusal && <p className="muted small">{reviewRefusal}</p>}
 
       {started && (
         <div className="revision-note started">
@@ -2321,6 +2358,17 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* LAST: AI Review covers the editor while it is open, and nothing is
+          opened from inside it. An accepted change re-reads the draft, so
+          the editor beneath shows it when the drawer closes. */}
+      {reviewing && (
+        <ReviewMode
+          draft={draft}
+          onClose={() => setReviewing(false)}
+          onChanged={() => { refresh().catch((e) => setError(message(e))); }}
+        />
       )}
     </div>
   );

@@ -29,6 +29,7 @@ ROUTES = [
     "GET /config/draft/review",
     "POST /config/draft/review/accept",
     "POST /config/draft/review/close",
+    "POST /config/draft/review/answer",
 ]
 
 
@@ -139,6 +140,19 @@ class ReviewRoutesTest(unittest.TestCase):
         self.assertEqual(sent["action"], "close")
         self.assertEqual(sent["session_id"], SESSION)
 
+    def test_answer_relays_the_question_and_the_text(self):
+        self.answer = {"status": 202, "body": {"suggestion_id": "s-0024",
+                                               "status": "answering"}}
+        reply = self.dispatch("POST /config/draft/review/answer", body={
+            "session": SESSION, "suggestion_id": "s-0024",
+            "answer": "Yes, the register has it."})
+        sent = self.payload()
+        self.assertEqual(sent["action"], "answer")
+        self.assertEqual(sent["session_id"], SESSION)
+        self.assertEqual(sent["suggestion_id"], "s-0024")
+        self.assertEqual(sent["answer"], "Yes, the register has it.")
+        self.assertEqual(reply["statusCode"], 202)
+
     def test_the_tenant_and_role_come_from_the_token_never_the_body(self):
         self.dispatch("POST /config/draft/review/accept", body={
             "session": SESSION, "suggestion_id": "s-0001",
@@ -190,6 +204,40 @@ class ReviewRoutesTest(unittest.TestCase):
                 self.assertIn('"%s"' % route, terraform)
         self.assertIn("REVIEWER_FUNCTION", terraform)
         self.assertIn("aws_lambda_function.reviewer.arn", terraform)
+
+
+class MayReviewTest(unittest.TestCase):
+    """GET /settings says whether AI Review is open to this tenant, read as
+    the reviewer reads the plan: the subscription first, tenant.plan only on
+    a trial."""
+
+    def settings(self, tenant_plan, subscribed):
+        app = load_api()
+
+        def sql(statement, params=None, tx=None):
+            s = " ".join(statement.split())
+            if s.startswith("SELECT name, plan"):
+                return {"records": [[{"stringValue": "TESTCO"},
+                                     {"stringValue": tenant_plan}]
+                                    + [{"isNull": True}] * 5]}
+            if "FROM subscription" in s:
+                return {"records": [[{"stringValue": subscribed}]]
+                        if subscribed else []}
+            return {"records": []}
+
+        with mock.patch.object(app, "_sql", side_effect=sql):
+            return app.get_settings(TENANT, "admin")["may_review"]
+
+    def test_business_and_enterprise_subscriptions_may(self):
+        self.assertTrue(self.settings("base", "business"))
+        self.assertTrue(self.settings("base", "enterprise"))
+
+    def test_base_may_not_whatever_tenant_plan_says(self):
+        self.assertFalse(self.settings("business", "base"))
+
+    def test_a_trial_follows_tenant_plan(self):
+        self.assertTrue(self.settings("business", None))
+        self.assertFalse(self.settings("base", None))
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ runs quote, write, charge in that order, once per session.
 
 import datetime
 import importlib
+import json
 import os
 import sys
 import types
@@ -366,6 +367,152 @@ class AcceptTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.accept(sid)
         self.assertEqual(self.calls, [])
+
+
+class AnswerTest(unittest.TestCase):
+    """A question answered (REV-01 S2): recorded, turned into one suggestion
+    in the background, accepted like any other - and never charged by
+    itself. AcceptTest's stubs, borrowed rather than inherited, so its tests
+    do not run twice."""
+
+    SESSION = AcceptTest.SESSION
+
+    def setUp(self):
+        AcceptTest.setUp(self)
+        self.r._lambda = mock.MagicMock()
+        self.env = mock.patch.dict(os.environ, ENV)
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.r._records = lambda t, s, kind: {
+            v["suggestion_id"]: v for k, v in self.objects.items()
+            if "/%s/" % kind in k}
+        self.model = {"suggestions": [{
+            "kind": "field_found_in", "target": {"field_key": "f_name"},
+            "proposed": ["coi", "register"],
+            "reason": "You said the register names it too."}]}
+        self.r._invoke = lambda prompt, system: (
+            json.dumps(self.model), {"input_tokens": 9, "output_tokens": 3},
+            "end_turn")
+        self.qid = AcceptTest.suggest(
+            self, id="s-0024", kind="question",
+            target={"field_key": "f_name"}, current=None, proposed=None,
+            question="Is the name also on the register?")
+
+    def answer(self, text="Yes, the register has it.", role="admin",
+               qid=None):
+        return self.r.answer(7, "a@firm.com", role, self.SESSION,
+                             qid or self.qid, text)
+
+    def read(self):
+        return self.r._answer_read_safely(7, self.SESSION, self.qid)
+
+    def record(self):
+        return self.objects[self.r._answer_key(7, self.SESSION, self.qid)]
+
+    def test_answering_records_it_and_starts_the_read(self):
+        out = self.answer()
+        self.assertEqual(out, {"suggestion_id": "s-0024",
+                               "status": "answering"})
+        self.assertEqual(self.record()["answer"], "Yes, the register has it.")
+        call = self.r._lambda.invoke.call_args.kwargs
+        self.assertEqual(call["InvocationType"], "Event")
+        self.assertEqual(json.loads(call["Payload"])["action"], "answer_read")
+
+    def test_the_read_makes_one_suggestion_with_the_drafts_current(self):
+        self.answer()
+        self.read()
+        made = self.record()["suggestion"]
+        self.assertEqual(made["id"], "s-0024-a")
+        self.assertEqual(made["from_question"], "s-0024")
+        self.assertEqual(made["current"], ["coi"])   # from the draft
+        self.assertEqual(made["proposed"], ["coi", "register"])
+
+    def test_an_answer_that_changes_nothing_says_so(self):
+        self.model = {"suggestions": [{
+            "kind": "question", "target": {"field_key": "f_name"},
+            "question": "Which register?"}]}
+        self.answer()
+        self.read()
+        self.assertEqual(self.record()["status"], "no_change")
+        self.assertNotIn("suggestion", self.record())
+
+    def test_a_model_failure_is_written_where_the_screen_polls(self):
+        def broken(prompt, system):
+            raise RuntimeError("model down")
+        self.r._invoke = broken
+        self.answer()
+        self.assertEqual(self.read(), {"status": "failed"})
+        self.assertEqual(self.record()["status"], "failed")
+
+    def test_answering_and_reading_charge_nothing_and_write_nothing(self):
+        self.answer()
+        self.read()
+        self.r.wallet.charge.assert_not_called()
+        self.assertEqual([c for c in self.calls if c[0] != "quote"], [])
+
+    def test_poll_shows_the_answer_and_the_suggestion_after_its_question(self):
+        self.answer()
+        self.read()
+        listed = self.r.poll(7, self.SESSION)["suggestions"]
+        ids = [s["id"] for s in listed]
+        self.assertEqual(ids[ids.index("s-0024") + 1], "s-0024-a")
+        question = listed[ids.index("s-0024")]
+        self.assertEqual(question["answer"]["status"], "ready")
+        self.assertEqual(listed[ids.index("s-0024-a")]["status"], "open")
+
+    def test_the_suggestion_is_accepted_and_charged_like_any_other(self):
+        self.answer()
+        self.read()
+        out = self.r.accept(7, "a@firm.com", "admin", self.SESSION,
+                            "s-0024-a")
+        self.assertEqual(out["status"], "accepted")
+        self.assertEqual([c[0] for c in self.calls],
+                         ["quote", "found_in", "charge"])
+        self.assertIn(("found_in", "f_name", ["coi", "register"]), self.calls)
+
+    def test_a_paid_session_answers_and_accepts_with_no_second_charge(self):
+        self.paid = 91
+        self.answer()
+        self.read()
+        out = self.r.accept(7, "a@firm.com", "admin", self.SESSION,
+                            "s-0024-a")
+        self.r.wallet.charge.assert_not_called()
+        self.assertEqual(out["charged_cents"], 0)
+
+    def test_only_a_question_can_be_answered(self):
+        AcceptTest.suggest(self, id="s-0001", kind="field_description",
+                           target={"field_key": "f_name"},
+                           current="The name.", proposed="New.")
+        with self.assertRaises(ValueError):
+            self.answer(qid="s-0001")
+        with self.assertRaises(ValueError):
+            self.answer(qid="s-9999")
+
+    def test_an_empty_or_long_answer_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.answer("   ")
+        with self.assertRaises(ValueError):
+            self.answer("x" * 2001)
+        self.r._lambda.invoke.assert_not_called()
+
+    def test_a_question_is_answered_once_unless_it_came_to_nothing(self):
+        self.answer()
+        with self.assertRaises(ValueError):
+            self.answer("Again.")
+        self.record()["status"] = "no_change"
+        self.assertEqual(self.answer("Try this.")["status"], "answering")
+
+    def test_a_member_a_closed_or_an_old_session_cannot_answer(self):
+        with self.assertRaises(PermissionError):
+            self.answer(role="member")
+        self.objects[self.r._closed_key(7, self.SESSION)] = {"closed_at": "x"}
+        with self.assertRaises(ValueError):
+            self.answer()
+
+    def test_an_unknown_answered_id_finds_nothing(self):
+        # A made-up "-a" id must not reach storage through its question.
+        with self.assertRaises(ValueError):
+            self.r.accept(7, "a@firm.com", "admin", self.SESSION, "../x-a")
 
 
 if __name__ == "__main__":

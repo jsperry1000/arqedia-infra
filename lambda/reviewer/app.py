@@ -16,6 +16,17 @@ or declines each suggestion. Nothing is written to the draft without a click.
                                      {"template_key", "section_key"}>}
     {"action": "close",  "tenant_id": 1, "email": "...", "role": "admin",
                          "session_id": "..."}
+    {"action": "answer", "tenant_id": 1, "email": "...", "role": "admin",
+                         "session_id": "...", "suggestion_id": "s-0024",
+                         "answer": "<the administrator's reply>"}
+    {"action": "answer_read", "tenant_id": 1, "session_id": "...",
+                         "suggestion_id": "s-0024"}            (itself)
+
+A QUESTION IS ANSWERED, NOT ACCEPTED (REV-01 S2). The answer is recorded and
+read in the background, as the review itself is: one small model call turns
+the question and the reply into one concrete suggestion, "<id>-a", which then
+goes through accept like any other. Answering never writes the draft and is
+never charged; only an accept is.
 
 The tenant, email and role come from the API, which reads them from the
 signed token. Nothing here takes a tenant from anywhere else.
@@ -29,11 +40,11 @@ THE DRAFT, AND ONLY THE DRAFT. The pipeline never reads revision 0
 extraction or composition. Every write goes through editor.py, the same path
 every other configuration edit takes.
 
-TWO WRITERS, TWO KINDS OF OBJECT. The read owns <session>.review.json and
-nothing else writes it. An accept writes <session>/accepted/<id>.json and a
-close writes <session>/closed.json. Two accepts landing together each write
-their own object, so neither can overwrite the other's record - the rule the
-proposer's working.json follows.
+ONE WRITER PER OBJECT. The read owns <session>.review.json and nothing else
+writes it. An accept writes <session>/accepted/<id>.json, an answer
+<session>/answers/<id>.json and a close <session>/closed.json. Two acts
+landing together each write their own object, so neither can overwrite the
+other's record - the rule the proposer's working.json follows.
 
 MONEY (settled 30 September 2026). $1.00 a session, charged once, on the
 first accepted suggestion, keyed review:<session_id>. The order is quote,
@@ -93,6 +104,13 @@ _MAX_TOKENS = 8192
 _MAX_SUGGESTIONS = 25
 
 _SESSION = re.compile(r"^[0-9a-f]{32}$")
+
+# An administrator's reply to a question. Long enough for a paragraph of
+# explanation; a question is not where a whole prompt is written.
+_MAX_ANSWER = 2000
+
+# The suggestion an answer produced carries its question's id and this.
+_ANSWERED = "-a"
 
 KINDS = ("field_description", "section_prompt", "document_type_description",
          "field_found_in", "new_field", "question")
@@ -178,6 +196,11 @@ def _accepted_key(tenant_id, session_id, suggestion_id):
 
 def _closed_key(tenant_id, session_id):
     return "%s%s/closed.json" % (_prefix(tenant_id), session_id)
+
+
+def _answer_key(tenant_id, session_id, suggestion_id):
+    return "%s%s/answers/%s.json" % (_prefix(tenant_id), session_id,
+                                     suggestion_id)
 
 
 def _put(key, body):
@@ -728,14 +751,11 @@ def _failed(tenant_id, session_id, status, reason, exc):
 
 # --- poll ------------------------------------------------------------------
 
-def poll(tenant_id, session_id):
-    """The review, with what has been accepted and whether it is closed."""
-    review = _get(_review_key(tenant_id, session_id))
-    if review is None:
-        raise ValueError("no such review")
-
-    outcomes = {}
-    prefix = "%s%s/accepted/" % (_prefix(tenant_id), session_id)
+def _records(tenant_id, session_id, kind):
+    """Every record of one kind in a session - accepted or answers - keyed by
+    the suggestion it is about."""
+    found = {}
+    prefix = "%s%s/%s/" % (_prefix(tenant_id), session_id, kind)
     token = None
     while True:
         args = {"Bucket": REVIEW_BUCKET, "Prefix": prefix}
@@ -743,16 +763,43 @@ def poll(tenant_id, session_id):
             args["ContinuationToken"] = token
         page = _s3.list_objects_v2(**args)
         for obj in page.get("Contents", []):
-            outcome = _get(obj["Key"])
-            if outcome:
-                outcomes[outcome["suggestion_id"]] = outcome
+            record = _get(obj["Key"])
+            if record:
+                found[record["suggestion_id"]] = record
         if not page.get("IsTruncated"):
             break
         token = page.get("NextContinuationToken")
+    return found
 
+
+def poll(tenant_id, session_id):
+    """The review, with what has been accepted, what has been answered and
+    whether it is closed.
+
+    A question's answer travels on the question, and the suggestion it
+    produced follows it in the list, so the screen shows the two together."""
+    review = _get(_review_key(tenant_id, session_id))
+    if review is None:
+        raise ValueError("no such review")
+
+    outcomes = _records(tenant_id, session_id, "accepted")
+    answers = _records(tenant_id, session_id, "answers")
+
+    listed = []
     for s in review.get("suggestions", []):
+        listed.append(s)
+        answered = answers.get(s["id"])
+        if s.get("kind") != "question" or not answered:
+            continue
+        s["answer"] = {k: answered.get(k) for k in (
+            "status", "answer", "by", "at", "reason")}
+        if answered.get("status") == "ready" and answered.get("suggestion"):
+            listed.append(answered["suggestion"])
+
+    for s in listed:
         outcome = outcomes.get(s["id"])
         s["status"] = outcome["status"] if outcome else "open"
+    review["suggestions"] = listed
 
     closed = _get(_closed_key(tenant_id, session_id))
     review["closed"] = bool(closed)
@@ -783,24 +830,14 @@ def accept(tenant_id, email, role, session_id, suggestion_id, value=None,
     one free session, logged, and nothing is undone."""
     _require_admin(role)
     _require_plan(tenant_id)
+    review = _usable(tenant_id, session_id)
 
-    review = _get(_review_key(tenant_id, session_id))
-    if review is None:
-        raise ValueError("no such review")
-    if review.get("status") != "ready":
-        raise ValueError("this review has not finished reading")
-    if _get(_closed_key(tenant_id, session_id)):
-        raise ValueError("this review is closed. Open a new one.")
-    if _expired(review):
-        raise ValueError("this review is more than %d hours old. Open a new "
-                         "one." % SESSION_HOURS)
-
-    suggestion = next((s for s in review.get("suggestions", [])
-                       if s.get("id") == suggestion_id), None)
+    suggestion = _find(tenant_id, session_id, review, suggestion_id)
     if suggestion is None:
         raise ValueError("no such suggestion")
     if suggestion["kind"] == "question":
-        raise ValueError("a question has nothing to accept")
+        raise ValueError("a question has nothing to accept. Answer it, and "
+                         "accept the change the answer produces.")
 
     done = _get(_accepted_key(tenant_id, session_id, suggestion_id))
     if done and done.get("status") == "accepted":
@@ -865,6 +902,51 @@ def accept(tenant_id, email, role, session_id, suggestion_id, value=None,
           "entry=%s by=%s" % (tenant_id, session_id, suggestion_id,
                               suggestion["kind"], entry_id, email))
     return outcome
+
+
+def _usable(tenant_id, session_id):
+    """The review, where it may still be acted on: read to the end, not
+    closed, and not older than a day (D7)."""
+    review = _get(_review_key(tenant_id, session_id))
+    if review is None:
+        raise ValueError("no such review")
+    if review.get("status") != "ready":
+        raise ValueError("this review has not finished reading")
+    if _get(_closed_key(tenant_id, session_id)):
+        raise ValueError("this review is closed. Open a new one.")
+    if _expired(review):
+        raise ValueError("this review is more than %d hours old. Open a new "
+                         "one." % SESSION_HOURS)
+    return review
+
+
+def _question(review, suggestion_id):
+    """A question in the review, by its id, or None."""
+    return next((s for s in review.get("suggestions", [])
+                 if s.get("id") == suggestion_id
+                 and s.get("kind") == "question"), None)
+
+
+def _find(tenant_id, session_id, review, suggestion_id):
+    """A suggestion the read made, or one an answer made, or None.
+
+    An answer's suggestion is found through its question, so an id from the
+    request reaches a storage key only once the question it names exists."""
+    found = next((s for s in review.get("suggestions", [])
+                  if s.get("id") == suggestion_id), None)
+    if found is not None:
+        return found
+    if not isinstance(suggestion_id, str) \
+            or not suggestion_id.endswith(_ANSWERED):
+        return None
+    asked = suggestion_id[:-len(_ANSWERED)]
+    if _question(review, asked) is None:
+        return None
+    record = _get(_answer_key(tenant_id, session_id, asked)) or {}
+    if record.get("status") != "ready":
+        return None
+    made = record.get("suggestion")
+    return made if made and made.get("id") == suggestion_id else None
 
 
 def _value(suggestion, value, draft):
@@ -979,6 +1061,170 @@ def _write_new_field(tenant_id, draft, target, proposed, bind_to):
     return {"field": key, "found_in": proposed["found_in"], "bound": bound}
 
 
+# --- answer ----------------------------------------------------------------
+
+def answer(tenant_id, email, role, session_id, suggestion_id, text):
+    """Record an administrator's reply to a question, and start turning it
+    into a change (REV-01 S2).
+
+    Returns at once: the conversion is a model call, which can outlast the
+    gateway's 29 seconds, so it runs in the background and the screen polls,
+    as it does for the read. Nothing is written to the draft and nothing is
+    charged. The suggestion it produces is accepted - or not - like any other,
+    and that accept is the session's charge if it is the first."""
+    _require_admin(role)
+    _require_plan(tenant_id)
+    review = _usable(tenant_id, session_id)
+
+    if _question(review, suggestion_id) is None:
+        raise ValueError("only a question in this review can be answered")
+    text = text.strip() if isinstance(text, str) else ""
+    if not text:
+        raise ValueError("write an answer first")
+    if len(text) > _MAX_ANSWER:
+        raise ValueError("an answer is at most %d characters" % _MAX_ANSWER)
+
+    key = _answer_key(tenant_id, session_id, suggestion_id)
+    held = _get(key) or {}
+    # Once a change has been made from an answer, or is being made, that is
+    # the answer. One that came to nothing or failed may be answered again.
+    if held.get("status") in ("answering", "ready"):
+        raise ValueError("this question has already been answered")
+
+    _put(key, {"suggestion_id": suggestion_id, "status": "answering",
+               "answer": text, "by": email, "at": _stamp()})
+    _lambda.invoke(
+        FunctionName=os.environ["AWS_LAMBDA_FUNCTION_NAME"],
+        InvocationType="Event",
+        Payload=json.dumps({"action": "answer_read", "tenant_id": tenant_id,
+                            "session_id": session_id,
+                            "suggestion_id": suggestion_id}))
+
+    print("[review-answered] tenant=%s session=%s question=%s by=%s" % (
+        tenant_id, session_id, suggestion_id, email))
+    return {"suggestion_id": suggestion_id, "status": "answering"}
+
+
+def _answering(draft, question, text):
+    """The prompt that turns a question and its answer into one change.
+
+    It carries what the question is about and the whole vocabulary by key,
+    because the change may be a new fact, or a fact sought in other documents,
+    as well as new wording."""
+    target = question.get("target") or {}
+    about = {}
+    try:
+        if "field_key" in target:
+            f = _field(draft, target["field_key"])
+            about["field"] = {"key": f["key"], "label": f["label"],
+                              "description": f["description"] or "",
+                              "found_in": f["found_in"]}
+        if "type_key" in target:
+            t = _type(draft, target["type_key"])
+            about["document_type"] = {"key": t["key"], "label": t["label"],
+                                      "description": t["description"] or ""}
+        if "section_key" in target and "template_key" in target:
+            s = _section(draft, target["template_key"], target["section_key"])
+            about["section"] = {"template_key": s["template_key"],
+                                "section_key": s["key"], "title": s["title"],
+                                "prompt": s["prompt"] or "",
+                                "bound_fields": s["fields"]}
+    except KeyError:
+        pass   # what it was about has gone; the vocabulary below still holds
+
+    listing = json.dumps({
+        "about": about,
+        "fields": [{"key": f["key"], "label": f["label"]}
+                   for f in draft["fields"]],
+        "document_types": [{"key": t["key"], "label": t["label"]}
+                           for t in draft["document_types"]],
+    }, ensure_ascii=False)
+
+    kinds = ('"field_description", "section_prompt", '
+             '"document_type_description", "field_found_in", "new_field"')
+    return """You asked a question about this configuration and the person who
+configures it has answered. Turn the answer into exactly ONE concrete change.
+
+Your question: %s
+Why you asked: %s
+Their answer: %s
+
+Targets and proposed values take the same shapes as before:
+- field_description:          {"field_key": ...}; proposed is the whole new description
+- document_type_description:  {"type_key": ...}; proposed is the whole new description
+- section_prompt:             {"template_key": ..., "section_key": ...}; proposed is the whole new prompt
+- field_found_in:             {"field_key": ...}; proposed is the WHOLE list of document type keys
+- new_field:                  {"template_key": ..., "section_key": ...}; proposed is
+  {"label", "description", "is_table", "columns": [{"label", "description"}], "found_in"}
+
+Where the answer means nothing should change, return no suggestions.
+
+%s
+
+--- CONFIGURATION ---
+%s""" % (question.get("question") or "", question.get("reason") or "", text,
+         _SHAPE % (kinds, "see above", "see above", 1), listing)
+
+
+def _answer_read(tenant_id, session_id, suggestion_id):
+    key = _answer_key(tenant_id, session_id, suggestion_id)
+    record = _get(key)
+    if not record or record.get("status") != "answering":
+        return {"status": "nothing to do"}
+    review = _get(_review_key(tenant_id, session_id)) or {}
+    question = _question(review, suggestion_id)
+    if question is None:
+        raise ValueError("the question has gone")
+
+    draft = editor.draft(tenant_id)
+    text, usage, stop = _invoke(_answering(draft, question, record["answer"]),
+                                _SYSTEM)
+    allowed = tuple(k for k in KINDS if k != "question")
+    kept, dropped = clean(draft, _as_json(text), allowed,
+                          (question.get("target") or {}).get("template_key"))
+
+    record.update(tokens_in=usage.get("input_tokens", 0),
+                  tokens_out=usage.get("output_tokens", 0),
+                  finished_at=_stamp())
+    if kept:
+        made = kept[0]
+        made["id"] = suggestion_id + _ANSWERED
+        made["from_question"] = suggestion_id
+        record.update(status="ready", suggestion=made)
+    else:
+        record.update(status="no_change",
+                      reason="The answer did not lead to a change that can be "
+                             "written. Answer again, or make the change "
+                             "yourself.")
+    _put(key, record)
+
+    print("[review-answer-read] tenant=%s session=%s question=%s status=%s "
+          "dropped=%d stop=%s" % (tenant_id, session_id, suggestion_id,
+                                  record["status"], dropped, stop))
+    return {"status": record["status"]}
+
+
+def _answer_read_safely(tenant_id, session_id, suggestion_id):
+    """The conversion, with its failure written where the screen polls. Not
+    re-raised, for the read's reason: an asynchronous retry asks a refusing
+    model twice more after the person has been told."""
+    try:
+        return _answer_read(tenant_id, session_id, suggestion_id)
+    except Exception as exc:  # noqa: BLE001 - the screen must be told
+        print("[review-answer-failed] tenant=%s session=%s question=%s %r" % (
+            tenant_id, session_id, suggestion_id, exc))
+        key = _answer_key(tenant_id, session_id, suggestion_id)
+        try:
+            record = _get(key) or {"suggestion_id": suggestion_id}
+            record.update(status="failed", finished_at=_stamp(),
+                          reason="That answer could not be turned into a "
+                                 "change just now. Try answering again.")
+            _put(key, record)
+        except Exception as write:  # noqa: BLE001 - the log is the last resort
+            print("[review-answer-unwritable] %r" % write)
+    return {"status": "failed"}
+
+
 # --- close -----------------------------------------------------------------
 
 def close(tenant_id, email, role, session_id):
@@ -1009,6 +1255,9 @@ def lambda_handler(event, context):
 
     if action == "read":
         return _read_safely(tenant_id, _session(event.get("session_id")))
+    if action == "answer_read":
+        return _answer_read_safely(tenant_id, _session(event.get("session_id")),
+                                   str(event.get("suggestion_id") or ""))
 
     try:
         if action == "open":
@@ -1027,6 +1276,10 @@ def lambda_handler(event, context):
         if action == "close":
             return _reply(200, close(tenant_id, event.get("email"),
                                      event.get("role"), session_id))
+        if action == "answer":
+            return _reply(202, answer(
+                tenant_id, event.get("email"), event.get("role"), session_id,
+                event.get("suggestion_id"), event.get("answer")))
         return _reply(400, {"error": "unknown action"})
 
     except wallet.InsufficientFunds as exc:
