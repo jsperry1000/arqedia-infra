@@ -17,6 +17,21 @@ produced by *Pipeline v1.0*.
 >
 > Nothing else in this document has been altered.
 
+> **Amended 1 October 2026 — allowance, overage, rate limit, storage
+> (share-recipient).** Changed in place: §6's allowance table, its rate-limit
+> row, and §9 item 1. Added: §6's trial, overage and reset paragraphs, and the
+> note at the end of §8. What §6's table said before, so it is not lost:
+>
+> | | Base | Small Business | Enterprise |
+> |---|---|---|---|
+> | Shares per month | 5 | unlimited | negotiated |
+> | Rate limit | applies | applies | applies |
+>
+> **Business is not unlimited.** It includes 25 a month and is metered past
+> them. **A trial is Base's shape**, not a tier of its own: ten shares once,
+> for the whole fourteen-day trial. The registered term is computed per grant
+> from its own send (§6). Nothing else in this document has been altered.
+
 ---
 
 ## 0. Status of every claim here
@@ -155,21 +170,39 @@ more than that.
 
 ## 6. Allowance, expiry, revocation, audit
 
-| | Base | Small Business | Enterprise |
-|---|---|---|---|
-| Shares per month | 5 | unlimited | negotiated |
-| Rate limit | applies | applies | applies |
+| | Trial | Base | Small Business | Enterprise |
+|---|---|---|---|---|
+| Shares included | 10 for the whole trial | 10 a month | 25 a month | as contracted |
+| Each share past that | $1.00 | $1.00 | $0.25 | as contracted |
+| Rate limit | 20 a day | 20 a day | 20 a day | 20 a day |
 
-**A rate limit applies at every tier including unlimited.** Free viewer accounts
-with no revenue behind them are an abuse and storage surface; "unlimited" is a
-commercial promise about normal use, not an invitation to bulk-send.
+**Past the allowance a share is charged, never refused.** The price is the
+plan's `meter_price` row - `share_overage_base` or `share_overage_business`
+(migration 036) - charged through `wallet.charge`, shown and accepted before
+the send. A trial is charged at Base's price.
+
+**A trial is Base's shape, not a tier of its own.** Ten shares, once, for the
+whole trial - anchored to `tenant.trial_ends_at`, never reset during it, and
+whatever plan the tenant signed up for. On conversion the tenant moves to its
+plan's monthly allowance from the conversion date.
+
+**A month is the billing period**, the same one a monthly credit bucket lives
+for: it ends at `subscription.current_period_ends_at`.
+
+**Re-sending a memorandum to the same address uses no allowance and costs
+nothing**, revoked or not - it finds the same grant and reinstates it (§8). It
+does count toward the daily limit, because it sends an email.
+
+**A rate limit applies at every tier.** Free viewer accounts with no revenue
+behind them are an abuse and storage surface; an allowance is a commercial
+promise about normal use, not an invitation to bulk-send.
 
 **Expiry — settled, two-stage.**
 
 | Viewer state | Grant term |
 |---|---|
 | Sent, email-verified only | 2 weeks from send |
-| Registered with the app | Extended to 6 months from registration |
+| Registered with the app | 6 months from that grant's own send |
 
 Registration is a real signup — the viewer accepts our terms and privacy policy
 and sets a password. It costs nothing, grants no product capability beyond
@@ -184,6 +217,12 @@ keeps it.
 
 **Extension is per grant, applied at registration and to grants received
 afterwards**, across every tenant that has shared with that viewer.
+
+> **Settled 1 October 2026 (share-recipient; UX02 12.5).** A registered
+> viewer's grant runs to its own `sent_at` + 6 months, unless the tenant set
+> the expiry. Registering recomputes every grant the viewer holds. There is no
+> account-level registration date in the computation: a grant sent five months
+> before its recipient registered gets one more month, not six.
 
 **Revocation** is immediate and available to any seat, admin or member, at any
 time — including in `capped`, since revoking is a reduction of access and a
@@ -277,11 +316,32 @@ share_access_log      access_id PK, grant_id FK, action,   -- view | download
 The unique key means re-sending the same memo to the same address updates the
 existing grant rather than consuming a second share from the allowance.
 
+> **Built 1 October 2026 in DynamoDB, not Aurora (share-recipient).** The
+> model above is the design; what was built is four pay-per-request tables in
+> `share.tf`, so that nothing a viewer does reaches the cluster (§4):
+>
+> - `share_grant`, keyed `"<memo_id>#<viewer_account_id>"` - the key is the
+>   unique rule. Revoking flips `revoked`; the item stays. Re-sending
+>   reinstates the same item with the same link token. Carries
+>   `authority_affirmed_at` (§7.2), which the model above did not. `sent_by`
+>   and `revoked_by` are email addresses, as every other act in the product
+>   records its author, not seat ids. Indexed by tenant and by viewer.
+> - `viewer_account`, keyed by the first 32 hex characters of sha256 of the
+>   lower-cased address, so a grant can name its recipient before the
+>   recipient has opened anything. Created on the first open.
+> - `share_access_log`, written asynchronously.
+> - `share_usage`, the allowance and daily counters - not in the model
+>   above, and needed so two sends cannot both take the last free share.
+>
+> There is no foreign key and no cascade from `memo`: an archived memorandum
+> still resolves for a grant (migration 030).
+
 ---
 
 ## 9. Open
 
-1. **Rate limit** (§6) — the number, at every tier.
+1. ~~**Rate limit** (§6) — the number, at every tier.~~ **Settled 1 October
+   2026:** 20 shares a day per tenant, every plan.
 2. **Counsel review** (§7.1) — jurisdiction defaults for the marketing
    preference, and the authority-to-disclose wording.
 3. **Email delivery** — no provider named. Deferred behind an interface like

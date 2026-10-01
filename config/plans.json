@@ -27,7 +27,8 @@
     "seat_count": "plan table",
     "monthly_price_cents": "plan table, and checked against config/paddle/sandbox.json by tests/test_plans_source.py",
     "monthly_credit_cents": "plan table",
-    "share_allowance": "plan table; NULL means unlimited, as migration 018 says",
+    "share_allowance": "plan table, as migration 036 sets it; NULL still means unlimited (migration 018) and no plan carries it now",
+    "share_overage_cents": "meter_price, the share_overage_<plan_key> rows migration 036 writes",
     "field_sets_per_type": "site/pricing/index.html ONLY - no column, no constant, nothing enforces it",
     "sections_per_template": "site/pricing/index.html ONLY - the code's bounds are _REWRITE_MAX_SECTIONS 50 and proposer._MAX_SECTIONS 40, neither of them per plan",
     "daily_classification_cents": "site/pricing/index.html ONLY - nothing meters or enforces it",
@@ -56,6 +57,24 @@
     "somebody committed to a signup."
   ],
 
+  "share_overage_cents": {
+    "base": 100,
+    "business": 25
+  },
+  "share_overage_note": [
+    "What one shared memorandum costs past the plan's monthly allowance, by",
+    "plan_key. OUTSIDE plans, so the field list every plan carries is",
+    "unchanged. The ENFORCED figures are meter_price's share_overage_base and",
+    "share_overage_business rows (migration 036); this is the PUBLISHED copy.",
+    "",
+    "A TRIAL IS BASE'S SHAPE: ten shares once for the whole trial, then the",
+    "base price. Enterprise is not here - its allowance and price are as",
+    "contracted.",
+    "",
+    "Sending past the allowance is charged, never refused. A rate limit of 20",
+    "shares a day applies on every plan."
+  ],
+
   "topup_increment_cents": 500,
   "topup_increment_note": [
     "OUTSIDE plans, BECAUSE IT IS NOT A PLAN ATTRIBUTE. The pricing page shows",
@@ -76,7 +95,7 @@
       "seat_count": 2,
       "monthly_price_cents": 2500,
       "monthly_credit_cents": 500,
-      "share_allowance": 5,
+      "share_allowance": 10,
       "field_sets_per_type": 3,
       "sections_per_template": 12,
       "daily_classification_cents": 500,
@@ -90,7 +109,7 @@
       "seat_count": 5,
       "monthly_price_cents": 6500,
       "monthly_credit_cents": 1500,
-      "share_allowance": null,
+      "share_allowance": 25,
       "field_sets_per_type": 5,
       "sections_per_template": 25,
       "daily_classification_cents": 1500,

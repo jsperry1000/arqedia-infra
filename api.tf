@@ -168,7 +168,7 @@ resource "aws_lambda_function" "api" {
       REVIEWER_FUNCTION         = aws_lambda_function.reviewer.function_name
       PADDLE_API_BASE           = local.paddle_api_base
       PADDLE_API_KEY_SECRET_ARN = aws_secretsmanager_secret.paddle_api_key.arn
-    })
+    }, local.share_env)
   }
 
   tags = { Name = "${local.name_prefix}-api" }
@@ -351,6 +351,14 @@ locals {
     "DELETE /seats/invitations/{invitation_id}",
     "PUT /seats/{seat_id}",
     "DELETE /seats/{seat_id}",
+
+    # Sharing (share-recipient). Any seat may send and revoke - revoking
+    # works in every state, capped included (share_viewer_spec section 6).
+    # Sending opens from the memorandum's own page; the list is /shares.
+    # The recipient's half is the viewer function, in share.tf.
+    "GET /shares",
+    "POST /memos/{memo_id}/shares",
+    "POST /shares/{grant_id}/revoke",
   ]
 }
 
