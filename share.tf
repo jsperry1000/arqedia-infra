@@ -205,6 +205,17 @@ resource "aws_iam_role_policy" "api_share" {
         Action   = ["s3:DeleteObject"]
         Resource = ["${aws_s3_bucket.data["curated"].arn}/shares/*"]
       },
+      # share.purge_tenant lists a tenant's shares/ folder to delete it. Not
+      # called yet (account deletion does not exist); scoped to the prefix so
+      # the role cannot list anything else in the bucket.
+      {
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [aws_s3_bucket.data["curated"].arn]
+        Condition = {
+          StringLike = { "s3:prefix" = ["shares/*"] }
+        }
+      },
     ]
   })
 }

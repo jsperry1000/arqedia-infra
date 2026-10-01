@@ -78,6 +78,12 @@ Paying for a plan. Nothing here grants money; Paddle's webhooks do.
   POST /billing/checkout                 a Paddle transaction to open
   POST /billing/plan                     upgrade or downgrade
   POST /wallet/top-up                    buy $5 increments on the stored card
+
+Sharing a memorandum with somebody outside the workspace (share.py). The
+recipient's half is the share-viewer function, not this one.
+  GET  /shares                           what has been sent, and the allowance
+  POST /memos/{memo_id}/shares           send one, or send it again
+  POST /shares/{grant_id}/revoke         end future access
 """
 
 import datetime
@@ -2626,6 +2632,67 @@ def review(tenant_id, email, role, action, **fields):
     return _reply(result["status"], result["body"])
 
 
+# --- sharing ---------------------------------------------------------------
+#
+# IMPORTED HERE, NOT AT THE TOP. share.py imports share_rules, which reaches
+# this function only through the docprocessing layer. At the top of the
+# module a stale layer would take every route down with it (CLAUDE.md, first
+# warning); here it takes down sharing, and says so.
+
+SHARE_ROUTES = frozenset({
+    "GET /shares",
+    "POST /memos/{memo_id}/shares",
+    "POST /shares/{grant_id}/revoke",
+})
+
+
+def share_route(route, tenant_id, email, params, event):
+    """The three share routes, and what each refusal means.
+
+    ANY SEAT. Sending is the work, as filing and generating are; revoking is
+    a reduction of access, and is open in every state - capped included -
+    because a tenant locked out for non-payment must still be able to pull a
+    memorandum back (share_viewer_spec section 6)."""
+    import share
+
+    try:
+        if route == "GET /shares":
+            return _reply(200, share.listing(tenant_id))
+
+        if route == "POST /memos/{memo_id}/shares":
+            body = json.loads(event.get("body") or "{}")
+            sent = share.send(tenant_id, email, params.get("memo_id"), body)
+            if sent is None:
+                return _reply(404, {"error": "not found"})
+            return _reply(201, sent)
+
+        if route == "POST /shares/{grant_id}/revoke":
+            # The id carries a '#'. Unquoted, as an engagement name is, so it
+            # reads the same whether or not the gateway decoded it first.
+            grant_id = urllib.parse.unquote(params.get("grant_id") or "")
+            revoked = share.revoke(tenant_id, email, grant_id)
+            if revoked is None:
+                return _reply(404, {"error": "not found"})
+            return _reply(200, revoked)
+
+    except share.RateLimited as exc:
+        return _reply(429, {"error": str(exc)})
+    except share.Capped as exc:
+        return _reply(402, {"error": str(exc)})
+    except share.OverageNotAccepted as exc:
+        # Nothing was sent or charged. The price travels so the screen can
+        # put it to the person and send again with it accepted.
+        return _reply(409, {
+            "error": ("This workspace has used the %s shares its plan "
+                      "includes. Sending this one costs $%.2f."
+                      % (exc.allowance, exc.unit_cents / 100.0)),
+            "overage_cents": exc.unit_cents,
+            "allowance": exc.allowance,
+        })
+
+    return _reply(404, {"error": "unknown route"})
+
+
 # --- dispatch --------------------------------------------------------------
 
 def lambda_handler(event, context):
@@ -2895,6 +2962,10 @@ def _dispatch(event, context):
         if route == "DELETE /seats/{seat_id}":
             _require_seats_admin(role)
             return _reply(200, seats.remove(tenant_id, params.get("seat_id")))
+
+        # --- sharing -------------------------------------------------------
+        if route in SHARE_ROUTES:
+            return share_route(route, tenant_id, email, params, event)
 
         if route == "POST /memos/{memo_id}/revise":
             body = json.loads(event.get("body") or "{}")

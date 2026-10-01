@@ -114,3 +114,54 @@ def invitation(invited_by, accept_url, expires_at, role):
          str(expires_at)[:10],
          invited_by)
     return subject, body
+
+
+# --- what a share says -----------------------------------------------------
+
+def share_invitation(shared_by, tenant_name, memo_label, subject, link,
+                     expires_at, expiry_set_by_tenant):
+    """A memorandum, shared with somebody outside the workspace.
+
+    IT NAMES THE PERSON AND THE FIRM. Unlike a seat invitation, the recipient
+    is the intended reader of what was sent, and an unexpected link from a
+    product nobody has heard of is a phishing email; the same link from a
+    named person at a named firm is a document they were expecting. The
+    sender's address is the Reply-To.
+
+    IT SAYS WHAT THE MEMORANDUM IS ABOUT, and nothing else from it. A
+    recipient who has only clicked the link has no relationship with us
+    (share_viewer_spec section 7): this is transactional email about one
+    memorandum, and carries no marketing.
+
+    IT SAYS WHAT REGISTERING DOES only where registering would do it. A date
+    the tenant chose is a ceiling, and promising six months over it would be
+    untrue.
+    """
+    mail_subject = "%s has shared a memorandum with you" % shared_by
+    keep = ("" if expiry_set_by_tenant else
+            "Your access lasts two weeks. If you register - a password and an "
+            "authenticator app - it lasts six months from when this was "
+            "shared.\n\n")
+    body = (
+        "%s at %s has shared a memorandum with you through ARQEDIA:\n"
+        "\n"
+        "    %s\n"
+        "    %s\n"
+        "\n"
+        "Open it here:\n"
+        "\n"
+        "%s\n"
+        "\n"
+        "The link is yours: it identifies you, and every page you read or "
+        "download carries your address. Please do not forward it.\n"
+        "\n"
+        "Access ends on %s.\n"
+        "\n"
+        "%s"
+        "If you were not expecting this, you can ignore it.\n"
+        "\n"
+        "ARQEDIA\n"
+        "This address does not take replies; use Reply and it will reach %s.\n"
+    ) % (shared_by, tenant_name, memo_label, subject or "", link,
+         str(expires_at)[:10], keep, shared_by)
+    return mail_subject, body
