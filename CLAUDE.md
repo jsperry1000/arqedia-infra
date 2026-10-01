@@ -288,6 +288,11 @@ and never learns it was not real.
 Mocked today: **Subscription** (no endpoint), **Sharing**, **the Viewer**.
 Live: the wallet balance and ledger, seats, signing up.
 
+**Amended 1 October 2026 (share-recipient).** Sharing and the Viewer are no
+longer mocked: their mock.tsx blocks are deleted and both read real
+endpoints. They are not live until share.tf, migration 036 and a rebuilt
+layer are applied.
+
 Every inert control says "not connected yet" on click rather than failing
 quietly, and every mocked screen carries the marker at the top of its own tab.
 

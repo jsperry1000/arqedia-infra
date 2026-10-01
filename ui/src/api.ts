@@ -676,6 +676,75 @@ export type Proposal = {
   sections: ProposedSection[];
 };
 
+// --- sharing ----------------------------------------------------------------
+
+/** Where a workspace stands against its share allowance (share.allowance).
+ *  A trial is Base's shape: ten, once, for the whole trial. */
+export type ShareAllowance = {
+  plan: string;
+  trial: boolean;
+  standing: Standing;
+  period: string;
+  period_ends_at: string | null;
+  /** Null is unlimited, never zero. */
+  allowance: number | null;
+  used: number;
+  remaining: number | null;
+  overage_event: string;
+  /** What one share past the allowance costs. Null where it is not priced -
+   *  and an unpriced share is refused, never sent for nothing. */
+  overage_cents: number | null;
+  today: number;
+  daily_limit: number;
+  /** No balance at all: sending is refused, revoking is not. */
+  capped: boolean;
+};
+
+/** One memorandum shared with one address. The link token is never here: it
+ *  is the recipient's, and it went to them alone. */
+export type ShareGrant = {
+  grant_id: string;
+  memo_id: number;
+  memo_label: string;
+  subject: string | null;
+  recipient_email: string;
+  sent_by: string;
+  created_at: string;
+  sent_at: string;
+  expires_at: string;
+  expiry_set_by_tenant: boolean;
+  first_opened_at: string | null;
+  opens: number;
+  downloads: number;
+  revoked: boolean;
+  revoked_at: string | null;
+  revoked_by: string | null;
+  reinstated_at: string | null;
+  charged_cents: number | null;
+  expired: boolean;
+  registered?: boolean;
+};
+
+export type ShareSent = ShareGrant & {
+  /** Whether SES accepted the email. The share stands either way. */
+  sent: boolean;
+  reinstated: boolean;
+  charged_cents: number;
+};
+
+export type ShareSend = {
+  recipient: string;
+  /** §7.2. Required, and true. */
+  authority_affirmed: boolean;
+  /** Null for the default two weeks; a number is a date the tenant chose,
+   *  which registering never extends. */
+  expiry_days: number | null;
+  idempotency_key: string;
+  /** The overage price the person accepted, where the send is past the
+   *  allowance. Anything else is refused with the price, not charged. */
+  accept_overage_cents?: number | null;
+};
+
 export const api = {
   // --- configuration -------------------------------------------------
 
@@ -1092,6 +1161,24 @@ export const api = {
   memoPdf: (memoId: number): Promise<{ url: string; bytes: number }> =>
     call(`/memos/${memoId}/pdf`),
 
+  // --- sharing -------------------------------------------------------
+
+  /** Every share this workspace has sent, newest first, and the allowance. */
+  shares: (): Promise<{ grants: ShareGrant[]; allowance: ShareAllowance }> =>
+    call("/shares"),
+
+  /** Send a memorandum, or send it again. Again is the same grant -
+   *  reinstated if it was revoked - and uses no allowance. */
+  sendShare: (memoId: number, body: ShareSend): Promise<ShareSent> =>
+    call(`/memos/${memoId}/shares`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** End future access. It cannot recall a copy already downloaded. */
+  revokeShare: (grantId: string): Promise<ShareGrant> =>
+    call(`/shares/${encodeURIComponent(grantId)}/revoke`, { method: "POST" }),
+
   passage: (documentId: number, unit: number | null): Promise<Passage> =>
     call(`/documents/${documentId}/passage`
       + (unit ? `?unit=${unit}` : "")),
@@ -1328,4 +1415,100 @@ export const api = {
     person_name?: string;
   }): Promise<{ tenant_id: number; role: "admin" | "member"; email: string }> =>
     open_("/invitations/accept", body),
+};
+
+// --- the viewer --------------------------------------------------------------
+//
+// A recipient has no account in the customer pool and must never be sent one
+// of its tokens, so none of this goes through `call`. A link carries its own
+// token - "Authorization: Share <token>" - and a registered viewer signs in to
+// a pool of their own, through the viewer function, and carries its token.
+
+/** What the viewer page shows around the memorandum. view_url is the
+ *  watermarked PDF, valid for two minutes - long enough to start loading. */
+export type ViewerPage = {
+  grant_id: string;
+  memo_label: string;
+  subject: string | null;
+  tenant_name: string;
+  recipient_email: string;
+  sent_at: string;
+  expires_at: string;
+  expiry_set_by_tenant: boolean;
+  registered: boolean;
+  view_url: string;
+};
+
+export type ViewerShare = {
+  grant_id: string;
+  memo_label: string;
+  subject: string | null;
+  tenant_name: string;
+  sent_at: string;
+  expires_at: string;
+  expired: boolean;
+};
+
+/** How a viewer request proves itself. */
+export type ViewerCredential =
+  | { kind: "link"; token: string }
+  | { kind: "signed-in"; idToken: string };
+
+async function viewerCall(path: string, credential: ViewerCredential | null,
+                          method = "GET", body?: unknown) {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (credential?.kind === "link") headers.Authorization = "Share " + credential.token;
+  if (credential?.kind === "signed-in") headers.Authorization = credential.idToken;
+  const res = await fetch(config.apiUrl + path, {
+    method, headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let parsed: any = null;
+  try { parsed = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+  if (!res.ok) {
+    throw new ApiError(res.status,
+                       parsed?.error ?? text ?? `Request failed (${res.status}).`);
+  }
+  return parsed;
+}
+
+const one = (grantId: string, credential: ViewerCredential) =>
+  credential.kind === "link"
+    ? `/view/${encodeURIComponent(grantId)}`
+    : `/viewer/shares/${encodeURIComponent(grantId)}`;
+
+export const viewerApi = {
+  open: (grantId: string, credential: ViewerCredential): Promise<ViewerPage> =>
+    viewerCall(one(grantId, credential), credential),
+
+  download: (grantId: string, credential: ViewerCredential):
+      Promise<{ download_url: string }> =>
+    viewerCall(one(grantId, credential) + "/download", credential, "POST", {}),
+
+  /** A password, then the authenticator's secret to add. Nothing is
+   *  registered until confirm. */
+  register: (grantId: string, token: string, body: {
+    password: string; accept_terms: boolean; marketing_opt_in: boolean;
+  }): Promise<{ session: string; secret_code: string; otpauth: string }> =>
+    viewerCall(`/view/${encodeURIComponent(grantId)}/register`,
+               { kind: "link", token }, "POST", body),
+
+  confirm: (grantId: string, token: string, body: {
+    session: string; code: string; accept_terms: boolean;
+    marketing_opt_in: boolean;
+  }): Promise<{ id_token: string; expires_in: number; extended: number;
+                expires_at: string }> =>
+    viewerCall(`/view/${encodeURIComponent(grantId)}/register/confirm`,
+               { kind: "link", token }, "POST", body),
+
+  signIn: (email: string, password: string): Promise<{ session: string }> =>
+    viewerCall("/viewer/sign-in", null, "POST", { email, password }),
+
+  signInCode: (email: string, session: string, code: string):
+      Promise<{ id_token: string; expires_in: number }> =>
+    viewerCall("/viewer/sign-in/mfa", null, "POST", { email, session, code }),
+
+  mine: (idToken: string): Promise<{ shares: ViewerShare[] }> =>
+    viewerCall("/viewer/shares", { kind: "signed-in", idToken }),
 };

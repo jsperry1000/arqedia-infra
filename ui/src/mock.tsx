@@ -1,6 +1,6 @@
 /**
- * Mock data for the three screens that have no API behind them yet:
- * Wallet, Share and the Viewer.
+ * Mock data for what has no API behind it yet. Wallet, Share and the Viewer
+ * were the first three; all three are live now, and what is left is below.
  *
  * EVERY invented figure in the product is in this one file. When the wallet
  * and sharing endpoints land, this file is deleted and the three screens read
@@ -46,78 +46,19 @@ export function NotConnected({ what }: { what: string }) {
 // exported fake balance is a trap - the next screen that needs a number finds
 // one here and never learns it was not real.
 
-// --- sharing ---------------------------------------------------------------
-
-export const SHAREABLE = [
-  { memo_id: 101, label: "Credit Memorandum", subject: "Meridian Trading Ltd", generated: "4 March 2026" },
-  { memo_id: 102, label: "KYC Memorandum", subject: "Meridian Trading Ltd", generated: "4 March 2026" },
-  { memo_id: 103, label: "Lender Memorandum", subject: "Ardmore Logistics Ltd", generated: "12 February 2026" },
-];
-
-/** Three grants, showing both viewer states (share_viewer_spec §6).
- *
- *  A VERIFIED RECIPIENT KEEPS IT FOR 2 WEEKS, not 30 days (12.1). A
- *  REGISTERED ONE KEEPS IT FOR SIX MONTHS from registering - the extension is
- *  the whole incentive to register, and a row showing both is what makes the
- *  difference legible on the screen. The first row below is the registered
- *  case and is deliberately not two weeks. */
-export const GRANTS = [
-  {
-    to: "j.ferrers@northbank.com", memo: "Credit Memorandum - Meridian Trading Ltd",
-    sent: "4 Mar", opened: "4 Mar", opens: 3, downloads: 1, expires: "4 Sep", registered: true,
-  },
-  {
-    to: "credit.committee@vmac.com", memo: "Credit Memorandum - Meridian Trading Ltd",
-    sent: "4 Mar", opened: null, opens: 0, downloads: 0, expires: "18 Mar", registered: false,
-  },
-  {
-    to: "s.abara@ardmore.example", memo: "Lender Memorandum - Ardmore Logistics Ltd",
-    sent: "12 Feb", opened: "13 Feb", opens: 1, downloads: 0, expires: "26 Feb", registered: false,
-  },
-];
-
-/** What a grant carries, and what it does not. The scope is settled in the
- *  share specification; only the values shown are mock. */
-export const GRANT_SCOPE = [
-  { what: "The rendered memorandum", given: true },
-  { what: "The source documents behind each claim", given: false },
-  { what: "Your configuration", given: false },
-  { what: "Anything else in the engagement", given: false },
-];
-
-// --- the viewer ------------------------------------------------------------
-
-/** A stand-in tenant palette, so the one screen where both palettes meet
- *  shows the boundary. The application uses none of this. */
-export const TENANT_PALETTE = {
-  deep: "#1d3a63",
-  mid: "#3f6ea8",
-  highlight: "#c9a227",
-  light: "#cfe0f2",
-};
-
-export const VIEWER_MEMO = {
-  label: "Credit Memorandum",
-  subject: "Meridian Trading Ltd",
-  preparedBy: "TESTCO A",
-  generated: "4 March 2026",
-  revision: 36,
-  // A verified viewer - the bar offers "Register to keep access" - so two
-  // weeks from send, not thirty days (12.1).
-  expires: "18 March 2026",
-  sections: [
-    {
-      numeral: "IV",
-      title: "Existing Indebtedness",
-      paragraphs: [
-        { text: "The borrower reports senior facilities of USD 24.6m drawn against a committed line of USD 30.0m.", cite: "Audited-Accounts-FY2025.pdf" },
-        { text: "Net leverage stands at 2.8\u00d7 on trailing twelve-month EBITDA of USD 8.8m.", cite: "Audited-Accounts-FY2025.pdf" },
-      ],
-      pill: "Covenant position",
-      after: "No financial maintenance covenant ratio is stated in the facility agreement provided.",
-    },
-  ],
-};
+// --- sharing and the viewer -------------------------------------------------
+//
+// GONE. Sharing is live (share-recipient): the list reads GET /shares, sending
+// is POST /memos/{memo_id}/shares from the memorandum's own page, and the
+// viewer reads the grant through the share-viewer function.
+//
+// SHAREABLE, GRANTS, GRANT_SCOPE, VIEWER_MEMO and TENANT_PALETTE were removed
+// rather than left unused. GRANTS was three invented recipients with invented
+// open counts; VIEWER_MEMO an invented memorandum; TENANT_PALETTE four
+// invented colours that only the mock viewer used - the real viewer shows the
+// tenant's own colours because it shows the tenant's own PDF. GRANT_SCOPE was
+// the settled scope from the share specification rather than a figure, and
+// lives on as a statement in Share.tsx.
 
 // --- subscription ----------------------------------------------------------
 //
