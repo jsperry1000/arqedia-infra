@@ -448,8 +448,11 @@ export function ReviewMode({ draft, onClose, onChanged, onEditBindings }: {
               {edits[s.id] !== undefined ? "Suggested, as you are editing it"
                                          : "Suggested"}
             </p>
+            {/* The memo screen's free-standing prompt box: full width of the
+                card, the editor's font, resizable downward. Outside a .form,
+                a bare textarea took the browser's default width. */}
             {edits[s.id] !== undefined ? (
-              <textarea rows={6} value={edits[s.id]}
+              <textarea className="rewrite-prompt" rows={6} value={edits[s.id]}
                 onChange={(e) => setEdits(
                   (x) => ({ ...x, [s.id]: e.target.value }))} />
             ) : (
