@@ -513,6 +513,20 @@ class AnswerTest(unittest.TestCase):
         self.assertEqual(question["answer"]["status"], "ready")
         self.assertEqual(listed[ids.index("s-0024-a")]["status"], "open")
 
+    def test_poll_shows_what_was_written_including_an_edit(self):
+        AcceptTest.suggest(self, id="s-0001", kind="field_description",
+                           target={"field_key": "f_name"},
+                           current="The name.", proposed="The legal name.")
+        self.r.accept(7, "a@firm.com", "admin", self.SESSION, "s-0001",
+                      value="The registered legal name.")
+        listed = {s["id"]: s for s in self.r.poll(7, self.SESSION)
+                  ["suggestions"]}
+        self.assertEqual(listed["s-0001"]["status"], "accepted")
+        self.assertEqual(listed["s-0001"]["written"],
+                         "The registered legal name.")
+        self.assertEqual(listed["s-0001"]["proposed"], "The legal name.")
+        self.assertNotIn("written", listed["s-0024"])   # never accepted
+
     def test_the_suggestion_is_accepted_and_charged_like_any_other(self):
         self.answer()
         self.read()

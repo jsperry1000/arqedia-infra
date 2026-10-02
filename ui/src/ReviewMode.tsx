@@ -444,6 +444,21 @@ export function ReviewMode({ draft, onClose, onChanged, onEditBindings }: {
                 <Value draft={draft} value={s.current} />
               </>
             )}
+            {/* Once accepted, what was written - which is the person's edit
+                where they made one. Showing the suggestion as it came made an
+                edited accept look as though the edit had been lost. */}
+            {s.status === "accepted" && s.written !== undefined && (
+              <>
+                <p className="muted small">
+                  Written to the draft
+                  {JSON.stringify(s.written) !== JSON.stringify(s.proposed)
+                    && " — your edit of the suggestion"}
+                </p>
+                <Value draft={draft} value={s.written} />
+              </>
+            )}
+
+            {!(s.status === "accepted" && s.written !== undefined) && (<>
             <p className="muted small">
               {edits[s.id] !== undefined ? "Suggested, as you are editing it"
                                          : "Suggested"}
@@ -458,6 +473,7 @@ export function ReviewMode({ draft, onClose, onChanged, onEditBindings }: {
             ) : (
               <Value draft={draft} value={s.proposed} />
             )}
+            </>)}
 
             {s.status === "open" && usable && (
               <>
