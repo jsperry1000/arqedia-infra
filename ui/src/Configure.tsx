@@ -626,6 +626,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // reviewer reads it, and the caller's role. Display only: the reviewer
   // refuses for itself.
   const [reviewing, setReviewing] = useState(false);
+  // A section to bring into view once the editor has rendered it, after
+  // AI Review's "Edit bindings" has opened its fact list. A ref, not state:
+  // taking it is not something to re-render for.
+  const jumpTo = useRef<string | null>(null);
   const [reviewAccess, setReviewAccess] =
     useState<{ plan: boolean; admin: boolean } | null>(null);
   useEffect(() => {
@@ -1009,6 +1013,21 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     watch.observe(el);
     return () => watch.disconnect();
   }, [openSection, part]);
+
+  // Bring a section into view below the held bar, once it exists - "Edit
+  // bindings" in AI Review may have switched the memorandum and the part,
+  // so the row is rendered a moment after the request. After every render,
+  // and a no-op unless a jump is waiting and its row now exists.
+  useEffect(() => {
+    if (!jumpTo.current) return;
+    const row = document.getElementById(jumpTo.current);
+    if (!row) return;
+    window.scrollTo({
+      top: row.getBoundingClientRect().top + window.scrollY
+        - pinTop - barHeight - 8,
+    });
+    jumpTo.current = null;
+  });
 
   if (!state) return <p className="muted">Loading&hellip;</p>;
 
@@ -1591,7 +1610,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       )}
 
       {sections.map((s, i) => (
-        <div className="review section-row" key={s.key}>
+        <div className="review section-row" key={s.key}
+             id={`section-${s.template_key}-${s.key}`}>
           {/* Open, its heading and Close are held beneath the bar while its
               field list scrolls, so closing is always one click. */}
           <div className={"review-head" + (openSection === s.key
@@ -2368,6 +2388,17 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           draft={draft}
           onClose={() => setReviewing(false)}
           onChanged={() => { refresh().catch((e) => setError(message(e))); }}
+          // THE DRAWER CLOSES; THE SESSION DOES NOT. The fact list is part of
+          // the page, under this drawer, so the drawer is hidden to show it.
+          // Nothing is sent: the review stays open, and choosing AI Review
+          // again resumes it where it was, set-asides included (REV-01).
+          onEditBindings={(templateKey, sectionKey) => {
+            setReviewing(false);
+            setSectionSearch("");
+            place({ part: "sections", report: templateKey,
+                    section: sectionKey });
+            jumpTo.current = `section-${templateKey}-${sectionKey}`;
+          }}
         />
       )}
     </div>

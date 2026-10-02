@@ -361,6 +361,59 @@ class AcceptTest(unittest.TestCase):
             self.accept(sid)
         self.r.wallet.charge.assert_not_called()
 
+    # --- the person's own edit (inline edit before accept) -----------------
+
+    def test_an_edited_description_is_written_whole_with_the_edit(self):
+        sid = self.suggest(kind="field_description",
+                           target={"field_key": "f_holders"},
+                           current="Who holds shares.",
+                           proposed="Each registered holder and stake.")
+        out = self.accept(sid, value="  Each holder, stake and class.  ")
+        [(_, body)] = [c for c in self.calls if c[0] == "save_field"]
+        self.assertEqual(body["description"], "Each holder, stake and class.")
+        # The rest of the field is written back as it was.
+        self.assertEqual(body["cardinality"], "group")
+        self.assertEqual(body["columns"][0]["key"], "f_holders.name")
+        self.assertEqual(out["value"], "Each holder, stake and class.")
+
+    def test_an_edited_prompt_is_written_and_the_section_kept(self):
+        sid = self.suggest(kind="section_prompt",
+                           target={"template_key": "credit",
+                                   "section_key": "summary"},
+                           current="Summarise.", proposed="Lead with it.")
+        self.accept(sid, value="Lead with the name, then the number.")
+        [(_, body)] = [c for c in self.calls if c[0] == "save_section"]
+        self.assertEqual(body["prompt"], "Lead with the name, then the number.")
+        self.assertEqual(body["title"], "Summary")
+        self.assertNotIn("sort_order", body)
+
+    def test_an_empty_edit_is_refused_and_nothing_is_written_or_charged(self):
+        sid = self.suggest(kind="section_prompt",
+                           target={"template_key": "credit",
+                                   "section_key": "summary"},
+                           current="Summarise.", proposed="Lead with it.")
+        with self.assertRaises(ValueError):
+            self.accept(sid, value="   ")
+        self.assertEqual([c for c in self.calls if c[0] != "quote"], [])
+        self.r.wallet.charge.assert_not_called()
+
+    def test_no_edit_writes_the_suggestion_as_it_came(self):
+        sid = self.suggest(kind="field_description",
+                           target={"field_key": "f_name"},
+                           current="The name.", proposed="The legal name.")
+        self.accept(sid)
+        [(_, body)] = [c for c in self.calls if c[0] == "save_field"]
+        self.assertEqual(body["description"], "The legal name.")
+
+    def test_an_edit_is_still_refused_when_the_draft_moved(self):
+        # Stale is checked against what the review read, edit or no edit.
+        sid = self.suggest(kind="field_description",
+                           target={"field_key": "f_name"},
+                           current="Something older.", proposed="New.")
+        with self.assertRaises(self.r.Stale):
+            self.accept(sid, value="My own wording.")
+        self.assertEqual([c for c in self.calls if c[0] != "quote"], [])
+
     def test_a_question_cannot_be_accepted(self):
         sid = self.suggest(kind="question", target={"field_key": "f_name"},
                            current=None, proposed=None, question="Which?")

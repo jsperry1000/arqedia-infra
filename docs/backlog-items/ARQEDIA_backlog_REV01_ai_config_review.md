@@ -454,6 +454,67 @@ accepted like any other.
 
 ---
 
+### Built, 2 October 2026
+
+On `feature/ai-review-edit-and-bindings`, not merged. Screen only: neither
+change needs Terraform, a migration or a reviewer change.
+
+**Edit before accept.** A section prompt or a field description can be
+edited in place before it is accepted. Accept sends the edit as `value`.
+That path was already built: `_value()` refuses an empty one, and `_write()`
+writes the whole field or section with that one value changed, as for any
+accept. The edit is sent only when the wording was actually changed, so an
+edit opened and left alone writes the suggestion as it came. The stale check
+is unchanged: it compares the draft with what the review read, edit or no
+edit. Five reviewer tests pin this. A document type's description, where it
+is sought and a new fact are not editable on the screen. The reviewer accepts
+an edit for all three, but they were not asked for.
+
+**Edit bindings.** A suggestion or question about an assembled section, whose
+reason or question uses the words bound, unbound, bind or binding, offers
+"Edit bindings". It opens the editor's own fact list for that section, the
+one a section's "Fields" opens, reused as it is. A composed section is never
+offered it: it reads other sections, not bound facts. Nothing re-checks the
+suggestion afterwards. Once the binding is fixed, the person sets it aside,
+as with anything else handled by hand.
+
+- **The match is on words, and is coarse.** A suggestion that is about binding
+  without using one of those words gets no link. A suggestion whose target is
+  a fact rather than a section gets none either, because a fact can be bound
+  in several sections and there is no one list to open.
+
+**Decided: the drawer closes, the session does not.** The fact list is part of
+the page, and the review drawer covers the page, so the drawer is hidden to
+show it. Nothing is sent to the reviewer. Choosing AI Review again resumes the
+same session from the same tab, with what was set aside, until it is ended or
+a day old.
+
+- **Open question: should the drawer stay open beside the fact list
+  instead?** The person would then not lose their place in a long list of
+  suggestions, at the price of a layout where the drawer and the editor share
+  the screen. That needs a design and has to be seen rendered, so it was not
+  attempted here.
+
+**Close and End review are different acts, and the screen says so in its
+source.**
+
+| | Close (drawer header; also Escape and a click outside) | End review (toolbar) |
+|---|---|---|
+| Sends | Nothing | `POST /config/draft/review/close` |
+| The session | Stays open; reopening AI Review in the same tab resumes it | Closed: nothing more can be accepted or answered in it |
+| What was set aside | Kept, in the tab | Forgotten |
+
+One related gap, not fixed: "Start again", after a review that failed to
+read, forgets the session in the tab without closing it on the server. The
+failed session lapses on its own after a day.
+
+**Unverified.** As for the screen itself: not rendered, not walked. `tsc` and
+`eslint` are clean on `ReviewMode.tsx`, and `Configure.tsx`'s lint findings
+are exactly `main`'s. The jump to the section is measured against the held
+bar and has not been seen.
+
+---
+
 ### Not changed
 
 - Extraction, composition, classification, and any revision other than 0.

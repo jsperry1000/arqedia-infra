@@ -111,6 +111,31 @@ const KIND_LABEL: Record<ReviewSuggestion["kind"], string> = {
   question: "A question",
 };
 
+/** The kinds whose suggested text a person may edit before accepting it. */
+const EDITABLE = new Set<ReviewSuggestion["kind"]>(
+  ["section_prompt", "field_description"]);
+
+// What a suggestion or question says about binding - "bound", "unbound",
+// "bind", "binding". Matched on the words the reviewer wrote, nothing more.
+const BINDING_WORDS = /\b(un)?bound\b|\bbind(s|ing|ings)?\b/i;
+
+/** The section a binding problem is about, where there is one to open: a
+ *  suggestion or question on a section whose reason or question talks about
+ *  binding. Not a composed section - it reads other sections, not bound
+ *  facts, and has no fact list to open. */
+function bindingSection(draft: Draft | null, s: ReviewSuggestion):
+    { template_key: string; section_key: string } | null {
+  const t = s.target;
+  if (!draft || !t.template_key || !t.section_key) return null;
+  if (!BINDING_WORDS.test(`${s.reason ?? ""} ${s.question ?? ""}`)) {
+    return null;
+  }
+  const section = draft.sections.find(
+    (x) => x.template_key === t.template_key && x.key === t.section_key);
+  if (!section || section.kind === "composed") return null;
+  return { template_key: t.template_key, section_key: t.section_key };
+}
+
 function Value({ draft, value }: {
   draft: Draft | null;
   value: ReviewSuggestion["current"] | ReviewSuggestion["proposed"];
@@ -151,12 +176,16 @@ function message(err: unknown) {
   return text;
 }
 
-export function ReviewMode({ draft, onClose, onChanged }: {
+export function ReviewMode({ draft, onClose, onChanged, onEditBindings }: {
   draft: Draft | null;
   /** The drawer closes; the session stays open until ended or a day old. */
   onClose: () => void;
   /** Something was written to the draft, so the editor should read it again. */
   onChanged: () => void;
+  /** Open the editor's own fact list for one section. The editor closes this
+   *  drawer to show it; the session stays open and resumes when AI Review is
+   *  opened again. */
+  onEditBindings: (templateKey: string, sectionKey: string) => void;
 }) {
   const [session, setSession] = useState<string | null>(
     () => remembered(SESSION_KEY));
@@ -172,6 +201,9 @@ export function ReviewMode({ draft, onClose, onChanged }: {
   const [unbound, setUnbound] = useState<Set<string>>(new Set());
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [showDismissed, setShowDismissed] = useState(false);
+  // The person's own wording of a suggestion, while they are editing it. A
+  // suggestion with no entry is written as it came.
+  const [edits, setEdits] = useState<Record<string, string>>({});
 
   // What was set aside belongs to the session, and comes back with it.
   useEffect(() => {
@@ -282,15 +314,26 @@ export function ReviewMode({ draft, onClose, onChanged }: {
       && s.target.template_key && s.target.section_key
       ? { template_key: s.target.template_key,
           section_key: s.target.section_key } : undefined;
+    // Sent only when the wording was actually changed, so an edit opened and
+    // left alone writes the suggestion exactly as it came.
+    const edited = edits[s.id];
+    const value = edited !== undefined && typeof s.proposed === "string"
+      && edited.trim() !== s.proposed.trim() ? edited : undefined;
     try {
-      const done = await api.reviewAccept(session, s.id, bind);
+      const done = await api.reviewAccept(session, s.id, bind, value);
+      const how = value !== undefined ? " as you edited it" : "";
       setNotes((n) => ({ ...n, [s.id]: done.repeated
         ? "Already accepted."
         : done.charged_cents
-          ? `Written to the draft. This review has been charged `
+          ? `Written to the draft${how}. This review has been charged `
             + `$${(done.charged_cents / 100).toFixed(2)}; further changes `
             + `in it are free.`
-          : "Written to the draft." }));
+          : `Written to the draft${how}.` }));
+      setEdits((e) => {
+        const next = { ...e };
+        delete next[s.id];
+        return next;
+      });
       // S1: the rest of what was suggested about this thing is set aside.
       dismiss(group.items.filter((x) => x.id !== s.id && x.kind !== "question"
         && x.status === "open").map((x) => x.id), true);
@@ -344,6 +387,26 @@ export function ReviewMode({ draft, onClose, onChanged }: {
 
         {s.reason && <p className="muted small">{s.reason}</p>}
 
+        {/* A binding problem is fixed in the editor's own fact list for the
+            section, not here. Nothing re-checks the suggestion afterwards:
+            once it is fixed, set it aside, as with anything else handled by
+            hand. */}
+        {(() => {
+          const where = bindingSection(draft, s);
+          return where && (
+            <p className="small">
+              <a onClick={() => onEditBindings(where.template_key,
+                                               where.section_key)}>
+                Edit bindings
+              </a>
+              <span className="muted">
+                {" "}&middot; opens {nameOf(draft, s.target)} in the editor;
+                this review stays open to come back to
+              </span>
+            </p>
+          );
+        })()}
+
         {s.kind === "question" ? (
           <>
             <p>{s.question}</p>
@@ -381,8 +444,17 @@ export function ReviewMode({ draft, onClose, onChanged }: {
                 <Value draft={draft} value={s.current} />
               </>
             )}
-            <p className="muted small">Suggested</p>
-            <Value draft={draft} value={s.proposed} />
+            <p className="muted small">
+              {edits[s.id] !== undefined ? "Suggested, as you are editing it"
+                                         : "Suggested"}
+            </p>
+            {edits[s.id] !== undefined ? (
+              <textarea rows={6} value={edits[s.id]}
+                onChange={(e) => setEdits(
+                  (x) => ({ ...x, [s.id]: e.target.value }))} />
+            ) : (
+              <Value draft={draft} value={s.proposed} />
+            )}
 
             {s.status === "open" && usable && (
               <>
@@ -408,11 +480,31 @@ export function ReviewMode({ draft, onClose, onChanged }: {
                 )}
 
                 <div className="form-actions">
-                  <button disabled={!!busy} onClick={() => accept(s, group)}>
+                  <button disabled={!!busy || (edits[s.id] !== undefined
+                                               && !edits[s.id].trim())}
+                          onClick={() => accept(s, group)}>
                     {paying === s.id
                       ? `Accept and pay $${(price / 100).toFixed(2)}`
                       : "Accept"}
                   </button>
+                  {/* The person's own wording, before accepting. Accept then
+                      writes this instead of the suggestion; the rest of the
+                      field or section is written back as it was. */}
+                  {EDITABLE.has(s.kind) && typeof s.proposed === "string"
+                    && paying !== s.id && (edits[s.id] === undefined ? (
+                    <a className="secondary" onClick={() => setEdits(
+                      (x) => ({ ...x, [s.id]: s.proposed as string }))}>
+                      Edit
+                    </a>
+                  ) : (
+                    <a className="secondary" onClick={() => setEdits((x) => {
+                      const next = { ...x };
+                      delete next[s.id];
+                      return next;
+                    })}>
+                      Undo edit
+                    </a>
+                  ))}
                   {paying === s.id && (
                     <a className="secondary" onClick={() => setPaying(null)}>
                       Cancel
@@ -444,6 +536,13 @@ export function ReviewMode({ draft, onClose, onChanged }: {
       <aside className="panel" onClick={(e) => e.stopPropagation()}
              onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
         <div className="panel-head">
+          {/* CLOSE AND END REVIEW ARE DIFFERENT ACTS (REV-01, "Close and End
+              review"). Close - and Escape, and a click outside - only shuts
+              this drawer: nothing is sent, the session stays open, and
+              opening AI Review again in this tab resumes it. End review, in
+              the toolbar below, closes the session on the server: nothing
+              more can be accepted or answered in it, and this tab forgets it
+              and what was set aside. */}
           <a className="panel-close" onClick={onClose}>Close</a>
           <h3>AI Review</h3>
           <p className="muted small">
