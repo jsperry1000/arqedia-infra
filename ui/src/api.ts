@@ -933,14 +933,21 @@ export const api = {
     call(`/config/draft/review?session=${encodeURIComponent(session)}`),
 
   /** Write one suggestion into the draft. The session's first accept is its
-   *  charge; a repeat of the same one returns its first result. */
+   *  charge; a repeat of the same one returns its first result.
+   *
+   *  value is the person's own edit of the suggested text, written in its
+   *  place - the reviewer still writes the whole object with that one value
+   *  changed, and still refuses if the draft has moved since it was read.
+   *  Omitted, the suggestion is written as it came. */
   reviewAccept: (session: string, suggestionId: string,
-                 bindTo?: { template_key: string; section_key: string }):
+                 bindTo?: { template_key: string; section_key: string },
+                 value?: string):
     Promise<ReviewAccepted> =>
     call("/config/draft/review/accept", {
       method: "POST",
       body: JSON.stringify({ session, suggestion_id: suggestionId,
-                             ...(bindTo ? { bind_to: bindTo } : {}) }),
+                             ...(bindTo ? { bind_to: bindTo } : {}),
+                             ...(value !== undefined ? { value } : {}) }),
     }),
 
   /** Answer a question. The change it leads to arrives on a later poll, as
