@@ -799,6 +799,12 @@ def poll(tenant_id, session_id):
     for s in listed:
         outcome = outcomes.get(s["id"])
         s["status"] = outcome["status"] if outcome else "open"
+        # What was actually written, which is the person's edit where they
+        # made one. Without it the screen could show only the suggestion as
+        # it came, and an edited accept read as though the edit was lost.
+        if outcome and outcome.get("status") == "accepted" \
+                and "value" in outcome:
+            s["written"] = outcome["value"]
     review["suggestions"] = listed
 
     closed = _get(_closed_key(tenant_id, session_id))

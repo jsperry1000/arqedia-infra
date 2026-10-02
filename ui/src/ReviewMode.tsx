@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Working } from "./shell";
 import {
   api, statusOf,
@@ -204,6 +205,24 @@ export function ReviewMode({ draft, onClose, onChanged, onEditBindings }: {
   // The person's own wording of a suggestion, while they are editing it. A
   // suggestion with no entry is written as it came.
   const [edits, setEdits] = useState<Record<string, string>>({});
+  // Refused for want of balance (402), on opening or on the first accept.
+  // The refusal then carries a way to the balance - the Account page's own
+  // top-up, not a second one here. The session is untouched by leaving: it
+  // resumes when AI Review is chosen again.
+  // "open", or the id of the suggestion whose accept was refused - so the
+  // link sits beside the refusal it answers rather than out of view.
+  const [short, setShort] = useState<string | null>(null);
+  const navigate = useNavigate();
+
+  const topUp = (
+    <p className="small">
+      <a onClick={() => navigate("/account?tab=balance")}>Top up</a>
+      <span className="muted">
+        {" "}&middot; opens your balance; this review stays open, and
+        choosing AI Review again comes back to it
+      </span>
+    </p>
+  );
 
   // What was set aside belongs to the session, and comes back with it.
   useEffect(() => {
@@ -265,12 +284,14 @@ export function ReviewMode({ draft, onClose, onChanged, onEditBindings }: {
   const start = async () => {
     setBusy("Starting the review");
     setError("");
+    setShort(null);
     try {
       const opened = await api.reviewOpen();
       remember(SESSION_KEY, opened.session_id);
       setSession(opened.session_id);
     } catch (e) {
       setError(message(e));
+      setShort(statusOf(e) === 402 ? "open" : null);
     } finally {
       setBusy("");
     }
@@ -337,9 +358,11 @@ export function ReviewMode({ draft, onClose, onChanged, onEditBindings }: {
       // S1: the rest of what was suggested about this thing is set aside.
       dismiss(group.items.filter((x) => x.id !== s.id && x.kind !== "question"
         && x.status === "open").map((x) => x.id), true);
+      setShort(null);
       onChanged();
     } catch (e) {
       setNotes((n) => ({ ...n, [s.id]: message(e) }));
+      setShort(statusOf(e) === 402 ? s.id : null);
     } finally {
       setBusy("");
       await poll(session);
@@ -444,6 +467,21 @@ export function ReviewMode({ draft, onClose, onChanged, onEditBindings }: {
                 <Value draft={draft} value={s.current} />
               </>
             )}
+            {/* Once accepted, what was written - which is the person's edit
+                where they made one. Showing the suggestion as it came made an
+                edited accept look as though the edit had been lost. */}
+            {s.status === "accepted" && s.written !== undefined && (
+              <>
+                <p className="muted small">
+                  Written to the draft
+                  {JSON.stringify(s.written) !== JSON.stringify(s.proposed)
+                    && " — your edit of the suggestion"}
+                </p>
+                <Value draft={draft} value={s.written} />
+              </>
+            )}
+
+            {!(s.status === "accepted" && s.written !== undefined) && (<>
             <p className="muted small">
               {edits[s.id] !== undefined ? "Suggested, as you are editing it"
                                          : "Suggested"}
@@ -458,6 +496,7 @@ export function ReviewMode({ draft, onClose, onChanged, onEditBindings }: {
             ) : (
               <Value draft={draft} value={s.proposed} />
             )}
+            </>)}
 
             {s.status === "open" && usable && (
               <>
@@ -527,6 +566,7 @@ export function ReviewMode({ draft, onClose, onChanged, onEditBindings }: {
         )}
 
         {notes[s.id] && <p className="muted small">{notes[s.id]}</p>}
+        {short === s.id && topUp}
       </div>
     );
   };
@@ -554,6 +594,7 @@ export function ReviewMode({ draft, onClose, onChanged, onEditBindings }: {
             publish.
           </p>
           {error && <p className="error">{error}</p>}
+          {short === "open" && topUp}
           {busy && <Working what={busy} />}
 
           {review && review.status === "ready" && (

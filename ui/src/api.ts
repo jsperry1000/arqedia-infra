@@ -714,6 +714,9 @@ export type ReviewSuggestion = {
   /** open, accepted or stale - from the server. Dismissing is the screen's
    *  own and is never sent. */
   status: "open" | "accepted" | "stale";
+  /** On an accepted suggestion: what was written to the draft - the
+   *  person's edit where they made one, otherwise the suggestion itself. */
+  written?: string | string[] | ProposedNewField | null;
   /** On a question that has been answered. */
   answer?: {
     status: "answering" | "ready" | "no_change" | "failed";
