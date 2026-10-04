@@ -29,7 +29,6 @@
     "monthly_credit_cents": "plan table",
     "share_allowance": "plan table, as migration 036 sets it; NULL still means unlimited (migration 018) and no plan carries it now",
     "share_overage_cents": "meter_price, the share_overage_<plan_key> rows migration 036 writes",
-    "field_sets_per_type": "site/pricing/index.html ONLY - no column, no constant, nothing enforces it",
     "sections_per_template": "site/pricing/index.html ONLY - the code's bounds are _REWRITE_MAX_SECTIONS 50 and proposer._MAX_SECTIONS 40, neither of them per plan",
     "daily_classification_cents": "site/pricing/index.html ONLY - nothing meters or enforces it",
     "paddle_price_name": "config/paddle/sandbox.json, product name",
@@ -75,6 +74,20 @@
     "shares a day applies on every plan."
   ],
 
+  "field_sets_dropped_note": [
+    "FIELD SETS PER DOCUMENT TYPE WAS SOLD HERE UNTIL 30 SEPTEMBER 2026 (22.5):",
+    "3 on Base, 5 on Small Business, 10 by default on Enterprise. Dropped, not",
+    "enforced, because a field set is a schema the editor derives from which",
+    "document types each fact is found in - invisible to the tenant and not",
+    "theirs to control - and our own base exceeds the limit sold: 19 of tenant",
+    "0's 36 types carried more than 3, and one 23. The cost it stood for is",
+    "real (extraction reads the document once per set) and is being fixed in",
+    "extraction instead.",
+    "",
+    "plan.field_sets_per_type stays in the database. Dropping a column is a",
+    "separate migration and a separate decision."
+  ],
+
   "topup_increment_cents": 500,
   "topup_increment_note": [
     "OUTSIDE plans, BECAUSE IT IS NOT A PLAN ATTRIBUTE. The pricing page shows",
@@ -96,7 +109,6 @@
       "monthly_price_cents": 2500,
       "monthly_credit_cents": 500,
       "share_allowance": 10,
-      "field_sets_per_type": 3,
       "sections_per_template": 12,
       "daily_classification_cents": 500,
       "paddle_price_name": "ARQEDIA Base",
@@ -110,7 +122,6 @@
       "monthly_price_cents": 6500,
       "monthly_credit_cents": 1500,
       "share_allowance": 25,
-      "field_sets_per_type": 5,
       "sections_per_template": 25,
       "daily_classification_cents": 1500,
       "paddle_price_name": "ARQEDIA Small Business",
@@ -124,7 +135,6 @@
       "monthly_price_cents": null,
       "monthly_credit_cents": "as contracted",
       "share_allowance": "as contracted",
-      "field_sets_per_type": "10 by default",
       "sections_per_template": "50 by default",
       "daily_classification_cents": "negotiated",
       "paddle_price_name": null,

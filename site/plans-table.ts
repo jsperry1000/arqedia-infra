@@ -52,7 +52,6 @@ type Plan = {
   monthly_price_cents: Cell
   monthly_credit_cents: Cell
   share_allowance: Cell
-  field_sets_per_type: Cell
   sections_per_template: Cell
   daily_classification_cents: Cell
   how_it_starts: string
@@ -60,7 +59,7 @@ type Plan = {
 
 const REQUIRED = [
   'plan_key', 'name', 'seat_count', 'monthly_price_cents',
-  'monthly_credit_cents', 'share_allowance', 'field_sets_per_type',
+  'monthly_credit_cents', 'share_allowance',
   'sections_per_template', 'daily_classification_cents', 'how_it_starts',
 ] as const
 
@@ -237,8 +236,8 @@ export function renderPlansTable(file = PLANS_FILE): string {
           p.plan_key in shareOverage
             ? `${n}, then ${money2(shareOverage[p.plan_key])} each`
             : plain(n), 'unlimited'))),
-    row('Field sets per document type',
-        across((p) => cell(p.field_sets_per_type, plain, ''))),
+    // "Field sets per document type" sat here until 30 September 2026 and
+    // is no longer sold (22.5): see field_sets_dropped_note in the file.
     row('Sections per template',
         across((p) => cell(p.sections_per_template, plain, ''))),
     row('Daily classification allowance',

@@ -42,7 +42,7 @@ PADDLE = ROOT / "config" / "paddle" / "sandbox.json"
 # field dropped from every plan at once would otherwise pass.
 FIELDS = (
     "plan_key", "name", "seat_count", "monthly_price_cents",
-    "monthly_credit_cents", "share_allowance", "field_sets_per_type",
+    "monthly_credit_cents", "share_allowance",
     "sections_per_template", "daily_classification_cents",
     "paddle_price_name", "how_it_starts", "active",
 )
@@ -211,7 +211,7 @@ class ShapeTest(unittest.TestCase):
                 continue
             with self.subTest(plan=plan["plan_key"]):
                 for field in ("seat_count", "monthly_price_cents",
-                              "monthly_credit_cents", "field_sets_per_type",
+                              "monthly_credit_cents",
                               "sections_per_template",
                               "daily_classification_cents"):
                     self.assertIsInstance(plan[field], int, field)
@@ -225,7 +225,7 @@ class ShapeTest(unittest.TestCase):
         everywhere else."""
         e = [p for p in self.plans if p["plan_key"] == "enterprise"][0]
         for field in ("seat_count", "monthly_credit_cents", "share_allowance",
-                      "field_sets_per_type", "sections_per_template",
+                      "sections_per_template",
                       "daily_classification_cents"):
             with self.subTest(field=field):
                 self.assertIsInstance(e[field], str, field)
@@ -248,9 +248,19 @@ class ShapeTest(unittest.TestCase):
             # likewise (migration 036).
             sorted(FIELDS + ("enterprise", "share_overage_cents",
                              "topup_increment_cents", "trial_days")))
-        for field in ("field_sets_per_type", "sections_per_template",
-                      "daily_classification_cents"):
+        for field in ("sections_per_template", "daily_classification_cents"):
             self.assertIn("site/pricing/index.html", doc["sources"][field])
+
+    def test_field_sets_are_no_longer_sold(self):
+        """Dropped from pricing on 30 September 2026 (22.5): invisible to the
+        tenant, not theirs to control, and exceeded by our own base. The
+        note saying so stays; the field does not come back unannounced."""
+        doc = json.loads(PLANS.read_text(encoding="utf-8"))
+        for plan in doc["plans"]:
+            with self.subTest(plan=plan["plan_key"]):
+                self.assertNotIn("field_sets_per_type", plan)
+        self.assertNotIn("field_sets_per_type", doc["sources"])
+        self.assertIn("field_sets_dropped_note", doc)
 
 
 class ShareOverageTest(unittest.TestCase):
