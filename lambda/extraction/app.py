@@ -213,16 +213,12 @@ def _build_prompt(schema, envelope):
     # Built by concatenation, not .format(): the text contains literal JSON
     # braces and every one of them would be read as a placeholder.
     #
-    # THE SUBJECT COMES FIRST, before the field list, because the field
-    # descriptions are read in its light: "one-paragraph description of the
-    # SUBJECT" means nothing until the model has been told which company
-    # that is. Absent only where the handler has already refused, so this is
-    # never silently omitted.
+    # AFTER THE DOCUMENT, not before it (extraction-cache). This is the only
+    # part of the prompt that differs from one field set to the next, and a
+    # cached prefix has to be identical byte for byte - so the field list
+    # moved below the document, and "below" in its wording became "above".
     instruction = (
-        _subject_preamble(envelope["subject_name"])
-        if envelope.get("subject_name") else ""
-    ) + (
-        "Extract the following from the document below. Return JSON with "
+        "Extract the following from the document above. Return JSON with "
         "exactly these keys:\n\n"
         "{\n" + "\n".join(lines) + "\n}\n\n"
         'For each field, "value" is what the document states, or null if it '
@@ -233,7 +229,7 @@ def _build_prompt(schema, envelope):
         "came from the same one.\n"
         "The document has " + str(count) + " " + word + "s, numbered "
         + str(first_index) + " to " + str(last_index)
-        + ", marked in the text below.\n"
+        + ", marked in the text above.\n"
         "If you cannot tell which " + word + " a value came from, return null "
         'for "unit". A wrong ' + word + " number is worse than none.\n\n"
         "Return only the JSON object."
@@ -255,15 +251,48 @@ def _build_prompt(schema, envelope):
 
     body = "".join(marked)[:MAX_CHARS]
 
-    prompt = (
-        instruction
-        + "\n\n--- DOCUMENT START ---\n"
+    # THE DOCUMENT IS READ ONCE PER FILING, NOT ONCE PER FIELD SET
+    # (extraction-cache, 22.5). It is its own block, first, and marked for
+    # Bedrock's prompt cache, so the second and later sets read it from the
+    # cache at a tenth of the input price instead of paying for it again. A
+    # 22-set document was read 22 times.
+    #
+    # THE SUBJECT STAYS FIRST, inside the cached block, because the field
+    # descriptions are read in its light: "one-paragraph description of the
+    # SUBJECT" means nothing until the model has been told which company
+    # that is. It is the same for every set in the filing, so it costs the
+    # cache nothing. Absent only where the handler has already refused, so
+    # this is never silently omitted.
+    #
+    # Identical for every set of one filing: built from the envelope alone,
+    # never from the schema. A Haiku 4.5 prefix under 4,096 tokens is simply
+    # not cached; the call still succeeds and is billed as before.
+    document = (
+        (_subject_preamble(envelope["subject_name"])
+         if envelope.get("subject_name") else "")
+        + "--- DOCUMENT START ---\n"
         + body
         + "\n--- DOCUMENT END ---"
     )
-    return prompt, len(raw) > MAX_CHARS
+    blocks = [
+        {"type": "text", "text": document},
+        {"type": "text", "text": instruction},
+    ]
+    return blocks, len(raw) > MAX_CHARS
+
+
+def _cached(blocks):
+    """The same blocks with the document marked for the prompt cache.
+
+    Only where a second set will read it. Writing to the cache costs 1.25x
+    the input price, so a filing with one field set would pay more to cache
+    a document nothing reads again."""
+    return [dict(blocks[0], cache_control={"type": "ephemeral"})] + blocks[1:]
+
 
 def _invoke(prompt):
+    """One model call. `prompt` is the content of the one user message: a
+    string, or the blocks _build_prompt returns."""
     response = _bedrock.invoke_model(
         modelId=MODEL_ID,
         body=json.dumps({
@@ -499,7 +528,14 @@ def lambda_handler(event, context):
     schema_keys = registry.schemas_for(envelope.get("document_type"))
     results, total_written = {}, 0
     tokens_in = tokens_out = 0
+    # What the prompt cache did (extraction-cache). input_tokens counts only
+    # what was neither read from nor written to the cache, so the document's
+    # cost is these two plus it - and leaving them out would make a cached
+    # filing look cheaper than it was.
+    cache_read = cache_write = 0
     failures = []
+    # Cached only where a second set will read it (see _cached).
+    reread = len(schema_keys) > 1
 
     for schema_key in schema_keys:
         schema = registry.get_schema(schema_key)
@@ -520,10 +556,12 @@ def lambda_handler(event, context):
         # the worse answer. The failure is recorded either way.
         try:
             prompt, truncated = _build_prompt(schema, envelope)
-            extracted, usage = _invoke(prompt)
+            extracted, usage = _invoke(_cached(prompt) if reread else prompt)
 
             tokens_in += usage.get("input_tokens", 0)
             tokens_out += usage.get("output_tokens", 0)
+            cache_read += usage.get("cache_read_input_tokens", 0) or 0
+            cache_write += usage.get("cache_creation_input_tokens", 0) or 0
 
             if extracted is None:
                 results[schema_key] = {"status": "invalid-json"}
@@ -565,7 +603,9 @@ def lambda_handler(event, context):
     envelope["extraction_error"] = extraction_error
     envelope["extraction_complete"] = True
     envelope["extraction_results"] = results
-    envelope["extraction_tokens"] = {"input": tokens_in, "output": tokens_out}
+    envelope["extraction_tokens"] = {"input": tokens_in, "output": tokens_out,
+                                     "cache_read": cache_read,
+                                     "cache_write": cache_write}
     envelope["model_id"] = MODEL_ID
     # envelope["subject_name"] was set above, before the prompts were built.
     # It sits here beside model_id for the same reason: a value should be
@@ -602,10 +642,10 @@ def lambda_handler(event, context):
         )
 
     print("[extracted] doc={} schemas={} values={} failed={} error={} "
-          "tokens_in={} tokens_out={}".format(
+          "tokens_in={} tokens_out={} cache_read={} cache_write={}".format(
               envelope.get("document_id"), list(results.keys()),
               total_written, len(failures), extraction_error,
-              tokens_in, tokens_out))
+              tokens_in, tokens_out, cache_read, cache_write))
 
     return {
         "status": "ok",
