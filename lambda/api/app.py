@@ -858,28 +858,41 @@ OCR_READ_MODE = textract.TEXT
 OCR_ONLY_WHEN_THIN = True
 
 
-def _start_ocr(registry, tenant_id, document_id, s3_key, document_type):
-    """Send a scan to OCR rather than to extraction.
+def _ocr_mode(registry, document_type):
+    """The Textract mode a document is read with. OCR_READ_MODE, unless that
+    is lifted - see the note above it."""
+    return OCR_READ_MODE or registry.read_mode_for(document_type)
 
-    The read mode is OCR_READ_MODE, not the type's configured one - see the
-    note above it. The job runs asynchronously; the collector picks it up on
-    completion and releases the document to extraction then. The mode used is
-    what textract_api records, so the collector fetches with the same one."""
+
+def _start_ocr(registry, tenant_id, s3_key, parts):
+    """Send a file to OCR once, for every document filed from it.
+
+    ONE JOB PER FILE (ocr-split-parts, 5 October 2026). `parts` is every
+    (document_id, document_type) in this filing that lives in the file and
+    reads in the same mode. Textract reads the whole object whatever is
+    asked, so one job per PART read the whole file once per part - the
+    Manty accounts, two parts filed twice, were billed for 56 pages of
+    paper that had 14. The job id goes on every part's row, and the
+    collector cuts each part's own pages out of the one result.
+
+    The job runs asynchronously; the collector picks it up on completion and
+    releases each document to extraction then. The mode used is what
+    textract_api records, so the collector fetches with the same one."""
     job_id, mode = textract.start(
-        DOCS_BUCKET, s3_key, document_type,
+        DOCS_BUCKET, s3_key, parts[0][1],
         TEXTRACT_TOPIC_ARN, TEXTRACT_ROLE_ARN,
-        # None here would restore the type's own configured mode.
-        read_mode=OCR_READ_MODE or registry.read_mode_for(document_type))
-    _sql(
-        """
-        UPDATE document
-        SET document_type = :ty, type_confirmed = 1, state = 'reading',
-            textract_job_id = :job, textract_api = :mode
-        WHERE tenant_id = :t AND document_id = :d
-        """,
-        [_p("ty", document_type), _p("job", job_id), _p("mode", mode),
-         _p("t", tenant_id), _p("d", document_id)],
-    )
+        read_mode=_ocr_mode(registry, parts[0][1]))
+    for document_id, document_type in parts:
+        _sql(
+            """
+            UPDATE document
+            SET document_type = :ty, type_confirmed = 1, state = 'reading',
+                textract_job_id = :job, textract_api = :mode
+            WHERE tenant_id = :t AND document_id = :d
+            """,
+            [_p("ty", document_type), _p("job", job_id), _p("mode", mode),
+             _p("t", tenant_id), _p("d", document_id)],
+        )
     return job_id, mode
 
 
@@ -1021,6 +1034,9 @@ def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
         charge_entry_id = (paid or {}).get("entry_id")
 
     filed, rejected, reading, refunded = 0, 0, 0, 0
+    # (s3_key, mode) -> [(document_id, document_type)]: the files to OCR, one
+    # job each, and the documents each job reads for.
+    to_ocr = {}
 
     for d in decisions:
         document_id = int(d.get("document_id"))
@@ -1058,19 +1074,11 @@ def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
         # _start_ocr. A thin layer is the only reason to OCR.
         if thin or (not OCR_ONLY_WHEN_THIN
                     and registry.always_ocr(document_type)):
-            # PAID FOR ALREADY. Everything below this point can fail with the
-            # money gone, which is what item 14 exists to answer: the document
-            # is told, and the charge for it comes back. The rest of the batch
-            # carries on - one bad document must not strand seventeen good
-            # ones that have also been paid for.
-            try:
-                _start_ocr(registry, tenant_id, document_id, s3_key,
-                           document_type)
-                reading += 1
-            except Exception as exc:  # noqa: BLE001 - refunded, then reported
-                refunded += _fail_and_refund(
-                    tenant_id, email, document_id, charge_entry_id,
-                    "textract.start: %s" % type(exc).__name__)
+            # Gathered, not started: every part of one file in this filing
+            # shares one read (ocr-split-parts). Started after the loop.
+            to_ocr.setdefault(
+                (s3_key, _ocr_mode(registry, document_type)), []
+            ).append((document_id, document_type))
             continue
 
         # Everything here is after the charge too. A missing envelope, a KMS
@@ -1099,6 +1107,21 @@ def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
             refunded += _fail_and_refund(
                 tenant_id, email, document_id, charge_entry_id,
                 "filing: %s" % type(exc).__name__)
+
+    # One job per file. PAID FOR ALREADY: everything here can fail with the
+    # money gone, which is what item 14 exists to answer - each document is
+    # told, and the charge for it comes back. The rest of the batch carries
+    # on - one bad file must not strand seventeen good ones that have also
+    # been paid for.
+    for (s3_key, _mode), parts in to_ocr.items():
+        try:
+            _start_ocr(registry, tenant_id, s3_key, parts)
+            reading += len(parts)
+        except Exception as exc:  # noqa: BLE001 - refunded, then reported
+            for document_id, _type in parts:
+                refunded += _fail_and_refund(
+                    tenant_id, email, document_id, charge_entry_id,
+                    "textract.start: %s" % type(exc).__name__)
 
     return {"filed": filed, "reading": reading, "rejected": rejected,
             "refunded": refunded}
