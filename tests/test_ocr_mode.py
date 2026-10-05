@@ -63,8 +63,8 @@ class OcrModeTest(unittest.TestCase):
         with mock.patch.object(self.app, "textract") as textract, \
                 mock.patch.object(self.app, "_sql"):
             textract.start.return_value = ("job-1", "text")
-            self.app._start_ocr(Registry(), TENANT, 7, "k",
-                                "audited-statements")
+            self.app._start_ocr(Registry(), TENANT, "k",
+                                [(7, "audited-statements")])
         self.assertEqual(textract.start.call_args.kwargs["read_mode"], "text")
 
     def test_none_restores_the_configured_mode(self):
@@ -73,8 +73,8 @@ class OcrModeTest(unittest.TestCase):
                 mock.patch.object(self.app, "_sql"), \
                 mock.patch.object(self.app, "OCR_READ_MODE", None):
             textract.start.return_value = ("job-1", "forms")
-            self.app._start_ocr(Registry(), TENANT, 7, "k",
-                                "audited-statements")
+            self.app._start_ocr(Registry(), TENANT, "k",
+                                [(7, "audited-statements")])
         self.assertEqual(textract.start.call_args.kwargs["read_mode"], "forms")
 
     def file(self, thin):

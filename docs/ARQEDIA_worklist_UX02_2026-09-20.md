@@ -381,6 +381,7 @@ Raised 24 September 2026 on the walk.
 | 22.9 | Left rail: "Template Catalogue" becomes "Report Catalogue" |
 | 22.10 | Found 29 September 2026 building 22.3: the price summary above the lower filing button still states the cost of every waiting document, so it no longer matches the button beneath it, which now files the ticked rows only |
 | 22.11 | Found 29 September 2026: an expired pending_signup row is never deleted, and the row is written before the code email is sent, so a failed send leaves one too. Two sit on dev. Each holds an address, organisation, jurisdiction, region and IP for a signup that never completed. Delete them on expiry |
+| 22.12 | Decided 5 October 2026, to build after ocr-split-parts is walked: store each file's OCR result in S3 at its first read, and reuse it for that file's later parts and any re-filing, so a file is read by Textract once, ever. Textract keeps a job's results for 7 days, and a part filed later or a file filed again starts a new whole-file job: on dev 48 OCR'd rows share a storage key with another and each started its own job. Keyed on the file, not the document |
 
 ## Rolled into existing backlog
 

@@ -77,18 +77,19 @@ def start(s3_bucket, s3_key, document_type, topic_arn, role_arn,
     the document type - the thing a person confirms. The table below is the
     fallback for a type the configuration does not describe.
 
-    page_start and page_end are for a split file: the document occupies only
-    part of it. Absent, the whole file is read."""
+    THE WHOLE FILE IS ALWAYS READ. Textract's asynchronous API takes an
+    object, not a page range, so page_start and page_end cannot narrow it.
+    They used to be accepted and passed to a branch that set the very same
+    location again; they are kept in the signature only so an older caller
+    does not break, and are ignored. A split file is read ONCE, for all its
+    parts, and each part is cut out of the result by fetch/assemble
+    (ocr-split-parts, 5 October 2026)."""
     mode = read_mode or read_mode_for(document_type)
 
     document = {"S3Object": {"Bucket": s3_bucket, "Name": s3_key}}
     notify = {"SNSTopicArn": topic_arn, "RoleArn": role_arn}
 
     kwargs = {"DocumentLocation": document, "NotificationChannel": notify}
-    if page_start and page_end:
-        kwargs["DocumentLocation"] = {
-            "S3Object": {"Bucket": s3_bucket, "Name": s3_key},
-        }
 
     if mode == EXPENSE:
         job_id = _textract.start_expense_analysis(**kwargs)["JobId"]
@@ -109,14 +110,12 @@ def _getter(mode):
     return _textract.get_document_text_detection
 
 
-def fetch(job_id, mode, page_start=None, page_end=None):
-    """Collect a completed job. Returns (text, units, tables).
+def fetch_blocks(job_id, mode):
+    """Every block of a completed job, all result pages collected.
 
-    The job has already succeeded - the notification said so. Results are
-    paginated; all pages are collected before assembly.
-
-    page_start and page_end trim the result to one document within a split
-    file. Textract reads the whole file; the trim happens here."""
+    The job has already succeeded - the notification said so. Separate from
+    assemble so a split file's parts are cut from ONE fetch rather than one
+    paginated read of the whole file per part."""
     getter = _getter(mode)
 
     response = getter(JobId=job_id)
@@ -126,10 +125,24 @@ def fetch(job_id, mode, page_start=None, page_end=None):
         response = getter(JobId=job_id, NextToken=token)
         blocks.extend(response.get("Blocks", []))
         token = response.get("NextToken")
+    return blocks
 
+
+def assemble(blocks, page_start=None, page_end=None):
+    """One document's (text, units, tables) out of a file's blocks.
+
+    page_start and page_end cut one part out of a split file; absent, the
+    whole file is the document. The cut is made here because Textract reads
+    the whole file."""
     text, units = _blocks_to_pages(blocks, page_start, page_end)
     tables = _blocks_to_tables(blocks, page_start, page_end)
     return text, units, tables
+
+
+def fetch(job_id, mode, page_start=None, page_end=None):
+    """Collect a completed job for one document. Returns (text, units, tables).
+    fetch_blocks then assemble, for a caller with one document."""
+    return assemble(fetch_blocks(job_id, mode), page_start, page_end)
 
 
 def _in_range(page, page_start, page_end):
@@ -143,7 +156,15 @@ def _in_range(page, page_start, page_end):
 def _blocks_to_pages(blocks, page_start=None, page_end=None):
     """Lines grouped by page, then joined - producing the same text and unit
     shape as the digital-text path, so nothing downstream knows the
-    difference."""
+    difference.
+
+    PAGE NUMBERS ARE THE FILE'S OWN, as the digital path keeps them
+    (normalizer/app.py, _slice): a value read from the first page of a part
+    covering pages 5 to 14 cites page 5, because that is where a reader
+    opening the file finds it. This used to renumber from 1, so the same part
+    read digitally and by OCR cited different pages for the same line - and
+    it went unseen only because no part was ever trimmed. Character offsets
+    are relative to the text returned, which is the part's own."""
     by_page = {}
     for b in blocks:
         if b.get("BlockType") != "LINE":
@@ -154,19 +175,19 @@ def _blocks_to_pages(blocks, page_start=None, page_end=None):
         by_page.setdefault(page, []).append(b.get("Text", ""))
 
     if not by_page:
-        return "", [{"kind": "page", "index": 1, "char_start": 0,
-                     "char_end": 0, "label": None}]
+        # Nothing read. The one unit names the part's own first page, not 1.
+        return "", [{"kind": "page", "index": page_start or 1,
+                     "char_start": 0, "char_end": 0, "label": None}]
 
     units, cursor, parts = [], 0, []
-    # Renumber from 1 so a split document's pages read 1..n, not 15..20.
-    for ordinal, page in enumerate(sorted(by_page), start=1):
+    for page in sorted(by_page):
         body = "\n".join(by_page[page])
         start = cursor
         parts.append(body)
         cursor += len(body)
         units.append({
             "kind": "page",
-            "index": ordinal,
+            "index": page,
             "char_start": start,
             "char_end": cursor,
             "label": None,
