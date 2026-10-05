@@ -204,6 +204,14 @@ export function columnsForSave(columns: ConfigColumn[]) {
  * defaults with no way to say otherwise, so a scanned ledger proposed from a
  * client's own memorandum was set to be read as prose and its figures were
  * whatever the text layer happened to hold.
+ *
+ * INERT SINCE 5 OCTOBER 2026, AND SAYS WHY. The API reads every scan as plain
+ * text and OCRs only a thin layer, whatever these say (OCR_READ_MODE and
+ * OCR_ONLY_WHEN_THIN in lambda/api/app.py). They stay rather than go: a
+ * control that disappears has to be rebuilt, and one that is disabled and
+ * explains itself tells the next person exactly what to switch back on.
+ * What is stored is shown and kept - a save sends the stored values back -
+ * so nothing configured is lost if the override is lifted.
  */
 export function ReadModeControls({ readMode, alwaysOcr, onChange }: {
   readMode: string;
@@ -214,7 +222,7 @@ export function ReadModeControls({ readMode, alwaysOcr, onChange }: {
     <>
       <label className="row">
         <span>Read as</span>
-        <select value={readMode}
+        <select value={readMode} disabled
                 onChange={(e) => onChange({
                   read_mode: e.target.value, always_ocr: alwaysOcr })}>
           <option value="text">Prose</option>
@@ -222,16 +230,24 @@ export function ReadModeControls({ readMode, alwaysOcr, onChange }: {
           <option value="expense">Invoices</option>
         </select>
       </label>
+      <p className="muted small">
+        Fixed at plain text today, whatever is chosen here. Reading forms and
+        tables is paid for by the page, and nothing in ARQEDIA reads what it
+        adds &mdash; extraction is given the same text either way. This
+        returns when something does.
+      </p>
 
       <label className="inline-check">
-        <input type="checkbox" checked={alwaysOcr}
+        <input type="checkbox" checked={alwaysOcr} disabled
                onChange={(e) => onChange({
                  read_mode: readMode, always_ocr: e.target.checked })} />
         Always read by OCR, even where the file carries text
       </label>
       <p className="muted small">
-        Worth setting where a garbled text layer would corrupt figures
-        &mdash; statements and ledgers, chiefly.
+        Not applied today: a document is read by OCR only where it carries
+        too little text of its own. In 22 of 24 documents measured, the
+        text a file already carried held 92&ndash;100% of the figures OCR
+        found. This returns if a garbled text layer is ever seen.
       </p>
     </>
   );
