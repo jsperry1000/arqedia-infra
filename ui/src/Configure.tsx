@@ -1959,8 +1959,23 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                     </a>
                     <div className="muted small">{t.description}</div>
                   </td>
+                  {/* WHAT HAPPENS, THEN WHAT IS SET (5 October 2026). Every
+                      scan is read as plain text and OCR'd only when it
+                      carries too little text, whatever the type says - see
+                      ReadModeControls. A setting that differs is still shown,
+                      marked as not applied, so nobody reads "forms" here and
+                      believes it. */}
                   <td className="muted small">
-                    {t.read_mode}{t.always_ocr ? " \u00b7 always OCR" : ""}
+                    text
+                    {(t.read_mode !== "text" || t.always_ocr) && (
+                      <span title="Set on this type, and not applied: every
+                                   scan is read as plain text, by OCR only
+                                   where the file carries too little text.">
+                        {" \u00b7 set to "}{t.read_mode}
+                        {t.always_ocr ? ", always OCR" : ""}
+                        {", not applied"}
+                      </span>
+                    )}
                   </td>
                   <td className="muted small">
                     <a onClick={() => {

@@ -817,16 +817,59 @@ def _envelope_suffix(page_from, part_index):
     return ".p" + str(part_index) + ".analysed.json"
 
 
+# --- how a scan is read: overridden here, decided 5 October 2026 ------------
+#
+# THE CONFIGURATION SAYS FORMS AND ALWAYS-OCR; THIS IS WHAT HAPPENS INSTEAD.
+# Both are properties of a document type in every tenant's configuration
+# (config_document_type.read_mode and .always_ocr), and published revisions
+# are never edited - so the override is code, here, and nowhere else. Undoing
+# it is these two names: OCR_READ_MODE = None restores each type's configured
+# mode, OCR_ONLY_WHEN_THIN = False restores always_ocr. Nothing else in the
+# API changes; the Configure screen's notes and disabled controls would be
+# lifted with it (ui/src/config-parts.tsx, and the "Read as" cell in
+# Configure.tsx).
+#
+# READ MODE IS TEXT, WHATEVER THE TYPE SAYS. Twelve types asked for Textract
+# FORMS (AnalyzeDocument with TABLES and FORMS, $0.065 a page) instead of
+# DetectDocumentText ($0.0015). Nothing reads what FORMS adds: textract.fetch
+# keeps only LINE blocks for the text, and the TABLE blocks it also collects
+# go to envelope["tables"], which extraction never opens (tables_as_text has
+# no caller). KEY_VALUE_SET, the FORMS output itself, is read by nothing in
+# lambda/. Extraction was sent the same lines either way. On dev that was
+# $32.60 of $33.30 OCR spend across 181 documents and 463 pages.
+#
+# WANTING IT BACK means something reading tables first - envelope["tables"]
+# into the extraction prompt, or a table-aware field. Then a TABLES-only read
+# ($0.015 a page) is the mode to return to, not FORMS: key-value pairs would
+# still have no reader.
+#
+# OCR RUNS ONLY WHEN THE TEXT LAYER IS THIN, WHATEVER always_ocr SAYS. Four
+# types (audited, interim and bank statements, aging reports) were OCR'd even
+# with a text layer, on the reasoning that a garbled layer corrupts numbers
+# worse than OCR does. Measured on dev: 22 of the 24 such documents had a
+# layer carrying 92-100% of the numbers OCR then found, and at least 80% of
+# its length; the other two failed the comparison only because a split part
+# was given its whole file's OCR text (a separate defect). The garbled-layer
+# case was not seen - so the rule went, at $12.35 of OCR on dev, and it may
+# return if a garbled layer ever is.
+#
+# THE CONFIGURE CONTROLS STAY, and say this (ui/src/config-parts.tsx).
+OCR_READ_MODE = textract.TEXT
+OCR_ONLY_WHEN_THIN = True
+
+
 def _start_ocr(registry, tenant_id, document_id, s3_key, document_type):
     """Send a scan to OCR rather than to extraction.
 
-    The read mode comes from the confirmed type, which is why confirmation
-    happens before filing. The job runs asynchronously; the collector picks it
-    up on completion and releases the document to extraction then."""
+    The read mode is OCR_READ_MODE, not the type's configured one - see the
+    note above it. The job runs asynchronously; the collector picks it up on
+    completion and releases the document to extraction then. The mode used is
+    what textract_api records, so the collector fetches with the same one."""
     job_id, mode = textract.start(
         DOCS_BUCKET, s3_key, document_type,
         TEXTRACT_TOPIC_ARN, TEXTRACT_ROLE_ARN,
-        read_mode=registry.read_mode_for(document_type))
+        # None here would restore the type's own configured mode.
+        read_mode=OCR_READ_MODE or registry.read_mode_for(document_type))
     _sql(
         """
         UPDATE document
@@ -1011,7 +1054,10 @@ def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
              [_p("e", charge_entry_id), _p("t", tenant_id),
               _p("d", document_id)])
 
-        if thin or registry.always_ocr(document_type):
+        # always_ocr is configured and no longer obeyed: see the note above
+        # _start_ocr. A thin layer is the only reason to OCR.
+        if thin or (not OCR_ONLY_WHEN_THIN
+                    and registry.always_ocr(document_type)):
             # PAID FOR ALREADY. Everything below this point can fail with the
             # money gone, which is what item 14 exists to answer: the document
             # is told, and the charge for it comes back. The rest of the batch
