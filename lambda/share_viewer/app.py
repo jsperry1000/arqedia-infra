@@ -84,6 +84,13 @@ EMAIL_CODE_GAP_SECONDS = 60
 EMAIL_CODE_PER_HOUR = 5
 EMAIL_CODE_FAILED = ("That code is not right, or has expired. Ask for a new "
                      "one.")
+EMAIL_CODE_NOT_SENT = ("We couldn't send the code just now. Nothing was used "
+                       "up - try again.")
+
+
+class EmailNotSent(Exception):
+    """SES did not accept the code email. Nothing was counted and no code
+    was left behind. 502: the fault is ours, not the request's."""
 
 
 _dynamo = None
@@ -365,29 +372,58 @@ def _send_email_code(grant, purpose):
     sender = _sender()
     if not sender:
         print("[email-code-not-sent] reason=no-sender")
-        raise RuntimeError("no sender configured")
+        raise EmailNotSent()
 
+    # THE CODE IS WRITTEN BEFORE THE SEND, so it is there to check when the
+    # email arrives - but THE LIMITS ARE COUNTED ONLY AFTER SES ACCEPTS IT.
+    # On 6 October a send refused by SES had already counted, and the
+    # person's retry was told a code had gone out a minute ago when none had
+    # gone at all.
     code = "%06d" % secrets.randbelow(1000000)
     _table("viewer").update_item(
         Key={"viewer_account_id": viewer_id},
         UpdateExpression=(
             "SET code_hash = :h, code_purpose = :p, code_expires_at = :e, "
-            "code_tries = :zero, code_sent_at = :at, "
-            "code_window_start = :w, code_window_count = :n"),
+            "code_tries = :zero"),
         ExpressionAttributeValues={
             ":h": _code_hash(viewer_id, purpose, code), ":p": purpose,
             ":e": rules.iso(at + datetime.timedelta(
                 minutes=EMAIL_CODE_MINUTES)),
-            ":zero": 0, ":at": rules.iso(at), ":w": window,
-            ":n": count + 1})
+            ":zero": 0})
 
     subject, text = _email_code_message(grant, code, purpose)
-    _ses.send_email(
-        Source=sender,
-        Destination={"ToAddresses": [grant["recipient_email"]]},
-        Message={"Subject": {"Data": subject, "Charset": "UTF-8"},
-                 "Body": {"Text": {"Data": text, "Charset": "UTF-8"}}})
-    print("[email-code-sent] viewer=%s purpose=%s" % (viewer_id[:8], purpose))
+    try:
+        sent = _ses.send_email(
+            Source=sender,
+            Destination={"ToAddresses": [grant["recipient_email"]]},
+            Message={"Subject": {"Data": subject, "Charset": "UTF-8"},
+                     "Body": {"Text": {"Data": text, "Charset": "UTF-8"}}})
+    except Exception as exc:  # noqa: BLE001 - undone, then reported
+        # Taken back: a code nobody was sent is not one anybody can use, and
+        # nothing was counted. Removed only if it is still the code written
+        # above, so a later request's code is never the one removed.
+        print("[email-code-not-sent] viewer=%s %r" % (viewer_id[:8], exc))
+        try:
+            _table("viewer").update_item(
+                Key={"viewer_account_id": viewer_id},
+                UpdateExpression="REMOVE code_hash, code_purpose, "
+                                 "code_expires_at, code_tries",
+                ConditionExpression="code_hash = :h",
+                ExpressionAttributeValues={
+                    ":h": _code_hash(viewer_id, purpose, code)})
+        except Exception as undo:  # noqa: BLE001 - the refusal stands
+            print("[email-code-undo-failed] viewer=%s %r" % (
+                viewer_id[:8], undo))
+        raise EmailNotSent()
+
+    _table("viewer").update_item(
+        Key={"viewer_account_id": viewer_id},
+        UpdateExpression=("SET code_sent_at = :at, code_window_start = :w, "
+                          "code_window_count = :n"),
+        ExpressionAttributeValues={":at": rules.iso(at), ":w": window,
+                                   ":n": count + 1})
+    print("[email-code-sent] viewer=%s purpose=%s message=%s" % (
+        viewer_id[:8], purpose, sent.get("MessageId")))
     return {"sent_to": _masked(grant["recipient_email"]),
             "minutes": EMAIL_CODE_MINUTES}
 
@@ -775,6 +811,8 @@ def _dispatch(event, context):
 
         return _reply(404, {"error": "unknown route"})
 
+    except EmailNotSent:
+        return _reply(502, {"error": EMAIL_CODE_NOT_SENT})
     except PermissionError as exc:
         return _reply(403, {"error": str(exc)})
     except ValueError as exc:
