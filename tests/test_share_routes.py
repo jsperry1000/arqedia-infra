@@ -564,6 +564,139 @@ class ViewerTest(unittest.TestCase):
         self.assertEqual([s["grant_id"] for s in mine["shares"]], [self.gid])
 
 
+@unittest.skipUnless(HAVE, "moto, boto3, pypdf or reportlab not installed")
+class RegisterCodeTest(ViewerTest):
+    """Registering takes a code emailed to the recipient's own address
+    (fix/share-registration-takeover). Holding the link is not enough.
+
+    Cognito and SES are mocks here: what is tested is that nothing reaches
+    Cognito without the right code, and where the code goes. Cognito's own
+    behaviour on the calls that follow is not exercised."""
+
+    def setUp(self):
+        super().setUp()
+        self.app._ses = mock.MagicMock()
+        self.app._cognito = mock.MagicMock()
+        self.app._cognito.admin_initiate_auth.return_value = {
+            "ChallengeName": "MFA_SETUP", "Session": "s1"}
+        self.app._cognito.associate_software_token.return_value = {
+            "SecretCode": "ABCD", "Session": "s2"}
+        self.sender = mock.patch.dict(os.environ,
+                                      {"SENDER": "no-reply@arqedia.test"})
+        self.sender.start()
+        self.accounts = boto3.resource(
+            "dynamodb", region_name=REGION).Table("viewer")
+
+    def tearDown(self):
+        self.sender.stop()
+        super().tearDown()
+
+    def sent_code(self):
+        """The code in the last email, as the recipient would read it."""
+        message = self.app._ses.send_email.call_args.kwargs
+        text = message["Message"]["Body"]["Text"]["Data"]
+        return message, text.split("is ", 1)[1][:6]
+
+    def register(self, code, password="Correct-horse-9"):
+        return self.call("POST /view/{grant_id}/register", body={
+            "email_code": code, "password": password,
+            "accept_terms": True, "marketing_opt_in": False})
+
+    def test_the_code_goes_to_the_recipient_and_nobody_else(self):
+        status, body = self.call("POST /view/{grant_id}/register/code",
+                                 body={"email": "attacker@evil.test"})
+        self.assertEqual(status, 200)
+        message, code = self.sent_code()
+        self.assertEqual(message["Destination"]["ToAddresses"],
+                         ["j.ferrers@northbank.com"])
+        self.assertEqual(body["sent_to"], "j***@northbank.com")
+        self.assertRegex(code, r"^\d{6}$")
+        held = self.accounts.get_item(
+            Key={"viewer_account_id": self.viewer})["Item"]
+        self.assertNotIn(code, json.dumps(held, default=str))
+
+    def test_the_link_alone_cannot_register(self):
+        status, _ = self.register("")
+        self.assertEqual(status, 400)
+        self.app._cognito.admin_create_user.assert_not_called()
+        self.app._cognito.admin_set_user_password.assert_not_called()
+
+    def test_the_right_code_registers_once(self):
+        self.call("POST /view/{grant_id}/register/code")
+        _, code = self.sent_code()
+        status, body = self.register(code)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["secret_code"], "ABCD")
+        self.app._cognito.admin_set_user_password.assert_called_once()
+        # Spent: the same code a second time does nothing.
+        self.app._cognito.reset_mock()
+        status, _ = self.register(code)
+        self.assertEqual(status, 400)
+        self.app._cognito.admin_set_user_password.assert_not_called()
+
+    def test_five_wrong_tries_spend_the_code(self):
+        self.call("POST /view/{grant_id}/register/code")
+        _, code = self.sent_code()
+        wrong = "000000" if code != "000000" else "111111"
+        for _ in range(5):
+            self.assertEqual(self.register(wrong)[0], 400)
+        self.assertEqual(self.register(code)[0], 400)
+        self.app._cognito.admin_set_user_password.assert_not_called()
+
+    def test_an_expired_code_is_refused(self):
+        self.call("POST /view/{grant_id}/register/code")
+        _, code = self.sent_code()
+        self.accounts.update_item(
+            Key={"viewer_account_id": self.viewer},
+            UpdateExpression="SET code_expires_at = :e",
+            ExpressionAttributeValues={":e": "2020-01-01T00:00:00Z"})
+        self.assertEqual(self.register(code)[0], 400)
+        self.app._cognito.admin_set_user_password.assert_not_called()
+
+    def test_a_bad_password_does_not_spend_the_code(self):
+        self.call("POST /view/{grant_id}/register/code")
+        _, code = self.sent_code()
+        self.assertEqual(self.register(code, password="short")[0], 400)
+        self.assertEqual(self.register(code)[0], 200)
+
+    def test_codes_cannot_be_asked_for_in_a_flood(self):
+        self.assertEqual(self.call("POST /view/{grant_id}/register/code")[0], 200)
+        self.assertEqual(self.call("POST /view/{grant_id}/register/code")[0], 400)
+        self.assertEqual(self.app._ses.send_email.call_count, 1)
+        # Five in an hour, however they are spaced.
+        self.accounts.update_item(
+            Key={"viewer_account_id": self.viewer},
+            UpdateExpression="SET code_sent_at = :old, code_window_count = :n",
+            ExpressionAttributeValues={":old": "2020-01-01T00:00:00Z",
+                                       ":n": 5})
+        self.assertEqual(self.call("POST /view/{grant_id}/register/code")[0], 400)
+        self.assertEqual(self.app._ses.send_email.call_count, 1)
+
+    def test_a_half_finished_registration_cannot_be_reset_by_the_link(self):
+        # Cognito already holds the user: an earlier registration stopped at
+        # the authenticator. The link alone used to set a new password on it.
+        self.app._cognito.admin_create_user.side_effect = \
+            self.app.ClientError({"Error": {"Code": "UsernameExistsException"}},
+                                 "AdminCreateUser")
+        self.assertEqual(self.register("123456")[0], 400)
+        self.app._cognito.admin_set_user_password.assert_not_called()
+
+    def test_a_registered_viewer_is_sent_no_code(self):
+        self.call("GET /view/{grant_id}")
+        self.accounts.update_item(
+            Key={"viewer_account_id": self.viewer},
+            UpdateExpression="SET registered = :y",
+            ExpressionAttributeValues={":y": True})
+        self.assertEqual(self.call("POST /view/{grant_id}/register/code")[0], 403)
+        self.app._ses.send_email.assert_not_called()
+
+
+# ViewerTest's own tests run once, on ViewerTest, not again on its subclass.
+for _name in [n for n in dir(ViewerTest) if n.startswith("test_")]:
+    if _name not in RegisterCodeTest.__dict__:
+        setattr(RegisterCodeTest, _name, None)
+
+
 class RulesTest(unittest.TestCase):
     """share_rules, which needs nothing installed."""
 

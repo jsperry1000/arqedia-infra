@@ -1612,8 +1612,17 @@ export const viewerApi = {
 
   /** A password, then the authenticator's secret to add. Nothing is
    *  registered until confirm. */
+  /** Email a one-time code to the share's recipient. The address is the
+   *  grant's, never one this page supplies: the link can be forwarded, and
+   *  the code is what only the recipient's inbox can produce. */
+  registerCode: (grantId: string, token: string):
+      Promise<{ sent_to: string; minutes: number }> =>
+    viewerCall(`/view/${encodeURIComponent(grantId)}/register/code`,
+               { kind: "link", token }, "POST", {}),
+
   register: (grantId: string, token: string, body: {
-    password: string; accept_terms: boolean; marketing_opt_in: boolean;
+    email_code: string; password: string; accept_terms: boolean;
+    marketing_opt_in: boolean;
   }): Promise<{ session: string; secret_code: string; otpauth: string }> =>
     viewerCall(`/view/${encodeURIComponent(grantId)}/register`,
                { kind: "link", token }, "POST", body),
