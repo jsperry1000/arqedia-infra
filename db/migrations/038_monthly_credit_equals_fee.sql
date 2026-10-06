@@ -1,0 +1,59 @@
+-- 038_monthly_credit_equals_fee.sql
+--
+-- Metered credit equals the monthly fee (22.4, decided 25 September 2026).
+-- PROPOSED, and not applied.
+--
+-- WHAT CHANGES
+--
+--   plan.monthly_credit_cents   base       500 ->  2500   ($5.00  -> $25.00)
+--                               business  1500 ->  6500   ($15.00 -> $65.00)
+--
+-- THIS OVERWRITES TWO VALUES, and says so, as 036 did. The old values are
+-- recorded here, which is where anybody looking for them will look:
+--
+--   SELECT plan_id, plan_key, monthly_price_cents, monthly_credit_cents
+--     FROM plan ORDER BY plan_id                      (read 6 October 2026)
+--   -> 1 | base     | 2500 |  500
+--   -> 2 | business | 6500 | 1500
+--
+-- WHAT IT REACHES. paddle_processor reads plan.monthly_credit_cents when a
+-- plan transaction completes and grants a monthly_credit bucket of that size,
+-- so the new figure applies from each tenant's next billing period. A bucket
+-- already granted is not touched: the ledger is append-only, and a bucket is
+-- the grant it was. On an upgrade the processor grants the new plan's credit
+-- less what the period has already granted, so a Base tenant moving to Small
+-- Business after this runs is granted 6500 - 2500.
+--
+-- WHAT IT DOES NOT CHANGE. The trial's $5.00 is signup's own grant, not a
+-- plan's monthly credit. daily_classification_cents reads $5.00 and $15.00
+-- too and is a different row on the pricing page. Neither is 22.4.
+--
+-- config/plans.json carries the same two numbers, and
+-- tests/test_plans_source.py fails if this file and it disagree.
+
+UPDATE plan SET monthly_credit_cents = 2500 WHERE plan_key = 'base';
+UPDATE plan SET monthly_credit_cents = 6500 WHERE plan_key = 'business';
+
+-- Verification
+--
+--   SELECT plan_id, plan_key, monthly_price_cents, monthly_credit_cents
+--     FROM plan ORDER BY plan_id
+--
+-- Expect, with plan_id 1 and 2 unchanged:
+--   1 | base     | 2500 | 2500
+--   2 | business | 6500 | 6500
+--
+--   SELECT filename FROM schema_migration
+--    WHERE filename = '038_monthly_credit_equals_fee.sql'
+--
+-- Expect one row.
+--
+--
+-- DEPLOY ORDER. Either order is safe. Nothing in code holds the old figures:
+-- the processor, billing._plans() and the Account screen read the table, and
+-- the pricing page is rendered from config/plans.json when the site builds.
+-- Between this running and the site deploying, the page states the old credit
+-- while the product grants the new, larger one.
+--
+-- NO SEMICOLON ENDS A COMMENT LINE HERE. db/migrate.ps1 splits statements on
+-- a semicolon at the end of a line, comments included.

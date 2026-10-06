@@ -1364,22 +1364,28 @@ export function EngagementView({ id, onBack, onMemo }: {
           {/* What this costs, before the click that costs it. The wallet
               specification writes this block; it is reproduced rather than
               reinvented, because the figures have to reconcile with a ledger
-              line a person may read months later. */}
-          {fileQuote && (
+              line a person may read months later.
+
+              THE TICKED ROWS, FROM THE BUTTON'S OWN QUOTE (22.10). It priced
+              every row waiting while the button beneath files the ticked ones
+              only (22.3), so the two figures a hand's width apart disagreed
+              whenever anything was left unticked. Nothing ticked, nothing
+              priced: the button says what to do. */}
+          {pickedQuote && (
             <div className="quote">
               <div>
-                <span>{fileQuote.quantity}{" "}
-                  {fileQuote.quantity === 1 ? "document" : "documents"} proposed</span>
-                <b>{money(fileQuote.total_cents)}</b>
+                <span>{pickedQuote.quantity}{" "}
+                  {pickedQuote.quantity === 1 ? "document" : "documents"} selected</span>
+                <b>{money(pickedQuote.total_cents)}</b>
               </div>
               <div>
                 <span>Available</span>
-                <b>{money(fileQuote.available_cents)}</b>
+                <b>{money(pickedQuote.available_cents)}</b>
               </div>
-              {!fileQuote.affordable && (
+              {!pickedQuote.affordable && (
                 <div className="short">
                   <span>Fileable now</span>
-                  <b>{fileQuote.affordable_count}</b>
+                  <b>{pickedQuote.affordable_count}</b>
                 </div>
               )}
             </div>
