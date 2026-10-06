@@ -315,14 +315,16 @@ class SubjectTest(unittest.TestCase):
         result, _, invoke = self.run_with("Cocoa Empire")
 
         self.assertEqual(result["status"], "ok")
-        prompt = invoke.call_args.args[0]
-        self.assertTrue(prompt.startswith(
-            "The subject of this file is **Cocoa Empire**."), prompt[:120])
+        # Two blocks since extraction-cache-v2: the framing and document,
+        # which the subject opens, then the field list.
+        framing, fields = [b["text"] for b in invoke.call_args.args[0]]
+        self.assertTrue(framing.startswith(
+            "The subject of this file is **Cocoa Empire**."), framing[:120])
         self.assertIn("Treat any name that refers to the same company",
-                      prompt)
-        self.assertIn("is not the subject", prompt)
-        # The field list still follows it, unchanged.
-        self.assertIn("f_company_name", prompt)
+                      framing)
+        self.assertIn("is not the subject", framing)
+        # The field list follows, unchanged.
+        self.assertIn("f_company_name", fields)
 
     def test_the_subject_is_recorded_on_the_envelope(self):
         """Beside model_id, for the same reason: a value should be traceable
@@ -339,6 +341,73 @@ class SubjectTest(unittest.TestCase):
         with mock.patch.object(self.app, "_sql",
                                lambda s, p=None: {"records": []}):
             self.assertIsNone(self.app._subject_for(2, 753))
+
+
+class CacheV2Test(unittest.TestCase):
+    """The framing and the document are cached; the field list alone moved
+    (extraction-cache-v2). #278 rewrote the framing and lost specifics, so
+    what is proved here is that nothing but the field list's position
+    changed."""
+
+    KEYS = "exactly these keys:\n\n"
+
+    def setUp(self):
+        self.app, self.config = load_extraction()
+        body = mock.MagicMock()
+        body.read.return_value = json.dumps(ENVELOPE).encode("utf-8")
+        self.app._s3.get_object.return_value = {"Body": body}
+
+    def run_with(self, schemas, usage=None):
+        self.config.load.return_value = FakeRegistry(schemas)
+        invoke = mock.MagicMock(return_value=(
+            {"f_company_name": {"value": "Cocoa Empire Uganda Ltd.",
+                                "unit": 1}},
+            usage or {"input_tokens": 11, "output_tokens": 7}))
+        with mock.patch.object(self.app, "_sql", FakeDb().sql), \
+                mock.patch.object(self.app, "_invoke", invoke):
+            self.app.lambda_handler(EVENT, None)
+        return [c.args[0] for c in invoke.call_args_list]
+
+    def test_only_the_field_list_moved(self):
+        """Put the field list back where it sat and the old prompt's layout
+        is restored, character for character: opening, field list, rules,
+        document."""
+        envelope = dict(ENVELOPE, subject_name="Cocoa Empire")
+        blocks, _ = self.app._build_prompt({"fields": [SINGLE]}, envelope)
+        framing, fields = blocks[0]["text"], blocks[1]["text"]
+        cut = framing.index(self.KEYS) + len(self.KEYS)
+        old_layout = framing[:cut] + fields + framing[cut:]
+        self.assertIn(self.KEYS + "{\n", old_layout)
+        self.assertIn("\n}\n\nFor each field", old_layout)
+        self.assertTrue(old_layout.endswith("--- DOCUMENT END ---"))
+        self.assertTrue(fields.startswith("{\n") and fields.endswith("\n}"))
+        self.assertNotIn("f_company_name", framing)
+
+    def test_the_framing_and_document_are_the_same_for_every_set(self):
+        prompts = self.run_with({"a": {"fields": [SINGLE]},
+                                 "b": {"fields": [GOOD_GROUP]}})
+        self.assertEqual(prompts[0][0]["text"], prompts[1][0]["text"])
+        self.assertNotEqual(prompts[0][1]["text"], prompts[1][1]["text"])
+
+    def test_cached_only_where_a_second_set_reads_it(self):
+        one = self.run_with({"a": {"fields": [SINGLE]}})
+        self.assertNotIn("cache_control", one[0][0])
+        two = self.run_with({"a": {"fields": [SINGLE]},
+                             "b": {"fields": [SINGLE]}})
+        for prompt in two:
+            self.assertEqual(prompt[0]["cache_control"], {"type": "ephemeral"})
+            self.assertNotIn("cache_control", prompt[1])
+
+    def test_cache_tokens_are_counted(self):
+        self.run_with({"a": {"fields": [SINGLE]}, "b": {"fields": [SINGLE]}},
+                      {"input_tokens": 300, "output_tokens": 20,
+                       "cache_read_input_tokens": 5000,
+                       "cache_creation_input_tokens": 0})
+        written = json.loads(
+            self.app._s3.put_object.call_args.kwargs["Body"].decode("utf-8"))
+        self.assertEqual(written["extraction_tokens"],
+                         {"input": 600, "output": 40,
+                          "cache_read": 10000, "cache_write": 0})
 
 
 if __name__ == "__main__":
