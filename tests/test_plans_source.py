@@ -291,6 +291,33 @@ class ShareOverageTest(unittest.TestCase):
         self.assertEqual(sorted(written), ["base", "business"])
 
 
+class MonthlyCreditTest(unittest.TestCase):
+    """Metered credit equals the monthly fee (22.4). Published here, enforced
+    by the plan table that migration 038 writes - two copies, compared."""
+
+    MIGRATION = ROOT / "db" / "migrations" / "038_monthly_credit_equals_fee.sql"
+
+    def test_a_priced_plan_includes_its_fee_as_credit(self):
+        for plan in plans():
+            if plan["paddle_price_name"] is None:
+                continue
+            with self.subTest(plan=plan["plan_key"]):
+                self.assertEqual(plan["monthly_credit_cents"],
+                                 plan["monthly_price_cents"])
+
+    def test_the_published_credit_is_the_one_the_migration_writes(self):
+        sql = self.MIGRATION.read_text(encoding="utf-8")
+        written = {m.group(2): int(m.group(1)) for m in re.finditer(
+            r"UPDATE plan SET monthly_credit_cents = (\d+) "
+            r"WHERE plan_key = '(\w+)'", sql)}
+        self.assertEqual(sorted(written), ["base", "business"])
+        for plan in plans():
+            if plan["plan_key"] in written:
+                with self.subTest(plan=plan["plan_key"]):
+                    self.assertEqual(plan["monthly_credit_cents"],
+                                     written[plan["plan_key"]])
+
+
 class TopUpIncrementTest(unittest.TestCase):
     """The one number on the pricing table that is not a plan attribute.
 
