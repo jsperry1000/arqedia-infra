@@ -30,7 +30,6 @@
     "share_allowance": "plan table, as migration 036 sets it; NULL still means unlimited (migration 018) and no plan carries it now",
     "share_overage_cents": "meter_price, the share_overage_<plan_key> rows migration 036 writes",
     "sections_per_template": "site/pricing/index.html ONLY - the code's bounds are _REWRITE_MAX_SECTIONS 50 and proposer._MAX_SECTIONS 40, neither of them per plan",
-    "daily_classification_cents": "site/pricing/index.html ONLY - nothing meters or enforces it",
     "paddle_price_name": "config/paddle/sandbox.json, product name",
     "how_it_starts": "site/pricing/index.html, the 'How it starts' row; the Enterprise address is also in ui/src/upgrade.tsx",
     "active": "plan table",
@@ -88,6 +87,19 @@
     "separate migration and a separate decision."
   ],
 
+  "classification_allowance_dropped_note": [
+    "THE DAILY CLASSIFICATION ALLOWANCE WAS SOLD HERE UNTIL 6 OCTOBER 2026 (22.5):",
+    "$5.00 on Base, $15.00 on Small Business, negotiated on Enterprise. Dropped,",
+    "not enforced, because nothing ever enforced it - the wallet bucket",
+    "pipeline_spec_v1 section 8.1 describes was never built - and a limit we do",
+    "not apply should not be sold. Measured on dev, 76 files, 1 September to",
+    "6 October 2026: classification costs $0.0037 a file at the median and",
+    "$0.0123 at most, against the spec's $0.05 placeholder.",
+    "",
+    "plan.daily_classification_cents stays in the database, as",
+    "field_sets_per_type does. Dropping a column is a separate decision."
+  ],
+
   "topup_increment_cents": 500,
   "topup_increment_note": [
     "OUTSIDE plans, BECAUSE IT IS NOT A PLAN ATTRIBUTE. The pricing page shows",
@@ -110,7 +122,6 @@
       "monthly_credit_cents": 2500,
       "share_allowance": 10,
       "sections_per_template": 12,
-      "daily_classification_cents": 500,
       "paddle_price_name": "ARQEDIA Base",
       "how_it_starts": "https://app.arqedia.com/signup",
       "active": true
@@ -123,7 +134,6 @@
       "monthly_credit_cents": 6500,
       "share_allowance": 25,
       "sections_per_template": 25,
-      "daily_classification_cents": 1500,
       "paddle_price_name": "ARQEDIA Small Business",
       "how_it_starts": "https://app.arqedia.com/signup",
       "active": true
@@ -136,7 +146,6 @@
       "monthly_credit_cents": "as contracted",
       "share_allowance": "as contracted",
       "sections_per_template": "50 by default",
-      "daily_classification_cents": "negotiated",
       "paddle_price_name": null,
       "how_it_starts": "mailto:enterprise@arqedia.com?subject=ARQEDIA%20Enterprise%20enquiry",
       "active": true

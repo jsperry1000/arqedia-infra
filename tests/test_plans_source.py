@@ -43,7 +43,7 @@ PADDLE = ROOT / "config" / "paddle" / "sandbox.json"
 FIELDS = (
     "plan_key", "name", "seat_count", "monthly_price_cents",
     "monthly_credit_cents", "share_allowance",
-    "sections_per_template", "daily_classification_cents",
+    "sections_per_template",
     "paddle_price_name", "how_it_starts", "active",
 )
 
@@ -212,8 +212,7 @@ class ShapeTest(unittest.TestCase):
             with self.subTest(plan=plan["plan_key"]):
                 for field in ("seat_count", "monthly_price_cents",
                               "monthly_credit_cents",
-                              "sections_per_template",
-                              "daily_classification_cents"):
+                              "sections_per_template"):
                     self.assertIsInstance(plan[field], int, field)
                 # share_allowance alone may be null: null is unlimited, as
                 # migration 018 says, and it is the one nullable column.
@@ -225,8 +224,7 @@ class ShapeTest(unittest.TestCase):
         everywhere else."""
         e = [p for p in self.plans if p["plan_key"] == "enterprise"][0]
         for field in ("seat_count", "monthly_credit_cents", "share_allowance",
-                      "sections_per_template",
-                      "daily_classification_cents"):
+                      "sections_per_template"):
             with self.subTest(field=field):
                 self.assertIsInstance(e[field], str, field)
 
@@ -236,7 +234,7 @@ class ShapeTest(unittest.TestCase):
                 self.assertRegex(plan["how_it_starts"], r"^(https://|mailto:)")
 
     def test_the_file_records_where_each_field_came_from(self):
-        """Three of these numbers exist in no table and no constant - only in
+        """One of these numbers exists in no table and no constant - only in
         site/pricing/index.html. Somebody reading this file a year from now has
         to be able to find that out without being told."""
         doc = json.loads(PLANS.read_text(encoding="utf-8"))
@@ -248,8 +246,8 @@ class ShapeTest(unittest.TestCase):
             # likewise (migration 036).
             sorted(FIELDS + ("enterprise", "share_overage_cents",
                              "topup_increment_cents", "trial_days")))
-        for field in ("sections_per_template", "daily_classification_cents"):
-            self.assertIn("site/pricing/index.html", doc["sources"][field])
+        self.assertIn("site/pricing/index.html",
+                      doc["sources"]["sections_per_template"])
 
     def test_field_sets_are_no_longer_sold(self):
         """Dropped from pricing on 30 September 2026 (22.5): invisible to the
@@ -261,6 +259,16 @@ class ShapeTest(unittest.TestCase):
                 self.assertNotIn("field_sets_per_type", plan)
         self.assertNotIn("field_sets_per_type", doc["sources"])
         self.assertIn("field_sets_dropped_note", doc)
+
+    def test_the_classification_allowance_is_no_longer_sold(self):
+        """Dropped from pricing on 6 October 2026 (22.5): nothing enforced
+        it, and a limit we do not apply should not be sold."""
+        doc = json.loads(PLANS.read_text(encoding="utf-8"))
+        for plan in doc["plans"]:
+            with self.subTest(plan=plan["plan_key"]):
+                self.assertNotIn("daily_classification_cents", plan)
+        self.assertNotIn("daily_classification_cents", doc["sources"])
+        self.assertIn("classification_allowance_dropped_note", doc)
 
 
 class ShareOverageTest(unittest.TestCase):
