@@ -166,6 +166,13 @@ locals {
     aws_dynamodb_table.share_usage.arn,
   ]
 
+  # The SES configuration set attached by default to arqedia.com. Made in the
+  # console on 14 September 2026 (CloudTrail: CreateConfigurationSet,
+  # jperry-admin) and not managed here - read as a name rather than a
+  # resource, so this stack cannot delete it. It has no event destinations:
+  # nothing watches a bounce yet (CLAUDE.md, What is open, 10.6).
+  ses_configuration_set = "my-first-configuration-set"
+
   share_env = {
     SHARE_GRANT_TABLE      = aws_dynamodb_table.share_grant.name
     VIEWER_ACCOUNT_TABLE   = aws_dynamodb_table.viewer_account.name
@@ -413,6 +420,7 @@ data "aws_iam_policy_document" "share_viewer" {
   #              at the domain can be used either.
   # A resource naming only identity/no-reply@arqedia.com would match no
   # identity SES checks, and every send would be refused.
+  #
   statement {
     effect    = "Allow"
     actions   = ["ses:SendEmail"]
@@ -423,6 +431,24 @@ data "aws_iam_policy_document" "share_viewer" {
       variable = "ses:FromAddress"
       values   = [var.signup_sender]
     }
+  }
+
+  # AND THE CONFIGURATION SET. arqedia.com carries a default configuration
+  # set, and SES authorises a send against it as well as against the
+  # identity. Without it every send was refused - the live failure of
+  # 6 October: "not authorized to perform 'ses:SendEmail' on resource
+  # ...configuration-set/my-first-configuration-set".
+  #
+  # A STATEMENT OF ITS OWN, WITHOUT THE FromAddress CONDITION, deliberately.
+  # Whether SES evaluates ses:FromAddress when it checks a configuration set
+  # could not be confirmed: IAM's policy simulator does not model this
+  # resource for ses:SendEmail at all (it denies even Resource "*"). Left
+  # unconditioned it grants nothing alone - every send still needs the
+  # identity statement above, and that one is held to the one sender.
+  statement {
+    effect    = "Allow"
+    actions   = ["ses:SendEmail"]
+    resources = ["arn:aws:ses:${var.aws_region}:${data.aws_caller_identity.current.account_id}:configuration-set/${local.ses_configuration_set}"]
   }
 }
 
