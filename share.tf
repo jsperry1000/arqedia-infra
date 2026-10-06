@@ -263,7 +263,9 @@ resource "aws_cognito_user_pool" "viewer" {
 
   # Nobody makes themselves a viewer. The viewer function makes the user when
   # somebody holding a valid link registers - the same one door the customer
-  # pool has, for the same reason.
+  # pool has, for the same reason. Since fix/share-registration-takeover the
+  # link is not enough: registering also takes a code emailed to the
+  # recipient's own address, because a link can be forwarded.
   admin_create_user_config {
     allow_admin_create_user_only = true
   }
@@ -397,6 +399,17 @@ data "aws_iam_policy_document" "share_viewer" {
     ]
     resources = [aws_cognito_user_pool.viewer.arn]
   }
+
+  # The one-time code sent to a recipient's own address before they may
+  # register (fix/share-registration-takeover). The same action the signup
+  # and API functions hold, for the same reason: SES scopes a send by the
+  # identity of the From address, and the handler takes that from SENDER,
+  # never from a request.
+  statement {
+    effect    = "Allow"
+    actions   = ["ses:SendEmail"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "share_viewer" {
@@ -441,6 +454,8 @@ resource "aws_lambda_function" "share_viewer" {
       CURATED_BUCKET   = aws_s3_bucket.data["curated"].id
       VIEWER_POOL_ID   = aws_cognito_user_pool.viewer.id
       VIEWER_CLIENT_ID = aws_cognito_user_pool_client.viewer.id
+      # One sender for the whole product, declared in signup.tf.
+      SENDER = var.signup_sender
     })
   }
 
@@ -461,6 +476,9 @@ resource "aws_apigatewayv2_route" "share_viewer_open" {
   for_each = toset([
     "GET /view/{grant_id}",
     "POST /view/{grant_id}/download",
+    # Emails the recipient a code before they may register. The address is
+    # the grant's, never one from the request.
+    "POST /view/{grant_id}/register/code",
     "POST /view/{grant_id}/register",
     "POST /view/{grant_id}/register/confirm",
     "POST /viewer/sign-in",

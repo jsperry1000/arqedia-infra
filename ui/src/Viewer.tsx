@@ -191,15 +191,32 @@ function Register({ grantId, token, page, onDone, onCancel }: {
   const [setup, setSetup] = useState<{ session: string; secret_code: string;
                                        otpauth: string } | null>(null);
   const [code, setCode] = useState("");
+  // The code emailed to the recipient's own address. A link can be
+  // forwarded; registering needs what only the recipient's inbox has.
+  const [sentTo, setSentTo] = useState("");
+  const [emailCode, setEmailCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  async function sendCode() {
+    setBusy(true);
+    setError("");
+    try {
+      setSentTo((await viewerApi.registerCode(grantId, token)).sent_to);
+    } catch (err) {
+      setError(String((err as Error).message));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function begin() {
     setBusy(true);
     setError("");
     try {
       setSetup(await viewerApi.register(grantId, token, {
-        password, accept_terms: terms, marketing_opt_in: marketing }));
+        email_code: emailCode.trim(), password, accept_terms: terms,
+        marketing_opt_in: marketing }));
     } catch (err) {
       setError(String((err as Error).message));
     } finally {
@@ -240,12 +257,35 @@ function Register({ grantId, token, page, onDone, onCancel }: {
         </p>
       )}
 
-      {!setup ? (
+      {!setup && !sentTo ? (
+        <>
+          <p className="small">
+            First we email a code to {page.recipient_email}, the address this
+            was shared with. Registering needs it, so nobody else holding
+            this link can register in your name.
+          </p>
+          <div className="form-actions">
+            <button onClick={sendCode} disabled={busy}>
+              {busy ? "Sending…" : "Email me a code"}
+            </button>
+            <a className="secondary" onClick={onCancel}>Not now</a>
+          </div>
+        </>
+      ) : !setup ? (
         <>
           <label className="row">
             <span>Email</span>
             <input value={page.recipient_email} disabled />
           </label>
+          <label className="row">
+            <span>Code sent to {sentTo} &mdash; it lasts ten minutes</span>
+            <input inputMode="numeric" autoComplete="one-time-code"
+                   value={emailCode}
+                   onChange={(e) => setEmailCode(e.target.value)} />
+          </label>
+          <p className="small">
+            Not arrived? <a onClick={busy ? undefined : sendCode}>Send another</a>.
+          </p>
           <label className="row">
             <span>Password &mdash; at least 12 characters, upper case, lower case and a number</span>
             <input type="password" value={password}
@@ -265,7 +305,9 @@ function Register({ grantId, token, page, onDone, onCancel }: {
             <span>Email me about ARQEDIA. You can stop this at any time.</span>
           </label>
           <div className="form-actions">
-            <button onClick={begin} disabled={busy || !terms || !password}>
+            <button onClick={begin}
+                    disabled={busy || !terms || !password
+                              || emailCode.trim().length < 6}>
               {busy ? "Working…" : "Continue"}
             </button>
             <a className="secondary" onClick={onCancel}>Not now</a>

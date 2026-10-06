@@ -28,7 +28,8 @@ which; the person does not learn which part of a guess was wrong.
 Routes:
   GET  /view/{grant_id}                     the memorandum, by its link
   POST /view/{grant_id}/download            a copy stamped with this moment
-  POST /view/{grant_id}/register            a password, then MFA setup
+  POST /view/{grant_id}/register/code       email the recipient a code
+  POST /view/{grant_id}/register            the code, a password, MFA setup
   POST /view/{grant_id}/register/confirm    the authenticator's first code
   POST /viewer/sign-in                      a registered viewer, password
   POST /viewer/sign-in/mfa                  ... and the code
@@ -37,9 +38,13 @@ Routes:
   POST /viewer/shares/{grant_id}/download   a copy of it, signed in
 """
 
+import datetime
 import hashlib
+import hmac
 import json
 import os
+import re
+import secrets
 import time
 import urllib.parse
 import uuid
@@ -53,6 +58,7 @@ import share_rules as rules
 _s3 = boto3.client("s3")
 _lambda = boto3.client("lambda")
 _cognito = boto3.client("cognito-idp")
+_ses = boto3.client("ses")
 
 CURATED_BUCKET = os.environ["CURATED_BUCKET"]
 VIEWER_POOL_ID = os.environ["VIEWER_POOL_ID"]
@@ -67,6 +73,17 @@ LINK_DEAD = ("This link does not work. It may have expired or been "
              "again.")
 SIGN_IN_FAILED = "That email and password do not match a registered viewer."
 CODE_FAILED = "That code was not accepted. Check the time on your device and try again."
+
+# The one-time code emailed to a recipient's own address (fix/share-
+# registration-takeover). Ten minutes, five tries, one a minute, five an hour:
+# long enough to fetch from a mailbox, short and scarce enough that the code
+# is the inbox's to give and nobody else's to guess or to flood.
+EMAIL_CODE_MINUTES = 10
+EMAIL_CODE_TRIES = 5
+EMAIL_CODE_GAP_SECONDS = 60
+EMAIL_CODE_PER_HOUR = 5
+EMAIL_CODE_FAILED = ("That code is not right, or has expired. Ask for a new "
+                     "one.")
 
 
 _dynamo = None
@@ -258,25 +275,208 @@ def _download(grant):
     return {"download_url": _presign(key, attachment=_filename(grant))}
 
 
+# --- a code to the recipient's own inbox -----------------------------------
+#
+# THE LINK PROVES NOTHING ABOUT WHO HOLDS IT. It can be forwarded, and until
+# this existed whoever held it could register the recipient's address with
+# their own password and authenticator - before the real recipient did, or
+# over a registration they had started and not finished. A code sent to the
+# recipient's address at the moment it is needed is what the link holder
+# cannot produce on the recipient's behalf.
+#
+# KEPT ON THE VIEWER ACCOUNT, hashed. One live code per recipient, for one
+# purpose; asking again replaces it. A hash rather than the code, so the
+# table does not hold something that can be typed in - though six digits
+# hashed are no secret from somebody who can read the table, which is why the
+# five tries and ten minutes are the protection and the hash is not.
+#
+# SENT FROM HERE, not through the API's mail.py. The signup function sends its
+# own code for the same reason: this function's role holds what it needs and
+# nothing else, and the API's mail module is not in this function's package.
+
+def _sender():
+    """Read when a code is sent, not at import, as mail.sender() does: a
+    missing SENDER should fail the send, not every route."""
+    return os.environ.get("SENDER") or ""
+
+
+def _code_hash(viewer_id, purpose, code):
+    return hashlib.sha256(("%s:%s:%s" % (viewer_id, purpose, code))
+                          .encode("utf-8")).hexdigest()
+
+
+def _masked(address):
+    local, _, domain = str(address or "").partition("@")
+    return (local[:1] or "?") + "***@" + domain
+
+
+def _email_code_message(grant, code, purpose):
+    """What the code email says. Plain text, like every message the product
+    sends. It says what the code is for, so a recipient who did not ask for
+    one knows somebody else holds their link."""
+    why = {
+        "register": ("Someone is using the link to a memorandum %s shared "
+                     "with this address, to register and keep access to it."
+                     % (grant.get("tenant_name") or "a firm")),
+    }[purpose]
+    subject = "Your ARQEDIA code: %s" % code
+    body = (
+        "Your ARQEDIA code is %s\n"
+        "\n"
+        "It lasts %d minutes.\n"
+        "\n"
+        "%s If that is you, enter the code where you were asked for it.\n"
+        "\n"
+        "If it is not you, do not pass this code on. Nothing changes without "
+        "it, and the memorandum stays as it was.\n"
+        "\n"
+        "ARQEDIA\n"
+        "This address does not take replies.\n"
+    ) % (code, EMAIL_CODE_MINUTES, why)
+    return subject, body
+
+
+def _send_email_code(grant, purpose):
+    """Email a fresh code to the grant's recipient, and to nobody else.
+
+    The address is the grant's - the one the tenant sent to - never one from
+    the request. Refused, without sending, inside a minute of the last code
+    or past five in an hour, so a link holder cannot flood the recipient."""
+    viewer_id = grant["viewer_account_id"]
+    at = rules.now()
+    account = _table("viewer").get_item(
+        Key={"viewer_account_id": viewer_id},
+        ConsistentRead=True).get("Item") or {}
+
+    last = account.get("code_sent_at")
+    if last and (at - rules.parse(last)).total_seconds() \
+            < EMAIL_CODE_GAP_SECONDS:
+        raise ValueError("A code was sent less than a minute ago. Check your "
+                         "inbox, or ask again in a minute.")
+
+    window = account.get("code_window_start")
+    count = int(account.get("code_window_count") or 0)
+    if not window or (at - rules.parse(window)).total_seconds() >= 3600:
+        window, count = rules.iso(at), 0
+    if count >= EMAIL_CODE_PER_HOUR:
+        raise ValueError("Too many codes have been sent to this address in "
+                         "the last hour. Try again later.")
+
+    sender = _sender()
+    if not sender:
+        print("[email-code-not-sent] reason=no-sender")
+        raise RuntimeError("no sender configured")
+
+    code = "%06d" % secrets.randbelow(1000000)
+    _table("viewer").update_item(
+        Key={"viewer_account_id": viewer_id},
+        UpdateExpression=(
+            "SET code_hash = :h, code_purpose = :p, code_expires_at = :e, "
+            "code_tries = :zero, code_sent_at = :at, "
+            "code_window_start = :w, code_window_count = :n"),
+        ExpressionAttributeValues={
+            ":h": _code_hash(viewer_id, purpose, code), ":p": purpose,
+            ":e": rules.iso(at + datetime.timedelta(
+                minutes=EMAIL_CODE_MINUTES)),
+            ":zero": 0, ":at": rules.iso(at), ":w": window,
+            ":n": count + 1})
+
+    subject, text = _email_code_message(grant, code, purpose)
+    _ses.send_email(
+        Source=sender,
+        Destination={"ToAddresses": [grant["recipient_email"]]},
+        Message={"Subject": {"Data": subject, "Charset": "UTF-8"},
+                 "Body": {"Text": {"Data": text, "Charset": "UTF-8"}}})
+    print("[email-code-sent] viewer=%s purpose=%s" % (viewer_id[:8], purpose))
+    return {"sent_to": _masked(grant["recipient_email"]),
+            "minutes": EMAIL_CODE_MINUTES}
+
+
+def _spend_email_code(viewer_id, purpose, presented):
+    """True once, for the right code, inside its ten minutes and five tries -
+    and the code is gone the moment it is spent, so it cannot be used twice.
+    Raises ValueError(EMAIL_CODE_FAILED) otherwise, saying nothing about why:
+    wrong, expired and used-up all read the same."""
+    presented = re.sub(r"\s+", "", str(presented or ""))
+    account = _table("viewer").get_item(
+        Key={"viewer_account_id": viewer_id},
+        ConsistentRead=True).get("Item") or {}
+
+    held = account.get("code_hash")
+    live = bool(held and account.get("code_purpose") == purpose
+                and account.get("code_expires_at")
+                and rules.parse(account["code_expires_at"]) > rules.now()
+                and int(account.get("code_tries") or 0) < EMAIL_CODE_TRIES)
+    if not live:
+        raise ValueError(EMAIL_CODE_FAILED)
+
+    if not re.match(r"^\d{6}$", presented) or not hmac.compare_digest(
+            _code_hash(viewer_id, purpose, presented), held):
+        _table("viewer").update_item(
+            Key={"viewer_account_id": viewer_id},
+            UpdateExpression="ADD code_tries :one",
+            ExpressionAttributeValues={":one": 1})
+        raise ValueError(EMAIL_CODE_FAILED)
+
+    # Spent: removed on the condition that it is still the code just
+    # checked, so two requests racing with the same code cannot both pass.
+    try:
+        _table("viewer").update_item(
+            Key={"viewer_account_id": viewer_id},
+            UpdateExpression="REMOVE code_hash, code_purpose, "
+                             "code_expires_at, code_tries",
+            ConditionExpression="code_hash = :h",
+            ExpressionAttributeValues={":h": held})
+    except ClientError as exc:
+        if _code(exc) == "ConditionalCheckFailedException":
+            raise ValueError(EMAIL_CODE_FAILED)
+        raise
+    return True
+
+
+# The viewer pool's policy (share.tf), checked here before a code is spent,
+# so a password Cognito would refuse does not cost the person their code.
+_PASSWORD_RULE = ("That password is not accepted: at least 12 characters, "
+                  "with upper case, lower case and a number.")
+
+
+def _password_ok(password):
+    return bool(len(password) >= 12 and re.search(r"[a-z]", password)
+                and re.search(r"[A-Z]", password)
+                and re.search(r"\d", password))
+
+
 # --- registering -------------------------------------------------------------
 
 def _register(grant, body):
-    """A password, then the authenticator. Nothing is marked registered until
-    the first code is right (_confirm)."""
+    """The emailed code, a password, then the authenticator. Nothing is
+    marked registered until the authenticator's first code is right
+    (_confirm).
+
+    THE EMAILED CODE COMES FIRST, before Cognito is touched at all. The link
+    is not proof of who holds it; the code, sent to the recipient's own
+    address by _send_email_code, is. Without it nobody can create this user
+    or set its password - which also closes resetting a registration that
+    was started and not finished, since that is the same two calls."""
     if body.get("accept_terms") is not True:
         raise ValueError("Registering means accepting the terms and privacy "
                          "policy.")
     password = str(body.get("password") or "")
     if not password:
         raise ValueError("Choose a password.")
+    if not _password_ok(password):
+        raise ValueError(_PASSWORD_RULE)
 
     account = _account(grant["viewer_account_id"])
     if account.get("registered"):
         raise PermissionError("You have already registered. Sign in instead.")
 
+    _spend_email_code(grant["viewer_account_id"], "register",
+                      body.get("email_code"))
+
     email = grant["recipient_email"]
-    # THE ADDRESS IS VERIFIED: the person holds a link that was sent to it
-    # and to nobody else. Cognito sends nothing.
+    # THE ADDRESS IS VERIFIED by the code just spent, which only its inbox
+    # could supply. Cognito sends nothing.
     try:
         _cognito.admin_create_user(
             UserPoolId=VIEWER_POOL_ID, Username=email,
@@ -297,9 +497,7 @@ def _register(grant, body):
             Permanent=True)
     except ClientError as exc:
         if _code(exc) == "InvalidPasswordException":
-            raise ValueError("That password is not accepted: at least 12 "
-                             "characters, with upper case, lower case and a "
-                             "number.")
+            raise ValueError(_PASSWORD_RULE)
         raise
 
     started = _cognito.admin_initiate_auth(
@@ -521,6 +719,7 @@ def _dispatch(event, context):
 
     try:
         if route in ("GET /view/{grant_id}", "POST /view/{grant_id}/download",
+                     "POST /view/{grant_id}/register/code",
                      "POST /view/{grant_id}/register",
                      "POST /view/{grant_id}/register/confirm"):
             grant, refused = _authorised(grant_id, token=token or "")
@@ -538,6 +737,12 @@ def _dispatch(event, context):
                 copy = _download(grant)
                 _record(context, event, grant, "download")
                 return _reply(200, copy)
+            if route == "POST /view/{grant_id}/register/code":
+                _arrived(grant)
+                if _account(grant["viewer_account_id"]).get("registered"):
+                    raise PermissionError(
+                        "You have already registered. Sign in instead.")
+                return _reply(200, _send_email_code(grant, "register"))
             if route == "POST /view/{grant_id}/register":
                 _arrived(grant)
                 return _reply(200, _register(grant, body))
