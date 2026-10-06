@@ -53,14 +53,13 @@ type Plan = {
   monthly_credit_cents: Cell
   share_allowance: Cell
   sections_per_template: Cell
-  daily_classification_cents: Cell
   how_it_starts: string
 }
 
 const REQUIRED = [
   'plan_key', 'name', 'seat_count', 'monthly_price_cents',
   'monthly_credit_cents', 'share_allowance',
-  'sections_per_template', 'daily_classification_cents', 'how_it_starts',
+  'sections_per_template', 'how_it_starts',
 ] as const
 
 class PlansError extends Error {
@@ -148,7 +147,7 @@ export function readPlans(file = PLANS_FILE):
 // read $5.00 and the top-up row reads $5. Making them agree would be a change
 // to the page nobody asked for, in a commit about where the numbers come from.
 
-/** $5.00, $15.00 - the credit and allowance rows. */
+/** $25.00, $1.00 - the credit row and the share overage. */
 const money2 = (cents: number) => `$${(cents / 100).toFixed(2)}`
 
 /** $5, $25 - the top-up row and the price in the header. */
@@ -240,8 +239,8 @@ export function renderPlansTable(file = PLANS_FILE): string {
     // is no longer sold (22.5): see field_sets_dropped_note in the file.
     row('Sections per template',
         across((p) => cell(p.sections_per_template, plain, ''))),
-    row('Daily classification allowance',
-        across((p) => cell(p.daily_classification_cents, money2, ''))),
+    // "Daily classification allowance" sat here until 6 October 2026 and
+    // is no longer sold (22.5): see classification_allowance_dropped_note.
     // One number, every column. The historical note is kept because it is
     // what explains why this row looks per-plan and is not.
     row('Top-up increment', plans.map(() => money0(topup)))

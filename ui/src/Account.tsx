@@ -88,7 +88,6 @@ type PlanRow = {
 };
 
 const limit = (value: number | null) => (value === null ? "—" : value);
-const cents = (value: number | null) => (value === null ? "—" : money(value));
 
 const ROWS: PlanRow[] = [
   { label: "Seats",
@@ -100,15 +99,13 @@ const ROWS: PlanRow[] = [
   { label: "Shared memoranda per month",
     of: (p) => (p.share_allowance === null ? "unlimited" : p.share_allowance),
     enterprise: ENTERPRISE_COLUMN.shares },
-  { label: "Field sets per document type",
-    of: (p) => limit(p.field_sets_per_type),
-    enterprise: ENTERPRISE_COLUMN.field_sets },
+  // "Field sets per document type" and "Daily classification allowance" sat
+  // here until 6 October 2026. Neither is sold any more (22.5) - see the two
+  // dropped notes in config/plans.json. The columns stay in the plan table
+  // and the API still returns them; nothing reads them to decide anything.
   { label: "Sections per template",
     of: (p) => limit(p.sections_per_template),
     enterprise: ENTERPRISE_COLUMN.sections },
-  { label: "Daily classification allowance",
-    of: (p) => cents(p.daily_classification_cents),
-    enterprise: ENTERPRISE_COLUMN.daily_classification },
 ];
 
 /**

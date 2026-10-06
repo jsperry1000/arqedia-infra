@@ -17,6 +17,11 @@ if (canvas) mountFlock(canvas)
 // A sentence in the memorandum, the facts that produced it, and the document
 // each fact was read from. Three sentences, each with its own set of facts and
 // its own sources — which is the whole point, and why one panel would not do.
+//
+// EVERY LOCATION IS ONE THE PRODUCT CAN PRODUCE: a page, a Word section or a
+// spreadsheet sheet - extracted_value.locator_kind holds page, section, sheet
+// or none, and nothing else. No clause, no cell range, no "cover"; the demo
+// carried all three until 6 October 2026 and none of them is ever written.
 
 interface Fact {
   label: string
@@ -48,7 +53,7 @@ const CLAIMS: Claim[] = [
       },
       {
         label: 'Facility Limit', value: 'USD 30,000,000',
-        source: 'Facility-Agreement-2024.pdf', page: 'p. 3, cl. 2.1',
+        source: 'Facility-Agreement-2024.pdf', page: 'p. 3',
         before: ['m', 'l'],
         passage: 'The Lenders make available a committed revolving facility in an aggregate amount of USD 30,000,000.',
         after: ['s', 'l'],
@@ -68,7 +73,7 @@ const CLAIMS: Claim[] = [
     facts: [
       {
         label: 'EBITDA (trailing twelve months)', value: 'USD 8,800,000',
-        source: 'Management-Accounts-Q1.xlsx', page: 'Summary, B12:B24',
+        source: 'Management-Accounts-Q1.xlsx', page: 'sheet 1',
         before: ['m'],
         passage: 'EBITDA, trailing twelve months to 31 December 2025: USD 8,800,000.',
         after: ['l', 's'],
@@ -95,7 +100,7 @@ const CLAIMS: Claim[] = [
     facts: [
       {
         label: 'Covenant Ratio', value: 'Not disclosed',
-        source: 'Facility-Agreement-2024.pdf', page: 'p. 41, cl. 18',
+        source: 'Facility-Agreement-2024.pdf', page: 'p. 41',
         before: ['l', 'm'],
         passage: 'The Borrower shall comply with the financial covenants set out in Schedule 4, which was not provided.',
         after: ['s', 'l'],
@@ -109,7 +114,7 @@ const CLAIMS: Claim[] = [
       },
       {
         label: 'Agreement Date', value: '17 June 2024',
-        source: 'Facility-Agreement-2024.pdf', page: 'cover',
+        source: 'Facility-Agreement-2024.pdf', page: 'p. 1',
         before: ['s'],
         passage: 'Dated 17 June 2024.',
         after: ['m', 'l'],

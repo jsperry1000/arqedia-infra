@@ -69,9 +69,7 @@ export const ENTERPRISE_COLUMN = {
   seats: "as contracted",
   monthly_credit: "as contracted",
   shares: "as contracted",
-  field_sets: "10 by default",
   sections: "50 by default",
-  daily_classification: "negotiated",
   topup: "$5",
 } as const;
 
