@@ -315,16 +315,14 @@ class SubjectTest(unittest.TestCase):
         result, _, invoke = self.run_with("Cocoa Empire")
 
         self.assertEqual(result["status"], "ok")
-        # Two blocks since extraction-cache: the document, which the subject
-        # opens, then the field list.
-        document, fields = [b["text"] for b in invoke.call_args.args[0]]
-        self.assertTrue(document.startswith(
-            "The subject of this file is **Cocoa Empire**."), document[:120])
+        prompt = invoke.call_args.args[0]
+        self.assertTrue(prompt.startswith(
+            "The subject of this file is **Cocoa Empire**."), prompt[:120])
         self.assertIn("Treat any name that refers to the same company",
-                      document)
-        self.assertIn("is not the subject", document)
+                      prompt)
+        self.assertIn("is not the subject", prompt)
         # The field list still follows it, unchanged.
-        self.assertIn("f_company_name", fields)
+        self.assertIn("f_company_name", prompt)
 
     def test_the_subject_is_recorded_on_the_envelope(self):
         """Beside model_id, for the same reason: a value should be traceable
@@ -341,69 +339,6 @@ class SubjectTest(unittest.TestCase):
         with mock.patch.object(self.app, "_sql",
                                lambda s, p=None: {"records": []}):
             self.assertIsNone(self.app._subject_for(2, 753))
-
-
-class CacheTest(unittest.TestCase):
-    """The document is read once per filing, not once per field set
-    (extraction-cache, 22.5). A 22-set document was sent 22 times; the
-    cache only hits if the document block is identical for every set."""
-
-    def setUp(self):
-        self.app, self.config = load_extraction()
-        body = mock.MagicMock()
-        body.read.return_value = json.dumps(ENVELOPE).encode("utf-8")
-        self.app._s3.get_object.return_value = {"Body": body}
-
-    def run_with(self, schemas, usage=None):
-        self.config.load.return_value = FakeRegistry(schemas)
-        invoke = mock.MagicMock(return_value=(
-            {"f_company_name": {"value": "Cocoa Empire Uganda Ltd.",
-                                "unit": 1}},
-            usage or {"input_tokens": 11, "output_tokens": 7}))
-        with mock.patch.object(self.app, "_sql", FakeDb().sql),                 mock.patch.object(self.app, "_invoke", invoke):
-            result = self.app.lambda_handler(EVENT, None)
-        return result, [c.args[0] for c in invoke.call_args_list]
-
-    def test_the_document_block_is_the_same_for_every_set(self):
-        """Byte for byte, or the cache never hits."""
-        _, prompts = self.run_with({"a": {"fields": [SINGLE]},
-                                    "b": {"fields": [GOOD_GROUP]}})
-        self.assertEqual(len(prompts), 2)
-        self.assertEqual(prompts[0][0]["text"], prompts[1][0]["text"])
-        self.assertNotEqual(prompts[0][1]["text"], prompts[1][1]["text"])
-
-    def test_the_document_comes_before_the_field_list(self):
-        _, prompts = self.run_with({"a": {"fields": [SINGLE]}})
-        document, fields = [b["text"] for b in prompts[0]]
-        self.assertIn("--- DOCUMENT START ---", document)
-        self.assertIn("Cocoa Empire Uganda Ltd.", document)
-        self.assertNotIn("f_company_name", document)
-        self.assertIn("from the document above", fields)
-
-    def test_the_document_is_cached_only_where_a_second_set_reads_it(self):
-        """Writing the cache costs 1.25x input; a one-set filing would pay
-        that and read nothing back."""
-        _, one = self.run_with({"a": {"fields": [SINGLE]}})
-        self.assertNotIn("cache_control", one[0][0])
-        _, two = self.run_with({"a": {"fields": [SINGLE]},
-                                "b": {"fields": [SINGLE]}})
-        for prompt in two:
-            self.assertEqual(prompt[0]["cache_control"], {"type": "ephemeral"})
-            self.assertNotIn("cache_control", prompt[1])
-
-    def test_cache_tokens_are_counted(self):
-        """input_tokens excludes what the cache read or wrote, so leaving
-        these out would make a cached filing look cheaper than it was."""
-        usage = {"input_tokens": 300, "output_tokens": 20,
-                 "cache_read_input_tokens": 5000,
-                 "cache_creation_input_tokens": 0}
-        self.run_with({"a": {"fields": [SINGLE]}, "b": {"fields": [SINGLE]}},
-                      usage)
-        written = json.loads(
-            self.app._s3.put_object.call_args.kwargs["Body"].decode("utf-8"))
-        self.assertEqual(written["extraction_tokens"],
-                         {"input": 600, "output": 40,
-                          "cache_read": 10000, "cache_write": 0})
 
 
 if __name__ == "__main__":
