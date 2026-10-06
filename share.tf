@@ -401,14 +401,28 @@ data "aws_iam_policy_document" "share_viewer" {
   }
 
   # The one-time code sent to a recipient's own address before they may
-  # register (fix/share-registration-takeover). The same action the signup
-  # and API functions hold, for the same reason: SES scopes a send by the
-  # identity of the From address, and the handler takes that from SENDER,
-  # never from a request.
+  # register (fix/share-registration-takeover).
+  #
+  # SCOPED IN THE POLICY, NOT ONLY IN THE CODE. The handler sends from SENDER
+  # and nothing else; this makes that a rule IAM enforces as well. Two parts,
+  # because SES authorises a send against the VERIFIED IDENTITY, and the one
+  # verified here is the domain, arqedia.com - there is no identity for the
+  # address itself. So:
+  #   resource   the domain identity, the same one auth.tf reads, and
+  #   condition  ses:FromAddress equal to the one sender, so no other address
+  #              at the domain can be used either.
+  # A resource naming only identity/no-reply@arqedia.com would match no
+  # identity SES checks, and every send would be refused.
   statement {
     effect    = "Allow"
     actions   = ["ses:SendEmail"]
-    resources = ["*"]
+    resources = [data.aws_ses_domain_identity.sender.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ses:FromAddress"
+      values   = [var.signup_sender]
+    }
   }
 }
 
