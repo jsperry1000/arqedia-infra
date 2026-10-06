@@ -218,13 +218,26 @@ def _build_prompt(schema, envelope):
     # SUBJECT" means nothing until the model has been told which company
     # that is. Absent only where the handler has already refused, so this is
     # never silently omitted.
-    instruction = (
+    #
+    # THREE PIECES, THE SAME WORDS (extraction-cache-v2, 6 October 2026). The
+    # framing is the prompt's own text, unchanged and in its own order: the
+    # opening up to "these keys:", then the rules from "For each field" to
+    # "Return only the JSON object." What moved is the field list alone - it
+    # sat between those two and now follows the document - because it is the
+    # one part that differs from one field set to the next, and a cached
+    # prefix has to be identical byte for byte. #278 rewrote the framing as
+    # well as moving it, and lost specifics (work list 22.13); this moves
+    # only.
+    opening = (
         _subject_preamble(envelope["subject_name"])
         if envelope.get("subject_name") else ""
     ) + (
         "Extract the following from the document below. Return JSON with "
         "exactly these keys:\n\n"
-        "{\n" + "\n".join(lines) + "\n}\n\n"
+    )
+    field_list = "{\n" + "\n".join(lines) + "\n}"
+    rules = (
+        "\n\n"
         'For each field, "value" is what the document states, or null if it '
         "is not present. Do not infer, do not use outside knowledge.\n\n"
         '"unit" is the ' + word + " number the value was read from. "
@@ -255,13 +268,27 @@ def _build_prompt(schema, envelope):
 
     body = "".join(marked)[:MAX_CHARS]
 
-    prompt = (
-        instruction
-        + "\n\n--- DOCUMENT START ---\n"
+    document = (
+        "\n\n--- DOCUMENT START ---\n"
         + body
         + "\n--- DOCUMENT END ---"
     )
-    return prompt, len(raw) > MAX_CHARS
+    # The framing and the document are one block, the same for every set of
+    # one filing, so the second and later sets read it from the cache. The
+    # field list follows on its own. Before this the whole prompt was
+    # opening + field_list + rules + document; only field_list has moved.
+    blocks = [
+        {"type": "text", "text": opening + rules + document},
+        {"type": "text", "text": field_list},
+    ]
+    return blocks, len(raw) > MAX_CHARS
+
+
+def _cached(blocks):
+    """The same blocks with the framing and document marked for the prompt
+    cache. Only where a second set will read it: writing the cache costs
+    1.25x the input price, so a one-set filing would pay more for nothing."""
+    return [dict(blocks[0], cache_control={"type": "ephemeral"})] + blocks[1:]
 
 def _invoke(prompt):
     response = _bedrock.invoke_model(
@@ -499,7 +526,13 @@ def lambda_handler(event, context):
     schema_keys = registry.schemas_for(envelope.get("document_type"))
     results, total_written = {}, 0
     tokens_in = tokens_out = 0
+    # What the prompt cache did. input_tokens counts only what was neither
+    # read from nor written to the cache, so leaving these out would make a
+    # cached filing look cheaper than it was.
+    cache_read = cache_write = 0
     failures = []
+    # Cached only where a second set will read it (see _cached).
+    reread = len(schema_keys) > 1
 
     for schema_key in schema_keys:
         schema = registry.get_schema(schema_key)
@@ -520,10 +553,12 @@ def lambda_handler(event, context):
         # the worse answer. The failure is recorded either way.
         try:
             prompt, truncated = _build_prompt(schema, envelope)
-            extracted, usage = _invoke(prompt)
+            extracted, usage = _invoke(_cached(prompt) if reread else prompt)
 
             tokens_in += usage.get("input_tokens", 0)
             tokens_out += usage.get("output_tokens", 0)
+            cache_read += usage.get("cache_read_input_tokens", 0) or 0
+            cache_write += usage.get("cache_creation_input_tokens", 0) or 0
 
             if extracted is None:
                 results[schema_key] = {"status": "invalid-json"}
@@ -565,7 +600,9 @@ def lambda_handler(event, context):
     envelope["extraction_error"] = extraction_error
     envelope["extraction_complete"] = True
     envelope["extraction_results"] = results
-    envelope["extraction_tokens"] = {"input": tokens_in, "output": tokens_out}
+    envelope["extraction_tokens"] = {"input": tokens_in, "output": tokens_out,
+                                     "cache_read": cache_read,
+                                     "cache_write": cache_write}
     envelope["model_id"] = MODEL_ID
     # envelope["subject_name"] was set above, before the prompts were built.
     # It sits here beside model_id for the same reason: a value should be
@@ -602,10 +639,10 @@ def lambda_handler(event, context):
         )
 
     print("[extracted] doc={} schemas={} values={} failed={} error={} "
-          "tokens_in={} tokens_out={}".format(
+          "tokens_in={} tokens_out={} cache_read={} cache_write={}".format(
               envelope.get("document_id"), list(results.keys()),
               total_written, len(failures), extraction_error,
-              tokens_in, tokens_out))
+              tokens_in, tokens_out, cache_read, cache_write))
 
     return {
         "status": "ok",
