@@ -152,6 +152,12 @@ def share_invitation(shared_by, tenant_name, memo_label, subject, link,
         "\n"
         "%s\n"
         "\n"
+        # The link alone opens nothing on a browser it has not been used on
+        # (fix/share-link-possession-read). Said here, so the code email that
+        # follows the first open is expected rather than alarming.
+        "The first time you open it on a device, we'll email you a code to "
+        "confirm it's you.\n"
+        "\n"
         "The link is yours: it identifies you, and every page you read or "
         "download carries your address. Please do not forward it.\n"
         "\n"

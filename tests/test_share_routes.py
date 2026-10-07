@@ -444,15 +444,48 @@ class ViewerTest(unittest.TestCase):
         self.grants.put_item(Item=self.grant)
         self.context = mock.MagicMock(function_name="share-viewer")
 
+        # THIS BROWSER IS VERIFIED for the recipient, a day ago - so these
+        # tests read as the recipient on their own device, and nothing here
+        # counts as "fresh" (fix/share-link-possession-read). DeviceTest
+        # covers the browser that is not.
+        self.device = self.verified_device(
+            now - datetime.timedelta(days=1))
+
+    def verified_device(self, at, months=6):
+        """A device token for the recipient, verified at `at`, written as
+        _issue_device writes one."""
+        device_id, secret = "d" + str(int(at.timestamp())), "s3cret"
+        accounts = boto3.resource("dynamodb", region_name=REGION)             .Table("viewer")
+        held = accounts.get_item(
+            Key={"viewer_account_id": self.viewer}).get("Item") or {
+                "viewer_account_id": self.viewer,
+                "email": "j.ferrers@northbank.com",
+                "verified_at": self.rules.iso(at),
+                "created_at": self.rules.iso(at), "registered": False,
+                "marketing_opt_in": False}
+        devices = dict(held.get("devices") or {})
+        devices[device_id] = {
+            "hash": self.app._device_hash(self.viewer, secret),
+            "created_at": self.rules.iso(at),
+            "expires_at": self.rules.iso(self.rules.add_months(at, months)),
+            "user_agent": "test"}
+        held["devices"] = devices
+        accounts.put_item(Item=held)
+        return "%s.%s" % (device_id, secret)
+
     def tearDown(self):
         self.aws.stop()
         self.env.stop()
 
     def call(self, route, token="secret-token", gid=None, body=None,
-             claims=None):
+             claims=None, device="default"):
+        headers = {"authorization": "Share " + token} if token else {}
+        device = self.device if device == "default" else device
+        if device:
+            headers["x-arqedia-device"] = device
         event = {"routeKey": route,
                  "pathParameters": {"grant_id": gid or self.gid},
-                 "headers": {"authorization": "Share " + token} if token else {},
+                 "headers": headers,
                  "body": json.dumps(body or {}),
                  "requestContext": {"http": {"sourceIp": "1.2.3.4",
                                              "userAgent": "test"}}}
@@ -848,6 +881,226 @@ for _name in [n for n in dir(ViewerTest) if n.startswith("test_")]:
 for _name in [n for n in dir(RegisterCodeTest) if n.startswith("test_")]:
     if _name not in MfaSetupTest.__dict__:
         setattr(MfaSetupTest, _name, None)
+
+
+@unittest.skipUnless(HAVE, "moto, boto3, pypdf or reportlab not installed")
+class DeviceTest(RegisterCodeTest):
+    """The link alone opens nothing (fix/share-link-possession-read).
+
+    Reading and downloading take the link AND a device token for the
+    recipient, issued only once a code emailed to the recipient has been
+    entered on that browser. These are written from the side of somebody
+    holding a forwarded link, and of the recipient on their own device."""
+
+    def stranger(self, route="GET /view/{grant_id}", **kw):
+        """The link, from a browser never verified for this recipient."""
+        return self.call(route, device=None, **kw)
+
+    def verify_here(self):
+        """Ask for a device code and enter it, as the recipient would."""
+        self.app._ses.reset_mock()
+        status, _ = self.call("POST /view/{grant_id}/verify/code",
+                              device=None)
+        self.assertEqual(status, 200)
+        _, code = self.sent_code()
+        return self.call("POST /view/{grant_id}/verify", device=None,
+                         body={"code": code})
+
+    # --- the link alone ------------------------------------------------------
+
+    def test_the_link_alone_does_not_open_it(self):
+        status, body = self.stranger()
+        self.assertEqual(status, 401)
+        self.assertTrue(body["device_required"])
+        self.assertEqual(body["sent_to"], "j***@northbank.com")
+        self.assertNotIn("view_url", body)
+        # Not an open: nothing is logged against the grant.
+        self.app._lambda.invoke.assert_not_called()
+
+    def test_the_link_alone_does_not_download_it(self):
+        self.assertEqual(
+            self.stranger("POST /view/{grant_id}/download")[0], 401)
+        keys = [o["Key"] for o in self.s3.list_objects_v2(
+            Bucket="curated").get("Contents", [])]
+        self.assertFalse(any("/downloads/" in k for k in keys))
+
+    def test_a_wrong_or_made_up_device_token_is_refused(self):
+        for presented in ("rubbish", self.device.split(".")[0] + ".wrong",
+                          "nosuchdevice.s3cret"):
+            with self.subTest(presented=presented):
+                self.assertEqual(self.call("GET /view/{grant_id}",
+                                           device=presented)[0], 401)
+
+    def test_a_registered_recipients_link_alone_is_refused_too(self):
+        self.accounts.update_item(
+            Key={"viewer_account_id": self.viewer},
+            UpdateExpression="SET registered = :y",
+            ExpressionAttributeValues={":y": True})
+        status, body = self.stranger()
+        self.assertEqual(status, 401)
+        self.assertTrue(body["registered"])
+        self.assertEqual(self.call("GET /view/{grant_id}")[0], 200)
+
+    # --- the recipient, on their own device ---------------------------------
+
+    def test_a_verified_device_opens_and_downloads_with_nothing_more(self):
+        self.assertEqual(self.call("GET /view/{grant_id}")[0], 200)
+        self.assertEqual(self.call("POST /view/{grant_id}/download")[0], 200)
+        # No code, no email: no added friction on a verified device.
+        self.app._ses.send_email.assert_not_called()
+
+    def test_verifying_a_device_then_opening(self):
+        status, body = self.verify_here()
+        self.assertEqual(status, 200)
+        token = body["device_token"]
+        message = self.app._ses.send_email.call_args.kwargs
+        self.assertEqual(message["Destination"]["ToAddresses"],
+                         ["j.ferrers@northbank.com"])
+        self.assertIn("tell the person who sent it",
+                      message["Message"]["Body"]["Text"]["Data"])
+        self.assertEqual(self.call("GET /view/{grant_id}", device=token)[0],
+                         200)
+        # Only a hash is kept.
+        held = self.accounts.get_item(
+            Key={"viewer_account_id": self.viewer})["Item"]
+        self.assertNotIn(token.split(".")[1], json.dumps(held, default=str))
+
+    def test_a_wrong_code_issues_no_device(self):
+        self.call("POST /view/{grant_id}/verify/code", device=None)
+        status, body = self.call("POST /view/{grant_id}/verify", device=None,
+                                 body={"code": "000000"})
+        self.assertEqual(status, 400)
+        self.assertNotIn("device_token", body)
+
+    def test_a_forwarded_link_sends_its_code_to_the_recipient(self):
+        # Somebody else holds the link and asks for a code. It goes to the
+        # recipient's inbox, never to them, and the link stays shut.
+        self.stranger("POST /view/{grant_id}/verify/code",
+                      body={"email": "forwardee@elsewhere.test"})
+        message = self.app._ses.send_email.call_args.kwargs
+        self.assertEqual(message["Destination"]["ToAddresses"],
+                         ["j.ferrers@northbank.com"])
+        self.assertEqual(self.stranger()[0], 401)
+
+    def test_one_device_opens_every_share_to_the_same_recipient(self):
+        other = self.rules.grant_id(12, self.viewer)
+        self.grants.put_item(Item=dict(self.grant, grant_id=other,
+                                       memo_id=12, tenant_id=7,
+                                       link_token="other-token"))
+        self.assertEqual(self.call("GET /view/{grant_id}", gid=other,
+                                   token="other-token")[0], 200)
+
+    def test_a_device_for_another_recipient_opens_nothing_here(self):
+        other_viewer = self.rules.viewer_account_id("someone@else.test")
+        accounts = self.accounts
+        accounts.put_item(Item={
+            "viewer_account_id": other_viewer,
+            "devices": {"x1": {
+                "hash": self.app._device_hash(other_viewer, "s3cret"),
+                "created_at": self.rules.iso(self.rules.now()),
+                "expires_at": self.rules.iso(
+                    self.rules.add_months(self.rules.now(), 6))}}})
+        self.assertEqual(self.call("GET /view/{grant_id}",
+                                   device="x1.s3cret")[0], 401)
+
+    # --- expiry and the cap --------------------------------------------------
+
+    def test_a_device_lasts_six_months_and_is_not_renewed(self):
+        status, body = self.verify_here()
+        ends = self.rules.parse(body["expires_at"])
+        self.assertEqual(ends.date(), self.rules.add_months(
+            self.rules.now(), 6).date())
+        old = self.verified_device(
+            self.rules.now() - datetime.timedelta(days=200))
+        self.assertEqual(self.call("GET /view/{grant_id}", device=old)[0],
+                         401)
+
+    def test_ten_devices_at_most_and_the_oldest_goes(self):
+        for _ in range(10):
+            self.accounts.update_item(
+                Key={"viewer_account_id": self.viewer},
+                UpdateExpression="REMOVE code_sent_at, code_window_start, "
+                                 "code_window_count")
+            self.assertEqual(self.verify_here()[0], 200)
+        held = self.accounts.get_item(
+            Key={"viewer_account_id": self.viewer})["Item"]
+        self.assertEqual(len(held["devices"]), 10)
+        # The setUp device was the oldest of the eleven.
+        self.assertEqual(self.call("GET /view/{grant_id}")[0], 401)
+
+    # --- the code limits are shared ------------------------------------------
+
+    def test_device_and_register_codes_share_the_inbox_limits(self):
+        self.assertEqual(
+            self.call("POST /view/{grant_id}/register/code")[0], 200)
+        status, body = self.stranger("POST /view/{grant_id}/verify/code")
+        self.assertEqual(status, 400)
+        self.assertIn("minute ago", body["error"])
+
+    def test_a_device_code_cannot_register_and_a_register_code_cannot_verify(
+            self):
+        self.call("POST /view/{grant_id}/verify/code", device=None)
+        _, code = self.sent_code()
+        self.assertEqual(self.register(code)[0], 400)
+        self.app._cognito.admin_set_user_password.assert_not_called()
+
+    # --- registering from a freshly verified device -------------------------
+
+    def test_a_fresh_device_registers_without_a_second_code(self):
+        _, body = self.verify_here()
+        self.app._ses.reset_mock()
+        status, _ = self.call("POST /view/{grant_id}/register",
+                              device=body["device_token"], body={
+                                  "email_code": "", "accept_terms": True,
+                                  "password": "Correct-horse-9",
+                                  "marketing_opt_in": False})
+        self.assertEqual(status, 200)
+        self.app._cognito.admin_set_user_password.assert_called_once()
+        self.app._ses.send_email.assert_not_called()
+
+    def test_an_older_device_still_needs_the_code(self):
+        status, body = self.call("POST /view/{grant_id}/register", body={
+            "email_code": "", "accept_terms": True,
+            "password": "Correct-horse-9", "marketing_opt_in": False})
+        self.assertEqual(status, 400)
+        self.assertTrue(body["code_required"])
+        self.app._cognito.admin_create_user.assert_not_called()
+
+    def test_a_bad_password_on_a_fresh_device_is_not_a_code_request(self):
+        _, body = self.verify_here()
+        status, reply = self.call("POST /view/{grant_id}/register",
+                                  device=body["device_token"], body={
+                                      "email_code": "", "accept_terms": True,
+                                      "password": "short",
+                                      "marketing_opt_in": False})
+        self.assertEqual(status, 400)
+        self.assertNotIn("code_required", reply)
+
+    def test_the_page_says_which_registration_it_needs(self):
+        _, page = self.call("GET /view/{grant_id}")
+        self.assertTrue(page["register_needs_code"])
+        _, body = self.verify_here()
+        _, page = self.call("GET /view/{grant_id}",
+                            device=body["device_token"])
+        self.assertFalse(page["register_needs_code"])
+
+    # --- an unused device code is shown to the recipient ---------------------
+
+    def test_an_unused_device_code_is_shown_and_cleared_once_used(self):
+        self.stranger("POST /view/{grant_id}/verify/code")
+        _, page = self.call("GET /view/{grant_id}")
+        self.assertIsNotNone(page["unused_device_code_at"])
+        # Entered (on any browser), it is no longer unused.
+        _, code = self.sent_code()
+        self.call("POST /view/{grant_id}/verify", device=None,
+                  body={"code": code})
+        _, page = self.call("GET /view/{grant_id}")
+        self.assertIsNone(page["unused_device_code_at"])
+
+
+for _name in [n for n in dir(RegisterCodeTest) if n.startswith("test_")]:
+    if _name not in DeviceTest.__dict__:
+        setattr(DeviceTest, _name, None)
 
 
 class RulesTest(unittest.TestCase):

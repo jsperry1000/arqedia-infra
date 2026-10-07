@@ -188,7 +188,11 @@ resource "aws_apigatewayv2_api" "main" {
   cors_configuration {
     allow_origins = local.browser_origins
     allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-    allow_headers = ["authorization", "content-type"]
+    # x-arqedia-device: a share recipient's verified-browser token, sent with
+    # the link on the viewer's /view routes (fix/share-link-possession-read).
+    # A header rather than a cookie, because this API's hostname is not
+    # app.arqedia.com's site and its cookie would be third-party there.
+    allow_headers = ["authorization", "content-type", "x-arqedia-device"]
     max_age       = 3600
   }
 

@@ -27,6 +27,11 @@ import logoWhite from "../../brand/logo-white.svg";
  *
  * A REGISTERED VIEWER signs in at /viewer to a pool of their own - never the
  * customer pool - and their token is kept for this tab only.
+ *
+ * THE LINK ALONE OPENS NOTHING (fix/share-link-possession-read). The first
+ * open on a browser asks for a code emailed to the recipient, and keeps a
+ * device token for them once it is entered (api.ts). A forwarded link asks
+ * whoever holds it for a code they cannot get.
  */
 
 const SESSION_KEY = "arqedia.viewer.id_token";
@@ -84,12 +89,21 @@ function Memorandum({ grantId, credential, onSignedIn }: {
   const [error, setError] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [registering, setRegistering] = useState(false);
+  // This browser is not verified for the share's recipient: what the server
+  // said, so the screen can name where the code goes and offer sign-in.
+  const [device, setDevice] = useState<{ sentTo: string; registered: boolean } | null>(null);
 
   async function load() {
     setError("");
+    setDevice(null);
     try {
       setPage(await viewerApi.open(grantId, credential));
     } catch (err) {
+      if (err instanceof ViewerError && err.deviceRequired) {
+        setDevice({ sentTo: String(err.detail?.sent_to ?? ""),
+                    registered: err.detail?.registered === true });
+        return;
+      }
       setError(String((err as Error).message));
     }
   }
@@ -108,6 +122,16 @@ function Memorandum({ grantId, credential, onSignedIn }: {
     }
   }
 
+  if (device && credential.kind === "link") {
+    return (
+      <div className="viewer public">
+        <Bar />
+        <VerifyDevice grantId={grantId} token={credential.token}
+                      sentTo={device.sentTo} registered={device.registered}
+                      onVerified={load} />
+      </div>
+    );
+  }
   if (error && !page) {
     return (
       <div className="viewer public">
@@ -153,6 +177,10 @@ function Memorandum({ grantId, credential, onSignedIn }: {
 
       {error && <p className="error viewer-message">{error}</p>}
 
+      {page.unused_device_code_at && !dismissed(page.unused_device_code_at) && (
+        <UnusedCode at={page.unused_device_code_at} />
+      )}
+
       {registering && credential.kind === "link" && (
         <Register grantId={grantId} token={credential.token} page={page}
                   onDone={(idToken, expiresAt) => {
@@ -171,6 +199,120 @@ function Memorandum({ grantId, credential, onSignedIn }: {
         and a downloaded copy also carries the time it was taken.
       </p>
     </div>
+  );
+}
+
+// --- verifying this browser ----------------------------------------------------
+
+/** The first open on a browser: a code to the recipient's own inbox, then
+ *  the memorandum. Nothing of it is shown before. */
+function VerifyDevice({ grantId, token, sentTo, registered, onVerified }: {
+  grantId: string;
+  token: string;
+  sentTo: string;
+  registered: boolean;
+  onVerified: () => void;
+}) {
+  const [sent, setSent] = useState(false);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function send() {
+    setBusy(true);
+    setError("");
+    try {
+      await viewerApi.verifyCode(grantId, token);
+      setSent(true);
+    } catch (err) {
+      setError(String((err as Error).message));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function verify() {
+    setBusy(true);
+    setError("");
+    try {
+      await viewerApi.verify(grantId, token, code.trim());
+      onVerified();
+    } catch (err) {
+      setError(String((err as Error).message));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="viewer-register form">
+      <h4>Confirm it&rsquo;s you</h4>
+      <p className="small">
+        This memorandum was shared with {sentTo}. To open it on this device,
+        we&rsquo;ll email a code to that address. You only do this once on
+        each device.
+      </p>
+      {!sent ? (
+        <div className="form-actions">
+          <button onClick={send} disabled={busy}>
+            {busy ? "Sending…" : "Email me a code"}
+          </button>
+        </div>
+      ) : (
+        <>
+          <label className="row">
+            <span>Code sent to {sentTo} &mdash; it lasts ten minutes</span>
+            <input inputMode="numeric" autoComplete="one-time-code" value={code}
+                   onChange={(e) => setCode(e.target.value)} />
+          </label>
+          <p className="small">
+            Not arrived? <a onClick={busy ? undefined : send}>Send another</a>.
+          </p>
+          <div className="form-actions">
+            <button onClick={verify} disabled={busy || code.trim().length < 6}>
+              {busy ? "Checking…" : "Open"}
+            </button>
+          </div>
+        </>
+      )}
+      {registered && (
+        <p className="muted small">
+          Registered? <a href="/viewer">Sign in instead</a>.
+        </p>
+      )}
+      <p className="muted small">
+        If this link was forwarded to you, it won&rsquo;t open here: ask the
+        person who shared it to share it with you directly.
+      </p>
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
+// An unused new-device code, said once per code. Dismissing it is a matter
+// for this browser only, so it is kept in local storage by the code's time.
+const SEEN_KEY = "arqedia.unused-code-seen";
+
+function dismissed(at: string): boolean {
+  try { return localStorage.getItem(SEEN_KEY) === at; } catch { return false; }
+}
+
+/** Asked for on 7 October: the recipient's sign, besides the warning email,
+ *  that a new-device code went out and was never entered. */
+function UnusedCode({ at }: { at: string }) {
+  const [gone, setGone] = useState(false);
+  if (gone) return null;
+  return (
+    <p className="warn viewer-message">
+      A code to open your shares on a new device was emailed to you on{" "}
+      {at.slice(0, 16).replace("T", " ")} UTC and hasn&rsquo;t been used. If
+      that wasn&rsquo;t you, someone else may have your link &mdash; tell the
+      person who sent it.{" "}
+      <a onClick={() => {
+        try { localStorage.setItem(SEEN_KEY, at); } catch { /* fine */ }
+        setGone(true);
+      }}>Dismiss</a>
+    </p>
   );
 }
 
@@ -199,6 +341,10 @@ function Register({ grantId, token, page, onDone, onCancel }: {
   // forwarded; registering needs what only the recipient's inbox has.
   const [sentTo, setSentTo] = useState("");
   const [emailCode, setEmailCode] = useState("");
+  // A browser verified in the last fifteen minutes has just proved the
+  // inbox, and registers without a second code. If those minutes pass while
+  // the form is open, the server asks after all, and the code step appears.
+  const [needsCode, setNeedsCode] = useState(page.register_needs_code);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -219,9 +365,17 @@ function Register({ grantId, token, page, onDone, onCancel }: {
     setError("");
     try {
       setSetup(await viewerApi.register(grantId, token, {
-        email_code: emailCode.trim(), password, accept_terms: terms,
-        marketing_opt_in: marketing }));
+        email_code: needsCode ? emailCode.trim() : "", password,
+        accept_terms: terms, marketing_opt_in: marketing }));
     } catch (err) {
+      // Only the server's own "a code is needed" - never any 400, which
+      // would turn a rejected password into a request for a code.
+      if (err instanceof ViewerError && err.detail?.code_required === true) {
+        setNeedsCode(true);
+        setSentTo("");
+        setError(String(err.message));
+        return;
+      }
       setError(String((err as Error).message));
     } finally {
       setBusy(false);
@@ -274,7 +428,7 @@ function Register({ grantId, token, page, onDone, onCancel }: {
         </p>
       )}
 
-      {!setup && !sentTo ? (
+      {!setup && needsCode && !sentTo ? (
         <>
           <p className="small">
             First we email a code to {page.recipient_email}, the address this
@@ -294,15 +448,19 @@ function Register({ grantId, token, page, onDone, onCancel }: {
             <span>Email</span>
             <input value={page.recipient_email} disabled />
           </label>
-          <label className="row">
-            <span>Code sent to {sentTo} &mdash; it lasts ten minutes</span>
-            <input inputMode="numeric" autoComplete="one-time-code"
-                   value={emailCode}
-                   onChange={(e) => setEmailCode(e.target.value)} />
-          </label>
-          <p className="small">
-            Not arrived? <a onClick={busy ? undefined : sendCode}>Send another</a>.
-          </p>
+          {needsCode && (
+            <>
+              <label className="row">
+                <span>Code sent to {sentTo} &mdash; it lasts ten minutes</span>
+                <input inputMode="numeric" autoComplete="one-time-code"
+                       value={emailCode}
+                       onChange={(e) => setEmailCode(e.target.value)} />
+              </label>
+              <p className="small">
+                Not arrived? <a onClick={busy ? undefined : sendCode}>Send another</a>.
+              </p>
+            </>
+          )}
           <label className="row">
             <span>Password &mdash; at least 12 characters, upper case, lower case and a number</span>
             <input type="password" value={password}
@@ -324,7 +482,7 @@ function Register({ grantId, token, page, onDone, onCancel }: {
           <div className="form-actions">
             <button onClick={begin}
                     disabled={busy || !terms || !password
-                              || emailCode.trim().length < 6}>
+                              || (needsCode && emailCode.trim().length < 6)}>
               {busy ? "Working…" : "Continue"}
             </button>
             <a className="secondary" onClick={onCancel}>Not now</a>
