@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Arqedia",
+    "slug": "arqedia-mobile",
+    "scheme": "arqedia",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.arqedia.mobile"
+    },
+    "android": {
+      "package": "com.arqedia.mobile"
+    },
+    "plugins": [
+      "expo-asset"
+    ]
+  }
+}

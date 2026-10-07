@@ -56,3 +56,7 @@ __pycache__/
 # A .txt at the root that IS worth keeping can be forced in with `git add -f`,
 # or given its own negation below.
 /*.txt
+
+# Mobile app (Expo): dependencies and Expo's local cache
+mobile/**/node_modules/
+mobile/**/.expo/
