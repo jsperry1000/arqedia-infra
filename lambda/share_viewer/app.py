@@ -513,6 +513,7 @@ def _register(grant, body):
     email = grant["recipient_email"]
     # THE ADDRESS IS VERIFIED by the code just spent, which only its inbox
     # could supply. Cognito sends nothing.
+    restarted = False
     try:
         _cognito.admin_create_user(
             UserPoolId=VIEWER_POOL_ID, Username=email,
@@ -522,8 +523,12 @@ def _register(grant, body):
     except ClientError as exc:
         # An earlier registration that never finished its MFA setup. The
         # account item says not registered, so the user is theirs to finish.
+        # The key issued below REPLACES the one that attempt issued, and the
+        # screen says so: an authenticator entry from before now makes codes
+        # that will never match.
         if _code(exc) != "UsernameExistsException":
             raise
+        restarted = True
 
     try:
         # THE PASSWORD IS NEVER STORED. It passes through here once, to the
@@ -549,9 +554,80 @@ def _register(grant, body):
         Session=started["Session"])
     secret = associated["SecretCode"]
     label = urllib.parse.quote("ARQEDIA:%s" % email)
+    otpauth = "otpauth://totp/%s?secret=%s&issuer=ARQEDIA" % (label, secret)
     return {"session": associated["Session"], "secret_code": secret,
-            "otpauth": "otpauth://totp/%s?secret=%s&issuer=ARQEDIA"
-                       % (label, secret)}
+            "otpauth": otpauth, "qr_svg": _setup_qr(otpauth),
+            "restarted": restarted}
+
+
+# What the authenticator step says, one sentence per cause
+# (fix/viewer-mfa-setup-timeout). All three used to read "check the time on
+# your device", so a session that had simply timed out - the live failure of
+# 7 October, a first code 3 minutes 15 seconds after a 3-minute session - sent
+# the person off to fix a clock that was right.
+MFA_SESSION_EXPIRED = ("This step timed out. Setting up the authenticator has "
+                       "to be finished within 15 minutes. Start again and "
+                       "we'll email you a new code.")
+MFA_CODE_MISMATCH = ("That code didn't match. Check the key was added exactly "
+                     "as shown and enter the next code your app shows. If it "
+                     "keeps failing, check your device sets its clock "
+                     "automatically.")
+MFA_SETUP_FAILED = ("Something went wrong setting up the authenticator. Start "
+                    "again.")
+
+# Cognito's error code -> (the sentence, whether the person must start again).
+# A wrong code can be retried in the same session; an expired or broken one
+# cannot, and the screen offers Start again rather than another try.
+MFA_SETUP_ERRORS = {
+    "NotAuthorizedException": (MFA_SESSION_EXPIRED, True),
+    "CodeMismatchException": (MFA_CODE_MISMATCH, False),
+    "EnableSoftwareTokenMFAException": (MFA_CODE_MISMATCH, False),
+}
+
+
+class MfaSetupRestart(Exception):
+    """The authenticator setup cannot go on in this session. 400, with
+    restart: true, so the screen leads back to a new emailed code."""
+
+
+def _setup_refused(exc, step):
+    """Cognito refused the authenticator setup. Logged by its own error code -
+    the reason the 7 October failure took a timing table to diagnose is that
+    nothing said which error it was - then answered with the sentence for
+    that cause."""
+    code = _code(exc)
+    print("[mfa-setup-refused] step=%s code=%s" % (step, code))
+    message, restart = MFA_SETUP_ERRORS.get(code, (MFA_SETUP_FAILED, True))
+    if restart:
+        raise MfaSetupRestart(message)
+    raise ValueError(message)
+
+
+def _setup_qr(otpauth):
+    """The authenticator setup link as a QR code, SVG, beside the typed key
+    rather than instead of it - somebody may be setting up on a device with no
+    camera.
+
+    reportlab's own QR generator, already in the layer for the PDFs: no new
+    dependency, and the secret goes nowhere it does not already go. Built
+    from the same otpauth link the typed key comes from, so the two cannot
+    disagree. None if it cannot be drawn: the typed key still works, and a
+    missing picture must not stop a registration."""
+    try:
+        from reportlab.graphics import renderSVG
+        from reportlab.graphics.barcode.qr import QrCodeWidget
+        from reportlab.graphics.shapes import Drawing
+
+        widget = QrCodeWidget(otpauth, barLevel="M")
+        x0, y0, x1, y1 = widget.getBounds()
+        size = 200
+        drawing = Drawing(size, size, transform=[
+            size / (x1 - x0), 0, 0, size / (y1 - y0), 0, 0])
+        drawing.add(widget)
+        return renderSVG.drawToString(drawing)
+    except Exception as exc:  # noqa: BLE001 - the typed key still works
+        print("[mfa-qr-not-drawn] %r" % exc)
+        return None
 
 
 def _confirm(grant, body):
@@ -569,18 +645,20 @@ def _confirm(grant, body):
             UserCode=str(body.get("code") or "").strip(),
             FriendlyDeviceName="ARQEDIA viewer")
     except ClientError as exc:
-        if _code(exc) in ("CodeMismatchException", "EnableSoftwareTokenMFAException",
-                          "NotAuthorizedException"):
-            raise ValueError(CODE_FAILED)
-        raise
+        _setup_refused(exc, "verify")
     if verified.get("Status") != "SUCCESS":
-        raise ValueError(CODE_FAILED)
+        print("[mfa-setup-refused] step=verify status=%s"
+              % verified.get("Status"))
+        raise ValueError(MFA_CODE_MISMATCH)
 
-    signed_in = _cognito.admin_respond_to_auth_challenge(
-        UserPoolId=VIEWER_POOL_ID, ClientId=VIEWER_CLIENT_ID,
-        ChallengeName="MFA_SETUP",
-        ChallengeResponses={"USERNAME": email},
-        Session=verified["Session"])
+    try:
+        signed_in = _cognito.admin_respond_to_auth_challenge(
+            UserPoolId=VIEWER_POOL_ID, ClientId=VIEWER_CLIENT_ID,
+            ChallengeName="MFA_SETUP",
+            ChallengeResponses={"USERNAME": email},
+            Session=verified["Session"])
+    except ClientError as exc:
+        _setup_refused(exc, "respond")
     _cognito.admin_set_user_mfa_preference(
         UserPoolId=VIEWER_POOL_ID, Username=email,
         SoftwareTokenMfaSettings={"Enabled": True, "PreferredMfa": True})
@@ -813,6 +891,8 @@ def _dispatch(event, context):
 
     except EmailNotSent:
         return _reply(502, {"error": EMAIL_CODE_NOT_SENT})
+    except MfaSetupRestart as exc:
+        return _reply(400, {"error": str(exc), "restart": True})
     except PermissionError as exc:
         return _reply(403, {"error": str(exc)})
     except ValueError as exc:

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
-  viewerApi, statusOf,
+  viewerApi, statusOf, ViewerError,
   type ViewerCredential, type ViewerPage, type ViewerShare,
 } from "./api";
 import { config } from "./config";
@@ -189,7 +189,11 @@ function Register({ grantId, token, page, onDone, onCancel }: {
   // applies where (share_viewer_spec §7.1). Unticked is never wrong.
   const [marketing, setMarketing] = useState(false);
   const [setup, setSetup] = useState<{ session: string; secret_code: string;
-                                       otpauth: string } | null>(null);
+                                       otpauth: string; qr_svg: string | null;
+                                       restarted: boolean } | null>(null);
+  // The authenticator step cannot go on - the session timed out - and the
+  // way forward is a new emailed code, not another try at this one.
+  const [mustRestart, setMustRestart] = useState(false);
   const [code, setCode] = useState("");
   // The code emailed to the recipient's own address. A link can be
   // forwarded; registering needs what only the recipient's inbox has.
@@ -235,9 +239,22 @@ function Register({ grantId, token, page, onDone, onCancel }: {
       onDone(done.id_token, done.expires_at ?? page.expires_at);
     } catch (err) {
       setError(String((err as Error).message));
+      setMustRestart(err instanceof ViewerError && err.restart);
     } finally {
       setBusy(false);
     }
+  }
+
+  /** Back to the first step: a new emailed code, then the password, then a
+   *  new key. The old key is spent - the screen says so when the new one
+   *  arrives (restarted). The password typed is kept. */
+  function startAgain() {
+    setSetup(null);
+    setSentTo("");
+    setEmailCode("");
+    setCode("");
+    setError("");
+    setMustRestart(false);
   }
 
   return (
@@ -315,28 +332,64 @@ function Register({ grantId, token, page, onDone, onCancel }: {
         </>
       ) : (
         <>
-          <p className="small">
-            Add ARQEDIA to your authenticator app with this key, then enter
-            the six-digit code it shows.
-          </p>
-          <p><code className="secret">{setup.secret_code.replace(/(.{4})/g, "$1 ").trim()}</code></p>
-          <p className="small">
-            On a phone, <a href={setup.otpauth}>open it in your authenticator</a>.
-          </p>
-          <label className="row">
-            <span>Code</span>
-            <input inputMode="numeric" autoComplete="one-time-code" value={code}
-                   onChange={(e) => setCode(e.target.value)} />
-          </label>
-          <div className="form-actions">
-            <button onClick={confirm} disabled={busy || code.trim().length < 6}>
-              {busy ? "Checking…" : "Register"}
-            </button>
-            <a className="secondary" onClick={onCancel}>Not now</a>
-          </div>
+          {/* Once the session has gone, the key and QR below are spent:
+              hidden, so nobody tries again with them. Start again issues
+              new ones. */}
+          {!mustRestart && (
+            <>
+              {/* Only after a restart: the key below replaces the one the
+                  earlier attempt issued, so its authenticator entry now makes
+                  codes that never match (stale-entry notice, approved wording). */}
+              {setup.restarted && (
+                <p className="warn">
+                  You started registering before. Delete the earlier ARQEDIA
+                  entry from your authenticator app first. This new key replaces
+                  it, and the old entry&rsquo;s codes won&rsquo;t work.
+                </p>
+              )}
+              <p className="small">
+                Scan this with your authenticator app, or add the key by hand,
+                then enter the six-digit code it shows. You have 15 minutes.
+              </p>
+              {/* Beside the typed key, not instead of it: somebody may be
+                  setting up on a device with no camera. Drawn by the server from
+                  the same setup link as the key, so the two cannot disagree. */}
+              {setup.qr_svg && (
+                <img className="setup-qr" alt="QR code for your authenticator app"
+                     width={180} height={180}
+                     src={"data:image/svg+xml;charset=utf-8,"
+                          + encodeURIComponent(setup.qr_svg)} />
+              )}
+              <p><code className="secret">{setup.secret_code.replace(/(.{4})/g, "$1 ").trim()}</code></p>
+              <p className="small">
+                On a phone, <a href={setup.otpauth}>open it in your authenticator</a>.
+              </p>
+            </>
+          )}
+          {!mustRestart && (
+            <>
+              <label className="row">
+                <span>Code</span>
+                <input inputMode="numeric" autoComplete="one-time-code" value={code}
+                       onChange={(e) => setCode(e.target.value)} />
+              </label>
+              <div className="form-actions">
+                <button onClick={confirm} disabled={busy || code.trim().length < 6}>
+                  {busy ? "Checking…" : "Register"}
+                </button>
+                <a className="secondary" onClick={onCancel}>Not now</a>
+              </div>
+            </>
+          )}
         </>
       )}
       {error && <p className="error">{error}</p>}
+      {mustRestart && (
+        <div className="form-actions">
+          <button onClick={startAgain}>Start again</button>
+          <a className="secondary" onClick={onCancel}>Not now</a>
+        </div>
+      )}
     </div>
   );
 }
