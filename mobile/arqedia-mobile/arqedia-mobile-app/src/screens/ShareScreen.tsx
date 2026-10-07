@@ -111,7 +111,7 @@ export default function ShareScreen() {
     setMemo(null);
     setMemos(null);
     try {
-      setMemos((await api.memos(e.engagement_id)).memos);
+      setMemos((await api.memos(e.engagement)).memos);
     } catch (err: any) {
       setError(err?.message || String(err));
     }

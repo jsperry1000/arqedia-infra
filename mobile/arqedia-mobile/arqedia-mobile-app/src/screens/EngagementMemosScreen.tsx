@@ -17,10 +17,10 @@ export default function EngagementMemosScreen({ route, navigation }: Props) {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.memos(engagement.engagement_id)
+    api.memos(engagement.engagement)
       .then((r) => setMemos(r.memos))
       .catch((err) => setError(err?.message || String(err)));
-  }, [engagement.engagement_id]);
+  }, [engagement.engagement]);
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>

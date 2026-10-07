@@ -73,8 +73,12 @@ export const api = {
     return call('/engagements');
   },
 
-  memos(engagementId: number): Promise<{ memos: MemoRef[] }> {
-    return call(`/engagements/${encodeURIComponent(engagementId)}/memos`);
+  /** BY NAME, NOT ID. The route's {id} is the engagement's name: the handler
+   *  looks it up with engagement_named (lambda/api/app.py), as the web app
+   *  calls it. An engagement_id here is read as a name and refused with
+   *  "no engagement called 17". */
+  memos(engagementName: string): Promise<{ memos: MemoRef[] }> {
+    return call(`/engagements/${encodeURIComponent(engagementName)}/memos`);
   },
 
   /** The PDF is rendered when asked for, not stored. */
