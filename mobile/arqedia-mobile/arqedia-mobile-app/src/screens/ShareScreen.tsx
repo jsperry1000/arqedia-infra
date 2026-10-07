@@ -60,7 +60,7 @@ export default function ShareScreen() {
                   { borderColor: selected ? colors.deep : colors.border, borderWidth: selected ? 1.5 : 1 },
                 ]}
               >
-                <View style={[styles.memoIcon, { backgroundColor: selected ? colors.light : '#F1EFE9' }]} />
+                <View style={[styles.memoIcon, { backgroundColor: selected ? colors.light : colors.shade }]} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.memoTitle} numberOfLines={1}>{m.title}</Text>
                   <Text style={styles.memoSubtitle}>{m.memo_type} · rev. {m.revision}</Text>
@@ -157,7 +157,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 12,
   },
   input: { paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.ink },
-  divider: { height: 1, backgroundColor: '#EEEBE4', marginHorizontal: 14 },
+  divider: { height: 1, backgroundColor: colors.border, marginHorizontal: 14 },
   grantRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },
   avatar: {
     width: 30, height: 30, borderRadius: 999, backgroundColor: colors.light,

@@ -121,7 +121,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
-  rowLineBorder: { borderBottomWidth: 1, borderBottomColor: '#EEEBE4' },
+  rowLineBorder: { borderBottomWidth: 1, borderBottomColor: colors.border },
   rowLabel: { fontSize: 13.5, color: colors.subtext },
   rowValue: { fontSize: 13.5, fontWeight: '600', color: colors.ink },
   actionBar: {

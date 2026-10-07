@@ -7,6 +7,7 @@ export const colors = {
   deep: '#002561', // --deep
   mid: '#278ACA', // --medium
   light: '#C7E4F8', // --light
+  // reserved for the generate control only — do not use elsewhere.
   highlight: '#FFDD00', // --gold
 
   ink: '#0d1b2a', // --ink
@@ -15,4 +16,5 @@ export const colors = {
   border: '#e2e8f0', // --line
   surface: '#ffffff', // --paper
   background: '#f7fafd', // --wash
+  shade: '#eef4fa', // --shade
 } as const;
