@@ -743,10 +743,111 @@ class RegisterCodeTest(ViewerTest):
         self.app._ses.send_email.assert_not_called()
 
 
-# ViewerTest's own tests run once, on ViewerTest, not again on its subclass.
+@unittest.skipUnless(HAVE, "moto, boto3, pypdf or reportlab not installed")
+class MfaSetupTest(RegisterCodeTest):
+    """The authenticator step (fix/viewer-mfa-setup-timeout).
+
+    Each Cognito refusal has its own sentence. They all used to read "check
+    the time on your device", and on 7 October a session that had simply
+    expired sent the person to fix a clock that was right. This is exactly
+    the kind of mapping that regresses silently, so every code is named."""
+
+    def confirm(self, code="123456"):
+        return self.call("POST /view/{grant_id}/register/confirm", body={
+            "session": "s2", "code": code, "accept_terms": True,
+            "marketing_opt_in": False})
+
+    def refusal(self, code):
+        return self.app.ClientError({"Error": {"Code": code}}, "Verify")
+
+    def test_each_cognito_error_has_its_own_sentence(self):
+        expected = {
+            "NotAuthorizedException":
+                (self.app.MFA_SESSION_EXPIRED, True),
+            "CodeMismatchException":
+                (self.app.MFA_CODE_MISMATCH, False),
+            "EnableSoftwareTokenMFAException":
+                (self.app.MFA_CODE_MISMATCH, False),
+            "SomethingNobodyExpected":
+                (self.app.MFA_SETUP_FAILED, True),
+        }
+        for code, (message, restart) in expected.items():
+            with self.subTest(code=code):
+                self.app._cognito.verify_software_token.side_effect = \
+                    self.refusal(code)
+                status, body = self.confirm()
+                self.assertEqual(status, 400)
+                self.assertEqual(body["error"], message)
+                self.assertEqual(body.get("restart", False), restart)
+
+    def test_an_expired_session_is_not_blamed_on_the_clock(self):
+        self.app._cognito.verify_software_token.side_effect = \
+            self.refusal("NotAuthorizedException")
+        _, body = self.confirm()
+        self.assertIn("timed out", body["error"])
+        self.assertNotIn("clock", body["error"])
+        self.assertNotIn("time on your device", body["error"])
+        self.assertNotEqual(self.app.MFA_SESSION_EXPIRED,
+                            self.app.MFA_CODE_MISMATCH)
+
+    def test_a_session_that_expires_after_the_code_still_says_so(self):
+        # The code matched, then the session ran out before the challenge
+        # was answered.
+        self.app._cognito.verify_software_token.side_effect = None
+        self.app._cognito.verify_software_token.return_value = {
+            "Status": "SUCCESS", "Session": "s3"}
+        self.app._cognito.admin_respond_to_auth_challenge.side_effect = \
+            self.refusal("NotAuthorizedException")
+        _, body = self.confirm()
+        self.assertEqual(body["error"], self.app.MFA_SESSION_EXPIRED)
+        self.assertTrue(body["restart"])
+
+    def test_a_status_other_than_success_is_a_mismatch(self):
+        self.app._cognito.verify_software_token.side_effect = None
+        self.app._cognito.verify_software_token.return_value = {
+            "Status": "ERROR"}
+        _, body = self.confirm()
+        self.assertEqual(body["error"], self.app.MFA_CODE_MISMATCH)
+        self.assertNotIn("restart", body)
+
+    def test_the_key_comes_with_a_qr_code_and_no_restart_flag(self):
+        self.call("POST /view/{grant_id}/register/code")
+        _, code = self.sent_code()
+        status, body = self.register(code)
+        self.assertEqual(status, 200)
+        self.assertTrue(body["qr_svg"].lstrip().startswith("<?xml"))
+        self.assertIn("<svg", body["qr_svg"])
+        self.assertFalse(body["restarted"])
+        self.assertIn("secret=ABCD", body["otpauth"])
+
+    def test_a_restart_is_flagged_so_the_stale_entry_is_named(self):
+        self.app._cognito.admin_create_user.side_effect = \
+            self.app.ClientError({"Error": {"Code": "UsernameExistsException"}},
+                                 "AdminCreateUser")
+        self.call("POST /view/{grant_id}/register/code")
+        _, code = self.sent_code()
+        status, body = self.register(code)
+        self.assertEqual(status, 200)
+        self.assertTrue(body["restarted"])
+
+    def test_no_qr_still_registers(self):
+        with mock.patch.object(self.app, "_setup_qr", return_value=None):
+            self.call("POST /view/{grant_id}/register/code")
+            _, code = self.sent_code()
+            status, body = self.register(code)
+        self.assertEqual(status, 200)
+        self.assertIsNone(body["qr_svg"])
+        self.assertEqual(body["secret_code"], "ABCD")
+
+
+# ViewerTest's own tests run once, on ViewerTest, not again on its subclass;
+# RegisterCodeTest's likewise, not again on MfaSetupTest.
 for _name in [n for n in dir(ViewerTest) if n.startswith("test_")]:
     if _name not in RegisterCodeTest.__dict__:
         setattr(RegisterCodeTest, _name, None)
+for _name in [n for n in dir(RegisterCodeTest) if n.startswith("test_")]:
+    if _name not in MfaSetupTest.__dict__:
+        setattr(MfaSetupTest, _name, None)
 
 
 class RulesTest(unittest.TestCase):

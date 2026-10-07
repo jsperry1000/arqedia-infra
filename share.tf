@@ -304,6 +304,14 @@ resource "aws_cognito_user_pool_client" "viewer" {
   id_token_validity      = 60
   refresh_token_validity = 30
 
+  # How long each sign-in challenge - the authenticator setup above all -
+  # stays open. Cognito's default is 3 minutes, and 15 is its maximum. Three
+  # was not enough to scan or type a key and switch apps: on 7 October the
+  # first code arrived 3 minutes 15 seconds after the setup began, and every
+  # try after that failed on a session already gone
+  # (fix/viewer-mfa-setup-timeout).
+  auth_session_validity = 15
+
   token_validity_units {
     access_token  = "minutes"
     id_token      = "minutes"

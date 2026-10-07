@@ -1591,10 +1591,24 @@ async function viewerCall(path: string, credential: ViewerCredential | null,
   let parsed: any = null;
   try { parsed = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
   if (!res.ok) {
-    throw new ApiError(res.status,
-                       parsed?.error ?? text ?? `Request failed (${res.status}).`);
+    throw new ViewerError(res.status,
+                          parsed?.error ?? text ?? `Request failed (${res.status}).`,
+                          parsed?.restart === true);
   }
   return parsed;
+}
+
+/** A viewer refusal. `restart` is the server saying this step cannot go on -
+ *  an authenticator setup that timed out - and the screen should lead back
+ *  to a new emailed code rather than offer another try. */
+export class ViewerError extends ApiError {
+  readonly restart: boolean;
+
+  constructor(status: number, body: string, restart: boolean) {
+    super(status, body);
+    this.name = "ViewerError";
+    this.restart = restart;
+  }
 }
 
 const one = (grantId: string, credential: ViewerCredential) =>
@@ -1623,7 +1637,13 @@ export const viewerApi = {
   register: (grantId: string, token: string, body: {
     email_code: string; password: string; accept_terms: boolean;
     marketing_opt_in: boolean;
-  }): Promise<{ session: string; secret_code: string; otpauth: string }> =>
+  }): Promise<{ session: string; secret_code: string; otpauth: string;
+                /** The setup link as a QR code, SVG; null if it could not
+                 *  be drawn, and the typed key still works. */
+                qr_svg: string | null;
+                /** An earlier attempt was not finished: this key replaces
+                 *  its key, and the old authenticator entry is dead. */
+                restarted: boolean }> =>
     viewerCall(`/view/${encodeURIComponent(grantId)}/register`,
                { kind: "link", token }, "POST", body),
 
