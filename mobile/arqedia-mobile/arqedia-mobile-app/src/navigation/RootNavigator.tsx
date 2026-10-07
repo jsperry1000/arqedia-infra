@@ -2,11 +2,11 @@ import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { View, Text } from 'react-native';
 import { colors } from '@/theme/colors';
 import MemosScreen from '@/screens/MemosScreen';
 import ShareScreen from '@/screens/ShareScreen';
 import MemoDetailScreen from '@/screens/MemoDetailScreen';
+import AccountScreen from '@/screens/AccountScreen';
 
 export type RootStackParamList = {
   Tabs: undefined;
@@ -21,16 +21,6 @@ export type TabParamList = {
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<TabParamList>();
-
-function AccountScreen() {
-  // Placeholder — identity_seats_spec_v1.md defines seat/session concepts
-  // but no mobile account-screen content; left as a stub.
-  return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background }}>
-      <Text style={{ color: colors.subtext }}>Account</Text>
-    </View>
-  );
-}
 
 function Tabs() {
   return (
