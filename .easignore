@@ -1,0 +1,59 @@
+# What EAS Build uploads to Expo, and what it does not.
+#
+# EAS packs the project from the git repository root, and where this file
+# exists it is read INSTEAD of .gitignore. So it does two jobs: it keeps
+# everything outside mobile/ - Terraform, the Lambdas, docs, anything
+# untracked at the root - off Expo's servers, and it repeats every rule in
+# .gitignore, which would otherwise stop applying to the upload.
+#
+# A rule added to .gitignore is added here too.
+
+# Everything but the mobile app. NO TRAILING SLASH on the negation: EAS's
+# matcher reads "!/mobile/" as matching nothing and uploads an empty
+# archive. "!/mobile" is what `eas build:inspect --stage archive` showed
+# working on 7 October.
+/*
+!/mobile
+
+# --- .gitignore, repeated ---------------------------------------------------
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Variables - may contain secrets
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Credentials
+*.pem
+*.key
+.env
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Build artefacts
+build/
+
+memo-result.json
+
+__pycache__/
+*.pyc
+*.pdf
+
+site/dist/
+site/node_modules/
+
+/*.txt
+
+# Mobile app (Expo): dependencies and Expo's local cache
+mobile/**/node_modules/
+mobile/**/.expo/

@@ -2,6 +2,7 @@
   "expo": {
     "name": "Arqedia",
     "slug": "arqedia-mobile",
+    "owner": "chase-creek-llc",
     "scheme": "arqedia",
     "version": "0.1.0",
     "orientation": "portrait",
@@ -15,6 +16,11 @@
     },
     "plugins": [
       "expo-asset"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "2fb3f4f4-a1ea-48b3-9db6-41932eea8931"
+      }
+    }
   }
 }
