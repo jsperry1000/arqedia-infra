@@ -51,7 +51,7 @@ export default function MemosScreen() {
             <View
               style={[
                 styles.iconCircle,
-                { backgroundColor: item.status === 'ready' ? colors.light : colors.highlight },
+                { backgroundColor: item.status === 'ready' ? colors.light : colors.muted },
               ]}
             />
             <View style={{ flex: 1 }}>
@@ -65,10 +65,10 @@ export default function MemosScreen() {
             <View
               style={[
                 styles.pill,
-                { backgroundColor: item.status === 'ready' ? colors.light : colors.highlight },
+                { backgroundColor: item.status === 'ready' ? colors.light : colors.muted },
               ]}
             >
-              <Text style={styles.pillText}>
+              <Text style={[styles.pillText, item.status !== 'ready' && { color: colors.ink }]}>
                 {item.status === 'ready' ? 'Ready' : 'Generating'}
               </Text>
             </View>

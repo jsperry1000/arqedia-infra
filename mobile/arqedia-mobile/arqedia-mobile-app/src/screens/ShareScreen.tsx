@@ -110,7 +110,7 @@ export default function ShareScreen() {
                 </Text>
               </View>
               <View style={{ alignItems: 'flex-end', gap: 3 }}>
-                <Text style={[styles.grantStatus, g.revoked_at && { color: colors.danger }]}>
+                <Text style={[styles.grantStatus, g.revoked_at && { color: colors.muted }]}>
                   {g.revoked_at ? 'Revoked' : g.first_opened_at ? 'Viewed' : 'Sent'}
                 </Text>
                 {!g.revoked_at && (
@@ -166,7 +166,7 @@ const styles = StyleSheet.create({
   avatarText: { fontSize: 12, fontWeight: '700', color: colors.deep },
   grantText: { fontSize: 13.5, color: colors.ink },
   grantStatus: { fontSize: 11, fontWeight: '600', color: colors.mid },
-  revokeText: { fontSize: 11, fontWeight: '600', color: colors.danger },
+  revokeText: { fontSize: 11, fontWeight: '600', color: colors.ink },
   sendBar: {
     padding: 20, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.border,
   },
