@@ -1,101 +1,114 @@
-// STUBBED — no live API base URL, auth flow, or endpoint list exists in
-// this project yet (identity_seats_spec_v1.md defines web/seat login only;
-// no mobile-facing endpoints are documented). This file is the seam to
-// wire later: swap the mock bodies below for real calls, keep the
-// function signatures and types.
+// The live API, called the way ui/src/api.ts calls it: the Cognito ID token
+// as a bare Authorization header, no "Bearer". The tenant travels inside the
+// token; nothing here says which tenant this is.
 
-import { Memo, ShareGrant } from '@/types';
+import { fetchAuthSession } from 'aws-amplify/auth';
+import { randomUUID } from 'expo-crypto';
+import { config } from '@/config';
+import {
+  Engagement, MemoRef, ShareAllowance, ShareGrant, ShareSend, ShareSent,
+} from '@/types';
 
-const MOCK_MEMOS: Memo[] = [
-  {
-    memo_id: 'memo_1',
-    title: 'Meridian Capital — Q3 Diligence',
-    memo_type: 'Credit memo',
-    revision: 4,
-    status: 'ready',
-    generated_at: '2026-09-30T00:00:00Z',
-    page_count: 17,
-    file_size_bytes: 2_516_582,
-  },
-  {
-    memo_id: 'memo_2',
-    title: 'Harborline Logistics — Series B',
-    memo_type: 'Investment memo',
-    revision: 2,
-    status: 'ready',
-    generated_at: '2026-09-28T00:00:00Z',
-    page_count: null,
-    file_size_bytes: null,
-  },
-  {
-    memo_id: 'memo_3',
-    title: 'Dunemere Retail — Annual Review',
-    memo_type: 'Credit memo',
-    revision: 1,
-    status: 'generating',
-    generated_at: null,
-    page_count: null,
-    file_size_bytes: null,
-  },
-];
+/** A refusal, carrying the status and the server's sentence. The handler
+ *  answers a refusal as {"error": "..."}, written to be shown as it stands. */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly body: Record<string, unknown>;
 
-const MOCK_GRANTS: ShareGrant[] = [
-  {
-    grant_id: 'grant_1',
-    tenant_id: 'tenant_1',
-    memo_id: 'memo_2',
-    viewer_account_id: 'viewer_1',
-    viewer_email: 'j.reyes@harborline.com',
-    sent_by_seat_id: 'seat_1',
-    created_at: '2026-10-01T00:00:00Z',
-    expires_at: '2026-10-31T00:00:00Z',
-    expiry_set_by_tenant: false,
-    revoked_at: null,
-    revoked_by_seat_id: null,
-    first_opened_at: '2026-10-02T00:00:00Z',
-  },
-];
+  constructor(status: number, text: string) {
+    let body: Record<string, unknown> = {};
+    try {
+      body = JSON.parse(text);
+    } catch { /* not JSON; the text is the message */ }
+    super(typeof body.error === 'string' ? body.error : text);
+    this.name = 'ApiError';
+    this.status = status;
+    this.body = body;
+  }
+}
 
-function delay<T>(value: T, ms = 300): Promise<T> {
-  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
+/** Past the allowance, and the price was not accepted - or a different one
+ *  was. Nothing was sent or charged. The price travels so the screen can put
+ *  it to the person; it is never accepted for them. */
+export class OverageRequired extends ApiError {
+  readonly overageCents: number;
+
+  constructor(text: string, overageCents: number) {
+    super(409, text);
+    this.name = 'OverageRequired';
+    this.overageCents = overageCents;
+  }
+}
+
+/** No balance at all. Sending is refused; revoking still works. */
+export class Capped extends ApiError {
+  constructor(text: string) {
+    super(402, text);
+    this.name = 'Capped';
+  }
+}
+
+/** One click, one key: minted when the person presses Send, so a retry of
+ *  the same press is answered rather than charged twice. */
+export function chargeKey(): string {
+  return randomUUID();
+}
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const session = await fetchAuthSession();
+  const token = session.tokens?.idToken?.toString();
+  if (!token) throw new Error('not signed in');
+  return { Authorization: token, 'content-type': 'application/json' };
+}
+
+async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = await authHeaders();
+  const res = await fetch(config.apiUrl + path, { ...init, headers });
+  if (!res.ok) throw new ApiError(res.status, await res.text());
+  return res.json();
 }
 
 export const api = {
-  listMemos(): Promise<Memo[]> {
-    return delay(MOCK_MEMOS);
+  engagements(): Promise<{ engagements: Engagement[] }> {
+    return call('/engagements');
   },
 
-  getMemo(memoId: string): Promise<Memo | undefined> {
-    return delay(MOCK_MEMOS.find((m) => m.memo_id === memoId));
+  memos(engagementId: number): Promise<{ memos: MemoRef[] }> {
+    return call(`/engagements/${encodeURIComponent(engagementId)}/memos`);
   },
 
-  listRecentGrants(): Promise<ShareGrant[]> {
-    return delay(MOCK_GRANTS);
+  /** The PDF is rendered when asked for, not stored. */
+  memoPdf(memoId: number): Promise<{ url: string; bytes: number }> {
+    return call(`/memos/${memoId}/pdf`);
   },
 
-  sendShareGrant(input: {
-    memo_id: string;
-    recipient_email: string;
-    note?: string;
-  }): Promise<ShareGrant> {
-    const grant: ShareGrant = {
-      grant_id: `grant_${Date.now()}`,
-      tenant_id: 'tenant_1',
-      memo_id: input.memo_id,
-      viewer_account_id: `viewer_${Date.now()}`,
-      viewer_email: input.recipient_email,
-      sent_by_seat_id: 'seat_1',
-      created_at: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 30 * 86400_000).toISOString(),
-      expiry_set_by_tenant: false,
-      revoked_at: null,
-      revoked_by_seat_id: null,
-      first_opened_at: null,
-    };
-    return delay(grant);
+  /** Every share this workspace has sent, newest first, and the allowance. */
+  shares(): Promise<{ grants: ShareGrant[]; allowance: ShareAllowance }> {
+    return call('/shares');
   },
 
-  revokeGrant(grantId: string): Promise<void> {
-    return delay(undefined);
+  /** Send a memorandum, or send it again. A 409 is OverageRequired and a 402
+   *  is Capped; both mean nothing was sent or charged. */
+  async sendShare(memoId: number, body: ShareSend): Promise<ShareSent> {
+    try {
+      return await call(`/memos/${memoId}/shares`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409
+          && typeof err.body.overage_cents === 'number') {
+        throw new OverageRequired(JSON.stringify(err.body), err.body.overage_cents);
+      }
+      if (err instanceof ApiError && err.status === 402) {
+        throw new Capped(JSON.stringify(err.body));
+      }
+      throw err;
+    }
+  },
+
+  /** End future access. It cannot recall a copy already downloaded. */
+  revokeShare(grantId: string): Promise<ShareGrant> {
+    return call(`/shares/${encodeURIComponent(grantId)}/revoke`, { method: 'POST' });
   },
 };
