@@ -16,7 +16,10 @@ TWO WAYS IN.
   The link       "Authorization: Share <token>" on the /view routes, checked
                  against the grant with a strongly consistent read on every
                  request. A revoke is one write to that item, so the next
-                 request after it is refused.
+                 request after it is refused. Reading and downloading also
+                 take a verified device - "X-Arqedia-Device: <token>", issued
+                 once a code emailed to the recipient is entered on that
+                 browser. The link alone opens nothing.
   Signed in      a registered viewer's token from the viewer pool, on the
                  /viewer/shares routes. The gateway verifies it; this checks
                  the grant names the same person.
@@ -26,8 +29,10 @@ and one that never existed all say the link does not work. The log says
 which; the person does not learn which part of a guess was wrong.
 
 Routes:
-  GET  /view/{grant_id}                     the memorandum, by its link
+  GET  /view/{grant_id}                     the memorandum: link + device
   POST /view/{grant_id}/download            a copy stamped with this moment
+  POST /view/{grant_id}/verify/code         email a code to verify a browser
+  POST /view/{grant_id}/verify              the code; a device token back
   POST /view/{grant_id}/register/code       email the recipient a code
   POST /view/{grant_id}/register            the code, a password, MFA setup
   POST /view/{grant_id}/register/confirm    the authenticator's first code
@@ -91,6 +96,36 @@ EMAIL_CODE_NOT_SENT = ("We couldn't send the code just now. Nothing was used "
 class EmailNotSent(Exception):
     """SES did not accept the code email. Nothing was counted and no code
     was left behind. 502: the fault is ours, not the request's."""
+
+
+# A browser verified for one recipient (fix/share-link-possession-read).
+# Holding the link is no longer enough to read: the browser must also hold a
+# device token, issued once a code emailed to the recipient has been entered
+# on it. Six months from verification and not renewed by use; ten per
+# recipient, the oldest dropped; a device verified in the last fifteen
+# minutes is proof enough to register without a second code (decisions of
+# 7 October 2026).
+DEVICE_HEADER = "x-arqedia-device"
+DEVICE_MONTHS = 6
+DEVICE_CAP = 10
+DEVICE_FRESH_MINUTES = 15
+DEVICE_NEEDED = ("To open this on this device, confirm it's you. We'll email "
+                 "a code to the address it was shared with.")
+
+
+class CodeRequired(Exception):
+    """Registering needs an emailed code: this browser was not verified in
+    the last fifteen minutes. 400, with code_required: true."""
+
+
+class DeviceNeeded(Exception):
+    """The link is good but this browser has not been verified for its
+    recipient. 401, saying so - nothing of the memorandum is served."""
+
+    def __init__(self, grant, registered):
+        self.sent_to = _masked(grant["recipient_email"])
+        self.registered = registered
+        super().__init__(DEVICE_NEEDED)
 
 
 _dynamo = None
@@ -229,10 +264,26 @@ def _presign(key, attachment=None):
                                       ExpiresIn=URL_SECONDS)
 
 
-def _page(grant):
+def _unused_device_code_at(account):
+    """When a code to open this recipient's shares on a new device was
+    emailed and has not been used, or None.
+
+    Asked for on 7 October: is the warning email the recipient's only sign
+    that somebody else tried? It was. A code spent - on this browser or any
+    other - is removed, so one still held was asked for and not entered:
+    either the recipient gave up on a device, or the link is in somebody
+    else's hands. The page shows it to a verified browser, which is the
+    recipient, and lets them decide which."""
+    if account.get("code_purpose") == "device" and account.get("code_hash"):
+        return account.get("code_sent_at")
+    return None
+
+
+def _page(grant, account=None, device=None):
     """What the viewer page shows around the memorandum."""
     g = _plain(grant)
-    account = _account(g["viewer_account_id"])
+    if account is None:
+        account = _account(g["viewer_account_id"])
     return {
         "grant_id": g["grant_id"],
         "memo_label": g.get("memo_label"),
@@ -247,6 +298,10 @@ def _page(grant):
         # memorandum is ever served: that would be its text without the
         # watermark (decision of 1 October 2026, item 4).
         "view_url": _presign(g["view_key"]),
+        "unused_device_code_at": _unused_device_code_at(account),
+        # A browser verified in the last fifteen minutes registers without a
+        # second emailed code; any other needs one.
+        "register_needs_code": not _fresh(device),
     }
 
 
@@ -321,10 +376,17 @@ def _email_code_message(grant, code, purpose):
     """What the code email says. Plain text, like every message the product
     sends. It says what the code is for, so a recipient who did not ask for
     one knows somebody else holds their link."""
+    firm = grant.get("tenant_name") or "a firm"
     why = {
         "register": ("Someone is using the link to a memorandum %s shared "
                      "with this address, to register and keep access to it."
-                     % (grant.get("tenant_name") or "a firm")),
+                     % firm),
+        # The cheap answer to a forwarded link that is being used to flood
+        # this inbox: say plainly what it means (decision of 7 October).
+        "device": ("Someone opened the link to a memorandum %s shared with "
+                   "this address, on a device that hasn't been confirmed. If "
+                   "you didn't just open this link on a new device, someone "
+                   "else has it - tell the person who sent it to you." % firm),
     }[purpose]
     subject = "Your ARQEDIA code: %s" % code
     body = (
@@ -482,9 +544,112 @@ def _password_ok(password):
                 and re.search(r"\d", password))
 
 
+# --- a verified device -------------------------------------------------------
+#
+# THE LINK IS NOT ENOUGH TO READ. Until this existed GET /view authorised on
+# the link token alone, so anybody it was forwarded to could read and
+# download for as long as the grant lived - registered recipient or not.
+# Now the browser must also present a device token for the grant's
+# recipient, which it gets only by entering a code emailed to the
+# recipient's own address (the same _send_email_code and _spend_email_code
+# registration uses, purpose "device").
+#
+# PER RECIPIENT, NOT PER GRANT. One verified browser opens every share to
+# that recipient, from any tenant, until the device expires.
+#
+# THE TOKEN IS "<device id>.<secret>". The id finds the entry on the viewer
+# account; only a hash of the secret is kept. The browser holds the token in
+# local storage and sends it in the X-Arqedia-Device header - not a cookie:
+# the API is on its own AWS hostname, so a cookie would be third-party to
+# app.arqedia.com and refused by browsers that block those.
+
+def _device_from_headers(headers):
+    for key, value in (headers or {}).items():
+        if key.lower() == DEVICE_HEADER:
+            return str(value or "").strip() or None
+    return None
+
+
+def _device_hash(viewer_id, secret):
+    return hashlib.sha256(("%s:device:%s" % (viewer_id, secret))
+                          .encode("utf-8")).hexdigest()
+
+
+def _known_device(viewer_id, account, presented):
+    """The live device entry the presented token names, or None. Wrong,
+    unknown and expired all answer None."""
+    if not presented or "." not in presented:
+        return None
+    device_id, secret = presented.split(".", 1)
+    entry = (account.get("devices") or {}).get(device_id)
+    if not entry or not entry.get("hash"):
+        return None
+    if not hmac.compare_digest(_device_hash(viewer_id, secret),
+                               str(entry["hash"])):
+        return None
+    if rules.parse(entry["expires_at"]) <= rules.now():
+        return None
+    return entry
+
+
+def _require_device(grant, headers):
+    """(account, device entry) for a browser verified for this grant's
+    recipient; DeviceNeeded otherwise. Registered or not: a registered
+    recipient's link alone no longer opens anything either, and they may sign
+    in instead (/viewer)."""
+    viewer_id = grant["viewer_account_id"]
+    account = _table("viewer").get_item(
+        Key={"viewer_account_id": viewer_id},
+        ConsistentRead=True).get("Item") or {}
+    entry = _known_device(viewer_id, account, _device_from_headers(headers))
+    if entry is None:
+        print("[device-needed] viewer=%s presented=%s" % (
+            viewer_id[:8], bool(_device_from_headers(headers))))
+        raise DeviceNeeded(grant, bool(account.get("registered")))
+    return account, entry
+
+
+def _issue_device(viewer_id, user_agent):
+    """A new device token for this recipient, once their emailed code has
+    been spent. Six months, not renewed. Expired entries are dropped, and past
+    ten the oldest goes, so the list cannot grow without end."""
+    at = rules.now()
+    account = _table("viewer").get_item(
+        Key={"viewer_account_id": viewer_id},
+        ConsistentRead=True).get("Item") or {}
+    devices = {k: v for k, v in (account.get("devices") or {}).items()
+               if rules.parse(v["expires_at"]) > at}
+    while len(devices) >= DEVICE_CAP:
+        oldest = min(devices, key=lambda k: devices[k]["created_at"])
+        del devices[oldest]
+
+    device_id = uuid.uuid4().hex[:16]
+    secret = secrets.token_urlsafe(32)
+    ends = rules.add_months(at, DEVICE_MONTHS)
+    devices[device_id] = {"hash": _device_hash(viewer_id, secret),
+                          "created_at": rules.iso(at),
+                          "expires_at": rules.iso(ends),
+                          "user_agent": (user_agent or "")[:120]}
+    _table("viewer").update_item(
+        Key={"viewer_account_id": viewer_id},
+        UpdateExpression="SET devices = :d",
+        ExpressionAttributeValues={":d": devices})
+    print("[device-verified] viewer=%s devices=%d" % (viewer_id[:8],
+                                                      len(devices)))
+    return {"device_token": "%s.%s" % (device_id, secret),
+            "expires_at": rules.iso(ends)}
+
+
+def _fresh(entry):
+    """A device verified within the last fifteen minutes: as good a proof of
+    the inbox as a registration code sent just now."""
+    return bool(entry) and (rules.now() - rules.parse(entry["created_at"])) \
+        .total_seconds() <= DEVICE_FRESH_MINUTES * 60
+
+
 # --- registering -------------------------------------------------------------
 
-def _register(grant, body):
+def _register(grant, body, device=None):
     """The emailed code, a password, then the authenticator. Nothing is
     marked registered until the authenticator's first code is right
     (_confirm).
@@ -493,7 +658,11 @@ def _register(grant, body):
     is not proof of who holds it; the code, sent to the recipient's own
     address by _send_email_code, is. Without it nobody can create this user
     or set its password - which also closes resetting a registration that
-    was started and not finished, since that is the same two calls."""
+    was started and not finished, since that is the same two calls.
+
+    OR A FRESH DEVICE. A browser whose device code was entered in the last
+    fifteen minutes has just proved the same inbox, and is not made to prove
+    it twice (decision of 7 October 2026). Any other needs the code."""
     if body.get("accept_terms") is not True:
         raise ValueError("Registering means accepting the terms and privacy "
                          "policy.")
@@ -507,8 +676,15 @@ def _register(grant, body):
     if account.get("registered"):
         raise PermissionError("You have already registered. Sign in instead.")
 
-    _spend_email_code(grant["viewer_account_id"], "register",
-                      body.get("email_code"))
+    if not _fresh(device):
+        # Nothing presented at all: the screen thought this browser was fresh
+        # and the fifteen minutes ran out while the form was open. Said as
+        # such, so the screen asks for a code rather than reporting a wrong
+        # one.
+        if not str(body.get("email_code") or "").strip():
+            raise CodeRequired()
+        _spend_email_code(grant["viewer_account_id"], "register",
+                          body.get("email_code"))
 
     email = grant["recipient_email"]
     # THE ADDRESS IS VERIFIED by the code just spent, which only its inbox
@@ -833,6 +1009,8 @@ def _dispatch(event, context):
 
     try:
         if route in ("GET /view/{grant_id}", "POST /view/{grant_id}/download",
+                     "POST /view/{grant_id}/verify/code",
+                     "POST /view/{grant_id}/verify",
                      "POST /view/{grant_id}/register/code",
                      "POST /view/{grant_id}/register",
                      "POST /view/{grant_id}/register/confirm"):
@@ -840,17 +1018,38 @@ def _dispatch(event, context):
             if refused:
                 return refused
 
+            # READING AND DOWNLOADING TAKE THE LINK AND A VERIFIED DEVICE -
+            # the same rule for both, so there is no weaker way to the same
+            # memorandum (fix/share-link-possession-read).
             if route == "GET /view/{grant_id}":
+                account, device = _require_device(grant, event.get("headers"))
                 _arrived(grant)
                 _record(context, event, grant, "view")
-                return _reply(200, _page(grant))
+                return _reply(200, _page(grant, account, device))
             if route == "POST /view/{grant_id}/download":
+                _require_device(grant, event.get("headers"))
                 _arrived(grant)
                 # Recorded once the copy exists, not before: a download that
                 # failed is not one somebody took.
                 copy = _download(grant)
                 _record(context, event, grant, "download")
                 return _reply(200, copy)
+
+            # Verifying this browser: a code to the recipient's own inbox,
+            # then a device token for it. The link holder gets the token only
+            # by entering what that inbox received.
+            if route == "POST /view/{grant_id}/verify/code":
+                _arrived(grant)
+                return _reply(200, _send_email_code(grant, "device"))
+            if route == "POST /view/{grant_id}/verify":
+                _spend_email_code(grant["viewer_account_id"], "device",
+                                  body.get("code"))
+                _arrived(grant)
+                agent = ((event.get("requestContext") or {}).get("http")
+                         or {}).get("userAgent")
+                return _reply(200, _issue_device(grant["viewer_account_id"],
+                                                 agent))
+
             if route == "POST /view/{grant_id}/register/code":
                 _arrived(grant)
                 if _account(grant["viewer_account_id"]).get("registered"):
@@ -859,7 +1058,15 @@ def _dispatch(event, context):
                 return _reply(200, _send_email_code(grant, "register"))
             if route == "POST /view/{grant_id}/register":
                 _arrived(grant)
-                return _reply(200, _register(grant, body))
+                # A verified device is optional here: fresh, it stands in for
+                # the emailed code; otherwise the code is required as before.
+                viewer_id = grant["viewer_account_id"]
+                device = _known_device(
+                    viewer_id, _table("viewer").get_item(
+                        Key={"viewer_account_id": viewer_id},
+                        ConsistentRead=True).get("Item") or {},
+                    _device_from_headers(event.get("headers")))
+                return _reply(200, _register(grant, body, device))
             return _reply(200, _confirm(grant, body))
 
         if route == "POST /viewer/sign-in":
@@ -889,6 +1096,13 @@ def _dispatch(event, context):
 
         return _reply(404, {"error": "unknown route"})
 
+    except DeviceNeeded as exc:
+        return _reply(401, {"error": str(exc), "device_required": True,
+                            "sent_to": exc.sent_to,
+                            "registered": exc.registered})
+    except CodeRequired:
+        return _reply(400, {"error": "Confirm it's you again: ask for a "
+                                     "code.", "code_required": True})
     except EmailNotSent:
         return _reply(502, {"error": EMAIL_CODE_NOT_SENT})
     except MfaSetupRestart as exc:

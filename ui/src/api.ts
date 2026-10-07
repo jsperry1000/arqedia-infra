@@ -1561,6 +1561,13 @@ export type ViewerPage = {
   expiry_set_by_tenant: boolean;
   registered: boolean;
   view_url: string;
+  /** When a code to open this recipient's shares on a new device was
+   *  emailed and never used - somebody gave up on a device, or the link is in
+   *  somebody else's hands. Null when there is none. */
+  unused_device_code_at: string | null;
+  /** False when this browser was verified in the last fifteen minutes: it
+   *  registers without a second emailed code. */
+  register_needs_code: boolean;
 };
 
 export type ViewerShare = {
@@ -1578,11 +1585,41 @@ export type ViewerCredential =
   | { kind: "link"; token: string }
   | { kind: "signed-in"; idToken: string };
 
+// --- this browser, verified for a recipient ---------------------------------
+//
+// THE LINK ALONE OPENS NOTHING (fix/share-link-possession-read). A browser
+// also needs a device token for the share's recipient, issued once a code
+// emailed to them is entered here. Kept in local storage, per recipient - the
+// viewer id is the part of the share id after the '#' - so one browser can be
+// verified for more than one recipient, and one verification opens every
+// share to that recipient. Not a cookie: the API is on its own AWS hostname,
+// so a cookie would be third-party here and refused by browsers that block
+// those.
+
+const DEVICE_KEY = "arqedia.device.";
+
+function viewerOf(grantId: string): string {
+  return grantId.split("#")[1] ?? "";
+}
+
+function deviceFor(grantId: string): string {
+  try { return localStorage.getItem(DEVICE_KEY + viewerOf(grantId)) ?? ""; }
+  catch { return ""; }
+}
+
+function keepDevice(grantId: string, token: string) {
+  try { localStorage.setItem(DEVICE_KEY + viewerOf(grantId), token); }
+  catch { /* a private window: verified for this page only */ }
+}
+
 async function viewerCall(path: string, credential: ViewerCredential | null,
-                          method = "GET", body?: unknown) {
+                          method = "GET", body?: unknown, grantId?: string) {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (credential?.kind === "link") headers.Authorization = "Share " + credential.token;
   if (credential?.kind === "signed-in") headers.Authorization = credential.idToken;
+  // With the link only: a signed-in viewer is proved by their sign-in.
+  const device = credential?.kind === "link" && grantId ? deviceFor(grantId) : "";
+  if (device) headers["X-Arqedia-Device"] = device;
   const res = await fetch(config.apiUrl + path, {
     method, headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -1593,7 +1630,7 @@ async function viewerCall(path: string, credential: ViewerCredential | null,
   if (!res.ok) {
     throw new ViewerError(res.status,
                           parsed?.error ?? text ?? `Request failed (${res.status}).`,
-                          parsed?.restart === true);
+                          parsed?.restart === true, parsed);
   }
   return parsed;
 }
@@ -1603,11 +1640,21 @@ async function viewerCall(path: string, credential: ViewerCredential | null,
  *  to a new emailed code rather than offer another try. */
 export class ViewerError extends ApiError {
   readonly restart: boolean;
+  /** The refusal's own fields - device_required, sent_to, registered - for
+   *  a screen that has to act on more than the sentence. */
+  readonly detail: Record<string, unknown> | null;
 
-  constructor(status: number, body: string, restart: boolean) {
+  constructor(status: number, body: string, restart: boolean,
+              detail: Record<string, unknown> | null = null) {
     super(status, body);
     this.name = "ViewerError";
     this.restart = restart;
+    this.detail = detail;
+  }
+
+  /** This browser has not been verified for the share's recipient. */
+  get deviceRequired(): boolean {
+    return this.status === 401 && this.detail?.device_required === true;
   }
 }
 
@@ -1618,11 +1665,28 @@ const one = (grantId: string, credential: ViewerCredential) =>
 
 export const viewerApi = {
   open: (grantId: string, credential: ViewerCredential): Promise<ViewerPage> =>
-    viewerCall(one(grantId, credential), credential),
+    viewerCall(one(grantId, credential), credential, "GET", undefined, grantId),
 
   download: (grantId: string, credential: ViewerCredential):
       Promise<{ download_url: string }> =>
-    viewerCall(one(grantId, credential) + "/download", credential, "POST", {}),
+    viewerCall(one(grantId, credential) + "/download", credential, "POST", {},
+               grantId),
+
+  /** Email a code to the share's recipient, to verify this browser. */
+  verifyCode: (grantId: string, token: string):
+      Promise<{ sent_to: string; minutes: number }> =>
+    viewerCall(`/view/${encodeURIComponent(grantId)}/verify/code`,
+               { kind: "link", token }, "POST", {}),
+
+  /** The code; the device token comes back and is kept for this recipient. */
+  verify: async (grantId: string, token: string, code: string):
+      Promise<{ expires_at: string }> => {
+    const done = await viewerCall(
+      `/view/${encodeURIComponent(grantId)}/verify`,
+      { kind: "link", token }, "POST", { code });
+    keepDevice(grantId, done.device_token);
+    return { expires_at: done.expires_at };
+  },
 
   /** A password, then the authenticator's secret to add. Nothing is
    *  registered until confirm. */
@@ -1635,6 +1699,7 @@ export const viewerApi = {
                { kind: "link", token }, "POST", {}),
 
   register: (grantId: string, token: string, body: {
+    /** Empty when this browser was verified in the last fifteen minutes. */
     email_code: string; password: string; accept_terms: boolean;
     marketing_opt_in: boolean;
   }): Promise<{ session: string; secret_code: string; otpauth: string;
@@ -1645,7 +1710,7 @@ export const viewerApi = {
                  *  its key, and the old authenticator entry is dead. */
                 restarted: boolean }> =>
     viewerCall(`/view/${encodeURIComponent(grantId)}/register`,
-               { kind: "link", token }, "POST", body),
+               { kind: "link", token }, "POST", body, grantId),
 
   confirm: (grantId: string, token: string, body: {
     session: string; code: string; accept_terms: boolean;

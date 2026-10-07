@@ -524,6 +524,11 @@ resource "aws_apigatewayv2_route" "share_viewer_open" {
   for_each = toset([
     "GET /view/{grant_id}",
     "POST /view/{grant_id}/download",
+    # Verifying a browser for the recipient: a code to their own inbox, then
+    # a device token. Reading and downloading need both the link and that
+    # token (fix/share-link-possession-read).
+    "POST /view/{grant_id}/verify/code",
+    "POST /view/{grant_id}/verify",
     # Emails the recipient a code before they may register. The address is
     # the grant's, never one from the request.
     "POST /view/{grant_id}/register/code",
