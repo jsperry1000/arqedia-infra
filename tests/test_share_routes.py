@@ -672,6 +672,58 @@ class RegisterCodeTest(ViewerTest):
         self.assertEqual(self.call("POST /view/{grant_id}/register/code")[0], 400)
         self.assertEqual(self.app._ses.send_email.call_count, 1)
 
+    def refused_by_ses(self):
+        """The refusal seen live on 6 October: the role allowed the identity
+        but not the configuration set SES also checks."""
+        return self.app.ClientError(
+            {"Error": {"Code": "AccessDenied",
+                       "Message": "not authorized to perform ses:SendEmail "
+                                  "on resource configuration-set/x"}},
+            "SendEmail")
+
+    def test_a_failed_send_uses_no_rate_limit_slot(self):
+        # Exactly the 6 October failure. SES refused; the retry was then
+        # told a code had gone out a minute ago, when none had gone at all.
+        self.app._ses.send_email.side_effect = self.refused_by_ses()
+        status, body = self.call("POST /view/{grant_id}/register/code")
+        self.assertEqual(status, 502)
+        self.assertIn("couldn't send", body["error"])
+        self.assertNotIn("minute ago", body["error"])
+
+        held = self.accounts.get_item(
+            Key={"viewer_account_id": self.viewer})["Item"]
+        for counted in ("code_sent_at", "code_window_count",
+                        "code_window_start", "code_hash"):
+            self.assertNotIn(counted, held, counted)
+
+        # SES works again: the immediate retry is sent, not rate-limited,
+        # and only that one send is counted.
+        self.app._ses.send_email.side_effect = None
+        self.app._ses.send_email.return_value = {"MessageId": "m-1"}
+        status, _ = self.call("POST /view/{grant_id}/register/code")
+        self.assertEqual(status, 200)
+        held = self.accounts.get_item(
+            Key={"viewer_account_id": self.viewer})["Item"]
+        self.assertEqual(int(held["code_window_count"]), 1)
+
+    def test_five_failed_sends_do_not_lock_out_the_hour(self):
+        self.app._ses.send_email.side_effect = self.refused_by_ses()
+        for _ in range(self.app.EMAIL_CODE_PER_HOUR):
+            self.assertEqual(
+                self.call("POST /view/{grant_id}/register/code")[0], 502)
+        self.app._ses.send_email.side_effect = None
+        self.assertEqual(
+            self.call("POST /view/{grant_id}/register/code")[0], 200)
+
+    def test_a_code_whose_email_failed_cannot_be_used(self):
+        self.app._ses.send_email.side_effect = self.refused_by_ses()
+        self.call("POST /view/{grant_id}/register/code")
+        _, text = None, self.app._ses.send_email.call_args.kwargs[
+            "Message"]["Body"]["Text"]["Data"]
+        code = text.split("is ", 1)[1][:6]
+        self.assertEqual(self.register(code)[0], 400)
+        self.app._cognito.admin_set_user_password.assert_not_called()
+
     def test_a_half_finished_registration_cannot_be_reset_by_the_link(self):
         # Cognito already holds the user: an earlier registration stopped at
         # the authenticator. The link alone used to set a new password on it.
