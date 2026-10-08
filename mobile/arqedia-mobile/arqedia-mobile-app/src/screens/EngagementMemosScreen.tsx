@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, Pressable, StyleSheet } from 'react-native';
+import { View, Text, FlatList, Pressable, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { colors } from '@/theme/colors';
@@ -55,7 +55,14 @@ export default function EngagementMemosScreen({ route, navigation }: Props) {
           >
             <View style={styles.iconCircle} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowTitle} numberOfLines={1}>{item.template_label}</Text>
+              {/* The title is cut to one line. Tapping it - not the row,
+                  which opens the memo - shows the whole of it. */}
+              <Pressable
+                onPress={() => Alert.alert(item.template_label, `Memo ${item.label}`)}
+                hitSlop={4}
+              >
+                <Text style={styles.rowTitle} numberOfLines={1}>{item.template_label}</Text>
+              </Pressable>
               <Text style={styles.rowSubtitle} numberOfLines={1}>
                 Memo {item.label} · {new Date(item.generated_at).toLocaleDateString()}
               </Text>
