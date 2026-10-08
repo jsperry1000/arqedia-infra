@@ -1,5 +1,6 @@
 import { fetchAuthSession } from "aws-amplify/auth";
 import { config } from "./config";
+import type { BatchMemo } from "./shareBatch";
 
 // Every request carries the token. The tenant travels inside it, signed:
 // nothing here says which tenant we are, and nothing here could.
@@ -805,8 +806,9 @@ export type ShareGrant = {
 };
 
 export type ShareSent = ShareGrant & {
-  /** Whether SES accepted the email. The share stands either way. */
-  sent: boolean;
+  /** Whether SES accepted the email. The share stands either way. Null
+   *  where none was sent: a batch share, emailed by notifyShares. */
+  sent: boolean | null;
   reinstated: boolean;
   charged_cents: number;
 };
@@ -822,6 +824,9 @@ export type ShareSend = {
   /** The overage price the person accepted, where the send is past the
    *  allowance. Anything else is refused with the price, not charged. */
   accept_overage_cents?: number | null;
+  /** False in a batch (Share a memo): the share is made, counted and charged
+   *  as ever, and its email is left for notifyShares - one for the batch. */
+  notify?: boolean;
 };
 
 export const api = {
@@ -1302,6 +1307,19 @@ export const api = {
   /** End future access. It cannot recall a copy already downloaded. */
   revokeShare: (grantId: string): Promise<ShareGrant> =>
     call(`/shares/${encodeURIComponent(grantId)}/revoke`, { method: "POST" }),
+
+  /** Every live memorandum across engagements, for Share a memo, with
+   *  whether this person keeps unsaved changes on each. */
+  allMemos: (): Promise<{ memos: BatchMemo[]; limit: number }> =>
+    call("/memos"),
+
+  /** One email for the shares of a batch that succeeded. Refused, nothing
+   *  sent, for any share already emailed. */
+  notifyShares: (grantIds: string[]): Promise<{ sent: boolean; grant_ids: string[] }> =>
+    call("/shares/notify", {
+      method: "POST",
+      body: JSON.stringify({ grant_ids: grantIds }),
+    }),
 
   passage: (documentId: number, unit: number | null): Promise<Passage> =>
     call(`/documents/${documentId}/passage`

@@ -8,6 +8,7 @@ import { BackContext, BackPill } from "./shell";
 import { WelcomeView } from "./Welcome";
 import { AccountView } from "./Account";
 import { ShareView } from "./Share";
+import { ShareBatchView } from "./ShareMemos";
 import { ViewerByLink, ViewerSignedIn } from "./Viewer";
 import { SignUp } from "./SignUp";
 import { InvitationView } from "./Invitation";
@@ -612,6 +613,13 @@ function ShareRoute() {
                     onMemo={(memoId) => navigate(`/memos/${memoId}`)} />;
 }
 
+function ShareBatchRoute() {
+  const navigate = useNavigate();
+  return <ShareBatchView onBack={useBack()}
+                         onHistory={() => navigate("/shares")}
+                         onTopUp={() => navigate("/account?tab=balance")} />;
+}
+
 // --- shell -----------------------------------------------------------------
 
 export default function App() {
@@ -692,6 +700,27 @@ export default function App() {
       document.removeEventListener("keydown", escape);
     };
   }, [settingsOpen]);
+
+  // The Sharing choice, the same kind of panel: sending several memoranda at
+  // once, and what has been sent.
+  const [sharingOpen, setSharingOpen] = useState(false);
+  const sharingPanel = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!sharingOpen) return;
+    const away = (e: MouseEvent) => {
+      const item = sharingPanel.current?.parentElement;
+      if (item && !item.contains(e.target as Node)) setSharingOpen(false);
+    };
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSharingOpen(false);
+    };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [sharingOpen]);
 
   // The one Back. A screen hands up its own leave action; with none, Back
   // goes to the previous page.
@@ -838,7 +867,23 @@ export default function App() {
         <a className={catalogueClass} onClick={() => navigate("/catalogue")}>
           Report Catalogue
         </a>
-        <a className={railClass("/shares")} onClick={() => navigate("/shares")}>Sharing</a>
+        {/* Sharing opens a choice, as Settings does (share-multi-memo). */}
+        <div className="rail-item">
+          <a className={railClass("/shares")}
+             onClick={() => setSharingOpen(!sharingOpen)}>Sharing</a>
+          {sharingOpen && (
+            <div className="chooser" ref={sharingPanel}>
+              <a onClick={() => { setSharingOpen(false); navigate("/shares/new"); }}>
+                Share a memo
+              </a>
+              <p className="muted small">Up to five memoranda to one person, in one email.</p>
+              <a onClick={() => { setSharingOpen(false); navigate("/shares"); }}>
+                History
+              </a>
+              <p className="muted small">Who has what, what they opened, and revoking.</p>
+            </div>
+          )}
+        </div>
         {/* Settings opens a choice, as Configure does. Two things live under
             it and they are not alike: how memoranda look, and who pays for
             them. The balance belongs to the second - it is an account matter,
@@ -887,6 +932,7 @@ export default function App() {
               <Route path="/settings/brand" element={<SettingsRoute />} />
               <Route path="/account" element={<AccountRoute />} />
               <Route path="/shares" element={<ShareRoute />} />
+              <Route path="/shares/new" element={<ShareBatchRoute />} />
               {/* Get started forks and publishes, then hands what it added
                   to the configuration screen, which says so at the top.
                   Reached from the rail's panel or the first-run screen it

@@ -401,16 +401,23 @@ def send(tenant_id, email, memo_id, body):
     expires = rules.expires_at(at, _registered(viewer_id), tenant_expiry)
     tenant_name = _tenant_name(tenant_id)
 
+    # notify: false is a batch (feature/share-multi-memo): the share is made,
+    # counted and charged exactly as one sent alone, but its email is left
+    # for POST /shares/notify, which sends one message for the whole batch.
+    # The Share button on a memorandum never sends it.
+    notify_now = body.get("notify", True) is not False
+
     if existing and existing.get("status") == rules.ACTIVE:
         return _resend(tenant_id, email, existing, at, expires,
-                       tenant_expiry is not None, tenant_name)
+                       tenant_expiry is not None, tenant_name, notify_now)
 
     return _send_new(tenant_id, email, memo, recipient, viewer_id, grant_id,
                      existing, at, expires, tenant_expiry is not None, key,
-                     tenant_name, body)
+                     tenant_name, body, notify_now)
 
 
-def _resend(tenant_id, email, grant, at, expires, tenant_set, tenant_name):
+def _resend(tenant_id, email, grant, at, expires, tenant_set, tenant_name,
+            notify_now=True):
     """The same memorandum to the same address again: reinstate the grant if
     it was revoked, refresh its expiry, and send the same link. No allowance
     and no charge (decision of 1 October 2026, item 8)."""
@@ -426,7 +433,10 @@ def _resend(tenant_id, email, grant, at, expires, tenant_set, tenant_name):
               "sent_by = :by")
     if was_revoked:
         update += ", reinstated_at = :sent, reinstated_by = :by"
-    update += " REMOVE revoked_at, revoked_by ADD resends :one"
+    # Sent again, so its email has not gone out for this send yet: the batch
+    # email may carry it, and a lone re-send emails it straight away below.
+    update += (" REMOVE revoked_at, revoked_by, notified_at"
+               " ADD resends :one")
     _table("grant").update_item(
         Key={"grant_id": grant["grant_id"]},
         UpdateExpression=update,
@@ -437,7 +447,7 @@ def _resend(tenant_id, email, grant, at, expires, tenant_set, tenant_name):
     grant = dict(grant, revoked=False, sent_at=rules.iso(at),
                  expires_at=rules.iso(expires), expiry_set_by_tenant=tenant_set,
                  sent_by=email)
-    sent = _mail(email, tenant_name, grant)
+    sent = _mail(email, tenant_name, grant) if notify_now else None
     print("[share-resent] tenant=%s memo=%s reinstated=%s sent=%s" % (
         tenant_id, grant["memo_id"], was_revoked, sent))
     return dict(_view(grant), sent=sent, reinstated=was_revoked,
@@ -445,7 +455,8 @@ def _resend(tenant_id, email, grant, at, expires, tenant_set, tenant_name):
 
 
 def _send_new(tenant_id, email, memo, recipient, viewer_id, grant_id,
-              pending, at, expires, tenant_set, key, tenant_name, body):
+              pending, at, expires, tenant_set, key, tenant_name, body,
+              notify_now=True):
     day = "d" + at.strftime("%Y-%m-%d")
     retry = bool(pending) and pending.get("idempotency_key") == key
 
@@ -589,7 +600,7 @@ def _send_new(tenant_id, email, memo, recipient, viewer_id, grant_id,
                                    ":now": rules.iso(rules.now())})
     item = dict(item, status=rules.ACTIVE, over=over, charged_cents=charged)
 
-    sent = _mail(email, tenant_name, item)
+    sent = _mail(email, tenant_name, item) if notify_now else None
     print("[share-sent] tenant=%s memo=%s over=%s charged=%s sent=%s" % (
         tenant_id, memo["memo_id"], over, charged, sent))
     return dict(_view(item), sent=sent, reinstated=False,
@@ -609,8 +620,122 @@ def _mail(email, tenant_name, grant):
     # wish. It opens nothing for them or anybody they forward it to - the
     # link takes a device verified by a code sent to the grant's recipient,
     # and nobody else (fix/share-link-possession-read).
-    return mail.send(grant["recipient_email"], subject, text,
+    sent = mail.send(grant["recipient_email"], subject, text,
                      reply_to=email, bcc=email)
+    if sent:
+        _mark_notified([grant["grant_id"]])
+    return sent
+
+
+def _mark_notified(grant_ids):
+    """The email for these shares has gone. Recorded so POST /shares/notify
+    cannot send it again - it refuses a share already emailed, which is what
+    stops it being used to flood a recipient's inbox."""
+    at = rules.iso(rules.now())
+    for gid in grant_ids:
+        try:
+            _table("grant").update_item(
+                Key={"grant_id": gid},
+                UpdateExpression="SET notified_at = :at",
+                ExpressionAttributeValues={":at": at})
+        except Exception as exc:  # noqa: BLE001 - the email went regardless
+            print("[share-notified-not-marked] %s %r" % (str(gid)[:12], exc))
+
+
+# --- one email for a batch -------------------------------------------------
+#
+# feature/share-multi-memo, decided 8 October 2026. "Share a memo" sends each
+# selected memorandum as its own share - its own grant, allowance check,
+# charge and idempotency key, through send() above with notify: false - and
+# then asks for ONE email to the recipient with a link for every share that
+# succeeded. If some failed and are retried later, the retry's successes get
+# an email of their own: nothing waits.
+
+MAX_BATCH = 5
+
+
+class AlreadyNotified(Exception):
+    """A share in the request has had its email. 409."""
+
+
+def notify(tenant_id, email, grant_ids):
+    """One email for several shares to one recipient, the sender BCC'd.
+
+    REFUSED, AND NOTHING SENT, where any share is not this tenant's, is not
+    live, was revoked, goes to a different address than the others, or has
+    already been emailed - the last of which is what keeps this from being a
+    way to send the same recipient the same email over and over.
+
+    THE SHARES ARE CLAIMED BEFORE THE SEND, and given back if SES refuses:
+    two requests racing for the same shares cannot both send, and a failed
+    send leaves them free to be emailed again. Returns None where a share is
+    not this tenant's (404)."""
+    ids = [str(g) for g in (grant_ids or [])]
+    if not ids or len(ids) != len(set(ids)):
+        raise ValueError("Name each share once.")
+    if len(ids) > MAX_BATCH:
+        raise ValueError("At most %d memoranda are shared at once."
+                         % MAX_BATCH)
+
+    grants = []
+    for gid in ids:
+        g = _table("grant").get_item(Key={"grant_id": gid},
+                                     ConsistentRead=True).get("Item")
+        if not g or int(g.get("tenant_id", -1)) != int(tenant_id):
+            return None
+        if g.get("status") != rules.ACTIVE or g.get("revoked"):
+            raise ValueError("One of these shares is not live, so the email "
+                             "was not sent.")
+        if g.get("notified_at"):
+            raise AlreadyNotified("One of these shares has already been "
+                                  "emailed. Use Send again from History to "
+                                  "send it again.")
+        grants.append(g)
+
+    recipients = {g["recipient_email"] for g in grants}
+    if len(recipients) != 1:
+        raise ValueError("These shares are not to the same person.")
+
+    at = rules.iso(rules.now())
+    claimed = []
+    try:
+        for g in grants:
+            _table("grant").update_item(
+                Key={"grant_id": g["grant_id"]},
+                UpdateExpression="SET notified_at = :at",
+                ConditionExpression="attribute_not_exists(notified_at)",
+                ExpressionAttributeValues={":at": at})
+            claimed.append(g["grant_id"])
+    except ClientError as exc:
+        _unclaim(claimed)
+        if _conditional_failure(exc):
+            raise AlreadyNotified("One of these shares has just been emailed.")
+        raise
+
+    subject, text = mail.share_batch_invitation(
+        email, _tenant_name(tenant_id),
+        [{"memo_label": g["memo_label"], "subject": g.get("subject"),
+          "link": _link(g["grant_id"], g["link_token"]),
+          "expires_at": g["expires_at"],
+          "expiry_set_by_tenant": bool(g.get("expiry_set_by_tenant"))}
+         for g in grants])
+    sent = mail.send(recipients.pop(), subject, text, reply_to=email,
+                     bcc=email)
+    if not sent:
+        _unclaim(claimed)
+    print("[share-notified] tenant=%s shares=%d sent=%s" % (
+        tenant_id, len(grants), sent))
+    return {"sent": sent, "grant_ids": ids}
+
+
+def _unclaim(grant_ids):
+    for gid in grant_ids:
+        try:
+            _table("grant").update_item(
+                Key={"grant_id": gid},
+                UpdateExpression="REMOVE notified_at")
+        except Exception as exc:  # noqa: BLE001 - logged
+            print("[share-unclaim-failed] %s %r" % (str(gid)[:12], exc))
 
 
 # --- listing and revoking --------------------------------------------------
@@ -625,7 +750,7 @@ def _view(grant, registered=None):
         "sent_by", "created_at", "sent_at", "expires_at",
         "expiry_set_by_tenant", "first_opened_at", "opens", "downloads",
         "revoked", "revoked_at", "revoked_by", "reinstated_at",
-        "charged_cents")}
+        "charged_cents", "notified_at")}
     out["revoked"] = bool(out["revoked"])
     out["expired"] = expired
     if registered is not None:

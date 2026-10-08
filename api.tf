@@ -367,6 +367,12 @@ locals {
     "GET /shares",
     "POST /memos/{memo_id}/shares",
     "POST /shares/{grant_id}/revoke",
+
+    # Share a memo (feature/share-multi-memo): every live memorandum across
+    # engagements to pick from, and one email for a batch of shares - each
+    # still sent, counted and charged on its own by the route above.
+    "GET /memos",
+    "POST /shares/notify",
   ]
 }
 

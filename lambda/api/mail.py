@@ -158,6 +158,27 @@ def invitation(invited_by, accept_url, expires_at, role):
 
 
 # --- what a share says -----------------------------------------------------
+#
+# The sentences a share email carries whatever is in it, written once for the
+# single-share email and the batch email both (feature/share-multi-memo), so
+# the two cannot come to say different things about the same link.
+
+# The link alone opens nothing on a browser it has not been used on
+# (fix/share-link-possession-read). Said here, so the code email that
+# follows the first open is expected rather than alarming.
+_SHARE_DEVICE = ("The first time you open %s on a device, we'll email you a "
+                 "code to confirm it's you.\n")
+_SHARE_YOURS = ("%s yours: %s identifies you, and every page you read or "
+                "download carries your address. Please do not forward %s.\n")
+_SHARE_KEEP = ("Your access lasts two weeks. If you register - a password and "
+               "an authenticator app - it lasts six months from when this was "
+               "shared.\n\n")
+_SHARE_CLOSE = (
+    "If you were not expecting this, you can ignore it.\n"
+    "\n"
+    "ARQEDIA\n"
+    "This address does not take replies; use Reply and it will reach %s.\n")
+
 
 def share_invitation(shared_by, tenant_name, memo_label, subject, link,
                      expires_at, expiry_set_by_tenant):
@@ -179,10 +200,7 @@ def share_invitation(shared_by, tenant_name, memo_label, subject, link,
     untrue.
     """
     mail_subject = "%s has shared a memorandum with you" % shared_by
-    keep = ("" if expiry_set_by_tenant else
-            "Your access lasts two weeks. If you register - a password and an "
-            "authenticator app - it lasts six months from when this was "
-            "shared.\n\n")
+    keep = "" if expiry_set_by_tenant else _SHARE_KEEP
     body = (
         "%s at %s has shared a memorandum with you through ARQEDIA:\n"
         "\n"
@@ -193,22 +211,76 @@ def share_invitation(shared_by, tenant_name, memo_label, subject, link,
         "\n"
         "%s\n"
         "\n"
-        # The link alone opens nothing on a browser it has not been used on
-        # (fix/share-link-possession-read). Said here, so the code email that
-        # follows the first open is expected rather than alarming.
-        "The first time you open it on a device, we'll email you a code to "
-        "confirm it's you.\n"
+        + _SHARE_DEVICE % "it" +
         "\n"
-        "The link is yours: it identifies you, and every page you read or "
-        "download carries your address. Please do not forward it.\n"
+        + _SHARE_YOURS % ("The link is", "it", "it") +
         "\n"
         "Access ends on %s.\n"
         "\n"
         "%s"
-        "If you were not expecting this, you can ignore it.\n"
-        "\n"
-        "ARQEDIA\n"
-        "This address does not take replies; use Reply and it will reach %s.\n"
+        + _SHARE_CLOSE
     ) % (shared_by, tenant_name, memo_label, subject or "", link,
          str(expires_at)[:10], keep, shared_by)
+    return mail_subject, body
+
+
+def share_batch_invitation(shared_by, tenant_name, shares):
+    """Several memoranda, shared with one person in one go - one email
+    (feature/share-multi-memo, decision of 8 October 2026).
+
+    `shares` is a list of dicts: memo_label, subject, link, expires_at,
+    expiry_set_by_tenant - one per share that succeeded. Each memorandum is
+    its own share with its own link; this only puts their links in one
+    message.
+
+    ONE SHARE IS THE ORDINARY EMAIL. A batch where one memorandum got through
+    reads exactly as sharing that one memorandum does - the recipient cannot
+    tell, and has no reason to.
+
+    THE DATE IS SAID ONCE where every share ends the same day, which is the
+    ordinary case: one send time, one expiry choice, one recipient. Where
+    they differ - a re-sent share keeps a date the tenant set - each line
+    carries its own.
+
+    WHAT REGISTERING DOES is said where any share in it would be lengthened
+    by it, as the single email says it where its one share would."""
+    if len(shares) == 1:
+        s = shares[0]
+        return share_invitation(shared_by, tenant_name, s["memo_label"],
+                                s.get("subject"), s["link"], s["expires_at"],
+                                bool(s.get("expiry_set_by_tenant")))
+
+    dates = {str(s["expires_at"])[:10] for s in shares}
+    same_day = len(dates) == 1
+    lines = []
+    for s in shares:
+        title = s["memo_label"]
+        if s.get("subject"):
+            title += " — " + s["subject"]
+        lines.append("    %s\n" % title)
+        lines.append("    %s\n" % s["link"])
+        if not same_day:
+            lines.append("    Access ends on %s.\n" % str(s["expires_at"])[:10])
+        lines.append("\n")
+
+    ends = ("Access to all of these ends on %s.\n\n" % dates.pop()
+            if same_day else "")
+    keep = (_SHARE_KEEP if any(not s.get("expiry_set_by_tenant")
+                               for s in shares) else "")
+    mail_subject = "%s has shared %d memoranda with you" % (shared_by,
+                                                            len(shares))
+    body = (
+        "%s at %s has shared %d memoranda with you through ARQEDIA. Each has "
+        "its own link:\n"
+        "\n"
+        "%s"
+        + _SHARE_DEVICE % "one" +
+        "\n"
+        + _SHARE_YOURS % ("Each link is", "it", "them") +
+        "\n"
+        "%s"
+        "%s"
+        + _SHARE_CLOSE
+    ) % (shared_by, tenant_name, len(shares), "".join(lines), ends, keep,
+         shared_by)
     return mail_subject, body
