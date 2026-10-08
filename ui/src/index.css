@@ -234,6 +234,10 @@ button:disabled { background: var(--line); color: var(--muted); cursor: default;
 main button { background: var(--gold); color: var(--deep); }
 main button:hover:not(:disabled) { background: #f5d400; }
 main button:disabled { background: var(--line); color: var(--muted); }
+/* Not gold: a choice that is not generating (Share a memo's shortfall). */
+main button.plain { background: var(--deep); color: #fff; }
+main button.plain:hover:not(:disabled) { background: var(--medium); }
+main button.plain:disabled { background: var(--line); color: var(--muted); }
 
 .inline { display: flex; gap: 8px; margin-top: 20px; }
 .inline input { flex: 1; }
