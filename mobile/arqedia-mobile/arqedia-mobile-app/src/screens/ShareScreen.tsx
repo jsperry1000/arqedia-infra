@@ -1,8 +1,12 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, TextInput, ScrollView, ActivityIndicator } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, TextInput, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { colors } from '@/theme/colors';
+import { RootStackParamList } from '@/navigation/RootNavigator';
 import { api, chargeKey, Capped, OverageRequired } from '@/api/client';
+import { openMemoPdf } from '@/api/pdf';
 import { Engagement, MemoRef, ShareAllowance, ShareGrant, ShareSent } from '@/types';
 
 // Sending a memorandum, and taking it back. Follows ui/src/Share.tsx: the
@@ -12,6 +16,8 @@ import { Engagement, MemoRef, ShareAllowance, ShareGrant, ShareSent } from '@/ty
 
 const day = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString() : '');
 const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+const DOUBLE_TAP_MS = 350;
 
 // The default is not a date the tenant set: two weeks, and six months once
 // the recipient registers. A chosen period is a ceiling registering never
@@ -61,6 +67,7 @@ function Check({ checked, onPress, children }: {
 }
 
 export default function ShareScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [engagements, setEngagements] = useState<Engagement[] | null>(null);
   const [engagement, setEngagement] = useState<Engagement | null>(null);
   const [memos, setMemos] = useState<MemoRef[] | null>(null);
@@ -114,6 +121,28 @@ export default function ShareScreen() {
       setMemos((await api.memos(e.engagement)).memos);
     } catch (err: any) {
       setError(err?.message || String(err));
+    }
+  };
+
+  // One tap chooses a memo. A second tap on the same memo within DOUBLE_TAP_MS
+  // offers its PDF, so the person can check what they are about to send.
+  const lastTap = useRef<{ id: number; at: number } | null>(null);
+  const onMemoPress = (m: MemoRef) => {
+    const now = Date.now();
+    const prev = lastTap.current;
+    lastTap.current = { id: m.memo_id, at: now };
+    setMemo(m);
+    if (prev && prev.id === m.memo_id && now - prev.at < DOUBLE_TAP_MS) {
+      lastTap.current = null;
+      Alert.alert(m.template_label, `Open memo ${m.label} as a PDF?`, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Open PDF',
+          onPress: () => {
+            openMemoPdf(m.memo_id).catch((err) => setError(err?.message || String(err)));
+          },
+        },
+      ]);
     }
   };
 
@@ -195,7 +224,7 @@ export default function ShareScreen() {
                 <Pressable key={e.engagement_id} style={styles.pick} onPress={() => pickEngagement(e)}>
                   <View style={[styles.pickIcon, { backgroundColor: colors.shade }]} />
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.pickTitle} numberOfLines={1}>{e.engagement}</Text>
+                    <Text style={styles.engagementName} numberOfLines={1}>{e.engagement}</Text>
                     <Text style={styles.pickSubtitle} numberOfLines={1}>
                       {e.subject_name ?? 'No subject named'}
                     </Text>
@@ -218,7 +247,7 @@ export default function ShareScreen() {
                 return (
                   <Pressable
                     key={m.memo_id}
-                    onPress={() => setMemo(m)}
+                    onPress={() => onMemoPress(m)}
                     style={[
                       styles.pick,
                       { borderColor: selected ? colors.deep : colors.border, borderWidth: selected ? 1.5 : 1 },
@@ -301,7 +330,11 @@ export default function ShareScreen() {
           <Text style={styles.sectionLabel}>Recently sent</Text>
           {grants.length === 0 && <Text style={styles.small}>Nothing shared yet.</Text>}
           {grants.map((g) => (
-            <View key={g.grant_id} style={styles.grantRow}>
+            <Pressable
+              key={g.grant_id}
+              style={styles.grantRow}
+              onPress={() => navigation.navigate('GrantDetail', { grant: g })}
+            >
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{g.recipient_email.slice(0, 2).toUpperCase()}</Text>
               </View>
@@ -328,7 +361,7 @@ export default function ShareScreen() {
                     )
                 )}
               </View>
-            </View>
+            </Pressable>
           ))}
         </View>
       </ScrollView>
@@ -361,7 +394,11 @@ const styles = StyleSheet.create({
   small: { fontSize: 13, color: colors.subtext, lineHeight: 18 },
   warn: { fontSize: 13.5, color: colors.ink, lineHeight: 19 },
   error: { fontSize: 13.5, color: colors.ink },
-  backLink: { fontSize: 14, fontWeight: '600', color: colors.mid, marginBottom: 8 },
+  // The engagement's name, wherever the picker shows it: the row to choose it,
+  // and the line above its memos that goes back. Larger than the memo titles,
+  // because it is what the person is choosing between.
+  engagementName: { fontSize: 18, fontWeight: '700', color: colors.ink },
+  backLink: { fontSize: 18, fontWeight: '700', color: colors.mid, marginBottom: 10 },
   chevron: { fontSize: 22, color: colors.muted },
   pick: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
