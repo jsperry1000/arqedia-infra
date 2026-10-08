@@ -82,9 +82,11 @@ Paying for a plan. Nothing here grants money; Paddle's webhooks do.
 
 Sharing a memorandum with somebody outside the workspace (share.py). The
 recipient's half is the share-viewer function, not this one.
+  GET  /memos                            every live memo, for Share a memo
   GET  /shares                           what has been sent, and the allowance
   POST /memos/{memo_id}/shares           send one, or send it again
   POST /shares/{grant_id}/revoke         end future access
+  POST /shares/notify                    one email for a batch just sent
 """
 
 import datetime
@@ -2021,6 +2023,80 @@ def memo_working(tenant_id, email, memo_id):
             "saved_at": stored.get("saved_at")}
 
 
+def _has_unsaved(tenant_id, email, memo_id):
+    """Whether this person keeps unsaved work on this memo - the rule the
+    memo page's own Share button follows, so "Share a memo" greys out the
+    same memoranda. Per person: a colleague's unsaved work greys nothing out
+    for anybody else. An unreadable copy counts as unsaved, so a memo is
+    never offered on a guess."""
+    try:
+        body = _s3.get_object(
+            Bucket=CURATED_BUCKET,
+            Key=_working_key(tenant_id, memo_id, email))["Body"].read()
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        if code in ("NoSuchKey", "404", "AccessDenied", "403"):
+            return False
+        print("[working-unreadable] memo=%s %r" % (memo_id, exc))
+        return True
+    try:
+        return json.loads(body.decode("utf-8")).get("working") is not None
+    except ValueError:
+        return True
+
+
+# The longest list "Share a memo" offers. Newest first; a memorandum older
+# than the two-hundredth is still shared from its own page.
+_ALL_MEMOS_LIMIT = 200
+
+
+def list_all_memos(tenant_id, email):
+    """Every live memorandum this tenant holds, across engagements, newest
+    first - what "Share a memo" picks from (feature/share-multi-memo).
+
+    THE SAME SET THE SHARE BUTTON SHARES FROM: live memoranda, each named as
+    it was when it was written (list_memos explains why), with the number a
+    person reads - root.revision - and the engagement it belongs to.
+
+    unsaved IS PER PERSON, read from the same kept working copy the memo page
+    keeps. A memorandum with unsaved changes is shown and not selectable, as
+    its own Share button is disabled. The reads run side by side: one small
+    object per memorandum, and a list of them one at a time would be slow."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    rows = _sql(
+        """
+        SELECT m.memo_id, m.template_key, m.config_revision,
+               m.parent_memo_id, m.revision, m.generated_at,
+               e.name, e.subject_name
+        FROM memo m
+        LEFT JOIN engagement e
+               ON e.engagement_id = m.engagement_id
+              AND e.tenant_id = m.tenant_id
+        WHERE m.tenant_id = :t AND m.state = 'live'
+        ORDER BY m.generated_at DESC, m.memo_id DESC
+        LIMIT %d
+        """ % _ALL_MEMOS_LIMIT,
+        [_p("t", tenant_id)]).get("records", [])
+
+    memos = [{
+        "memo_id": _col(r, 0),
+        "label": config.load(tenant_id, _col(r, 2) or 1)
+                       .label_for_template(_col(r, 1)),
+        "number": "%s.%s" % (_col(r, 3) or _col(r, 0), _col(r, 4)),
+        "generated_at": _col(r, 5),
+        "engagement": _col(r, 6),
+        "subject_name": _col(r, 7),
+    } for r in rows]
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        flags = list(pool.map(
+            lambda m: _has_unsaved(tenant_id, email, m["memo_id"]), memos))
+    for m, unsaved in zip(memos, flags):
+        m["unsaved"] = unsaved
+    return {"memos": memos, "limit": _ALL_MEMOS_LIMIT}
+
+
 def keep_memo_working(tenant_id, email, memo_id, working):
     """Keep the person's unsaved work, or clear it with None."""
     if not _own_memo(tenant_id, memo_id):
@@ -2725,6 +2801,8 @@ SHARE_ROUTES = frozenset({
     "GET /shares",
     "POST /memos/{memo_id}/shares",
     "POST /shares/{grant_id}/revoke",
+    # One email for a batch of shares just sent (feature/share-multi-memo).
+    "POST /shares/notify",
 })
 
 
@@ -2757,6 +2835,15 @@ def share_route(route, tenant_id, email, params, event):
                 return _reply(404, {"error": "not found"})
             return _reply(200, revoked)
 
+        if route == "POST /shares/notify":
+            body = json.loads(event.get("body") or "{}")
+            notified = share.notify(tenant_id, email, body.get("grant_ids"))
+            if notified is None:
+                return _reply(404, {"error": "not found"})
+            return _reply(200, notified)
+
+    except share.AlreadyNotified as exc:
+        return _reply(409, {"error": str(exc)})
     except share.RateLimited as exc:
         return _reply(429, {"error": str(exc)})
     except share.Capped as exc:
@@ -2929,6 +3016,10 @@ def _dispatch(event, context):
             if passage is None:
                 return _reply(404, {"error": "not found"})
             return _reply(200, passage)
+
+        # Every live memorandum, across engagements, for "Share a memo".
+        if route == "GET /memos":
+            return _reply(200, list_all_memos(tenant_id, email))
 
         if route == "GET /engagements/{id}/memos":
             found = engagement_named(tenant_id, engagement)

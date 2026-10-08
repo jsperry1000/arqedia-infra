@@ -1117,6 +1117,190 @@ for _name in [n for n in dir(RegisterCodeTest) if n.startswith("test_")]:
         setattr(DeviceTest, _name, None)
 
 
+@unittest.skipUnless(HAVE, "moto, boto3, pypdf or reportlab not installed")
+class BatchTest(SendTest):
+    """Share a memo (feature/share-multi-memo): several memoranda to one
+    person - each its own grant, allowance count, charge and key, sent with
+    notify: false - then ONE email for the shares that succeeded."""
+
+    def setUp(self):
+        super().setUp()
+        self.share._memo = lambda t, m: {
+            "memo_id": int(m), "label": "Lender Brief %s.1" % m,
+            "subject": "Company %s" % m} if 11 <= int(m) <= 16 else None
+
+    def batch(self, memos, to="j.ferrers@northbank.com", **extra):
+        """As the screen does: one send per memo, its own key, no email."""
+        out = []
+        for m in memos:
+            try:
+                out.append(self.send(memo=m, to=to, key="batch-%s" % m,
+                                     notify=False, **extra))
+            except Exception as exc:  # noqa: BLE001 - recorded, as the screen does
+                out.append(exc)
+        return out
+
+    def grant(self, gid):
+        return self.share._table("grant").get_item(
+            Key={"grant_id": gid})["Item"]
+
+    def test_n_memos_make_n_separate_grants_and_no_email(self):
+        sent = self.batch([11, 12, 13])
+        self.assertEqual(len({s["grant_id"] for s in sent}), 3)
+        self.assertEqual([s["memo_id"] for s in sent], [11, 12, 13])
+        self.assertTrue(all(s["sent"] is None for s in sent))
+        self.assertEqual(self.mails, [])
+        self.assertEqual(self.usage("p2026-10-20 20:26:37"), 3)
+        for s in sent:
+            g = self.grant(s["grant_id"])
+            self.assertEqual(g["status"], "active")
+            self.assertEqual(g["idempotency_key"], "batch-%s" % s["memo_id"])
+            self.assertNotIn("notified_at", g)
+
+    def test_one_email_for_the_batch_with_every_link_and_the_sender_copied(
+            self):
+        sent = self.batch([11, 12, 13])
+        result = self.share.notify(1, "sp@ebl.test",
+                                   [s["grant_id"] for s in sent])
+        self.assertTrue(result["sent"])
+        self.assertEqual(len(self.mails), 1)
+        to, subject, body, reply_to, bcc = self.mails[0]
+        self.assertEqual(to, "j.ferrers@northbank.com")
+        self.assertIn("3 memoranda", subject)
+        self.assertEqual((reply_to, bcc), ("sp@ebl.test", "sp@ebl.test"))
+        for s in sent:
+            token = self.grant(s["grant_id"])["link_token"]
+            self.assertIn("#t=" + token, body)
+            self.assertIn("notified_at", self.grant(s["grant_id"]))
+
+    def test_a_batch_of_one_is_the_ordinary_email(self):
+        sent = self.batch([11])
+        self.share.notify(1, "sp@ebl.test", [sent[0]["grant_id"]])
+        self.assertIn("has shared a memorandum with you", self.mails[0][1])
+
+    def test_a_batch_that_partly_fails_emails_the_ones_that_succeeded(self):
+        # Memo 99 is not this tenant's; the others go through regardless.
+        sent = self.batch([11, 99, 12])
+        good = [s for s in sent if isinstance(s, dict)]
+        self.assertEqual([s["memo_id"] for s in good], [11, 12])
+        self.assertIsNone(sent[1])
+        self.share.notify(1, "sp@ebl.test", [s["grant_id"] for s in good])
+        self.assertIn("2 memoranda", self.mails[0][1])
+
+    def test_retried_successes_get_an_email_of_their_own(self):
+        first = self.batch([11, 12])
+        self.share.notify(1, "sp@ebl.test", [s["grant_id"] for s in first])
+        later = self.batch([13])
+        self.share.notify(1, "sp@ebl.test", [later[0]["grant_id"]])
+        self.assertEqual(len(self.mails), 2)
+        self.assertNotIn(self.grant(first[0]["grant_id"])["link_token"],
+                         self.mails[1][2])
+
+    def test_a_share_is_never_emailed_twice_by_notify(self):
+        sent = self.batch([11])
+        ids = [sent[0]["grant_id"]]
+        self.share.notify(1, "sp@ebl.test", ids)
+        with self.assertRaises(self.share.AlreadyNotified):
+            self.share.notify(1, "sp@ebl.test", ids)
+        self.assertEqual(len(self.mails), 1)
+
+    def test_a_single_share_is_marked_as_emailed_so_notify_refuses_it(self):
+        sent = self.send(memo=11)
+        self.assertIn("notified_at", self.grant(sent["grant_id"]))
+        with self.assertRaises(self.share.AlreadyNotified):
+            self.share.notify(1, "sp@ebl.test", [sent["grant_id"]])
+
+    def test_a_failed_email_leaves_the_shares_free_to_email_again(self):
+        sent = self.batch([11, 12])
+        ids = [s["grant_id"] for s in sent]
+        self.share.mail.send = lambda *a, **k: False
+        self.assertFalse(self.share.notify(1, "sp@ebl.test", ids)["sent"])
+        for gid in ids:
+            self.assertNotIn("notified_at", self.grant(gid))
+        self.share.mail.send = lambda to, subject, body, reply_to=None, \
+            bcc=None: self.mails.append((to, subject, body, reply_to,
+                                         bcc)) or True
+        self.assertTrue(self.share.notify(1, "sp@ebl.test", ids)["sent"])
+
+    def test_notify_refuses_mixed_recipients_other_tenants_and_more_than_5(
+            self):
+        a = self.batch([11])[0]
+        b = self.batch([12], to="someone@else.test")[0]
+        with self.assertRaises(ValueError):
+            self.share.notify(1, "sp@ebl.test", [a["grant_id"], b["grant_id"]])
+        self.assertIsNone(self.share.notify(2, "x@y.test", [a["grant_id"]]))
+        with self.assertRaises(ValueError):
+            self.share.notify(1, "sp@ebl.test", ["g%d" % i for i in range(6)])
+        self.assertEqual(self.mails, [])
+
+    def test_a_resend_in_a_batch_is_free_and_rides_in_the_batch_email(self):
+        first = self.send(memo=11)           # emailed on its own
+        self.mails.clear()
+        again = self.batch([11, 12])
+        self.assertEqual(again[0]["grant_id"], first["grant_id"])
+        self.assertEqual(again[0]["charged_cents"], 0)
+        self.assertEqual(self.usage("p2026-10-20 20:26:37"), 2)
+        self.share.notify(1, "sp@ebl.test", [s["grant_id"] for s in again])
+        self.assertIn("2 memoranda", self.mails[0][1])
+
+    def test_nothing_past_the_allowance_is_charged_without_its_price(self):
+        # The shortfall screen sends accept_overage_cents only for the memos
+        # the person confirmed; any other is refused, not charged.
+        self.share._table("usage").put_item(Item={
+            "tenant_id": 1, "period": "p2026-10-20 20:26:37", "count": 9})
+        sent = self.batch([11, 12])
+        self.assertIsInstance(sent[0], dict)
+        self.assertIsInstance(sent[1], self.share.OverageNotAccepted)
+        self.assertEqual(self.charges, [])
+        self.assertEqual(self.usage("p2026-10-20 20:26:37"), 10)
+
+
+class BatchMailTest(unittest.TestCase):
+    """mail.share_batch_invitation (feature/share-multi-memo)."""
+
+    def setUp(self):
+        self.mail = load(API, "mail")
+
+    def share(self, n, expires="2026-10-22T10:00:00Z", tenant_set=False):
+        return {"memo_label": "Lender Brief %d.1" % n,
+                "subject": "Company %d" % n,
+                "link": "https://app.test/view/%d#t=tok%d" % (n, n),
+                "expires_at": expires, "expiry_set_by_tenant": tenant_set}
+
+    def test_one_share_is_exactly_the_single_email(self):
+        s = self.share(1)
+        self.assertEqual(
+            self.mail.share_batch_invitation("sp@ebl.test", "TESTCO A", [s]),
+            self.mail.share_invitation("sp@ebl.test", "TESTCO A",
+                                       s["memo_label"], s["subject"],
+                                       s["link"], s["expires_at"], False))
+
+    def test_several_shares_each_with_its_own_link_and_one_date(self):
+        subject, body = self.mail.share_batch_invitation(
+            "sp@ebl.test", "TESTCO A", [self.share(n) for n in (1, 2, 3)])
+        self.assertEqual(subject, "sp@ebl.test has shared 3 memoranda with you")
+        for n in (1, 2, 3):
+            self.assertIn("https://app.test/view/%d#t=tok%d" % (n, n), body)
+        self.assertEqual(body.count("2026-10-22"), 1)
+        self.assertIn("Access to all of these ends on 2026-10-22", body)
+
+    def test_differing_dates_are_given_per_link(self):
+        _, body = self.mail.share_batch_invitation("sp@ebl.test", "T", [
+            self.share(1), self.share(2, expires="2026-11-30T00:00:00Z",
+                                      tenant_set=True)])
+        self.assertNotIn("all of these", body)
+        self.assertIn("Access ends on 2026-10-22", body)
+        self.assertIn("Access ends on 2026-11-30", body)
+
+    def test_registering_is_offered_only_where_it_would_lengthen_access(self):
+        fixed = [self.share(n, tenant_set=True) for n in (1, 2)]
+        _, body = self.mail.share_batch_invitation("sp@ebl.test", "T", fixed)
+        self.assertNotIn("If you register", body)
+        mixed = [self.share(1, tenant_set=True), self.share(2)]
+        _, body = self.mail.share_batch_invitation("sp@ebl.test", "T", mixed)
+        self.assertIn("If you register", body)
+
+
 class MailBccTest(unittest.TestCase):
     """mail.send with a BCC (feature/share-sender-copy). SES rejects a whole
     message if any address in it is malformed, so the copy must never cost
@@ -1214,3 +1398,8 @@ class RulesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+for _name in [n for n in dir(SendTest) if n.startswith("test_")]:
+    if _name not in BatchTest.__dict__:
+        setattr(BatchTest, _name, None)
