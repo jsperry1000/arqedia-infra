@@ -604,8 +604,13 @@ def _mail(email, tenant_name, grant):
         email, tenant_name, grant["memo_label"], grant.get("subject"),
         _link(grant["grant_id"], grant["link_token"]),
         grant["expires_at"], bool(grant.get("expiry_set_by_tenant")))
+    # The sender is copied, BCC, on the same message (feature/share-sender-
+    # copy): the real ARQEDIA email in their own inbox, to forward if they
+    # wish. It opens nothing for them or anybody they forward it to - the
+    # link takes a device verified by a code sent to the grant's recipient,
+    # and nobody else (fix/share-link-possession-read).
     return mail.send(grant["recipient_email"], subject, text,
-                     reply_to=email)
+                     reply_to=email, bcc=email)
 
 
 # --- listing and revoking --------------------------------------------------
