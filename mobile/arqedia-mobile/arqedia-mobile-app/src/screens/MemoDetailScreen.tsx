@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, Linking, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { colors } from '@/theme/colors';
-import { api } from '@/api/client';
+import { openMemoPdf } from '@/api/pdf';
 import { RootStackParamList } from '@/navigation/RootNavigator';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'MemoDetail'>;
@@ -15,15 +15,11 @@ export default function MemoDetailScreen({ route, navigation }: Props) {
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState('');
 
-  // GET /memos/{id}/pdf renders the PDF when asked and answers with a link to
-  // it. The link is handed to the phone, which opens it in whatever views
-  // PDFs; saving a copy is the viewer's to offer.
   const onOpen = async () => {
     setOpening(true);
     setError('');
     try {
-      const { url } = await api.memoPdf(memo.memo_id);
-      await Linking.openURL(url);
+      await openMemoPdf(memo.memo_id);
     } catch (err: any) {
       setError(err?.message || String(err));
     } finally {

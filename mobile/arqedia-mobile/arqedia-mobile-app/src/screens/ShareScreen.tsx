@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, TextInput, ScrollView, ActivityIndicator } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, TextInput, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '@/theme/colors';
 import { api, chargeKey, Capped, OverageRequired } from '@/api/client';
+import { openMemoPdf } from '@/api/pdf';
 import { Engagement, MemoRef, ShareAllowance, ShareGrant, ShareSent } from '@/types';
 
 // Sending a memorandum, and taking it back. Follows ui/src/Share.tsx: the
@@ -12,6 +13,8 @@ import { Engagement, MemoRef, ShareAllowance, ShareGrant, ShareSent } from '@/ty
 
 const day = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString() : '');
 const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+const DOUBLE_TAP_MS = 350;
 
 // The default is not a date the tenant set: two weeks, and six months once
 // the recipient registers. A chosen period is a ceiling registering never
@@ -117,6 +120,28 @@ export default function ShareScreen() {
     }
   };
 
+  // One tap chooses a memo. A second tap on the same memo within DOUBLE_TAP_MS
+  // offers its PDF, so the person can check what they are about to send.
+  const lastTap = useRef<{ id: number; at: number } | null>(null);
+  const onMemoPress = (m: MemoRef) => {
+    const now = Date.now();
+    const prev = lastTap.current;
+    lastTap.current = { id: m.memo_id, at: now };
+    setMemo(m);
+    if (prev && prev.id === m.memo_id && now - prev.at < DOUBLE_TAP_MS) {
+      lastTap.current = null;
+      Alert.alert(m.template_label, `Open memo ${m.label} as a PDF?`, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Open PDF',
+          onPress: () => {
+            openMemoPdf(m.memo_id).catch((err) => setError(err?.message || String(err)));
+          },
+        },
+      ]);
+    }
+  };
+
   const onSend = async () => {
     if (!memo) return;
     setSending(true);
@@ -218,7 +243,7 @@ export default function ShareScreen() {
                 return (
                   <Pressable
                     key={m.memo_id}
-                    onPress={() => setMemo(m)}
+                    onPress={() => onMemoPress(m)}
                     style={[
                       styles.pick,
                       { borderColor: selected ? colors.deep : colors.border, borderWidth: selected ? 1.5 : 1 },
