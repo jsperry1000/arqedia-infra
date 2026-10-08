@@ -186,8 +186,8 @@ class SendTest(unittest.TestCase):
         s._render = render
 
         self.mails = []
-        s.mail.send = lambda to, subject, body, reply_to=None: \
-            self.mails.append((to, subject, body, reply_to)) or True
+        s.mail.send = lambda to, subject, body, reply_to=None, bcc=None: \
+            self.mails.append((to, subject, body, reply_to, bcc)) or True
 
     def tearDown(self):
         self.aws.stop()
@@ -224,6 +224,20 @@ class SendTest(unittest.TestCase):
         self.assertEqual(grant["status"], "active")
         self.assertIn("#t=" + grant["link_token"], self.mails[0][2])
         self.assertEqual(self.mails[0][3], "sp@ebl.test")
+
+    def test_the_sender_is_copied_on_the_same_email(self):
+        # feature/share-sender-copy: one message, the sender BCC'd on it.
+        self.send()
+        self.assertEqual(len(self.mails), 1)
+        to, _, _, _, bcc = self.mails[0]
+        self.assertEqual(to, "j.ferrers@northbank.com")
+        self.assertEqual(bcc, "sp@ebl.test")
+
+    def test_a_resend_copies_the_sender_too(self):
+        self.send(key="k1")
+        self.send(key="k2")
+        self.assertEqual([m[4] for m in self.mails],
+                         ["sp@ebl.test", "sp@ebl.test"])
 
     def test_the_authority_box_is_required(self):
         with self.assertRaises(ValueError):
@@ -1101,6 +1115,69 @@ class DeviceTest(RegisterCodeTest):
 for _name in [n for n in dir(RegisterCodeTest) if n.startswith("test_")]:
     if _name not in DeviceTest.__dict__:
         setattr(DeviceTest, _name, None)
+
+
+class MailBccTest(unittest.TestCase):
+    """mail.send with a BCC (feature/share-sender-copy). SES rejects a whole
+    message if any address in it is malformed, so the copy must never cost
+    the recipient their email. Needs nothing installed: SES is a mock."""
+
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, {"SENDER": "no-reply@x.test"})
+        self.env.start()
+        self.mail = load(API, "mail")
+        self.mail._ses = mock.MagicMock()
+
+    def tearDown(self):
+        self.env.stop()
+
+    def destinations(self):
+        return [c.kwargs["Destination"]
+                for c in self.mail._ses.send_email.call_args_list]
+
+    def test_the_copy_is_a_bcc_on_the_one_call(self):
+        self.assertTrue(self.mail.send("r@client.test", "s", "b",
+                                       reply_to="sp@ebl.test",
+                                       bcc="sp@ebl.test"))
+        self.assertEqual(self.destinations(), [
+            {"ToAddresses": ["r@client.test"],
+             "BccAddresses": ["sp@ebl.test"]}])
+
+    def test_a_malformed_copy_address_is_never_sent_to_ses(self):
+        # "unknown" is what the API falls back to for a token with no email.
+        for bad in ("unknown", "not an address", "@nobody", ""):
+            with self.subTest(bcc=bad):
+                self.mail._ses.reset_mock()
+                self.assertTrue(self.mail.send("r@client.test", "s", "b",
+                                               bcc=bad))
+                self.assertEqual(self.destinations(),
+                                 [{"ToAddresses": ["r@client.test"]}])
+
+    def test_no_copy_to_the_recipient_themself(self):
+        self.mail.send("r@client.test", "s", "b", bcc="R@Client.test")
+        self.assertEqual(self.destinations(),
+                         [{"ToAddresses": ["r@client.test"]}])
+
+    def test_a_refused_copy_still_delivers_to_the_recipient(self):
+        self.mail._ses.send_email.side_effect = [
+            Exception("MessageRejected: Illegal address"), {"MessageId": "m"}]
+        self.assertTrue(self.mail.send("r@client.test", "s", "b",
+                                       bcc="sp@ebl.test"))
+        self.assertEqual(self.destinations(), [
+            {"ToAddresses": ["r@client.test"],
+             "BccAddresses": ["sp@ebl.test"]},
+            {"ToAddresses": ["r@client.test"]}])
+
+    def test_a_send_that_fails_anyway_reports_false_and_never_raises(self):
+        self.mail._ses.send_email.side_effect = Exception("down")
+        self.assertFalse(self.mail.send("r@client.test", "s", "b",
+                                        bcc="sp@ebl.test"))
+        self.assertEqual(self.mail._ses.send_email.call_count, 2)
+
+    def test_without_a_copy_there_is_exactly_one_call(self):
+        self.mail._ses.send_email.side_effect = Exception("down")
+        self.assertFalse(self.mail.send("r@client.test", "s", "b"))
+        self.assertEqual(self.mail._ses.send_email.call_count, 1)
 
 
 class RulesTest(unittest.TestCase):

@@ -22,6 +22,7 @@ it is about to matter, and says so.
 """
 
 import os
+import re
 
 import boto3
 
@@ -35,23 +36,46 @@ def sender():
     return os.environ.get("SENDER") or ""
 
 
-def send(to, subject, body, reply_to=None):
-    """One plain-text message. True where SES accepted it.
+# A well-formed address, the shape SES itself insists on. Anything else in a
+# message's recipients makes SES reject the WHOLE message (SES developer
+# guide, "How email sending works") - so a BCC is only ever added in this
+# shape, and the API's own fallback for a token with no email, "unknown",
+# never reaches SES as a recipient.
+_ADDRESS = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def send(to, subject, body, reply_to=None, bcc=None):
+    """One plain-text message. True where SES accepted it for `to`.
 
     Plain text rather than HTML: every message this product sends is a
     sentence, a link and a date. HTML would add a template to maintain, a
     second copy of every word, and a class of rendering problem in other
     people's mail clients that we could not see.
+
+    A BCC NEVER COSTS THE RECIPIENT THEIR EMAIL (feature/share-sender-copy).
+    It is added only when well formed and not the recipient's own address,
+    and a send that SES refuses with it is sent again without it - the only
+    case in which this makes a second call. True means `to` was sent to; the
+    copy is a courtesy, logged either way.
     """
     address = sender()
     if not address:
         print("[mail-not-sent] to=%s reason=no-sender" % _mask(to))
         return False
 
-    try:
+    copy = (bcc or "").strip()
+    if copy and (not _ADDRESS.match(copy)
+                 or copy.lower() == str(to or "").strip().lower()):
+        print("[mail-bcc-skipped] to=%s bcc=%s" % (_mask(to), _mask(copy)))
+        copy = ""
+
+    def attempt(with_copy):
+        destination = {"ToAddresses": [to]}
+        if with_copy:
+            destination["BccAddresses"] = [with_copy]
         _ses.send_email(
             Source=address,
-            Destination={"ToAddresses": [to]},
+            Destination=destination,
             Message={
                 "Subject": {"Data": subject, "Charset": "UTF-8"},
                 "Body": {"Text": {"Data": body, "Charset": "UTF-8"}},
@@ -61,7 +85,24 @@ def send(to, subject, body, reply_to=None):
             # publishes no MX record and a reply to the sender goes nowhere.
             **({"ReplyToAddresses": [reply_to]} if reply_to else {}),
         )
-        print("[mail-sent] to=%s subject=%r" % (_mask(to), subject))
+
+    try:
+        attempt(copy)
+        print("[mail-sent] to=%s subject=%r bcc=%s" % (
+            _mask(to), subject, _mask(copy) if copy else "-"))
+        return True
+    except Exception as exc:  # noqa: BLE001 - the caller's work already stands
+        if not copy:
+            print("[mail-failed] to=%s subject=%r %r" % (_mask(to), subject,
+                                                          exc))
+            return False
+        print("[mail-bcc-refused] to=%s bcc=%s %r - sending without it" % (
+            _mask(to), _mask(copy), exc))
+
+    try:
+        attempt("")
+        print("[mail-sent] to=%s subject=%r bcc=dropped" % (_mask(to),
+                                                            subject))
         return True
     except Exception as exc:  # noqa: BLE001 - the caller's work already stands
         print("[mail-failed] to=%s subject=%r %r" % (_mask(to), subject, exc))
