@@ -195,7 +195,7 @@ export default function ShareScreen() {
                 <Pressable key={e.engagement_id} style={styles.pick} onPress={() => pickEngagement(e)}>
                   <View style={[styles.pickIcon, { backgroundColor: colors.shade }]} />
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.pickTitle} numberOfLines={1}>{e.engagement}</Text>
+                    <Text style={styles.engagementName} numberOfLines={1}>{e.engagement}</Text>
                     <Text style={styles.pickSubtitle} numberOfLines={1}>
                       {e.subject_name ?? 'No subject named'}
                     </Text>
@@ -361,7 +361,11 @@ const styles = StyleSheet.create({
   small: { fontSize: 13, color: colors.subtext, lineHeight: 18 },
   warn: { fontSize: 13.5, color: colors.ink, lineHeight: 19 },
   error: { fontSize: 13.5, color: colors.ink },
-  backLink: { fontSize: 14, fontWeight: '600', color: colors.mid, marginBottom: 8 },
+  // The engagement's name, wherever the picker shows it: the row to choose it,
+  // and the line above its memos that goes back. Larger than the memo titles,
+  // because it is what the person is choosing between.
+  engagementName: { fontSize: 18, fontWeight: '700', color: colors.ink },
+  backLink: { fontSize: 18, fontWeight: '700', color: colors.mid, marginBottom: 10 },
   chevron: { fontSize: 22, color: colors.muted },
   pick: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
