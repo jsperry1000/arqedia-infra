@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, TextInput, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { colors } from '@/theme/colors';
+import { RootStackParamList } from '@/navigation/RootNavigator';
 import { api, chargeKey, Capped, OverageRequired } from '@/api/client';
 import { openMemoPdf } from '@/api/pdf';
 import { Engagement, MemoRef, ShareAllowance, ShareGrant, ShareSent } from '@/types';
@@ -64,6 +67,7 @@ function Check({ checked, onPress, children }: {
 }
 
 export default function ShareScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [engagements, setEngagements] = useState<Engagement[] | null>(null);
   const [engagement, setEngagement] = useState<Engagement | null>(null);
   const [memos, setMemos] = useState<MemoRef[] | null>(null);
@@ -326,7 +330,11 @@ export default function ShareScreen() {
           <Text style={styles.sectionLabel}>Recently sent</Text>
           {grants.length === 0 && <Text style={styles.small}>Nothing shared yet.</Text>}
           {grants.map((g) => (
-            <View key={g.grant_id} style={styles.grantRow}>
+            <Pressable
+              key={g.grant_id}
+              style={styles.grantRow}
+              onPress={() => navigation.navigate('GrantDetail', { grant: g })}
+            >
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{g.recipient_email.slice(0, 2).toUpperCase()}</Text>
               </View>
@@ -353,7 +361,7 @@ export default function ShareScreen() {
                     )
                 )}
               </View>
-            </View>
+            </Pressable>
           ))}
         </View>
       </ScrollView>
