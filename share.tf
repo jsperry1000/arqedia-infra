@@ -552,6 +552,8 @@ resource "aws_apigatewayv2_route" "share_viewer_signed_in" {
     "GET /viewer/shares",
     "GET /viewer/shares/{grant_id}",
     "POST /viewer/shares/{grant_id}/download",
+    # "Not now" or "Yes" to the trial prompt (feature/viewer-tenant-integration).
+    "POST /viewer/trial-prompt",
   ])
 
   api_id             = aws_apigatewayv2_api.main.id
@@ -559,6 +561,26 @@ resource "aws_apigatewayv2_route" "share_viewer_signed_in" {
   target             = "integrations/${aws_apigatewayv2_integration.share_viewer.id}"
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.viewer.id
+}
+
+# Shared with me: a TENANT user whose address was also shared with. The
+# customer pool's authorizer, on the viewer function, because that is where
+# the watermarked copies, the expiry and the open counts already live. The
+# function answers only the viewer account linked to this exact user, and
+# refuses a viewer token here as the gateway refuses a customer token on the
+# routes above (feature/viewer-tenant-integration).
+resource "aws_apigatewayv2_route" "share_viewer_tenant" {
+  for_each = toset([
+    "GET /me/shared",
+    "GET /me/shared/{grant_id}",
+    "POST /me/shared/{grant_id}/download",
+  ])
+
+  api_id             = aws_apigatewayv2_api.main.id
+  route_key          = each.value
+  target             = "integrations/${aws_apigatewayv2_integration.share_viewer.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
 resource "aws_lambda_permission" "share_viewer_gateway" {
