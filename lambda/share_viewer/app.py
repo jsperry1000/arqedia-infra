@@ -41,6 +41,17 @@ Routes:
   GET  /viewer/shares                       everything shared with them
   GET  /viewer/shares/{grant_id}            one of them, signed in
   POST /viewer/shares/{grant_id}/download   a copy of it, signed in
+  POST /viewer/trial-prompt                 "Not now" or "Yes" to a trial
+
+A TENANT WHOSE EMAIL WAS ALSO SHARED WITH (feature/viewer-tenant-integration).
+The customer pool's token, on routes of their own. Answered only where the
+viewer account for that email is linked to this exact customer user
+(customer_sub = the token's sub), so a viewer's token - a different sub -
+never matches, and no tenant sees anything but what was sent to its own
+person's address:
+  GET  /me/shared                           shared with me, from the app
+  GET  /me/shared/{grant_id}                one of them
+  POST /me/shared/{grant_id}/download       a copy of it
 """
 
 import datetime
@@ -111,6 +122,13 @@ DEVICE_CAP = 10
 DEVICE_FRESH_MINUTES = 15
 DEVICE_NEEDED = ("To open this on this device, confirm it's you. We'll email "
                  "a code to the address it was shared with.")
+
+
+# The trial prompt a registered viewer sees on signing in: asked again 30 days
+# after it was last answered, and never once the viewer is also a linked
+# tenant (decision of 9 October 2026).
+TRIAL_PROMPT_DAYS = 30
+TRIAL_ANSWERS = ("yes", "not_now")
 
 
 class CodeRequired(Exception):
@@ -861,6 +879,13 @@ def _confirm(grant, body):
         UpdateExpression=update, ExpressionAttributeNames=names,
         ExpressionAttributeValues=values)
 
+    # THE SAME ADDRESS IN BOTH POOLS: a tenant user, linked at signup, now
+    # registering as a viewer too. Flagged, not resolved - which one a sign-in
+    # reaches is deferred (feature/viewer-tenant-integration).
+    if _account(grant["viewer_account_id"]).get("customer_sub"):
+        print("[both-pools] viewer=%s registered while linked to a tenant user"
+              % grant["viewer_account_id"][:8])
+
     extended = _extend(grant["viewer_account_id"])
     result = signed_in["AuthenticationResult"]
     print("[viewer-registered] viewer=%s grants=%d" % (
@@ -976,6 +1001,93 @@ def _mine(viewer_id):
             return {"shares": out}
 
 
+# --- the trial prompt --------------------------------------------------------
+
+def _trial_prompt_due(account):
+    """Whether a signed-in viewer is asked "Want to try ARQEDIA yourself?".
+
+    Never once they are a linked tenant: they already are. Otherwise asked
+    when it has never been answered, and again 30 days after the last answer
+    - "Yes" included, since a "Yes" that never became a signup is the same
+    person, still a viewer, a month on."""
+    if account.get("customer_sub"):
+        return False
+    answered = account.get("trial_prompt_answered_at")
+    if not answered:
+        return True
+    return (rules.now() - rules.parse(answered)).days >= TRIAL_PROMPT_DAYS
+
+
+def _answer_trial_prompt(viewer_id, body):
+    answer = str(body.get("answer") or "")
+    if answer not in TRIAL_ANSWERS:
+        raise ValueError("Answer yes or not_now.")
+    at = rules.now()
+    _table("viewer").update_item(
+        Key={"viewer_account_id": viewer_id},
+        UpdateExpression="SET trial_prompt_answer = :a, "
+                         "trial_prompt_answered_at = :at",
+        ConditionExpression="attribute_exists(viewer_account_id)",
+        ExpressionAttributeValues={":a": answer, ":at": rules.iso(at)})
+    return {"answer": answer,
+            "ask_again_after": rules.iso(
+                at + datetime.timedelta(days=TRIAL_PROMPT_DAYS))}
+
+
+# --- a tenant, shared with ---------------------------------------------------
+#
+# THE LINK IS ON THE VIEWER ACCOUNT (decision of 9 October 2026): customer_sub,
+# customer_tenant_id, linked_at, linked_via. The signup function writes it
+# when an account is made for an address that already has a viewer account;
+# this writes it on the first visit where signup's write is missing - a viewer
+# account made after the tenant signed up, or a signup whose link write
+# failed. Either way it names ONE customer user, and only that user's token
+# is answered.
+
+def _linked_viewer(claims):
+    """The viewer account id this tenant user is linked to, or None."""
+    email = rules.normalise_email(claims.get("email"))
+    sub = str(claims.get("sub") or "")
+    if not email or not sub:
+        return None
+    viewer_id = rules.viewer_account_id(email)
+    account = _table("viewer").get_item(
+        Key={"viewer_account_id": viewer_id},
+        ConsistentRead=True).get("Item")
+    if not account:
+        return None
+    held = account.get("customer_sub")
+    if held:
+        return viewer_id if held == sub else None
+
+    # Not linked yet. Only on an address the customer pool says is verified:
+    # every account the signup function makes is, and an unverified one has
+    # not shown it owns the inbox the shares went to.
+    if str(claims.get("email_verified") or "").lower() != "true":
+        return None
+    try:
+        _table("viewer").update_item(
+            Key={"viewer_account_id": viewer_id},
+            UpdateExpression="SET customer_sub = :s, customer_tenant_id = :t, "
+                             "linked_at = :at, linked_via = :via",
+            ConditionExpression="attribute_exists(viewer_account_id) AND "
+                                "attribute_not_exists(customer_sub)",
+            ExpressionAttributeValues={
+                ":s": sub, ":t": str(claims.get("custom:tenant_id") or ""),
+                ":at": rules.iso(rules.now()), ":via": "first-visit"})
+    except ClientError as exc:
+        if _code(exc) != "ConditionalCheckFailedException":
+            raise
+        # Linked by somebody else between the read and the write: answer by
+        # whatever is there now.
+        again = _account(viewer_id).get("customer_sub")
+        return viewer_id if again == sub else None
+    print("[viewer-linked] viewer=%s via=first-visit" % viewer_id[:8])
+    if account.get("registered"):
+        print("[both-pools] viewer=%s linked while registered" % viewer_id[:8])
+    return viewer_id
+
+
 # --- dispatch ----------------------------------------------------------------
 
 def lambda_handler(event, context):
@@ -1004,8 +1116,12 @@ def _dispatch(event, context):
 
     claims = (((event.get("requestContext") or {}).get("authorizer") or {})
               .get("jwt") or {}).get("claims") or {}
+    # A customer token carries the tenant; a viewer's never does. The gateway
+    # already puts each pool's token on its own routes - this holds the line
+    # again here, so a route bound to the wrong authorizer still refuses.
+    tenant_token = bool(claims.get("custom:tenant_id"))
     signed_in = rules.viewer_account_id(claims["email"]) \
-        if claims.get("email") else None
+        if claims.get("email") and not tenant_token else None
 
     try:
         if route in ("GET /view/{grant_id}", "POST /view/{grant_id}/download",
@@ -1074,13 +1190,40 @@ def _dispatch(event, context):
         if route == "POST /viewer/sign-in/mfa":
             return _reply(200, _sign_in_mfa(body))
 
+        # A tenant, shared with: the customer pool's token, answered only
+        # for the viewer account linked to this exact user.
+        if route in ("GET /me/shared", "GET /me/shared/{grant_id}",
+                     "POST /me/shared/{grant_id}/download"):
+            if not tenant_token:
+                return _reply(403, {"error": "not signed in"})
+            linked = _linked_viewer(claims)
+            if route == "GET /me/shared":
+                if linked is None:
+                    return _reply(200, {"linked": False, "shares": []})
+                return _reply(200, dict(_mine(linked), linked=True))
+            if linked is None:
+                return _reply(404, {"error": LINK_DEAD})
+            grant, refused = _authorised(grant_id, viewer_id=linked)
+            if refused:
+                return refused
+            if route == "GET /me/shared/{grant_id}":
+                _record(context, event, grant, "view")
+                return _reply(200, _page(grant))
+            copy = _download(grant)
+            _record(context, event, grant, "download")
+            return _reply(200, copy)
+
         # Signed in. The gateway's viewer-pool authorizer has verified the
         # token; with no email in it there is nobody to answer for.
         if signed_in is None:
             return _reply(403, {"error": "not signed in"})
 
         if route == "GET /viewer/shares":
-            return _reply(200, _mine(signed_in))
+            mine = _mine(signed_in)
+            mine["trial_prompt"] = _trial_prompt_due(_account(signed_in))
+            return _reply(200, mine)
+        if route == "POST /viewer/trial-prompt":
+            return _reply(200, _answer_trial_prompt(signed_in, body))
 
         if route in ("GET /viewer/shares/{grant_id}",
                      "POST /viewer/shares/{grant_id}/download"):

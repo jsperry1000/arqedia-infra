@@ -18,6 +18,21 @@ Routes, all unauthenticated:
   POST /signup             run the checks, send a code, create nothing
   POST /signup/verify      check the code, create the tenant and the user
   POST /invitations/accept take a seat on a tenant somebody else owns
+  POST /sign-in/lookup     which sign-in an address belongs to
+
+THE LOOKUP SAYS WHETHER AN ADDRESS HAS AN ACCOUNT, deliberately (decision of
+9 October 2026): one sign-in screen for both kinds of person, routed by email,
+was chosen over hiding that. begin() below already tells an address that has
+an account to sign in instead, so this discloses nothing new about the
+customer pool. It reads the customer pool through this function's own admin
+permission, and the viewer side from the viewer_account table - never the
+viewer pool, which only the viewer function may touch (CLAUDE.md, One door).
+
+A VIEWER WHO BECOMES A TENANT is linked when the account is made, by signup
+or by invitation: the viewer_account item for the same address is given the
+new customer user's sub. That is what "Shared with me" in the application
+answers by. Best effort - a link that cannot be written never fails a signup,
+and the viewer function links on first visit where this did not.
 
 Nothing exists until the code comes back. That is what stops a throwaway
 address taking a trial.
@@ -40,6 +55,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 _rds = boto3.client("rds-data")
+_ddb = boto3.client("dynamodb")
 _idp = boto3.client("cognito-idp")
 _ses = boto3.client("ses")
 
@@ -48,6 +64,9 @@ SECRET_ARN = os.environ["SECRET_ARN"]
 DATABASE = os.environ["DATABASE"]
 USER_POOL_ID = os.environ["USER_POOL_ID"]
 SENDER = os.environ["SENDER"]
+# Read where used rather than required at import: the function runs without it
+# until the Terraform that adds it is applied, and then links nobody.
+VIEWER_TABLE_ENV = "VIEWER_ACCOUNT_TABLE"
 
 # The trial. Fourteen days in all cases, full use, $5.00 of metered credit, no
 # card (decision record, amendment of 17 September 2026; was thirty, Wallet
@@ -289,6 +308,112 @@ def _record(domain, email, ip, outcome, detail=None):
         [_p("d", domain), _p("h", _sha(email)), _p("ip", ip),
          _p("o", outcome), _p("detail", detail)],
     )
+
+
+# --- viewers -----------------------------------------------------------------
+#
+# A viewer is a viewer_account item in DynamoDB, keyed by a hash of the
+# address. This function has no layer, so the key is computed here: it MUST
+# stay identical to share_rules.viewer_account_id, and tests/test_viewer_link
+# holds the two to each other.
+
+def _viewer_account_id(email):
+    return hashlib.sha256(
+        str(email or "").strip().lower().encode("utf-8")).hexdigest()[:32]
+
+
+def _viewer_account(email):
+    """The viewer_account item for this address, as DynamoDB returns it, or
+    None. None also where the table is not configured yet."""
+    table = os.environ.get(VIEWER_TABLE_ENV)
+    if not table:
+        print("[viewer-table-not-configured]")
+        return None
+    return _ddb.get_item(
+        TableName=table, ConsistentRead=True,
+        Key={"viewer_account_id": {"S": _viewer_account_id(email)}},
+    ).get("Item")
+
+
+def _sub_of(made):
+    """The sub of a user admin_create_user just made."""
+    for attribute in ((made or {}).get("User") or {}).get("Attributes") or []:
+        if attribute.get("Name") == "sub":
+            return attribute.get("Value")
+    return None
+
+
+def _link_viewer(email, tenant_id, sub, via):
+    """Link an existing viewer account to the customer user just made.
+
+    ONLY AN EXISTING ACCOUNT, and only one not linked already: the condition
+    is in the write, so two signups racing cannot both claim it, and an
+    address that was never shared with gets nothing written. Never raises -
+    the account is made and committed before this runs."""
+    table = os.environ.get(VIEWER_TABLE_ENV)
+    if not table or not sub:
+        print("[viewer-link-skipped] table=%s sub=%s" % (bool(table), bool(sub)))
+        return False
+    try:
+        _ddb.update_item(
+            TableName=table,
+            Key={"viewer_account_id": {"S": _viewer_account_id(email)}},
+            UpdateExpression="SET customer_sub = :s, customer_tenant_id = :t, "
+                             "linked_at = :at, linked_via = :via",
+            ConditionExpression="attribute_exists(viewer_account_id) AND "
+                                "attribute_not_exists(customer_sub)",
+            ExpressionAttributeValues={
+                ":s": {"S": sub}, ":t": {"S": str(tenant_id)},
+                ":at": {"S": datetime.datetime.utcnow().strftime(
+                    "%Y-%m-%dT%H:%M:%SZ")},
+                ":via": {"S": via}},
+            ReturnValues="ALL_NEW")
+    except ClientError as exc:
+        code, _ = _cognito_refusal(exc)
+        if code == "ConditionalCheckFailedException":
+            # No viewer account for this address - the usual case - or one
+            # already linked.
+            return False
+        print("[viewer-link-failed] %r" % exc)
+        return False
+    except Exception as exc:  # noqa: BLE001 - never fails the signup
+        print("[viewer-link-failed] %r" % exc)
+        return False
+    print("[viewer-linked] viewer=%s tenant=%s via=%s" % (
+        _viewer_account_id(email)[:8], tenant_id, via))
+    held = _viewer_account(email) or {}
+    if (held.get("registered") or {}).get("BOOL"):
+        # Flagged, not resolved: this address now signs in to two pools
+        # (feature/viewer-tenant-integration, deferred).
+        print("[both-pools] viewer=%s tenant=%s" % (
+            _viewer_account_id(email)[:8], tenant_id))
+    return True
+
+
+# --- POST /sign-in/lookup -----------------------------------------------------
+
+def lookup(event, body):
+    """Which sign-in this address belongs to: "tenant", "viewer", "both" or
+    "none". A viewer is one who has REGISTERED - a recipient who has only
+    opened a link has no password to sign in with."""
+    email = (body.get("email") or "").strip().lower()
+    if not EMAIL.match(email):
+        return _reply(400, {"error": "That does not look like an email address."})
+
+    try:
+        _idp.admin_get_user(UserPoolId=USER_POOL_ID, Username=email)
+        tenant = True
+    except _idp.exceptions.UserNotFoundException:
+        tenant = False
+
+    account = _viewer_account(email) or {}
+    viewer = bool((account.get("registered") or {}).get("BOOL"))
+
+    pool = ("both" if tenant and viewer else "tenant" if tenant
+            else "viewer" if viewer else "none")
+    if pool == "both":
+        print("[both-pools] viewer=%s at sign-in" % _viewer_account_id(email)[:8])
+    return _reply(200, {"pool": pool})
 
 
 # --- the checks ------------------------------------------------------------
@@ -685,7 +810,7 @@ def verify(event, body):
         # SUPPRESS: no invitation email. The person is standing in front of
         # the screen and is about to set their own password, so an email
         # carrying a temporary one would be noise and a second credential.
-        _idp.admin_create_user(
+        made = _idp.admin_create_user(
             UserPoolId=USER_POOL_ID,
             Username=email,
             MessageAction="SUPPRESS",
@@ -725,6 +850,8 @@ def verify(event, body):
     _sql("DELETE FROM pending_signup WHERE pending_id = :id",
          [_p("id", pending_id)])
     _record(domain, email, ip, "created", f"tenant {tenant_id}")
+    # After the commit, so a link never names a user that was rolled back.
+    _link_viewer(email, tenant_id, _sub_of(made), "signup")
 
     # Nothing about memoranda comes back, because nothing was chosen here. Get
     # started is where they are picked, and it reads what we ship rather than
@@ -825,7 +952,7 @@ def accept(event, body):
     )
 
     try:
-        _idp.admin_create_user(
+        made = _idp.admin_create_user(
             UserPoolId=USER_POOL_ID,
             Username=email,
             MessageAction="SUPPRESS",
@@ -867,6 +994,7 @@ def accept(event, body):
     _sql("DELETE FROM seat_invitation WHERE invitation_id = :i",
          [_p("i", invitation_id)])
     _record(domain, email, ip, "seat_taken", f"tenant {tenant_id}")
+    _link_viewer(email, tenant_id, _sub_of(made), "invitation")
 
     return _reply(200, {"tenant_id": tenant_id, "role": role, "email": email})
 
@@ -885,6 +1013,8 @@ def lambda_handler(event, context):
             return verify(event, body)
         if route == "POST /invitations/accept":
             return accept(event, body)
+        if route == "POST /sign-in/lookup":
+            return lookup(event, body)
         return _reply(404, {"error": "No such route."})
     except Exception as exc:  # noqa: BLE001 - nothing may escape to the client
         print("signup failed:", repr(exc))
