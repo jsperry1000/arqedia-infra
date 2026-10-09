@@ -159,3 +159,15 @@ one.
 - Whether Discard is undoable.
 - Whether undo survives a reload, which is the same question as whether the
   history is stored.
+
+### Decided 9 October 2026 (product owner)
+
+- **How far back:** the working copy. A stored history, kept beside the text,
+  surviving a reload.
+- **Discard:** undoable.
+
+Status above is left as written; these are the decisions it was waiting on.
+Still not designed: the stored shape under the 4 MiB limit (§ Stored shape).
+Inserting an image is an added act on the list above, from
+`docs/ARQEDIA_graphics-insert-questions.md`, which makes UNDO-01 a
+prerequisite for graphics in memos.
