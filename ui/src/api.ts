@@ -1745,6 +1745,40 @@ export const viewerApi = {
       Promise<{ id_token: string; expires_in: number }> =>
     viewerCall("/viewer/sign-in/mfa", null, "POST", { email, session, code }),
 
-  mine: (idToken: string): Promise<{ shares: ViewerShare[] }> =>
+  /** trial_prompt: ask "Want to try ARQEDIA yourself?" this time. False
+   *  inside 30 days of the last answer, and always once they are a tenant. */
+  mine: (idToken: string): Promise<{ shares: ViewerShare[]; trial_prompt: boolean }> =>
     viewerCall("/viewer/shares", { kind: "signed-in", idToken }),
+
+  answerTrialPrompt: (idToken: string, answer: "yes" | "not_now"):
+      Promise<{ answer: string; ask_again_after: string }> =>
+    viewerCall("/viewer/trial-prompt", { kind: "signed-in", idToken }, "POST",
+               { answer }),
+};
+
+// --- one sign-in for both kinds of person --------------------------------------
+
+/** Which sign-in an address belongs to (feature/viewer-tenant-integration).
+ *  "both" is an address with a workspace account AND a viewer registration:
+ *  flagged, and the person chooses - nothing decides for them yet. */
+export type SignInPool = "tenant" | "viewer" | "both" | "none";
+
+export const lookupSignIn = (email: string): Promise<{ pool: SignInPool }> =>
+  open_("/sign-in/lookup", { email });
+
+// --- shared with me, from the application --------------------------------------
+
+/** What has been shared with this person's own address, once their workspace
+ *  account is linked to the viewer account for it. Same grants a viewer sees
+ *  at /viewer; the customer token, on routes of their own. */
+export const sharedWithMe = {
+  list: (): Promise<{ linked: boolean; shares: ViewerShare[] }> =>
+    call("/me/shared"),
+
+  open: (grantId: string): Promise<ViewerPage> =>
+    call(`/me/shared/${encodeURIComponent(grantId)}`),
+
+  download: (grantId: string): Promise<{ download_url: string }> =>
+    call(`/me/shared/${encodeURIComponent(grantId)}/download`,
+         { method: "POST", body: "{}" }),
 };

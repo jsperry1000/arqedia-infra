@@ -9,7 +9,8 @@ import { WelcomeView } from "./Welcome";
 import { AccountView } from "./Account";
 import { ShareView } from "./Share";
 import { ShareBatchView } from "./ShareMemos";
-import { ViewerByLink, ViewerSignedIn } from "./Viewer";
+import { ViewerByLink, ViewerSignedIn, keepSession as keepViewerSession } from "./Viewer";
+import { SharedWithMeView } from "./SharedWithMe";
 import { SignUp } from "./SignUp";
 import { InvitationView } from "./Invitation";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
@@ -19,7 +20,9 @@ import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession,
 import { config } from "./config";
 import { useRole } from "./upgrade";
 import { TRIAL_DAYS } from "./trial";
-import { api, type Engagement } from "./api";
+import {
+  api, lookupSignIn, sharedWithMe, viewerApi, type Engagement, type SignInPool,
+} from "./api";
 // The mark lives in one place, /brand, and both the application and the
 // marketing site reference it from there. Replace those two files and both
 // surfaces change in the same commit.
@@ -92,8 +95,24 @@ function codeRefusal(err: any): string {
   return err?.message || String(err);
 }
 
+/** ONE SIGN-IN FOR BOTH KINDS OF PERSON (feature/viewer-tenant-integration).
+ *  The address comes first and is looked up: a workspace account signs in
+ *  here as it always has; a registered viewer signs in to the viewer pool,
+ *  through the viewer function, and lands on what has been shared with them.
+ *  The two pools stay separate - this only routes between them.
+ *
+ *  An address in BOTH is flagged and deferred: the person is asked which they
+ *  mean, and nothing decides for them. */
 function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void }) {
   const [email, setEmail] = useState("");
+  // Null until the address is looked up; changing the address clears it.
+  const [pool, setPool] = useState<SignInPool | null>(null);
+  // Which of the two an address in both pools means, once they have said.
+  const [chosen, setChosen] = useState<"tenant" | "viewer" | null>(null);
+  // The viewer pool's second step.
+  const [viewerSession, setViewerSession] = useState("");
+  const [viewerCode, setViewerCode] = useState("");
+  const navigate = useNavigate();
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [needsNew, setNeedsNew] = useState(false);
@@ -154,11 +173,37 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
     }
   }
 
+  const which = pool === "both" ? chosen : pool;
+
+  function otherAddress() {
+    setPool(null);
+    setChosen(null);
+    setViewerSession("");
+    setViewerCode("");
+    setPassword("");
+    setError("");
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     setBusy(true);
     try {
+      if (mode === "in" && !needsNew && pool === null) {
+        setPool((await lookupSignIn(email.trim())).pool);
+        return;
+      }
+      if (mode === "in" && which === "viewer") {
+        if (!viewerSession) {
+          setViewerSession((await viewerApi.signIn(email.trim(), password)).session);
+          return;
+        }
+        const done = await viewerApi.signInCode(email.trim(), viewerSession,
+                                                viewerCode.trim());
+        keepViewerSession(done.id_token);
+        navigate("/viewer");
+        return;
+      }
       if (mode === "forgot") {
         await sendCode();
         return;
@@ -202,7 +247,11 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
 
   const action = mode === "forgot" ? "Send a code"
     : mode === "reset" ? "Set the password"
+    : pool === null && !needsNew ? "Continue"
     : "Sign in";
+  // Nothing to submit: no account, or an address in both not yet chosen.
+  const stuck = mode === "in" && !needsNew
+    && (pool === "none" || (pool === "both" && chosen === null));
 
   return (
     <div className="centre">
@@ -256,23 +305,54 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
         {mode === "in" && !needsNew && (
           <>
             <input placeholder="Email" value={email}
-                   onChange={(e) => setEmail(e.target.value)} autoFocus />
+                   onChange={(e) => { setEmail(e.target.value); if (pool) otherAddress(); }}
+                   autoFocus />
             {/* There is no other user id, and somebody who has forgotten
                 which address they used is helped more by being told that
                 than by a screen that pretends to look one up (10.2). */}
             <p className="muted small" style={{ margin: 0 }}>
-              Your user id is the email address you signed up with.
+              Your user id is the email address you signed up with, or the
+              one a memorandum was shared with.
             </p>
-            <input type="password" placeholder="Password" value={password}
-                   onChange={(e) => setPassword(e.target.value)} />
+            {pool === "none" && (
+              <p className="muted small" style={{ margin: 0 }}>
+                No account uses that address. If a memorandum was shared with
+                it, open the link in that email.
+              </p>
+            )}
+            {pool === "both" && chosen === null && (
+              <>
+                <p className="muted small" style={{ margin: 0 }}>
+                  That address has a workspace account and also signs in to
+                  see what has been shared with it. Which do you want?
+                </p>
+                <a onClick={() => setChosen("tenant")}>Your ARQEDIA workspace</a>
+                <a onClick={() => setChosen("viewer")}>What has been shared with you</a>
+              </>
+            )}
+            {(which === "tenant" || which === "viewer") && !viewerSession && (
+              <input type="password" placeholder="Password" value={password}
+                     onChange={(e) => setPassword(e.target.value)} autoFocus />
+            )}
+            {which === "viewer" && viewerSession && (
+              <input placeholder="Code from your authenticator" value={viewerCode}
+                     inputMode="numeric" autoComplete="one-time-code"
+                     onChange={(e) => setViewerCode(e.target.value)} autoFocus />
+            )}
+            {pool !== null && (
+              <p className="muted small" style={{ margin: 0 }}>
+                <a onClick={otherAddress}>Use a different address</a>
+              </p>
+            )}
           </>
         )}
 
         {note && <p className="muted small" style={{ margin: 0 }}>{note}</p>}
         {error && <p className="error">{error}</p>}
-        <button disabled={busy}>{busy ? "..." : action}</button>
+        {!stuck && <button disabled={busy}>{busy ? "..." : action}</button>}
 
-        {mode === "in" && !needsNew && (
+        {/* Resetting is the workspace pool's; a viewer has no reset here. */}
+        {mode === "in" && !needsNew && which === "tenant" && (
           <p className="muted small" style={{ textAlign: "center", margin: 0 }}>
             <a onClick={() => go("forgot")}>Forgotten your password?</a>
           </p>
@@ -620,6 +700,10 @@ function ShareBatchRoute() {
                          onTopUp={() => navigate("/account?tab=balance")} />;
 }
 
+function SharedWithMeRoute() {
+  return <SharedWithMeView onBack={useBack()} />;
+}
+
 // --- shell -----------------------------------------------------------------
 
 export default function App() {
@@ -651,6 +735,16 @@ export default function App() {
   }
 
   useEffect(() => { check(); }, []);
+
+  // Shared with me shows only when this person's workspace account is linked
+  // to a viewer account for the same address (feature/viewer-tenant-
+  // integration). Asked once, signed in; reading it also links on a first
+  // visit where signup did not. Unreachable or refused reads as not linked.
+  const [linked, setLinked] = useState(false);
+  useEffect(() => {
+    if (!signedIn) return;
+    sharedWithMe.list().then((r) => setLinked(r.linked)).catch(() => setLinked(false));
+  }, [signedIn]);
 
   // A tenant's colours are NOT read here. They belong to what the tenant
   // produces - a rendered memorandum and anything they share - and are applied
@@ -884,6 +978,13 @@ export default function App() {
             </div>
           )}
         </div>
+        {/* What was shared WITH this person, as opposed to Sharing above,
+            which is all about sending. Only when there is something linked
+            to show. */}
+        {linked && (
+          <a className={railClass("/shared-with-me")}
+             onClick={() => navigate("/shared-with-me")}>Shared with me</a>
+        )}
         {/* Settings opens a choice, as Configure does. Two things live under
             it and they are not alike: how memoranda look, and who pays for
             them. The balance belongs to the second - it is an account matter,
@@ -933,6 +1034,7 @@ export default function App() {
               <Route path="/account" element={<AccountRoute />} />
               <Route path="/shares" element={<ShareRoute />} />
               <Route path="/shares/new" element={<ShareBatchRoute />} />
+              <Route path="/shared-with-me" element={<SharedWithMeRoute />} />
               {/* Get started forks and publishes, then hands what it added
                   to the configuration screen, which says so at the top.
                   Reached from the rail's panel or the first-run screen it
