@@ -137,14 +137,21 @@ _TENANT_NAME = "SELECT name FROM tenant WHERE tenant_id = :t"
 # and cannot report by person. That is the schema's decision, not this
 # module's, and the hash is returned because it is what makes two attempts
 # from one address recognisable as the same person.
+#
+# AN ANSWERED SIGN-IN LOOKUP IS NOT A SIGNUP. The lookup's rows share this
+# table for its rate limit (lambda/signup/app.py, 14 October 2026) and every
+# sign-in writes one, so they are left out here or they would bury the
+# signups. A lookup refused for its rate limit stays in: that is a connection
+# working through addresses, which is what this screen is for.
 _SIGNUPS = """
 SELECT attempt_id, email_domain, email_hash, ip, outcome, detail, created_at
 FROM signup_attempt
+WHERE outcome <> 'lookup'
 ORDER BY attempt_id DESC
 LIMIT :limit OFFSET :offset
 """
 
-_SIGNUP_COUNT = "SELECT COUNT(*) FROM signup_attempt"
+_SIGNUP_COUNT = "SELECT COUNT(*) FROM signup_attempt WHERE outcome <> 'lookup'"
 
 
 def every_tenant():
