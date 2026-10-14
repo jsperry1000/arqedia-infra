@@ -22,11 +22,19 @@ Routes, all unauthenticated:
 
 THE LOOKUP SAYS WHETHER AN ADDRESS HAS AN ACCOUNT, deliberately (decision of
 9 October 2026): one sign-in screen for both kinds of person, routed by email,
-was chosen over hiding that. begin() below already tells an address that has
-an account to sign in instead, so this discloses nothing new about the
-customer pool. It reads the customer pool through this function's own admin
-permission, and the viewer side from the viewer_account table - never the
+was chosen over hiding that. It reads the customer pool through this
+function's own admin permission, and the viewer side from the viewer_account table - never the
 viewer pool, which only the viewer function may touch (CLAUDE.md, One door).
+
+Corrected 14 October 2026. This said the lookup disclosed nothing new
+because begin() already tells an address with an account to sign in. It
+does, but only after the invitation check, so an uninvited address learned
+nothing there. The lookup is a new disclosure, and it is rate limited for
+that reason: once per minute and five times an hour from one connection.
+PAST THE LIMIT IT ANSWERS "unknown", never a refusal - every sign-in passes
+through here, and a shared office must not be locked out of signing in. The
+screen then offers the workspace password form, with the viewer sign-in one
+click away, which is what it showed before there was a lookup at all.
 
 A VIEWER WHO BECOMES A TENANT is linked when the account is made, by signup
 or by invitation: the viewer_account item for the same address is given the
@@ -89,6 +97,15 @@ MAX_ATTEMPTS = 5
 # script rather than a person.
 MAX_PER_IP_HOUR = 5
 MAX_PER_DOMAIN_HOUR = 3
+
+# The sign-in lookup's own limits, per connection (decision of 14 October
+# 2026). Its rows sit in signup_attempt under these outcomes and are left out
+# of the signup counts above, so signing in never spends a signup attempt.
+LOOKUP_PER_IP_MINUTE = 1
+LOOKUP_PER_IP_HOUR = 5
+LOOKUP_ANSWERED = "lookup"
+LOOKUP_LIMITED = "lookup_limited"
+NOT_LOOKUP = f"outcome NOT IN ('{LOOKUP_ANSWERED}', '{LOOKUP_LIMITED}')"
 
 # What somebody came to do (decision record, amendment of 17 September 2026).
 INTENTS = {"trial", "subscribe"}
@@ -392,13 +409,42 @@ def _link_viewer(email, tenant_id, sub, via):
 
 # --- POST /sign-in/lookup -----------------------------------------------------
 
+def _lookup_limited(ip):
+    """Whether this connection has had its lookups. Only answered lookups
+    count, so a connection that keeps asking past the limit is answered
+    again an hour after its last real answer, not never. No address at all
+    is treated as limited: there is nothing to count it by."""
+    if not ip:
+        return True
+    counts = _sql(
+        f"SELECT "
+        f"  COUNT(CASE WHEN created_at > DATE_SUB(NOW(), INTERVAL 1 MINUTE) "
+        f"             THEN 1 END), "
+        f"  COUNT(*) "
+        f"FROM signup_attempt "
+        f"WHERE ip = :ip AND outcome = '{LOOKUP_ANSWERED}' "
+        f"  AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)",
+        [_p("ip", ip)],
+    )["records"][0]
+    return ((_col(counts, 0) or 0) >= LOOKUP_PER_IP_MINUTE
+            or (_col(counts, 1) or 0) >= LOOKUP_PER_IP_HOUR)
+
+
 def lookup(event, body):
     """Which sign-in this address belongs to: "tenant", "viewer", "both" or
-    "none". A viewer is one who has REGISTERED - a recipient who has only
+    "none" - or "unknown", past the rate limit, which says nothing about the
+    address. A viewer is one who has REGISTERED - a recipient who has only
     opened a link has no password to sign in with."""
     email = (body.get("email") or "").strip().lower()
     if not EMAIL.match(email):
         return _reply(400, {"error": "That does not look like an email address."})
+
+    domain = email.split("@", 1)[1]
+    ip = _client_ip(event)
+    if _lookup_limited(ip):
+        _record(domain, email, ip, LOOKUP_LIMITED)
+        return _reply(200, {"pool": "unknown"})
+    _record(domain, email, ip, LOOKUP_ANSWERED)
 
     try:
         _idp.admin_get_user(UserPoolId=USER_POOL_ID, Username=email)
@@ -490,7 +536,7 @@ def _checks(email, domain, ip):
 
     per_domain = _sql(
         f"SELECT COUNT(*) FROM signup_attempt "
-        f"WHERE email_domain = :d AND created_at > {hour}",
+        f"WHERE email_domain = :d AND created_at > {hour} AND {NOT_LOOKUP}",
         [_p("d", domain)],
     )["records"][0]
     if _col(per_domain, 0) >= MAX_PER_DOMAIN_HOUR:
@@ -501,7 +547,7 @@ def _checks(email, domain, ip):
     if ip:
         per_ip = _sql(
             f"SELECT COUNT(*) FROM signup_attempt "
-            f"WHERE ip = :ip AND created_at > {hour}",
+            f"WHERE ip = :ip AND created_at > {hour} AND {NOT_LOOKUP}",
             [_p("ip", ip)],
         )["records"][0]
         if _col(per_ip, 0) >= MAX_PER_IP_HOUR:

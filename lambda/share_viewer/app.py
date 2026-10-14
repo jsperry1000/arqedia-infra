@@ -130,6 +130,16 @@ DEVICE_NEEDED = ("To open this on this device, confirm it's you. We'll email "
 TRIAL_PROMPT_DAYS = 30
 TRIAL_ANSWERS = ("yes", "not_now")
 
+# HELD WHILE SIGNUP IS INVITE-ONLY (decision of 14 October 2026). "Yes" goes
+# to /signup, which refuses any address not on signup_allow, so the prompt
+# would advertise a door that is shut. Auto-adding a viewer who says yes to
+# signup_allow was considered and not taken: it would give every registered
+# viewer a trial and its credit, skip the one-trial-per-domain rule that
+# allowlisted addresses bypass, run ahead of trial vetting, and need Aurora
+# access this function deliberately does not have. Everything else stays
+# built; set this True in the release that opens signup.
+TRIAL_PROMPT_ON = False
+
 
 class CodeRequired(Exception):
     """Registering needs an emailed code: this browser was not verified in
@@ -1009,7 +1019,9 @@ def _trial_prompt_due(account):
     Never once they are a linked tenant: they already are. Otherwise asked
     when it has never been answered, and again 30 days after the last answer
     - "Yes" included, since a "Yes" that never became a signup is the same
-    person, still a viewer, a month on."""
+    person, still a viewer, a month on. Never while TRIAL_PROMPT_ON is off."""
+    if not TRIAL_PROMPT_ON:
+        return False
     if account.get("customer_sub"):
         return False
     answered = account.get("trial_prompt_answered_at")

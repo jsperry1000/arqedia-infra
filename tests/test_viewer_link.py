@@ -76,12 +76,35 @@ class ViewerKeyTest(Base):
                              rules.viewer_account_id(address))
 
 
+class LookupDb(FakeSignupDb):
+    """The signup fake, answering the lookup's own count: this connection's
+    answered lookups in the last minute and the last hour."""
+
+    def __init__(self, minute=0, hour=0):
+        super().__init__()
+        self.counts = (minute, hour)
+
+    def sql(self, statement, params=None, tx=None):
+        if "outcome = 'lookup'" in " ".join(statement.split()):
+            self.statements.append((" ".join(statement.split()), {}))
+            return rows(self.counts)
+        return super().sql(statement, params, tx)
+
+
 class LookupTest(Base):
-    def lookup(self, email="a@firm.com"):
-        reply = self.signup.lambda_handler(
-            dict(EVENT, routeKey="POST /sign-in/lookup",
-                 body=json.dumps({"email": email})), None)
+    def setUp(self):
+        super().setUp()
+        self.db = LookupDb()
+
+    def lookup(self, email="a@firm.com", event=EVENT):
+        with mock.patch.object(self.signup, "_sql", self.db.sql):
+            reply = self.signup.lambda_handler(
+                dict(event, routeKey="POST /sign-in/lookup",
+                     body=json.dumps({"email": email})), None)
         return reply["statusCode"], json.loads(reply["body"])
+
+    def outcomes(self):
+        return [a["o"] for a in self.db.inserted("signup_attempt")]
 
     def test_a_tenant_user_is_routed_to_the_tenant_pool(self):
         self.signup._idp.admin_get_user.return_value = {"Username": "a"}
@@ -121,6 +144,78 @@ class LookupTest(Base):
         self.signup._idp.admin_get_user.side_effect = self.not_found()
         self.assertEqual(self.lookup(), (200, {"pool": "none"}))
         self.signup._ddb.get_item.assert_not_called()
+
+
+class LookupRateLimitTest(LookupTest):
+    """Once a minute and five times an hour from one connection; past that,
+    "unknown" - never a refusal, and nothing about the address (decision of
+    14 October 2026)."""
+
+    def setUp(self):
+        super().setUp()
+        self.signup._idp.admin_get_user.return_value = {"Username": "a"}
+
+    def assert_unknown_and_untouched(self):
+        self.assertEqual(self.lookup(), (200, {"pool": "unknown"}))
+        self.signup._idp.admin_get_user.assert_not_called()
+        self.signup._ddb.get_item.assert_not_called()
+        self.assertEqual(self.outcomes(), ["lookup_limited"])
+
+    def test_an_answered_lookup_is_recorded_hashed(self):
+        self.assertEqual(self.lookup("A@Firm.com"), (200, {"pool": "tenant"}))
+        [row] = self.db.inserted("signup_attempt")
+        self.assertEqual((row["o"], row["d"], row["ip"]),
+                         ("lookup", "firm.com", "203.0.113.9"))
+        self.assertEqual(row["h"], self.signup._sha("a@firm.com"))
+
+    def test_a_second_in_the_same_minute_is_unknown(self):
+        self.db.counts = (1, 1)
+        self.assert_unknown_and_untouched()
+
+    def test_a_sixth_in_the_hour_is_unknown(self):
+        self.db.counts = (0, 5)
+        self.assert_unknown_and_untouched()
+
+    def test_the_fifth_in_the_hour_is_answered(self):
+        self.db.counts = (0, 4)
+        self.assertEqual(self.lookup(), (200, {"pool": "tenant"}))
+
+    def test_no_connection_address_is_unknown(self):
+        self.assertEqual(self.lookup(event={"requestContext": {"http": {}}}),
+                         (200, {"pool": "unknown"}))
+        self.signup._idp.admin_get_user.assert_not_called()
+
+    def test_only_answered_lookups_count(self):
+        self.lookup()
+        [(counted, _)] = [st for st in self.db.statements
+                          if "outcome = 'lookup'" in st[0]]
+        self.assertIn("ip = :ip", counted)
+        self.assertNotIn("lookup_limited", counted)
+
+    def test_a_malformed_address_is_not_counted(self):
+        self.assertEqual(self.lookup("nope")[0], 400)
+        self.assertEqual(self.outcomes(), [])
+
+
+class LookupLeavesSignupAloneTest(Base):
+    """Signing in never spends a signup attempt: the signup rate limits do
+    not count lookup rows."""
+
+    def test_signup_counts_leave_lookups_out(self):
+        db = FakeSignupDb()
+        self.signup._idp.admin_get_user.side_effect = self.not_found()
+        with mock.patch.object(self.signup, "_sql", db.sql):
+            self.signup.begin(EVENT, {"email": "a@firm.com",
+                                      "org_name": "Firm"})
+        counts = [st for st, _ in db.statements
+                  if st.startswith("SELECT COUNT(*) FROM signup_attempt")]
+        self.assertEqual(len(counts), 2)
+        for st in counts:
+            self.assertIn("outcome NOT IN ('lookup', 'lookup_limited')", st)
+
+    def test_the_admin_signup_list_leaves_answered_lookups_out(self):
+        text = (ROOT / "lambda/admin/cross_tenant.py").read_text()
+        self.assertEqual(text.count("WHERE outcome <> 'lookup'"), 2)
 
 
 class SignupLinkTest(Base):

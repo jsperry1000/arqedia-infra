@@ -126,8 +126,13 @@ class SharedWithMeTest(ViewerTest):
 
 @unittest.skipUnless(HAVE, "moto, boto3, pypdf or reportlab not installed")
 class TrialPromptTest(ViewerTest):
+    """The rules for when it is asked are tested with the prompt switched on.
+    It ships held until signup opens (decision of 14 October 2026)."""
+
     def setUp(self):
         super().setUp()
+        self.ships = self.app.TRIAL_PROMPT_ON
+        self.app.TRIAL_PROMPT_ON = True
         self.accounts = boto3.resource("dynamodb", region_name=REGION) \
             .Table("viewer")
 
@@ -180,6 +185,17 @@ class TrialPromptTest(ViewerTest):
     def test_any_other_answer_is_refused(self):
         status, _ = self.answer("maybe")
         self.assertEqual(status, 400)
+
+    def test_it_ships_held_while_signup_is_invite_only(self):
+        # "Yes" leads to /signup, which refuses an address not on
+        # signup_allow.
+        self.assertIs(self.ships, False)
+
+    def test_held_it_is_never_asked(self):
+        self.app.TRIAL_PROMPT_ON = False
+        self.assertFalse(self.due())
+        self.answered(days_ago=400)
+        self.assertFalse(self.due())
 
 
 if __name__ == "__main__":
