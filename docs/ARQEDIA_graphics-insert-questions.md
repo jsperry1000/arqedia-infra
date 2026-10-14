@@ -157,3 +157,11 @@ What SVG and PDF would need (from documentation, not tested):
 **Shared copies** are stamped from the rendered PDF, so they inherit the PDF path's result.
 
 **Consequence.** PNG and JPEG work on both paths with nothing added. SVG needs a new library in the layer. PDF needs a new library on both paths, or conversion to an image at upload. How PDF and SVG are handled is not decided.
+
+## Product owner decisions, 14 Oct 2026 — after the P1 check
+
+1. **N4 revised: PNG and JPEG only.** SVG and PDF dropped. 10 MB per image, 50 MB total per memo, unchanged. Supersedes N4 of 9 Oct 2026, which stays above as recorded.
+2. **P1: resolved.** PNG and JPEG are supported on both paths; with SVG and PDF out of scope, no further action. Basis: the PDF renderer was tested (layer versions, off Lambda); the browser path is from documentation, not a rendered screen. The memo parsers on both paths still have no image case — that is build order (b) and (c), not a capability gap.
+3. **P2: resolved by scope change.** Sanitise-on-upload answered SVG script risk; with SVG dropped it no longer applies. The 14 Oct decision stays above as recorded.
+4. **P3: the last 10 edits.** Unchanged.
+5. **P4: confirmed.** A scheduled EventBridge rule invoking a Lambda, the same shape as `reconcile.tf`.
