@@ -171,3 +171,9 @@ Still not designed: the stored shape under the 4 MiB limit (§ Stored shape).
 Inserting an image is an added act on the list above, from
 `docs/ARQEDIA_graphics-insert-questions.md`, which makes UNDO-01 a
 prerequisite for graphics in memos.
+
+### Decided 14 October 2026 (product owner)
+
+- **Depth of the stored history:** the last 10 edits. Still open from
+  § Stored shape: whether each step is the whole document or the changed
+  blocks only.

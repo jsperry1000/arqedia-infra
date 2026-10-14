@@ -119,3 +119,14 @@ Recorded on branch `docs/graphics-insert-decisions`, separate from `fix/mobile-u
 - **P2. SVG can carry script.** An uploaded SVG shown to another person — a colleague, or a share recipient — is a security question as well as a rendering one. How an SVG is shown or converted is not decided.
 - **P3. Stored history against the 4 MiB cap.** UNDO-01 (§ Stored shape) names the cap as the real risk of a stored history: whole-document steps, changed blocks only, or a cap on steps. Not decided. Images are references, so they do not add to it.
 - **P4. The sweep.** Garbage collection needs a schedule and a rule for "unreferenced" covering working copies, their stored history and saved revisions. Not designed; a scheduled job is a Terraform change.
+
+## Product owner decisions, 14 Oct 2026 — answers to P1–P4
+
+1. **P1 — PDF/SVG render support: verify.** A task, not a decision. Confirm support on both paths (browser and `lambda/render/app.py`) before building on the assumption.
+2. **P2 — SVG script: sanitize on upload.**
+3. **P3 — stored undo history: the last 10 edits.**
+4. **P4 — the sweep: match the existing sweep pattern.**
+
+### Note on P4 — by CC, from code, 14 Oct 2026
+
+There is no deletion sweep in the repository today, and no S3 lifecycle rule. The only scheduled job is the reconciliation in `reconcile.tf`: an EventBridge rule on `rate(15 minutes)` invoking a Lambda (`reconcile.tf:195-213`). It finds missing work and deletes nothing. "Match the existing sweep pattern" is read as that shape — an EventBridge schedule invoking a Lambda — unless the product owner names another.
