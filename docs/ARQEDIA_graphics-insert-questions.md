@@ -165,3 +165,7 @@ What SVG and PDF would need (from documentation, not tested):
 3. **P2: resolved by scope change.** Sanitise-on-upload answered SVG script risk; with SVG dropped it no longer applies. The 14 Oct decision stays above as recorded.
 4. **P3: the last 10 edits.** Unchanged.
 5. **P4: confirmed.** A scheduled EventBridge rule invoking a Lambda, the same shape as `reconcile.tf`.
+
+## Product owner decision, 14 Oct 2026 — UNDO-01 stored shape
+
+**Each undo step holds the changed blocks only**, not the whole document. Recorded also in `ARQEDIA_backlog_UNDO01_undo_in_the_memo.md`. UNDO-01 has no open decisions left; the Instruction above ("nothing here starts until that's designed") now waits on UNDO-01's design, not its questions.

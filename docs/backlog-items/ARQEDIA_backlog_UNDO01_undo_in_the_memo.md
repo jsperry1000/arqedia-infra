@@ -177,3 +177,6 @@ prerequisite for graphics in memos.
 - **Depth of the stored history:** the last 10 edits. Still open from
   § Stored shape: whether each step is the whole document or the changed
   blocks only.
+- **Shape of a step:** the changed blocks only, not the whole document.
+  Settles the line above. All three questions in § Needed before any of it
+  is designed are now answered.
