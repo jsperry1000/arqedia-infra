@@ -130,3 +130,30 @@ Recorded on branch `docs/graphics-insert-decisions`, separate from `fix/mobile-u
 ### Note on P4 — by CC, from code, 14 Oct 2026
 
 There is no deletion sweep in the repository today, and no S3 lifecycle rule. The only scheduled job is the reconciliation in `reconcile.tf`: an EventBridge rule on `rate(15 minutes)` invoking a Lambda (`reconcile.tf:195-213`). It finds missing work and deletes nothing. "Match the existing sweep pattern" is read as that shape — an EventBridge schedule invoking a Lambda — unless the product owner names another.
+
+## P1 check — by CC, 14 Oct 2026
+
+**Deployed state.** `arqedia-dev-render` (python3.12, x86_64) runs layer `arqedia-dev-docprocessing:44`. Downloaded from AWS and listed: ReportLab 4.2.5, Pillow 12.3.0, pypdf, lxml. No svglib, no pdfrw, no PDF rasteriser.
+
+**PDF path — tested.** ReportLab 4.2.5 + Pillow 12.3.0 (the layer's versions), the same `ImageReader` → `drawImage` call as `_draw_logo` (`lambda/render/app.py:974`):
+
+| Type | Result |
+|---|---|
+| PNG | OK |
+| JPEG | OK |
+| SVG | FAIL — `UnidentifiedImageError` |
+| PDF | FAIL — `UnidentifiedImageError` |
+
+Run on Windows under Python 3.14, not on Lambda; library versions match the layer.
+
+What SVG and PDF would need (from documentation, not tested):
+- SVG: `svglib` (`svg2rlg`) converts SVG to a ReportLab drawing. Not in the layer. Its 2.0 release changed the px→pt conversion (1 px = 0.75 pt).
+- PDF: placed as vector content via `pdfrw` (`pagexobj` + `makerl`), or rasterised to an image (PyMuPDF, pdf2image). Neither is in the layer. Whether the layer's `pypdf` can do this has not been checked.
+
+**Browser path — from documentation, not rendered.**
+- SVG: displays in `<img>`; browsers do not run script in an SVG loaded as an image (MDN, "SVG as an image"). P2's sanitise-on-upload still applies to any route that serves the SVG directly.
+- PDF: not an image type. MDN's image format guide does not list it; `<img>` will not display it. Needs `<embed>`/`<iframe>`/`<object>` or a converter.
+
+**Shared copies** are stamped from the rendered PDF, so they inherit the PDF path's result.
+
+**Consequence.** PNG and JPEG work on both paths with nothing added. SVG needs a new library in the layer. PDF needs a new library on both paths, or conversion to an image at upload. How PDF and SVG are handled is not decided.
