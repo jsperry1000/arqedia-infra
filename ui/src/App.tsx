@@ -102,7 +102,12 @@ function codeRefusal(err: any): string {
  *  The two pools stay separate - this only routes between them.
  *
  *  An address in BOTH is flagged and deferred: the person is asked which they
- *  mean, and nothing decides for them. */
+ *  mean, and nothing decides for them.
+ *
+ *  UNKNOWN - the lookup past its rate limit, or a lookup that failed - shows
+ *  the workspace password form, as this card did before there was a lookup,
+ *  with the viewer sign-in one click away. Nobody is locked out of signing in
+ *  and the screen says nothing about the address. */
 function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void }) {
   const [email, setEmail] = useState("");
   // Null until the address is looked up; changing the address clears it.
@@ -173,7 +178,9 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
     }
   }
 
-  const which = pool === "both" ? chosen : pool;
+  const which = pool === "both" ? chosen
+    : pool === "unknown" ? (chosen ?? "tenant")
+    : pool;
 
   function otherAddress() {
     setPool(null);
@@ -190,7 +197,19 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
     setBusy(true);
     try {
       if (mode === "in" && !needsNew && pool === null) {
-        setPool((await lookupSignIn(email.trim())).pool);
+        // The server's own pattern, checked here so that a lookup that fails
+        // can be taken as unknown without hiding a mistyped address.
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
+          setError("That does not look like an email address.");
+          return;
+        }
+        let found: SignInPool = "unknown";
+        try {
+          found = (await lookupSignIn(email.trim())).pool;
+        } catch {
+          // Not a dead end: the same as past the rate limit.
+        }
+        setPool(found);
         return;
       }
       if (mode === "in" && which === "viewer") {
@@ -329,6 +348,17 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
                 <a onClick={() => setChosen("tenant")}>Your ARQEDIA workspace</a>
                 <a onClick={() => setChosen("viewer")}>What has been shared with you</a>
               </>
+            )}
+            {pool === "unknown" && !viewerSession && (
+              <p className="muted small" style={{ margin: 0 }}>
+                {which === "tenant"
+                  ? <a onClick={() => { setChosen("viewer"); setError(""); }}>
+                      Registered to see what was shared with you? Sign in for that
+                    </a>
+                  : <a onClick={() => { setChosen("tenant"); setError(""); }}>
+                      Sign in to your ARQEDIA workspace instead
+                    </a>}
+              </p>
             )}
             {(which === "tenant" || which === "viewer") && !viewerSession && (
               <input type="password" placeholder="Password" value={password}

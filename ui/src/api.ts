@@ -1760,8 +1760,10 @@ export const viewerApi = {
 
 /** Which sign-in an address belongs to (feature/viewer-tenant-integration).
  *  "both" is an address with a workspace account AND a viewer registration:
- *  flagged, and the person chooses - nothing decides for them yet. */
-export type SignInPool = "tenant" | "viewer" | "both" | "none";
+ *  flagged, and the person chooses - nothing decides for them yet.
+ *  "unknown" is the server's answer past its rate limit, and says nothing
+ *  about the address (decision of 14 October 2026). */
+export type SignInPool = "tenant" | "viewer" | "both" | "none" | "unknown";
 
 export const lookupSignIn = (email: string): Promise<{ pool: SignInPool }> =>
   open_("/sign-in/lookup", { email });
