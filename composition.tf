@@ -40,6 +40,14 @@ data "aws_iam_policy_document" "composition" {
     resources = ["${aws_s3_bucket.data["curated"].arn}/*"]
   }
 
+  # Update reads the memo a person saved, and its own run's progress, from
+  # the curated bucket. Reading only: nothing here lists or deletes.
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.data["curated"].arn}/*"]
+  }
+
   statement {
     effect    = "Allow"
     actions   = ["kms:Decrypt", "kms:GenerateDataKey"]

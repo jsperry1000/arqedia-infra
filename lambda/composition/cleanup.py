@@ -292,6 +292,12 @@ def front_matter(subject, engagement, generated_at, document_count, source_count
         return ""
 
 
+def open_item(text):
+    """An Open Item as the memorandum writes it: a callout, as a gap is, so
+    the reader and the renderer draw it on the same tinted panel."""
+    return "> **Open item.** " + " ".join((text or "").split())
+
+
 def coverage_callout(missing_types):
     """Names what was absent at generation, at the top, where it cannot be
     missed. Silent omission is the dangerous failure in a compliance record."""
@@ -405,3 +411,60 @@ REWRITE_PROMPT = (
     "Rewrite the section below as the instruction asks. Output markdown only "
     "- no heading, no preamble, no commentary on what you changed."
 )
+
+
+# Update. A person has saved their own text of a memorandum, and the
+# configuration or the documents have moved on since. The section is written
+# again from what is on file now, and this pass compares the two.
+#
+# THE MODEL NEVER RETURNS THE SAVED TEXT. It returns only what to ADD, and
+# where, by block number; the additions are put in by code and every saved
+# character stays where it was. "Content already in the saved text stays
+# exactly as the user wrote it" is therefore a property of the code, not an
+# instruction the model may or may not follow.
+#
+# What the model does decide - and nothing can check - is whether a fact is
+# already covered, new, or a contradiction. That judgement is the weak point
+# of Update and was accepted as one (decision of 16 October 2026).
+UPDATE_PREAMBLE = (
+    "You are comparing two versions of one section of an internal "
+    "memorandum. SAVED is the text a person wrote and signed off. It is "
+    "final: you cannot change, reword, shorten or remove any of it. FRESH is "
+    "the same section written again from the documents now on file.\n"
+    "Your only task is to say what FRESH states that SAVED does not.\n"
+    "1. An ADDITION is a fact FRESH states that SAVED does not state at all, "
+    "in any wording. A fact SAVED already states, however differently "
+    "worded, is not an addition. A difference of style, order or emphasis is "
+    "not an addition.\n"
+    "2. An OPEN ITEM is a fact FRESH states differently from SAVED - a "
+    "different figure, date, name, holding or status for the same thing. "
+    "Never add it as an addition and never choose between them. Write one "
+    "sentence saying what the memorandum states and what the documents now "
+    "on file state, naming both.\n"
+    "3. Use ONLY what FRESH states. Add no fact, figure, name or inference "
+    "beyond it. Do not compute ratios, percentages, totals or changes.\n"
+    "4. Keep every figure exactly as FRESH writes it, including currency and "
+    "period. Reproduce proper nouns, identifiers and entity names EXACTLY, "
+    "character for character.\n"
+    "5. Every addition and every open item MUST carry the citation token or "
+    "tokens FRESH gives for that fact. One without a token is discarded.\n"
+    "6. Write each addition in the register of the saved text, as measured "
+    "professional prose or, where it extends a list or table, as a short "
+    "sentence. Do not write a heading.\n"
+    "7. If FRESH states nothing SAVED does not, return no additions and no "
+    "open items. That is the expected answer when nothing has changed.\n"
+)
+
+UPDATE_PROMPT = (
+    "SAVED is given as numbered blocks. For each addition and open item, say "
+    "which block it belongs after - the block whose subject it extends - or "
+    "0 to put it before the first block.\n"
+    "Answer with JSON only, no preamble and no commentary, in exactly this "
+    "shape:\n"
+    "{\"additions\": [{\"after\": 2, \"text\": \"...\"}], "
+    "\"open_items\": [{\"after\": 1, \"text\": \"...\"}]}"
+)
+
+# What an Update row carries in memo_rewrite.prompt, which is NOT NULL. Not an
+# instruction anybody typed, and the screen says so from the row's source.
+UPDATE_ROW_PROMPT = "Update: regenerated from current template and documents"

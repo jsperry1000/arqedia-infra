@@ -257,6 +257,13 @@ locals {
     "POST /memos/{memo_id}/rewrites",
     "GET /memos/{memo_id}/rewrites",
 
+    # Updating a saved memo: every section written again from the
+    # configuration in use and the documents filed now, set beside the saved
+    # text as rewrites are. Charged as a generation, run by composition,
+    # polled for by run. Saved only through revise.
+    "POST /memos/{memo_id}/update",
+    "GET /memos/{memo_id}/update",
+
     # A person's unsaved work on a memo, kept so leaving does not lose it.
     "GET /memos/{memo_id}/working",
     "PUT /memos/{memo_id}/working",

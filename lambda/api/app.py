@@ -45,6 +45,12 @@ rewrite is recorded, and nothing changes until it is saved as a revision.
   POST /memos/{memo_id}/rewrites         start rewriting sections
   GET  /memos/{memo_id}/rewrites         how they are going, and what came back
 
+A saved memo may be updated: every section written again from the
+configuration in use and the documents now filed, and what is new set beside
+the saved text, as a rewrite is. Charged as a generation.
+  POST /memos/{memo_id}/update           start one
+  GET  /memos/{memo_id}/update           how it is going (?run=)
+
 A person's unsaved work on a memo is kept here, so leaving does not lose it.
   GET  /memos/{memo_id}/working          what they had not yet saved
   PUT  /memos/{memo_id}/working          keep it, or clear it
@@ -268,6 +274,8 @@ CURATOR_REFUSED_ROUTES = frozenset({
     "POST /uploads",
     "POST /engagements/{id}/file",
     "POST /engagements/{id}/generate",
+    # Update is a generation over a saved memo, and charged as one.
+    "POST /memos/{memo_id}/update",
     "POST /billing/checkout",
 })
 
@@ -1571,9 +1579,13 @@ def get_memo(tenant_id, memo_id):
     # Sections of this revision the model rewrote, and at whose prompt. A
     # reader must never have to guess which words a person wrote and which a
     # model did.
+    #
+    # source says which: NULL at a person's prompt, 'update' from Update
+    # (migration 039), with the revision Update wrote it under.
     rewritten = _sql(
         """
-        SELECT section_heading, prompted_by, model_id, completed_at
+        SELECT section_heading, prompted_by, model_id, completed_at,
+               source, config_revision
         FROM memo_rewrite
         WHERE tenant_id = :t AND accepted_in_memo_id = :m
         ORDER BY rewrite_id
@@ -1598,12 +1610,14 @@ def get_memo(tenant_id, memo_id):
                      "removed": bool(_col(s, 2))}
                     for s in sources.get("records", [])],
         "rewrites": [{"section_heading": _col(w, 0), "prompted_by": _col(w, 1),
-                      "model_id": _col(w, 2), "completed_at": _col(w, 3)}
+                      "model_id": _col(w, 2), "completed_at": _col(w, 3),
+                      "source": _col(w, 4), "config_revision": _col(w, 5)}
                      for w in rewritten.get("records", [])],
     }
 
 
-def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None):
+def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
+                config_revision=None, add_sources=False):
     """Save an edited memo as a NEW row. The original and its PDF are never
     touched: a compliance record is not overwritten, and which version anyone
     read stays answerable.
@@ -1614,6 +1628,20 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None):
     no longer exists. The editor's review is the evidence for a revision; that
     is what signing off means, and it belongs to a person rather than to the
     machinery.
+
+    TWO THINGS ONLY UPDATE ASKS FOR, and every other caller leaves alone.
+
+    config_revision names the revision the new row records. Absent, the
+    parent's is inherited, as it always has been. Update passes the revision
+    its sections were written under, which may be newer or older than the
+    parent's: an administrator can select an earlier one.
+
+    add_sources lets a citation name a document filed in the memo's
+    engagement since its root was written. Update writes from every document
+    now on file, so its text cites documents the root never had. Each one the
+    text cites is checked against the engagement's filed, active documents
+    and added to the new revision's sources; the check refuses anything else
+    exactly as it did.
     """
     parent = _sql(
         """
@@ -1629,7 +1657,8 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None):
 
     parent_key = _col(records[0], 0)
     template_key = _col(records[0], 1)
-    config_revision = _col(records[0], 2)
+    if config_revision is None:
+        config_revision = _col(records[0], 2)
     root_id = _col(records[0], 3) or int(memo_id)
     # Both inherited from the memo being revised (migration 030). The
     # engagement because a revision is the same matter as its parent, and the
@@ -1653,6 +1682,22 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None):
     )
     known = {_col(r, 0) for r in sources.get("records", [])}
 
+    # Documents filed in the engagement since, by filename, for Update only.
+    # Filed and active: the set composition writes from. One file can hold
+    # several documents sharing its name, so a name maps to every one.
+    filed_since = {}
+    if add_sources and parent_engagement is not None:
+        for r in _sql(
+                """
+                SELECT document_id, filename FROM document
+                WHERE tenant_id = :t AND engagement_id = :e
+                  AND state = 'filed' AND active = 1
+                """,
+                [_p("t", tenant_id), _p("e", int(parent_engagement))],
+        ).get("records", []):
+            if _col(r, 1) not in known:
+                filed_since.setdefault(_col(r, 1), []).append(_col(r, 0))
+
     # Anything of the form "<name>, page 3" is making a citation claim,
     # whether or not it looks like a filename. Requiring an extension let
     # "made-up-ref-1.0, page 1" through: it named no real document, cited a
@@ -1668,7 +1713,8 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None):
     ):
         cited.add(m.group(0))
 
-    unknown = sorted(c for c in cited if c not in known)
+    unknown = sorted(c for c in cited
+                     if c not in known and c not in filed_since)
     if unknown:
         raise ValueError(
             "these citations name documents that are not sources of this "
@@ -1758,6 +1804,18 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None):
         [_p("new_id", new_id), _p("t", tenant_id), _p("root", root_id)],
     )
 
+    # And the documents filed since that this text cites (Update only).
+    added = sorted({d for name in cited if name in filed_since
+                    for d in filed_since[name]})
+    for document_id in added:
+        _sql(
+            """
+            INSERT IGNORE INTO memo_source (memo_id, document_id, tenant_id)
+            VALUES (:new_id, :d, :t)
+            """,
+            [_p("new_id", new_id), _p("d", document_id), _p("t", tenant_id)],
+        )
+
     # The record that this revision carries model-written sections. Set once:
     # a rewrite already accepted elsewhere is never moved.
     if accepted:
@@ -1788,12 +1846,15 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None):
     except Exception as exc:  # noqa: BLE001 - logged; the revision stands
         print("[working-not-cleared] memo=%s by=%s %r" % (memo_id, email, exc))
 
-    print("[revised] memo=%s from=%s revision=%d by=%s rewrites=%d" % (
-        new_id, memo_id, next_revision, email, len(accepted)))
+    print("[revised] memo=%s from=%s revision=%d by=%s rewrites=%d "
+          "config_revision=%s sources_added=%d" % (
+              new_id, memo_id, next_revision, email, len(accepted),
+              config_revision, len(added)))
 
     return {"memo_id": new_id, "parent_memo_id": root_id,
             "revision": next_revision,
-            "label": "%s.%s" % (root_id, next_revision)}
+            "label": "%s.%s" % (root_id, next_revision),
+            "config_revision": config_revision}
 
 
 # --- rewriting a section ---------------------------------------------------
@@ -1918,7 +1979,8 @@ def list_rewrites(tenant_id, memo_id, ids=None):
         """
         SELECT rewrite_id, section_heading, prompt, prompted_by, status,
                error, citations_dropped, tokens_in, tokens_out, model_id,
-               created_at, completed_at, accepted_in_memo_id
+               created_at, completed_at, accepted_in_memo_id, source,
+               config_revision
         FROM memo_rewrite
         WHERE tenant_id = :t AND memo_id = :m
         """ + scope,
@@ -1941,6 +2003,9 @@ def list_rewrites(tenant_id, memo_id, ids=None):
             "created_at": _col(r, 10),
             "completed_at": _col(r, 11),
             "accepted_in_memo_id": _col(r, 12),
+            # NULL at a person's prompt, 'update' from Update (039).
+            "source": _col(r, 13),
+            "config_revision": _col(r, 14),
             "output_text": None,
         }
         if row["status"] == "done":
@@ -1953,6 +2018,155 @@ def list_rewrites(tenant_id, memo_id, ids=None):
         rows.append(row)
 
     return {"memo_id": int(memo_id), "rewrites": rows}
+
+
+# --- updating a saved memo -------------------------------------------------
+#
+# Every section written again from the configuration in use and the documents
+# filed now, by composition, with what is new set beside the saved text as a
+# memo_rewrite row per changed section (source 'update', migration 039). The
+# saved text is never changed by it: what is accepted is saved through
+# revise, which takes the revision and any documents filed since from the
+# rows themselves.
+#
+# The run's progress is an object in the curated bucket, as a proposal's is.
+# A row cannot say an Update finished with nothing to change, because there
+# would be no row; the object can.
+
+_RUN = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _update_key(tenant_id, memo_id, run):
+    """MIRRORED in lambda/composition/app.py, which finishes what this
+    starts. The two must not drift."""
+    return "tenants/%d/updates/memos/%d/%s.json" % (
+        int(tenant_id), int(memo_id), run)
+
+
+def update_memo(tenant_id, email, memo_id, idempotency_key):
+    """Charge for one Update and start it. Returns the run to poll.
+
+    CHARGED AS A GENERATION, memo_generated, on the click (decision of 16
+    October 2026). Every refusal below is above the charge, as generate's
+    are: a memo that cannot be updated must not take a dollar on its way to
+    failing. A run that fails after the charge is NOT refunded - refunds for
+    failed generation are not built (UX02 20.1), and the screen says so.
+
+    THE REVISION IN USE, read here once and carried in the event, so the
+    revision charged for is the revision that runs."""
+    found = _sql(
+        """
+        SELECT template_key, engagement_id, parent_memo_id, revision
+        FROM memo WHERE tenant_id = :t AND memo_id = :m
+        """,
+        [_p("t", tenant_id), _p("m", int(memo_id))]).get("records", [])
+    if not found:
+        return None
+    template_key = _col(found[0], 0)
+    engagement = _col(found[0], 1)
+    label = "%s.%s" % (_col(found[0], 2) or int(memo_id), _col(found[0], 3))
+
+    if engagement is None:
+        raise ValueError("this memorandum belongs to no engagement, so there "
+                         "is nothing to update it from")
+
+    revision = config.active_revision(tenant_id)
+    registry_now = config.load(tenant_id, revision)
+    if not registry_now.has_template(template_key):
+        raise ValueError("this memorandum is not in the configuration in "
+                         "use, so it cannot be updated")
+
+    wallet.charge(
+        tenant_id, email, "memo_generated", 1,
+        reference=registry_now.label_for_template(template_key)
+                  + " - update of memo " + label,
+        idempotency_key=idempotency_key)
+
+    run = hashlib.sha256(("%s|%s|%s|%s" % (
+        tenant_id, memo_id, idempotency_key, time.time())).encode("utf-8")
+    ).hexdigest()[:32]
+    started_at = datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+
+    # Written before the invocation, so the first poll finds a run rather
+    # than nothing.
+    _s3.put_object(
+        Bucket=CURATED_BUCKET, Key=_update_key(tenant_id, memo_id, run),
+        Body=json.dumps({"status": "running", "run": run,
+                         "memo_id": int(memo_id), "config_revision": revision,
+                         "requested_by": email, "started_at": started_at}
+                        ).encode("utf-8"),
+        ContentType="application/json")
+
+    _lambda.invoke(
+        FunctionName=COMPOSITION_FUNCTION,
+        InvocationType="Event",
+        Payload=json.dumps({"action": "update", "tenant_id": tenant_id,
+                            "memo_id": int(memo_id),
+                            "engagement_id": int(engagement),
+                            "template_key": template_key,
+                            "config_revision": revision,
+                            "run": run, "requested_by": email}))
+
+    print("[update-started] tenant=%s memo=%s run=%s revision=%s by=%s" % (
+        tenant_id, memo_id, run, revision, email))
+    return {"status": "started", "memo_id": int(memo_id), "run": run,
+            "config_revision": revision}
+
+
+def update_progress(tenant_id, memo_id, run):
+    """How an Update is going. Finished, it names the rows written, and the
+    rows themselves come with it so the screen needs no second call."""
+    if not _RUN.match(str(run or "")):
+        raise ValueError("no update was named")
+    if not _own_memo(tenant_id, memo_id):
+        return None
+    try:
+        body = _s3.get_object(
+            Bucket=CURATED_BUCKET,
+            Key=_update_key(tenant_id, memo_id, run))["Body"].read()
+    except ClientError as exc:
+        # As memo_working: a missing key reads as AccessDenied to a role
+        # without ListBucket.
+        code = exc.response.get("Error", {}).get("Code")
+        if code in ("NoSuchKey", "404", "AccessDenied", "403"):
+            return None
+        raise
+    state = json.loads(body.decode("utf-8"))
+
+    ids = state.get("rewrite_ids") or []
+    state["rewrites"] = []
+    if state.get("status") == "done" and ids:
+        state["rewrites"] = list_rewrites(
+            tenant_id, memo_id, ",".join(str(i) for i in ids))["rewrites"]
+    return state
+
+
+def _update_revision(tenant_id, memo_id, rewrite_ids):
+    """The revision a save takes from the Update rows it accepts, or None
+    where it accepts none.
+
+    Rows from two Updates run under different revisions cannot both be
+    right about which configuration the new revision was written under, so
+    such a save is refused rather than given one of the two."""
+    wanted = sorted({int(r) for r in (rewrite_ids or [])})
+    if not wanted:
+        return None
+    slots, params = _in_list(wanted, "r")
+    found = _sql(
+        """
+        SELECT DISTINCT config_revision FROM memo_rewrite
+        WHERE tenant_id = :t AND memo_id = :m AND source = 'update'
+          AND rewrite_id IN (%s)
+        """ % slots,
+        [_p("t", tenant_id), _p("m", int(memo_id))] + params,
+    ).get("records", [])
+    revisions = {_col(r, 0) for r in found}
+    if len(revisions) > 1:
+        raise ValueError("these sections come from updates made under "
+                         "different configurations. Accept the sections of "
+                         "one update, save, and update again.")
+    return revisions.pop() if revisions else None
 
 
 # --- work in progress on a memo -------------------------------------------
@@ -3142,9 +3356,16 @@ def _dispatch(event, context):
 
         if route == "POST /memos/{memo_id}/revise":
             body = json.loads(event.get("body") or "{}")
+            # Accepting Update rows is what makes a save an Update's: the
+            # revision and the documents filed since come from them, never
+            # from the request.
+            from_update = _update_revision(tenant_id, params.get("memo_id"),
+                                           body.get("rewrites") or [])
             revised = revise_memo(tenant_id, email, params.get("memo_id"),
                                   body.get("markdown", ""),
-                                  body.get("rewrites") or [])
+                                  body.get("rewrites") or [],
+                                  config_revision=from_update,
+                                  add_sources=from_update is not None)
             if revised is None:
                 return _reply(404, {"error": "not found"})
             return _reply(201, revised)
@@ -3160,6 +3381,21 @@ def _dispatch(event, context):
         if route == "GET /memos/{memo_id}/rewrites":
             return _reply(200, list_rewrites(tenant_id, params.get("memo_id"),
                                              query.get("ids")))
+
+        if route == "POST /memos/{memo_id}/update":
+            body = json.loads(event.get("body") or "{}")
+            started = update_memo(tenant_id, email, params.get("memo_id"),
+                                  _key(body, "update", params.get("memo_id")))
+            if started is None:
+                return _reply(404, {"error": "not found"})
+            return _reply(202, started)
+
+        if route == "GET /memos/{memo_id}/update":
+            progress = update_progress(tenant_id, params.get("memo_id"),
+                                       query.get("run"))
+            if progress is None:
+                return _reply(404, {"error": "not found"})
+            return _reply(200, progress)
 
         if route == "GET /memos/{memo_id}/working":
             found = memo_working(tenant_id, email, params.get("memo_id"))
