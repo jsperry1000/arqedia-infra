@@ -1980,7 +1980,7 @@ def list_rewrites(tenant_id, memo_id, ids=None):
         SELECT rewrite_id, section_heading, prompt, prompted_by, status,
                error, citations_dropped, tokens_in, tokens_out, model_id,
                created_at, completed_at, accepted_in_memo_id, source,
-               config_revision
+               config_revision, input_text = '' AS adds_section
         FROM memo_rewrite
         WHERE tenant_id = :t AND memo_id = :m
         """ + scope,
@@ -2006,6 +2006,10 @@ def list_rewrites(tenant_id, memo_id, ids=None):
             # NULL at a person's prompt, 'update' from Update (039).
             "source": _col(r, 13),
             "config_revision": _col(r, 14),
+            # An Update row for a section new in the template replaces
+            # nothing: it is added at the end. Said by the row, so the screen
+            # never decides it from a heading that may happen to match one.
+            "adds_section": bool(_col(r, 15)),
             "output_text": None,
         }
         if row["status"] == "done":
@@ -2076,15 +2080,25 @@ def update_memo(tenant_id, email, memo_id, idempotency_key):
         raise ValueError("this memorandum is not in the configuration in "
                          "use, so it cannot be updated")
 
-    wallet.charge(
+    paid = wallet.charge(
         tenant_id, email, "memo_generated", 1,
         reference=registry_now.label_for_template(template_key)
                   + " - update of memo " + label,
         idempotency_key=idempotency_key)
 
-    run = hashlib.sha256(("%s|%s|%s|%s" % (
-        tenant_id, memo_id, idempotency_key, time.time())).encode("utf-8")
+    # THE RUN IS THE CHARGE'S, derived from its key. wallet.charge answers a
+    # repeated key with repeated rather than refusing it, so a retry of the
+    # same click lands here having paid nothing - and must be given the run
+    # it already paid for, not start a second one for free.
+    run = hashlib.sha256(("%s|%s|%s" % (
+        tenant_id, memo_id, idempotency_key)).encode("utf-8")
     ).hexdigest()[:32]
+    if (paid or {}).get("repeated"):
+        print("[update-repeated] tenant=%s memo=%s run=%s" % (
+            tenant_id, memo_id, run))
+        return {"status": "repeated", "memo_id": int(memo_id), "run": run,
+                "config_revision": revision}
+
     started_at = datetime.datetime.now(datetime.timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
 

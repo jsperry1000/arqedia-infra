@@ -413,6 +413,15 @@ class UpdateRoute(unittest.TestCase):
         self.assertEqual(state["status"], "running")
         self.assertEqual(state["run"], payload["run"])
 
+    def test_a_repeated_click_gets_its_run_and_starts_nothing(self):
+        first = self.app.update_memo(TENANT, EMAIL, MEMO, "idem-1")
+        self.app.wallet.charge.side_effect = lambda *a, **k: {"repeated": True}
+        again = self.app.update_memo(TENANT, EMAIL, MEMO, "idem-1")
+        self.assertEqual(again["status"], "repeated")
+        self.assertEqual(again["run"], first["run"])
+        self.assertEqual(len(self.invocations), 1)
+        self.assertEqual(len(self.puts), 1)
+
     def test_no_engagement_is_refused_before_the_charge(self):
         self.memo = (("credit", None, 100, 2),)
         with self.assertRaises(ValueError):
