@@ -33,12 +33,14 @@ ENV = {
     "PADDLE_PRICE_TOPUP": "pri_topup",
 }
 
-# The five the curator may not use, and three it may.
+# The six the curator may not use, and three it may. Update is a generation
+# over a saved memo and is refused with generate.
 REFUSED = [
     "POST /config/templates/fork",
     "POST /uploads",
     "POST /engagements/{id}/file",
     "POST /engagements/{id}/generate",
+    "POST /memos/{memo_id}/update",
     "POST /billing/checkout",
 ]
 ALLOWED = [
@@ -107,7 +109,7 @@ class CurationOnlyTest(unittest.TestCase):
             with self.subTest(route=route):
                 self.assertIsNone(self.app._curation_only(0, route))
 
-    def test_the_list_is_exactly_those_five(self):
+    def test_the_list_is_exactly_those_six(self):
         self.assertEqual(sorted(self.app.CURATOR_REFUSED_ROUTES),
                          sorted(REFUSED))
 

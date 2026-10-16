@@ -32,6 +32,12 @@ Invoke with:
 or, to rewrite one section of a memo already written, with the id of the
 memo_rewrite row the API has written for it:
     {"action": "rewrite", "tenant_id": 1, "rewrite_id": 42}
+
+or, to update a memo a person has saved, against the configuration in use
+and the documents now on file (see _update):
+    {"action": "update", "tenant_id": 1, "memo_id": 7, "engagement_id": 3,
+     "template_key": "credit", "config_revision": 9, "run": "<hex>",
+     "requested_by": "a@b.test"}
 """
 
 import datetime
@@ -430,7 +436,7 @@ def _compose(section, assembled, subject_name=None):
 _CITATION = re.compile(r"\*([^*\n]+?\.(?:pdf|docx|xlsx|txt|json|xml)[^*\n]*?)\*")
 
 
-def _mask_citations(markdown):
+def _mask_citations(markdown, tokens=None):
     """Replace every citation with an opaque token before consolidation.
 
     Asking the model to preserve citations does not work: told to write for a
@@ -443,8 +449,14 @@ def _mask_citations(markdown):
     restored afterwards, character for character.
 
     Returns (masked_text, {token: original}).
+
+    `tokens` carries a numbering on from an earlier call, so two texts masked
+    one after the other give the same citation the same token. Update needs
+    that: the model is shown the saved section and the fresh one, and a
+    source cited by both must read as one source.
     """
-    seen, tokens = {}, {}
+    tokens = {} if tokens is None else tokens
+    seen = {original: token for token, original in tokens.items()}
 
     def swap(m):
         original = m.group(0)
@@ -772,6 +784,536 @@ def _record_claim(tenant_id, memo_id, section_key, ordinal, text, values):
     return claim_id
 
 
+# --- writing the sections --------------------------------------------------
+
+def _write_sections(registry, template_key, values, subject_name):
+    """Stages 1 to 3 for one template: assemble, draft, consolidate.
+
+    Generation and Update both write through here, so a section Update puts
+    beside a person's text is written exactly as a generated one would be.
+
+    Returns (sections, assembled, empty_sections, tokens_in, tokens_out)."""
+    tokens_in = tokens_out = 0
+
+    # 1. Assemble the deterministic sections. They are the context for the rest.
+    assembled = {}
+    for section in registry.sections_of_kind("extract", template_key):
+        markdown, used = _assemble_extract(registry, section, values)
+        assembled[section["key"]] = {
+            "title": section["title"],
+            "num": section["num"],
+            "markdown": markdown,
+            "values": used,
+        }
+
+    # 2. Draft the composed sections from that context.
+    for section in registry.sections_of_kind("composed", template_key):
+        markdown, used, usage = _compose(section, assembled, subject_name)
+        tokens_in += usage.get("input_tokens", 0)
+        tokens_out += usage.get("output_tokens", 0)
+        assembled[section["key"]] = {
+            "title": section["title"],
+            "num": section["num"],
+            "markdown": markdown,
+            "values": used,
+        }
+
+    # 3. Consolidate each section into what a reader receives.
+    sections = registry.sections_for(template_key)
+
+    empty_sections = []
+    for section in sections:
+        block = assembled[section["key"]]
+        if not block["markdown"].strip():
+            empty_sections.append(section["title"])
+            continue
+        clean, usage = _consolidate(section, block["markdown"], subject_name)
+        tokens_in += usage.get("input_tokens", 0)
+        tokens_out += usage.get("output_tokens", 0)
+        block["markdown"] = clean
+
+    return sections, assembled, empty_sections, tokens_in, tokens_out
+
+
+def _section_lines(block):
+    """One section as the memo writes it. A section with nothing in it says
+    so as a gap rather than vanishing from the page."""
+    body = block["markdown"].strip()
+
+    if not body:
+        return ["## {}. {}".format(block["num"], block["title"]), "",
+                "> **Gap.** No material addressing this section was "
+                "provided.", ""]
+
+    lines = []
+    # The consolidation keeps the heading, so do not add a second one.
+    if not body.lstrip().startswith("#"):
+        lines += ["## {}. {}".format(block["num"], block["title"]), ""]
+    return lines + [body, ""]
+
+
+# --- update ----------------------------------------------------------------
+#
+# A person has saved their own text of a memo, and the configuration or the
+# documents have moved on since. Update writes every section again, exactly
+# as generation would, and sets what is new beside the saved text for the
+# person to accept or discard. NOTHING IS SAVED HERE: an accepted section
+# reaches the memo only through revise, as a prompted rewrite's does, and
+# each changed section is one memo_rewrite row marked source = 'update'.
+#
+# THE SAVED TEXT IS THE BASE AND IS NEVER RETURNED BY THE MODEL. The model
+# says what to add and after which block; the code puts it there. A saved
+# character cannot be changed by this pass, whatever the model answers.
+#
+# SECTIONS ARE MATCHED BY section_key, WORKED OUT, NOT STORED. The memo names
+# the revision it was written under, and a revision never changes, so a saved
+# heading looked up in that revision gives its key and a fresh section carries
+# its own. A section renamed in the configuration since still matches. A
+# heading a person retyped inside the memo resolves to nothing and is kept as
+# it stands, as is a section the template no longer has.
+#
+# The run's progress is an object in the curated bucket, as a proposal's is:
+# the screen polls it through the API, and it is what says an Update finished
+# with nothing to change - which no row can say, because there is no row.
+
+# A section heading as the memo screen splits on it: level two, at the start
+# of the line. The screen's rule rather than _SECTION_HEADING's, so the
+# sections Update reports are the sections the screen shows.
+_SAVED_HEADING = re.compile(r"^##(?!#)\s+\S")
+
+# Merges run side by side. Generation has already taken most of the
+# function's time by the point they start.
+_UPDATE_WORKERS = 4
+
+# A citation token, as _mask_citations writes one.
+_TOKEN = re.compile(r"\[\[C\d+\]\]")
+
+
+def _update_key(tenant_id, memo_id, run):
+    """Where a run's progress is kept. MIRRORED in lambda/api/app.py, which
+    writes it first and reads it for the screen; the two must not drift."""
+    return "tenants/%d/updates/memos/%d/%s.json" % (
+        int(tenant_id), int(memo_id), run)
+
+
+def _get_update(tenant_id, memo_id, run):
+    try:
+        body = _s3.get_object(Bucket=CURATED_BUCKET,
+                              Key=_update_key(tenant_id, memo_id, run)
+                              )["Body"].read()
+    except ClientError:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+
+def _put_update(tenant_id, memo_id, run, state):
+    _s3.put_object(Bucket=CURATED_BUCKET,
+                   Key=_update_key(tenant_id, memo_id, run),
+                   Body=json.dumps(state).encode("utf-8"),
+                   ContentType="application/json")
+
+
+def _split_saved(markdown):
+    """The memo's sections as the screen splits them: [{heading, text}].
+
+    Each text runs from its heading to the line before the next one, so it is
+    the same text the screen holds under that section."""
+    lines = (markdown or "").replace("\r\n", "\n").split("\n")
+    starts = [i for i, line in enumerate(lines) if _SAVED_HEADING.match(line)]
+    out = []
+    for k, start in enumerate(starts):
+        end = starts[k + 1] if k + 1 < len(starts) else len(lines)
+        out.append({"heading": lines[start].strip(),
+                    "text": "\n".join(lines[start:end])})
+    return out
+
+
+def _heading_norm(text):
+    """A heading reduced to what identifies it: no hashes, no case, single
+    spaces. Composition writes "## II. Business"; the model consolidating it
+    occasionally doubles a space."""
+    return " ".join((text or "").lstrip("#").split()).lower()
+
+
+def _keys_by_heading(registry, template_key):
+    """{normalised heading: section_key} for one template at one revision."""
+    if not registry.has_template(template_key):
+        return {}
+    keys = {}
+    for s in registry.sections_for(template_key):
+        keys.setdefault(
+            _heading_norm("{}. {}".format(s["num"], s["title"])), s["key"])
+    return keys
+
+
+def _saved_blocks(text):
+    """(lines, [(first, last)]) - a section's lines, and each block of it as
+    the line range it occupies. A block is a run of lines with no blank one
+    in it: a paragraph, a list, a table, a callout. The heading is line 0
+    and belongs to no block."""
+    lines = text.split("\n")
+    blocks, start = [], None
+    for i in range(1, len(lines)):
+        if lines[i].strip():
+            if start is None:
+                start = i
+        elif start is not None:
+            blocks.append((start, i - 1))
+            start = None
+    if start is not None:
+        blocks.append((start, len(lines) - 1))
+    return lines, blocks
+
+
+def _insert(text, placements):
+    """The saved section with additions put in after the blocks named.
+
+    Every saved line is written back in its place, unchanged. An addition is
+    a new block of its own, set off by a blank line, so it can never run into
+    the sentence before it. `after` 0 is before the first block; a number past
+    the last block is after it."""
+    lines, blocks = _saved_blocks(text)
+    at = {}
+    for after, addition in placements:
+        n = max(0, min(int(after), len(blocks)))
+        line = 0 if n == 0 else blocks[n - 1][1]
+        at.setdefault(line, []).append(addition.strip())
+
+    out = []
+    for i, line in enumerate(lines):
+        out.append(line)
+        for addition in at.get(i, []):
+            out.extend(["", addition])
+    return "\n".join(out)
+
+
+def _parse_update(text):
+    """(additions, open_items) from the model's answer, each [(after, text)].
+
+    Anything that is not the shape asked for is dropped rather than guessed
+    at; an answer with no JSON in it at all is a failure."""
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end < start:
+        raise ValueError("the model did not answer in the form asked for")
+    found = json.loads(text[start:end + 1])
+
+    def items(name):
+        out = []
+        for item in (found.get(name) or []):
+            if not isinstance(item, dict):
+                continue
+            words = str(item.get("text") or "").strip()
+            if not words:
+                continue
+            try:
+                after = int(item.get("after") or 0)
+            except (TypeError, ValueError):
+                after = 0
+            out.append((after, words))
+        return out
+
+    return items("additions"), items("open_items")
+
+
+def _merge(saved_text, fresh_text, subject_name, label):
+    """What the fresh section says that the saved one does not.
+
+    Returns (additions, open_items, usage, discarded): additions and open
+    items as [(after, text)] with their citations restored, and a count of
+    those thrown away for carrying no citation. Raises on a reply that was
+    cut off or not in the form asked for; the caller records it on a row.
+
+    THE SAVED TEXT AND THE FRESH ONE SHARE ONE SET OF TOKENS, so a source
+    cited by both reads as the same source and the model can tell a fact
+    already stated from a new one by where it came from as well as by what
+    it says."""
+    lines, blocks = _saved_blocks(saved_text)
+    tokens = {}
+    numbered = []
+    for n, (first, last) in enumerate(blocks, start=1):
+        masked, tokens = _mask_citations("\n".join(lines[first:last + 1]),
+                                         tokens)
+        numbered.append("[B%d]\n%s" % (n, masked))
+
+    _, fresh_body = _split_heading(fresh_text)
+    fresh_masked, tokens = _mask_citations(
+        fresh_body[:_SECTION_INPUT_CHARS], tokens)
+
+    prompt = (
+        cleanup.UPDATE_PROMPT
+        + cleanup.CITATION_TOKENS
+        + "\n\n--- SAVED START ---\n"
+        + ("\n\n".join(numbered) or "(the saved section has no text)")
+        + "\n--- SAVED END ---"
+        + "\n\n--- FRESH START ---\n"
+        + fresh_masked
+        + "\n--- FRESH END ---"
+    )
+
+    text, usage = _invoke(prompt,
+                          system=cleanup.UPDATE_PREAMBLE
+                          + cleanup.subject_rule(subject_name),
+                          stage="update", section=label,
+                          chars_in=len(saved_text) + len(fresh_body))
+
+    if usage.get("output_tokens", 0) >= _MAX_TOKENS:
+        raise ValueError("the comparison ran past the length limit and was "
+                         "cut off")
+
+    additions, open_items = _parse_update(text)
+
+    # A statement with no source behind it is an assertion nobody can check.
+    # The model is told every one must carry a token; one that does not is
+    # discarded here rather than trusted.
+    discarded = 0
+
+    def cited(items):
+        nonlocal discarded
+        kept = []
+        for after, words in items:
+            if not any(t in tokens for t in _TOKEN.findall(words)):
+                discarded += 1
+                continue
+            kept.append((after, _restore_citations(words, tokens)[0]))
+        return kept
+
+    return cited(additions), cited(open_items), usage, discarded
+
+
+def _update(event):
+    """Update one saved memo. See the note above _SAVED_HEADING.
+
+    The API has charged, written the run's progress as running, and invoked
+    this asynchronously. Each changed section becomes a memo_rewrite row,
+    status done, source 'update'; the run's progress object names them and
+    says what was left alone.
+
+    THE REVISION COMES IN THE EVENT. The API read the revision in use when it
+    charged, and the job runs under that one (config registry spec, section
+    8): a selection landing mid-run must not change the rules under a job
+    already paid for.
+
+    Never raises, for _rewrite's reason: Lambda retries an asynchronous
+    invocation that raises, and the retry would spend the model again on a
+    run already failed. The failure is written to the progress object."""
+    tenant_id = int(event["tenant_id"])
+    memo_id = int(event["memo_id"])
+    run = str(event["run"])
+    revision = int(event["config_revision"])
+    requested_by = event.get("requested_by") or "unknown"
+
+    state = _get_update(tenant_id, memo_id, run) or {}
+    # Finished already. A second delivery must not run the model twice.
+    if state.get("status") not in (None, "running"):
+        return {"status": "already-" + str(state.get("status")), "run": run}
+    state.update({"status": "running", "run": run, "memo_id": memo_id,
+                  "config_revision": revision})
+
+    def finish(status, **fields):
+        state.update(fields)
+        state["status"] = status
+        state["completed_at"] = datetime.datetime.now(
+            datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            _put_update(tenant_id, memo_id, run, state)
+        except Exception as exc:  # noqa: BLE001 - logged; nothing else to do
+            print("[update-state-not-written] memo=%s run=%s %r" % (
+                memo_id, run, exc))
+        print("[update] tenant=%s memo=%s run=%s status=%s revision=%s "
+              "changed=%s unchanged=%s kept=%s failed=%s" % (
+                  tenant_id, memo_id, run, status, revision,
+                  state.get("changed"), state.get("unchanged"),
+                  len(state.get("kept") or []), state.get("failed_sections")))
+        return {"status": status, "run": run}
+
+    try:
+        found = _sql(
+            """
+            SELECT s3_bucket, s3_key, config_revision, template_key,
+                   engagement_id
+            FROM memo WHERE tenant_id = :t AND memo_id = :m
+            """,
+            [_p("t", tenant_id), _p("m", memo_id)]).get("records", [])
+        if not found:
+            return finish("failed", error="the memorandum was not found")
+
+        saved = _s3.get_object(Bucket=_col(found[0], 0),
+                               Key=_col(found[0], 1))["Body"].read() \
+                   .decode("utf-8")
+        from_revision = int(_col(found[0], 2) or 1)
+        template_key = event.get("template_key") or _col(found[0], 3)
+        engagement_id = event.get("engagement_id") or _col(found[0], 4)
+        state["from_revision"] = from_revision
+
+        if engagement_id is None:
+            return finish("failed", error="this memorandum belongs to no "
+                          "engagement, so there is nothing to update it from")
+
+        registry = config.load(tenant_id, revision)
+        if not registry.has_template(template_key):
+            return finish("failed", error="this memorandum is not in the "
+                          "configuration in use")
+        earlier = config.load(tenant_id, from_revision)
+
+        values = _load_values(tenant_id, engagement_id)
+        if not values:
+            return finish("failed", error="no document filed in this "
+                          "engagement has anything read from it")
+
+        subject_name = _subject_of(tenant_id, engagement_id)
+
+        sections, assembled, _empty, tokens_in, tokens_out = _write_sections(
+            registry, template_key, values, subject_name)
+
+        # Which saved section is which, by section_key.
+        now_keys = {s["key"] for s in sections}
+        was = _keys_by_heading(earlier, template_key)
+        had_keys = set(was.values())
+        matched, kept = {}, []
+        for s in _split_saved(saved):
+            key = was.get(_heading_norm(s["heading"]))
+            if key is None or key in matched or key not in now_keys:
+                kept.append(s["heading"])
+                continue
+            matched[key] = s
+
+        fresh = {s["key"]: "\n".join(_section_lines(assembled[s["key"]]))
+                 for s in sections}
+
+        # The comparisons. Only where the fresh section says anything: one
+        # that came back empty has nothing to add to what a person wrote.
+        jobs = [s for s in sections
+                if s["key"] in matched
+                and assembled[s["key"]]["markdown"].strip()]
+
+        def compare(section):
+            try:
+                return section["key"], _merge(
+                    matched[section["key"]]["text"], fresh[section["key"]],
+                    subject_name, section["key"]), None
+            except Exception as exc:  # noqa: BLE001 - recorded on a row
+                return section["key"], None, "%s: %s" % (
+                    type(exc).__name__, exc)
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=_UPDATE_WORKERS) as pool:
+            results = {key: (merged, error)
+                       for key, merged, error in pool.map(compare, jobs)}
+
+        # Open Items go to the memo's own Open Items section where it has
+        # one; otherwise each sits in the section it came from. Not to one
+        # whose own comparison failed: that section is offered as a failure,
+        # and an Open Item put in it would be offered nowhere.
+        target = ("open_items" if "open_items" in matched
+                  and not results.get("open_items", (None, None))[1]
+                  else None)
+        placements = {key: [] for key in matched}
+        collected = []
+        usage_of = {}
+        discarded = 0
+        for key, (merged, error) in results.items():
+            if error:
+                continue
+            additions, open_items, usage, dropped = merged
+            usage_of[key] = usage
+            discarded += dropped
+            tokens_in += usage.get("input_tokens", 0)
+            tokens_out += usage.get("output_tokens", 0)
+            placements[key].extend(additions)
+            for after, words in open_items:
+                if target and key != target:
+                    collected.append(cleanup.open_item(words))
+                else:
+                    placements[key].append((after, cleanup.open_item(words)))
+        if target:
+            # After the section's last block, in the order they were found.
+            placements[target].extend(
+                (len(_saved_blocks(matched[target]["text"])[1]), item)
+                for item in collected)
+
+        rewrite_ids, added_sections = [], []
+        changed = unchanged = failed = 0
+        for section in sections:
+            key = section["key"]
+            if key in matched:
+                heading = matched[key]["heading"]
+                saved_text = matched[key]["text"]
+                error = results.get(key, (None, None))[1]
+                if error:
+                    failed += 1
+                    rewrite_ids.append(_update_row(
+                        tenant_id, memo_id, heading, requested_by, saved_text,
+                        None, None, revision, error=error))
+                elif placements[key]:
+                    changed += 1
+                    rewrite_ids.append(_update_row(
+                        tenant_id, memo_id, heading, requested_by, saved_text,
+                        _insert(saved_text, placements[key]),
+                        usage_of.get(key), revision))
+                else:
+                    unchanged += 1
+            elif key not in had_keys:
+                # New in the template since this memo was written: written
+                # and offered whole, to go at the end.
+                text = fresh[key]
+                heading = text.split("\n", 1)[0].strip()
+                added_sections.append(heading)
+                rewrite_ids.append(_update_row(
+                    tenant_id, memo_id, heading, requested_by, "", text,
+                    None, revision))
+            # Otherwise the template had it when this memo was written and
+            # the memo no longer does under that heading: a person removed
+            # it or retyped its heading. Offering it again would put back
+            # what somebody took out, so it is left alone.
+
+        if discarded:
+            print("[update-uncited-discarded] memo=%s run=%s count=%d" % (
+                memo_id, run, discarded))
+
+        return finish("done", rewrite_ids=rewrite_ids, changed=changed,
+                      unchanged=unchanged, kept=kept[:50],
+                      added_sections=added_sections, failed_sections=failed,
+                      uncited_discarded=discarded,
+                      tokens_in=tokens_in, tokens_out=tokens_out)
+
+    except Exception as exc:  # noqa: BLE001 - written to the run, not raised
+        return finish("failed", error="%s: %s" % (type(exc).__name__, exc))
+
+
+def _update_row(tenant_id, memo_id, heading, requested_by, input_text,
+                output_text, usage, revision, error=None):
+    """One section of an Update as a memo_rewrite row, finished. Returns its
+    id. Done where there is text to offer, failed where the comparison could
+    not be made - the screen shows the second as it shows a failed rewrite,
+    and revise accepts only the first."""
+    usage = usage or {}
+    created = _sql(
+        """
+        INSERT INTO memo_rewrite
+          (tenant_id, memo_id, section_heading, prompt, prompted_by,
+           model_id, input_text, output_text, tokens_in, tokens_out,
+           status, error, completed_at, source, config_revision)
+        VALUES
+          (:t, :m, :heading, :prompt, :who, :model, :input, :output,
+           :tokens_in, :tokens_out, :status, :error, UTC_TIMESTAMP(),
+           'update', :revision)
+        """,
+        [_p("t", tenant_id), _p("m", memo_id),
+         _p("heading", heading[:512]),
+         _p("prompt", cleanup.UPDATE_ROW_PROMPT),
+         _p("who", requested_by), _p("model", MODEL_ID),
+         _p("input", input_text),
+         _p("output", None if output_text is None
+            else output_text.rstrip() + "\n"),
+         _p("tokens_in", usage.get("input_tokens")),
+         _p("tokens_out", usage.get("output_tokens")),
+         _p("status", "failed" if error else "done"),
+         _p("error", (error or "")[:1024] or None),
+         _p("revision", revision)],
+    )
+    return created.get("generatedFields", [{}])[0].get("longValue")
+
+
 # --- handler ---------------------------------------------------------------
 
 def lambda_handler(event, context):
@@ -780,6 +1322,11 @@ def lambda_handler(event, context):
     # exactly as it did.
     if event.get("action") == "rewrite":
         return _rewrite(event)
+
+    # Update shares generation's three stages through _write_sections, and
+    # writes no memo of its own.
+    if event.get("action") == "update":
+        return _update(event)
 
     tenant_id = int(event["tenant_id"])
     engagement = event["engagement"]
@@ -829,42 +1376,11 @@ def lambda_handler(event, context):
     # prompt is then exactly what it was.
     subject_name = _subject_of(tenant_id, engagement_id)
 
-    # 1. Assemble the deterministic sections. They are the context for the rest.
-    assembled = {}
-    for section in registry.sections_of_kind("extract", template_key):
-        markdown, used = _assemble_extract(registry, section, values)
-        assembled[section["key"]] = {
-            "title": section["title"],
-            "num": section["num"],
-            "markdown": markdown,
-            "values": used,
-        }
-
-    # 2. Draft the composed sections from that context.
-    for section in registry.sections_of_kind("composed", template_key):
-        markdown, used, usage = _compose(section, assembled, subject_name)
-        tokens_in += usage.get("input_tokens", 0)
-        tokens_out += usage.get("output_tokens", 0)
-        assembled[section["key"]] = {
-            "title": section["title"],
-            "num": section["num"],
-            "markdown": markdown,
-            "values": used,
-        }
-
-    # 3. Consolidate each section into what a reader receives.
-    sections = registry.sections_for(template_key)
-
-    empty_sections = []
-    for section in sections:
-        block = assembled[section["key"]]
-        if not block["markdown"].strip():
-            empty_sections.append(section["title"])
-            continue
-        clean, usage = _consolidate(section, block["markdown"], subject_name)
-        tokens_in += usage.get("input_tokens", 0)
-        tokens_out += usage.get("output_tokens", 0)
-        block["markdown"] = clean
+    # 1-3. Assemble, draft and consolidate.
+    sections, assembled, empty_sections, used_in, used_out = _write_sections(
+        registry, template_key, values, subject_name)
+    tokens_in += used_in
+    tokens_out += used_out
 
     # 4. Render. Front matter and the coverage banner are built, not written.
     #
@@ -886,23 +1402,7 @@ def lambda_handler(event, context):
     ]
 
     for section in sections:
-        block = assembled[section["key"]]
-        body = block["markdown"].strip()
-
-        if not body:
-            parts.append("## {}. {}".format(block["num"], block["title"]))
-            parts.append("")
-            parts.append("> **Gap.** No material addressing this section was "
-                         "provided.")
-            parts.append("")
-            continue
-
-        # The consolidation keeps the heading, so do not add a second one.
-        if not body.lstrip().startswith("#"):
-            parts.append("## {}. {}".format(block["num"], block["title"]))
-            parts.append("")
-        parts.append(body)
-        parts.append("")
+        parts.extend(_section_lines(assembled[section["key"]]))
 
     memo_body = "\n".join(parts)
     encoded = memo_body.encode("utf-8")

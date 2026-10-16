@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type Memo, type Passage, type Rewrite } from "./api";
+import { useNavigate } from "react-router-dom";
+import { api, chargeKey, statusOf, type Memo, type Passage, type Quote,
+         type Rewrite, type UpdateRun } from "./api";
 import { MemoDocument, type Ref } from "./MemoReader";
 import { useBackAction, usePinTop, Working } from "./shell";
-import { ShareSendPanel } from "./Share";
+import { money, ShareSendPanel } from "./Share";
+import { balanceFor } from "./upgrade";
 
 /**
  * Reading and revising a memo.
@@ -34,6 +37,15 @@ import { ShareSendPanel } from "./Share";
  * Leaving - Back, a reload, another memo - keeps it, on the server, and
  * coming back reopens it where it was. Only saving a revision or Discard
  * changes ends it.
+ *
+ * Update is the third way, offered on a memo a person has saved (16 October
+ * 2026). Every section is written again from the configuration in use and the
+ * documents filed now, and what is new comes back as rewrites do: beside the
+ * section, to accept or discard. The saved text is never changed by it - an
+ * accepted section is the saved one with additions set in - and a section new
+ * in the template is offered whole, to go at the end. It costs what a
+ * generation costs, so it is confirmed with the price first. It works on the
+ * memo as saved, so it waits until unsaved changes are saved or discarded.
  */
 
 // A section heading as composition writes it: "## II. Business". Level two
@@ -100,7 +112,17 @@ function errorText(err: unknown): string {
 }
 
 type Result = Pick<Rewrite, "rewrite_id" | "status" | "error" | "output_text"
-                           | "citations_dropped">;
+                           | "citations_dropped"> & Partial<Pick<Rewrite,
+                           "source">>;
+
+// An Update section new in the template is kept under its heading with this
+// in front, so it can never share a key with a section already in the memo:
+// those keys are headings, and a heading starts "##".
+const ADDS = "+";
+
+// Composition stops at fifteen minutes. Past seventeen, the update is not
+// coming.
+const UPDATE_GIVES_UP_MS = 17 * 60 * 1000;
 
 // A rewrite out for one section: in flight, or finished and waiting to be
 // accepted or discarded.
@@ -138,6 +160,18 @@ export function MemoView({ memoId, onBack, onOpen }: {
   const [acceptedBy, setAcceptedBy] = useState<Record<string, number[]>>({});
   const [runs, setRuns] = useState<Record<string, Run>>({});
   const [starting, setStarting] = useState(false);
+
+  // Update: the run still out, the confirmation before it is charged, and
+  // what the last one to finish found.
+  const navigate = useNavigate();
+  const [updateRun, setUpdateRun] = useState<string | null>(null);
+  const [confirmingUpdate, setConfirmingUpdate] = useState(false);
+  const [updateQuote, setUpdateQuote] = useState<Quote | null>(null);
+  const [startingUpdate, setStartingUpdate] = useState(false);
+  const [updated, setUpdated] = useState<UpdateRun | null>(null);
+  // Minted when the confirmation opens, so a retry of the same press is the
+  // same charge and the next press is a new one.
+  const updateKey = useRef("");
 
   const [loaded, setLoaded] = useState(false);
   const [keeping, setKeeping] = useState<"" | "keeping" | "kept" | "failed">("");
@@ -193,6 +227,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
     setMode("read");
     setSaveError("");
     setKeeping("");
+    setConfirmingUpdate(false);
+    setUpdated(null);
 
     keepBlocked.current = false;
     const working = api.memoWorking(memoId).catch(() => null);
@@ -211,6 +247,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
       setAcceptedBy(copy?.accepted_by ?? {});
       setRuns(Object.fromEntries(Object.entries(copy?.pending ?? {})
         .map(([key, id]) => [key, { id, result: null }])));
+      setUpdateRun(copy?.update_run ?? null);
       // A copy kept before editing moved into the document names a mode that
       // no longer exists; it opens in the reader, where editing now lives.
       setMode(copy?.mode === "rewrite" ? "rewrite" : "read");
@@ -235,7 +272,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
   const hasChanges = !!memo && (draft !== memo.markdown
     || Object.keys(typedPrompts).length > 0 || acceptedIds.length > 0
-    || Object.keys(runs).length > 0);
+    || Object.keys(runs).length > 0 || !!updateRun);
 
   const payload = !memo || !hasChanges ? "null" : JSON.stringify({
     version: 1,
@@ -244,6 +281,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
     prompts: typedPrompts,
     accepted_by: acceptedBy,
     pending: Object.fromEntries(Object.entries(runs).map(([k, r]) => [k, r.id])),
+    ...(updateRun ? { update_run: updateRun } : {}),
   });
 
   // Keep the working copy after a pause in the changes.
@@ -290,6 +328,69 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
     return () => clearInterval(timer);
   }, [runningKey, memoId]);
+
+  // The text as it stands, for the moment an Update finishes: its rows are
+  // matched to sections by heading, against the memo as it is then.
+  const draftNow = useRef(draft);
+  draftNow.current = draft;
+
+  // Poll an Update until it finishes. Its rows arrive together, already
+  // done, and join the rewrites out - so accepting, discarding, keeping and
+  // saving them is exactly what it is for a prompted rewrite.
+  useEffect(() => {
+    if (!updateRun) return;
+    const run = updateRun;
+    const began = Date.now();
+    let live = true;
+
+    const stop = (message: string) => {
+      setUpdateRun(null);
+      if (message) setSaveError(message);
+    };
+
+    const timer = setInterval(async () => {
+      if (Date.now() - began > UPDATE_GIVES_UP_MS) {
+        stop("The update gave no answer in seventeen minutes and has been "
+          + "given up on. The charge for it has not been refunded.");
+        return;
+      }
+      try {
+        const progress = await api.updateProgress(memoId, run);
+        if (!live || progress.status === "running") return;
+        if (progress.status === "failed") {
+          stop("The update could not be finished: "
+            + (progress.error ?? "no reason was given") + ". The charge for "
+            + "it has not been refunded.");
+          return;
+        }
+        const sections = splitSections(draftNow.current).sections;
+        setRuns((prev) => {
+          const next = { ...prev };
+          for (const row of progress.rewrites) {
+            const key = row.adds_section
+              ? ADDS + row.section_heading
+              : sections.find((s) => s.heading === row.section_heading.trim())
+                  ?.key ?? ADDS + row.section_heading;
+            next[key] = { id: row.rewrite_id, result: row };
+          }
+          return next;
+        });
+        setUpdated(progress);
+        setMode("rewrite");
+        stop("");
+      } catch (err) {
+        // The run is gone - a copy kept from an update that no longer
+        // exists. Nothing to wait for.
+        if (statusOf(err) === 404) {
+          stop("That update could not be found.");
+          return;
+        }
+        setSaveError(errorText(err));
+      }
+    }, 4000);
+
+    return () => { live = false; clearInterval(timer); };
+  }, [updateRun, memoId]);
 
   // filename -> document_id, so a citation naming a file can be opened. The
   // memo text carries no identifiers; this is the map.
@@ -358,9 +459,41 @@ export function MemoView({ memoId, onBack, onOpen }: {
     setPrompts({});
     setAcceptedBy({});
     setRuns({});
+    setUpdateRun(null);
+    setUpdated(null);
     setMode("read");
     setSaveError("");
     keepNow(memoId, "null");
+  }
+
+  /** The confirmation, priced by the server before anything is charged. */
+  function openUpdate() {
+    setSaveError("");
+    setUpdateQuote(null);
+    updateKey.current = chargeKey();
+    setConfirmingUpdate(true);
+    api.walletQuote("memo_generated", 1)
+      .then(setUpdateQuote)
+      .catch((err) => {
+        setUpdateQuote(null);
+        setSaveError("The update could not be priced, so it cannot be "
+          + "started: " + errorText(err));
+      });
+  }
+
+  async function startUpdate() {
+    setStartingUpdate(true);
+    setSaveError("");
+    try {
+      const started = await api.startUpdate(memoId, updateKey.current);
+      setUpdated(null);
+      setUpdateRun(started.run);
+      setConfirmingUpdate(false);
+    } catch (err) {
+      setSaveError(errorText(err));
+    } finally {
+      setStartingUpdate(false);
+    }
   }
 
   const split = splitSections(draft);
@@ -408,8 +541,11 @@ export function MemoView({ memoId, onBack, onOpen }: {
   function accept(key: string) {
     const run = runs[key];
     if (!run?.result?.output_text) return;
-    setDraft((d) => replaceSection(d, key,
-      run.result!.output_text!.replace(/\s+$/, "") + "\n"));
+    const text = run.result.output_text.replace(/\s+$/, "") + "\n";
+    // A section new in the template replaces nothing: it goes at the end.
+    setDraft((d) => key.startsWith(ADDS)
+      ? d.replace(/\s+$/, "") + "\n\n" + text
+      : replaceSection(d, key, text));
     setAcceptedBy((prev) => ({ ...prev,
                                [key]: [...(prev[key] ?? []), run.id] }));
     setPrompts((prev) => ({ ...prev, [key]: "" }));
@@ -426,7 +562,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
     });
   }
 
-  const blocked = inFlight > 0 || undecided > 0;
+  // An Update still running is a set of rewrites still out: saving now would
+  // end the working copy its answer is coming back to.
+  const blocked = inFlight > 0 || undecided > 0 || !!updateRun;
   const canSave = !!memo && !saving && !blocked && !!draft.trim()
     && draft !== memo.markdown;
 
@@ -466,14 +604,39 @@ export function MemoView({ memoId, onBack, onOpen }: {
                   onOpen={openRef} />
   );
 
-  // Which sections of this memo the model wrote, grouped by who prompted.
-  const rewrittenBy = (memo.rewrites ?? []).reduce<Record<string, string[]>>(
-    (acc, w) => {
+  // Which sections of this memo the model wrote, grouped by who prompted -
+  // and, apart from those, which an Update brought in and at whose request.
+  const byWho = (update: boolean) => (memo.rewrites ?? [])
+    .filter((w) => (w.source === "update") === update)
+    .reduce<Record<string, string[]>>((acc, w) => {
       (acc[w.prompted_by] ||= []).push(w.section_heading.replace(/^#+\s*/, ""));
       return acc;
     }, {});
+  const rewrittenBy = byWho(false);
+  const updatedBy = byWho(true);
+  const updatedUnder = (memo.rewrites ?? [])
+    .find((w) => w.source === "update")?.config_revision ?? null;
 
-  const blockedTitle = blocked ? "Accept or discard every rewrite first." : undefined;
+  const blockedTitle = updateRun ? "Wait for the update to finish."
+    : blocked ? "Accept or discard every rewrite first." : undefined;
+
+  // Offered on a memo a person has saved. It works on the memo as saved, so
+  // unsaved changes are saved or discarded first - Share's rule, for the
+  // same reason.
+  const updatable = memo.revision > 1;
+  const updateTitle = updateRun ? "The update is running."
+    : hasChanges ? "Save or discard your changes first. Update works on the "
+                   + "memo as saved."
+    : "Write every section again from the configuration in use and the "
+      + "documents filed now, and set what is new beside your text.";
+  const updateControl = updatable && (
+    <a className="secondary"
+       onClick={hasChanges ? undefined : openUpdate}
+       aria-disabled={hasChanges}
+       title={updateTitle}>
+      {updateRun ? "Updating…" : "Update"}
+    </a>
+  );
 
   return (
     <div className={mode !== "read" ? "wide" : ""}>
@@ -500,6 +663,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
             <a className="secondary" onClick={openRewrite}>
               Have Model Redraft a Section
             </a>
+            {updateControl}
             <a className="pdf" onClick={rendering ? undefined : downloadPdf}
                aria-disabled={rendering}>
               {rendering ? "Rendering\u2026" : "Download PDF"}
@@ -547,6 +711,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
             <button onClick={save} disabled={!canSave} title={blockedTitle}>
               {saving ? "Saving\u2026" : "Save as a new revision"}
             </button>
+            {updateControl}
             <a className="secondary" onClick={close}>Close</a>
           </>
         )}
@@ -576,6 +741,14 @@ export function MemoView({ memoId, onBack, onOpen }: {
               {headings.length === 1 ? "was" : "were"} rewritten by the model
               at {who}&rsquo;s prompt.
             </span>
+          ))}
+          {Object.entries(updatedBy).map(([who, headings]) => (
+            <span key={"u:" + who}>
+              {" "}{headings.join(", ")}{" "}
+              {headings.length === 1 ? "was" : "were"} updated from the
+              documents on file and configuration revision {updatedUnder}, at
+              {" "}{who}&rsquo;s request.
+            </span>
           ))}{" "}
           Memo{" "}
           <a onClick={() => onOpen(memo.parent_memo_id!)}>
@@ -597,6 +770,38 @@ export function MemoView({ memoId, onBack, onOpen }: {
         </p>
       )}
 
+      {updateRun && (
+        <Working what={"Updating every section from the documents on file. "
+                       + "It takes a few minutes, and you can leave and come "
+                       + "back"} />
+      )}
+
+      {updated && mode === "rewrite" && (
+        <p className="muted small edit-note">
+          The update compared {(updated.changed ?? 0) + (updated.unchanged ?? 0)
+          } {(updated.changed ?? 0) + (updated.unchanged ?? 0) === 1
+            ? "section" : "sections"} with the documents on file under
+          configuration revision {updated.config_revision}:{" "}
+          {updated.changed ?? 0} with something new, set beside your text
+          below; {updated.unchanged ?? 0} with nothing new.
+          {(updated.added_sections ?? []).length > 0 && (
+            <> {(updated.added_sections ?? []).length} new in the template,
+              offered at the end.</>
+          )}
+          {(updated.kept ?? []).length > 0 && (
+            <> Kept as you wrote {(updated.kept ?? []).length === 1
+                ? "it" : "them"}, with no counterpart in the template:{" "}
+              {(updated.kept ?? []).map((h) => h.replace(/^#+\s*/, ""))
+                .join(", ")}.</>
+          )}
+          {(updated.failed_sections ?? 0) > 0 && (
+            <> {updated.failed_sections} could not be compared and
+              {updated.failed_sections === 1 ? " is" : " are"} marked
+              below.</>
+          )}
+        </p>
+      )}
+
       {saveError && <p className="error">{saveError}</p>}
       {loadingRef && <Working what="Opening source" />}
 
@@ -607,7 +812,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
               <div className="rewrite-body">
                 <MemoDocument markdown={split.head} byFilename={byFilename}
                               gone={gone} onOpen={openRef}
-                              onChange={(text) => setDraft(
+                              onChange={updateRun ? undefined : (text) => setDraft(
                                 joinSections(text, split.hasHead, split.sections))} />
               </div>
               <p className="muted small rewrite-note">
@@ -638,7 +843,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
                       </div>
                     </div>
                     <div>
-                      <h4>Rewritten</h4>
+                      <h4>{result.source === "update" ? "Updated" : "Rewritten"}</h4>
                       <div className="rewrite-body">
                         {markdownOf(result.output_text)}
                       </div>
@@ -648,7 +853,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
                   <div className="rewrite-body">
                     <MemoDocument markdown={s.text} byFilename={byFilename}
                                   gone={gone} onOpen={openRef}
-                                  onChange={(text) => setDraft(
+                                  onChange={updateRun ? undefined : (text) => setDraft(
                                     replaceSection(draft, s.key, text))} />
                   </div>
                 )}
@@ -700,7 +905,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
                   )}
                 </div>
 
-                {!run && (
+                {!run && !updateRun && (
                   <textarea className="rewrite-prompt" rows={2}
                     placeholder={"How " + s.heading.replace(/^#+\s*/, "")
                                  + " should be rewritten"}
@@ -713,10 +918,47 @@ export function MemoView({ memoId, onBack, onOpen }: {
               </section>
             );
           })}
+
+          {/* Sections new in the template since this memo was written,
+              offered whole by an Update. Nothing here replaces anything:
+              accepting adds the section at the end of the memo. */}
+          {Object.entries(runs).filter(([key]) => key.startsWith(ADDS))
+            .map(([key, run]) => {
+              const result = run.result;
+              return (
+                <section className="rewrite-section" key={key}>
+                  <p className="muted small">
+                    New in the template since this memo was written.
+                    Accepting adds it at the end.
+                  </p>
+                  {result?.status === "done" && result.output_text && (
+                    <div className="rewrite-body">
+                      {markdownOf(result.output_text)}
+                    </div>
+                  )}
+                  {result?.status === "failed" && (
+                    <p className="error">{result.error}</p>
+                  )}
+                  <div className="rewrite-actions">
+                    {!result && <span className="busy">Loading&hellip;</span>}
+                    {result?.status === "done" && (
+                      <>
+                        <a onClick={() => accept(key)}>Add to the memo</a>
+                        <a onClick={() => dropRun(key)}>Discard</a>
+                      </>
+                    )}
+                    {result?.status === "failed" && (
+                      <a onClick={() => dropRun(key)}>Dismiss</a>
+                    )}
+                  </div>
+                </section>
+              );
+            })}
         </div>
       ) : (
         <MemoDocument markdown={draft} byFilename={byFilename} gone={gone}
-                      onOpen={openRef} onChange={setDraft} />
+                      onOpen={openRef}
+                      onChange={updateRun ? undefined : setDraft} />
       )}
 
       {passage && (
@@ -727,6 +969,90 @@ export function MemoView({ memoId, onBack, onOpen }: {
       {sharing && (
         <ShareSendPanel memoId={memo.memo_id} label={memo.label}
                         onClose={() => setSharing(false)} />
+      )}
+
+      {/* The press that spends, with its price first. The figures are the
+          server's quote, as Generate's are: Update is charged as a
+          generation, and the two must read the same on the ledger. */}
+      {confirmingUpdate && (
+        <div className="panel-backdrop" onClick={() => setConfirmingUpdate(false)}>
+          <div className="panel narrow" onClick={(e) => e.stopPropagation()}
+               onKeyDown={(e) => { if (e.key === "Escape") setConfirmingUpdate(false); }}>
+            <a className="panel-close"
+               onClick={() => setConfirmingUpdate(false)}>Close</a>
+            <div className="form">
+              <h4>Update memo {memo.label}</h4>
+
+              <p className="muted small">
+                Every section is written again from the configuration in use
+                and the documents filed in this engagement now. What is new
+                is set beside your text, section by section, to accept or
+                discard. Your text stays exactly as you wrote it. Where the
+                documents now say something different from it, that is added
+                as an Open Item rather than changed. A section new in the
+                template is offered at the end. Nothing is saved until you
+                save a revision.
+              </p>
+
+              {updateQuote && (
+                <div className="quote">
+                  <div>
+                    <span>1 update, charged as a memorandum</span>
+                    <b>{money(updateQuote.total_cents)}</b>
+                  </div>
+                  <div>
+                    <span>Available</span>
+                    <b>{money(updateQuote.available_cents)}</b>
+                  </div>
+                  {!updateQuote.affordable && (
+                    <div className="short">
+                      <span>Short by</span>
+                      <b>{money(updateQuote.total_cents
+                                - updateQuote.available_cents)}</b>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {updateQuote && !updateQuote.affordable && (
+                <p className="why warn">
+                  There is not enough balance for this. Nothing has been
+                  charged and nothing will be until there is.
+                </p>
+              )}
+
+              {saveError && <p className="error">{saveError}</p>}
+
+              <div className="form-actions">
+                {updateQuote && !updateQuote.affordable ? (
+                  <button onClick={() => navigate(balanceFor(
+                    updateQuote.total_cents - updateQuote.available_cents,
+                    `Updating memo ${memo.label}`, window.location.pathname))}>
+                    Top up
+                  </button>
+                ) : (
+                  // Held until priced: the price is on the button that
+                  // spends, and a button with no price on it is not offered.
+                  <button disabled={!updateQuote || startingUpdate}
+                          onClick={startUpdate}>
+                    {startingUpdate ? "Starting…" : updateQuote
+                      ? `Update · ${money(updateQuote.total_cents)}`
+                      : "Pricing…"}
+                  </button>
+                )}
+                <a className="secondary"
+                   onClick={() => setConfirmingUpdate(false)}>Cancel</a>
+              </div>
+
+              <p className="muted small">
+                The charge is made when the update starts, against the
+                balance rather than the card. A repeat of this click is not
+                charged twice. If the update fails, the charge is not
+                refunded.
+              </p>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
