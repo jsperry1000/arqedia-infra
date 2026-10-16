@@ -243,7 +243,9 @@ def _render_group(registry, field_id, columns, rows):
     if not live:
         return []
 
-    out = ["**" + registry.label_for(field_id) + "**", ""]
+    # The key beside the label, so an instruction that names f_suppliers can
+    # find the table it means. The model is told never to write it out.
+    out = ["**" + registry.label_for(field_id) + " (" + field_id + ")**", ""]
     out.append("| " + " | ".join(c[1] for c in live) + " |")
     out.append("|" + "|".join(["---"] * len(live)) + "|")
     for ordinal in sorted(records):
@@ -289,7 +291,8 @@ def _assemble_extract(registry, section, values):
                 continue
             for v in rows:
                 if v["field_id"] == field_id:
-                    blocks.append("- **" + _label_for(registry, field_id) + ":** "
+                    blocks.append("- **" + _label_for(registry, field_id)
+                                  + " (" + field_id + "):** "
                                   + str(v["value"]) + "  \n  *" + _citation(v) + "*")
         blocks.append("")
 
@@ -503,33 +506,58 @@ def _consolidate(section, markdown, subject_name=None):
 
     It replaces rather than adds: a tenant who has written what a section
     should look like meant that, not that on top of ours. The built-in shaping
-    remains the fallback, so the pack's tables keep working untouched."""
+    remains the fallback, so the pack's tables keep working untouched.
+
+    REPLACING MEANS THE PREAMBLE'S SHAPE TOO. Until 16 October 2026 only
+    SECTION_PRESENTATION was replaced: the section prompt was appended to the
+    user message while CLEANUP_PREAMBLE's own shape rules - opening sentence,
+    grouped tables, a closing Note - sat in the system prompt and won. A
+    section with an instruction is now consolidated under INSTRUCTED_PREAMBLE,
+    where the instruction decides the form and the rules decide only what may
+    be said.
+
+    A COMPOSED section is consolidated under the rules alone. It was drafted
+    to its own instruction already, and is told to keep the form it has."""
     if not markdown.strip():
         return markdown, {}
 
     masked, tokens = _mask_citations(markdown[:_SECTION_INPUT_CHARS])
 
-    shape = (section.get("prompt") or "").strip()
-    shape = "\n" + shape + "\n" if shape else cleanup.presentation_for(
-        section["key"])
+    instruction = (section.get("prompt") or "").strip()
+    if section.get("kind") == "composed":
+        shaped_by = "rules only"
+        instruction = cleanup.COMPOSED_INSTRUCTION
+    elif instruction:
+        shaped_by = "section prompt"
+    else:
+        shaped_by = "built-in"
 
-    prompt = (
-        cleanup.CLEANUP_PROMPT
-        + shape
-        + cleanup.CITATION_TOKENS
+    body = (
+        cleanup.CITATION_TOKENS
         + "\n\n--- SECTION START ---\n"
         + "## {}. {}\n\n".format(section["num"], section["title"])
         + masked
         + "\n--- SECTION END ---"
     )
 
-    # The subject joins the PREAMBLE, not the shape directive. cleanup.py's
-    # own rule: anything about what may be SAID belongs in the preamble,
-    # which governs every section; SECTION_PRESENTATION is about shape. It
-    # also means a tenant's own section prompt, which replaces the shaping,
-    # cannot displace it.
+    # Without an instruction, exactly what it was: the full preamble and the
+    # built-in shape for the pack's own section keys.
+    if shaped_by == "built-in":
+        preamble = cleanup.CLEANUP_PREAMBLE
+        prompt = (cleanup.CLEANUP_PROMPT
+                  + cleanup.presentation_for(section["key"])
+                  + body)
+    else:
+        preamble = cleanup.INSTRUCTED_PREAMBLE
+        prompt = (cleanup.INSTRUCTED_PROMPT
+                  + "\n\nINSTRUCTION\n" + instruction + "\n"
+                  + body)
+
+    # The subject joins the PREAMBLE, not the instruction. cleanup.py's own
+    # rule: anything about what may be SAID belongs in the preamble, so a
+    # tenant's instruction, which decides the form, cannot displace it.
     text, usage = _invoke(prompt,
-                          system=cleanup.CLEANUP_PREAMBLE
+                          system=preamble
                           + cleanup.subject_rule(subject_name),
                           stage="consolidate", section=section["key"],
                           chars_in=len(markdown))
@@ -540,9 +568,7 @@ def _consolidate(section, markdown, subject_name=None):
             section["key"], len(dropped), len(tokens)))
 
     print("[consolidated] section=%s shaped_by=%s" % (
-        section["key"],
-        "section prompt" if (section.get("prompt") or "").strip()
-        else "built-in"))
+        section["key"], shaped_by))
 
     return text + "\n", usage
 
