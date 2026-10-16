@@ -89,7 +89,10 @@ resource "aws_lambda_function" "composition" {
   runtime          = "python3.12"
   filename         = data.archive_file.composition.output_path
   source_code_hash = data.archive_file.composition.output_base64sha256
-  timeout          = 600
+  # The ceiling Lambda allows. Update is a whole generation followed by its
+  # comparison passes, four at a time, and a long memo's generation alone has
+  # come close to 600 (decision of 16 October 2026).
+  timeout          = 900
   memory_size      = 512
   layers           = [aws_lambda_layer_version.docprocessing.arn]
 

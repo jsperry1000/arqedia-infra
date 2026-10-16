@@ -337,6 +337,16 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
   source, leave it open, or let the sender choose.
 - **`docs/HANDOFF/` and `docs/backlog-items/`** hold duplicates of four backlog
   items, including a `(1)` copy of HONE01.
+- **A repeated Generate click starts a second memo for one charge.**
+  `wallet.charge` answers a reused idempotency key with `repeated: True`
+  rather than refusing it, and `generate()` in `lambda/api/app.py` invokes
+  composition regardless. Update (`update_memo`) does not: its run is derived
+  from the key and a repeat starts nothing. Found 16 October 2026 on
+  `feature/memo-update`; logged, not fixed.
+- **Update leaves a memo's front matter as it was.** The head above the first
+  section is never touched, so "Documents reviewed" and "Sources cited" keep
+  the counts from the original generation after an Update brings in documents
+  filed since. Found 16 October 2026; logged, not fixed.
 - **Account deletion must clear sharing too, and does not exist yet.**
   `share.purge_tenant(tenant_id)` in `lambda/api/share.py` removes a tenant's
   grants, their access log, its usage counters and its `shares/` PDFs from

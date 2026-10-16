@@ -120,8 +120,9 @@ type Result = Pick<Rewrite, "rewrite_id" | "status" | "error" | "output_text"
 // those keys are headings, and a heading starts "##".
 const ADDS = "+";
 
-// Composition stops at ten minutes. Past twelve, the update is not coming.
-const UPDATE_GIVES_UP_MS = 12 * 60 * 1000;
+// Composition stops at fifteen minutes. Past seventeen, the update is not
+// coming.
+const UPDATE_GIVES_UP_MS = 17 * 60 * 1000;
 
 // A rewrite out for one section: in flight, or finished and waiting to be
 // accepted or discarded.
@@ -349,7 +350,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
     const timer = setInterval(async () => {
       if (Date.now() - began > UPDATE_GIVES_UP_MS) {
-        stop("The update gave no answer in twelve minutes and has been "
+        stop("The update gave no answer in seventeen minutes and has been "
           + "given up on. The charge for it has not been refunded.");
         return;
       }
