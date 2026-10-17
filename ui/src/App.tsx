@@ -6,6 +6,7 @@ import { EngagementView } from "./Review";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BackContext, BackPill } from "./shell";
 import { WelcomeView } from "./Welcome";
+import { TrialBanner } from "./TrialBanner";
 import { AccountView } from "./Account";
 import { ShareView } from "./Share";
 import { ShareBatchView } from "./ShareMemos";
@@ -747,6 +748,9 @@ export default function App() {
   // backwards. The screen only decides what is DRAWN; the refusal itself
   // lives in the API dispatcher, which is what the server trusts.
   const [curator, setCurator] = useState(false);
+  // Which workspace, so a banner put away in this browser is put away for
+  // this workspace only.
+  const [tenantId, setTenantId] = useState("");
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -758,6 +762,7 @@ export default function App() {
       const tenant = String(claims["custom:tenant_id"] ?? "");
       setWho(`${claims.email ?? ""} - tenant ${tenant || "?"}`);
       setCurator(tenant === "0");
+      setTenantId(tenant);
       setSignedIn(true);
     } catch {
       setSignedIn(false);
@@ -1052,6 +1057,9 @@ export default function App() {
             <a className="home-pill" onClick={() => navigate("/")}>Home</a>
           </div>
           <main>
+            {/* Above every working screen, so the trial ending is not news
+                kept on one tab of Account (19.2). */}
+            <TrialBanner tenant={tenantId} />
             <Routes>
               <Route path="/" element={<EngagementsRoute />} />
               <Route path="/engagements/:id" element={<EngagementRoute />} />
