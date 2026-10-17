@@ -84,6 +84,15 @@ a:hover { text-decoration: underline; }
   display: block; height: 1px; margin: 5px 0; background: var(--line);
 }
 .shell header a       { color: var(--light); font-size: 13px; }
+/* The signed-in line, as a button (a11y, 17 October 2026): the same pale
+   13px text it was as a link, with none of button's fill or padding. */
+.shell header .account-toggle,
+.shell header .account-toggle:hover:not(:disabled) {
+  padding: 0; border: 0; background: transparent;
+  color: var(--light); font: inherit; font-size: 13px; font-weight: 400;
+  text-align: right;
+}
+.shell header .account-toggle:hover { text-decoration: underline; }
 
 main { max-width: 1040px; margin: 32px auto; padding: 0 24px; }
 
@@ -902,7 +911,7 @@ p.warn { color: #b45309; }
 
 /* --- settings ------------------------------------------------------------ */
 
-.saved { color: var(--green); font-size: 13px; }
+.saved { color: var(--green-ink); font-size: 13px; }
 
 .logo-row {
   display: flex; align-items: center; gap: 20px; margin: 12px 0 8px;
@@ -940,7 +949,7 @@ p.warn { color: #b45309; }
 
 .in-use {
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--green); font-weight: 600;
+  color: var(--green-ink); font-weight: 600;
 }
 
 /* A fatal fault is not a warning: it says the memo would be wrong, not
@@ -1507,7 +1516,9 @@ a.add:hover { background: var(--paper); text-decoration: none; }
 /* Nothing ticked, nothing to do. The pill says so rather than going through
    the motions and failing on an empty list. */
 .start-pill.off {
-  background: var(--line); color: var(--muted); cursor: default;
+  /* --ink-2 rather than --muted: --muted on --line is 3.86:1, and this is a
+     link, not a disabled control, so the contrast floor applies (7.32). */
+  background: var(--line); color: var(--ink-2); cursor: default;
 }
 
 /* --- the working indicator ------------------------------------------------ */
@@ -1828,6 +1839,63 @@ table.docs.plans-table thead th.quoted .plan-price { font-family: var(--sans); }
 .pack-row input { width: auto; margin-top: 3px; }
 .pack-row strong { display: block; color: var(--deep); font-weight: 500; }
 .pack-row .small { display: block; margin-top: 2px; }
+
+/* --- narrow windows (a11y and mobile, 17 October 2026) --------------------- */
+
+/* Below 900 - the width at which the configuration band, the stage strip and
+   the stat cards already give way - the rail stops being a 200px column and
+   becomes a row of tabs above the page, as the viewer's rail does at 720
+   (.viewer-shell). On a phone the column left the page about 175px.
+
+   The rest of this block lets rows of controls and wide tables give way
+   rather than push the page wider than the window: a row wraps, and a table
+   header that held one line lets its words break. */
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .shell .rail {
+    position: relative; top: auto; height: auto;
+    flex-direction: row; flex-wrap: wrap;
+    padding: 0; border-right: 0; border-bottom: 1px solid var(--line);
+  }
+  .shell .rail > a, .shell .rail-item > a {
+    padding: 10px 14px; border-left: 0; border-bottom: 3px solid transparent;
+  }
+  .shell .rail > a.on, .shell .rail-item > a.on {
+    border-bottom-color: var(--deep);
+  }
+  /* The choice opens beneath its tab rather than to the right of a column
+     that is no longer there. */
+  .shell .chooser {
+    left: 0; top: 100%; z-index: 26;
+    width: min(320px, calc(100vw - 32px));
+  }
+
+  main { margin: 20px auto; padding: 0 16px; }
+  .back-strip { padding: 10px 16px; }
+
+  .memo { padding: 20px 16px; }
+  .memo-head { flex-wrap: wrap; }
+  .memo-head .secondary, .memo-head .pdf, .memo-head button { margin-left: 0; }
+
+  .config-bar { flex-wrap: wrap; }
+  .config-bar .live { white-space: normal; }
+
+  .filters, .form-actions, .inline, .review-head, .review-body,
+  .logo-row, .template-row, .viewer-actions, .tabs { flex-wrap: wrap; }
+  .inline-check { white-space: normal; }
+  .review-body select { min-width: 0; max-width: 100%; }
+  .logo-preview { max-width: 100%; }
+
+  table.docs th { white-space: normal; }
+}
+
+/* A wide table's own sideways scroll (TableScroll in shell.tsx). Outside the
+   media query because it costs nothing where the table fits. */
+.table-scroll { max-width: 100%; overflow-x: auto; }
+.table-scroll:focus-visible { outline: 2px solid var(--medium); outline-offset: 2px; }
+/* Inside the box a header keeps its line again: the box scrolls, so there is
+   no reason to break "First opened" over two. */
+.table-scroll table.docs th { white-space: nowrap; }
 
 /* --- what a thing costs, before it costs it -------------------------------- */
 

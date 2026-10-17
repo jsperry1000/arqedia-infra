@@ -1374,7 +1374,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             + `Revision ${state.active_revision} stays in use.`)) return;
           act("Discarding", api.discardDraft);
         }}>Discard</a>
-        <button
+        {/* Plain, not gold: gold is the generate control's alone
+            (CLAUDE.md, Brand and colour). The drawer's own Publish below
+            matches. */}
+        <button className="plain"
           disabled={!!busy || (validation ? !validation.may_publish : false)}
           onClick={() => setPublishing(true)}>
           Publish
@@ -2203,7 +2206,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             <div className="inline">
               <input placeholder="What changed?" value={note} autoFocus
                      onChange={(e) => setNote(e.target.value)} />
-              <button
+              <button className="plain"
                 disabled={!!busy || (validation ? !validation.may_publish : false)}
                 onClick={() => act("Publishing", async () => {
                   await api.publish(note);

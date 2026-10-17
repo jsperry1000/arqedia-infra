@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useBackAction, Working } from "./shell";
+import { TableScroll, useBackAction, Working } from "./shell";
 import {
   api, chargeKey, statusOf,
   type ShareAllowance, type ShareGrant, type ShareSent,
@@ -406,6 +406,7 @@ export function ShareView({ onBack, onMemo }: {
       )}
 
       {shown.length > 0 && (
+        <TableScroll label="Sharing history">
         <table className="docs">
           <thead>
             <tr>
@@ -475,6 +476,7 @@ export function ShareView({ onBack, onMemo }: {
             ))}
           </tbody>
         </table>
+        </TableScroll>
       )}
 
       <CannotRecall />

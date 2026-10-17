@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { updatePassword } from "aws-amplify/auth";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useBackAction, Working } from "./shell";
+import { TableScroll, useBackAction, Working } from "./shell";
 import { ENTERPRISE_COLUMN, EnterpriseLink, UpgradePrompt } from "./upgrade";
 import { api, chargeKey, type Wallet, type LedgerEntry,
          type Seats as SeatState, type Invited,
@@ -427,6 +427,7 @@ function Subscription() {
           plan row, it cannot be bought here, and a control that answers 403
           is worse than no control. Its words are ENTERPRISE_COLUMN - the one
           copy in this codebase, declared there with the reason. */}
+      <TableScroll label="Plans">
       <table className="docs plans-table">
         <thead>
           <tr>
@@ -434,7 +435,7 @@ function Subscription() {
             {view.plans.map((p: Plan) => (
               <th key={p.plan_key} onClick={() => setChosen(p.plan_key)}
                   className={p.plan_key === chosen ? "chosen" : undefined}>
-                <input type="radio" name="plan"
+                <input type="radio" name="plan" aria-label={p.name}
                        checked={p.plan_key === chosen}
                        onChange={() => setChosen(p.plan_key)} />
                 <span className="plan-name">{p.name}</span>
@@ -467,6 +468,7 @@ function Subscription() {
           ))}
         </tbody>
       </table>
+      </TableScroll>
 
       <div className="form-actions">
         {active ? (
@@ -811,6 +813,7 @@ function Balance() {
       )}
 
       {live.length > 0 && (
+        <TableScroll label="Balance, by bucket">
         <table className="docs">
           <thead>
             <tr><th>Bucket</th><th>Granted</th><th>Spent</th><th>Remaining</th><th>Expires</th></tr>
@@ -830,6 +833,7 @@ function Balance() {
             ))}
           </tbody>
         </table>
+        </TableScroll>
       )}
 
       {gone.length > 0 && (
@@ -839,6 +843,7 @@ function Balance() {
             Shown rather than hidden. Money that ran out on a date is easier to
             understand than money that was simply never there.
           </p>
+          <TableScroll label="Expired">
           <table className="docs">
             <tbody>
               {gone.map((b) => (
@@ -851,6 +856,7 @@ function Balance() {
               ))}
             </tbody>
           </table>
+          </TableScroll>
         </>
       )}
 
@@ -860,6 +866,7 @@ function Balance() {
         <p className="muted">Nothing charged yet.</p>
       )}
       {entries !== null && entries.length > 0 && (
+        <TableScroll label="Ledger">
         <table className="docs">
           <thead>
             <tr><th>When</th><th>Event</th><th>Reference</th><th>By</th><th>Amount</th></tr>
@@ -885,6 +892,7 @@ function Balance() {
             ))}
           </tbody>
         </table>
+        </TableScroll>
       )}
 
       <p className="muted small">
@@ -969,6 +977,7 @@ function Seats() {
           ` \u00b7 ${state.external} outside ${state.home_domain}`}
       </p>
 
+      <TableScroll label="Seats">
       <table className="docs">
         <thead>
           <tr><th>Person</th><th>Rights</th><th>Since</th><th></th></tr>
@@ -1032,6 +1041,7 @@ function Seats() {
           ))}
         </tbody>
       </table>
+      </TableScroll>
 
       {state.invitations.length > 0 && (
         <p className="muted small">
