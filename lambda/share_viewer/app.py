@@ -1102,6 +1102,12 @@ def _linked_viewer(claims):
 
 # --- dispatch ----------------------------------------------------------------
 
+# JSON that could not be read, past the request body (copy review, 17 October
+# 2026). Every deliberate refusal is a ValueError and keeps its own sentence.
+REQUEST_UNREADABLE = ("That request could not be read. Reload the page and "
+                      "try again.")
+
+
 def lambda_handler(event, context):
     if event.get("action") == "log":
         return _write_log(event)
@@ -1264,6 +1270,12 @@ def _dispatch(event, context):
         return _reply(400, {"error": str(exc), "restart": True})
     except PermissionError as exc:
         return _reply(403, {"error": str(exc)})
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        # ValueErrors, so the line below would answer with the parser's own
+        # text. The request body is read above; this is anything read after
+        # it. Logged, and the person told what to do.
+        print("[viewer-unreadable] route=%s %r" % (route, exc))
+        return _reply(400, {"error": REQUEST_UNREADABLE})
     except ValueError as exc:
         return _reply(400, {"error": str(exc)})
     except Exception as exc:  # noqa: BLE001 - never leak internals

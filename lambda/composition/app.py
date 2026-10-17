@@ -587,6 +587,13 @@ def _consolidate(section, markdown, subject_name=None):
 
 # --- rewrite ---------------------------------------------------------------
 
+# What a person is told when a rewrite or an Update stops on an exception.
+# The exception itself is logged; its text is never shown.
+REWRITE_FAULT = ("The rewrite stopped because of a fault on our side. "
+                 "Try it again.")
+UPDATE_FAULT = ("The update stopped because of a fault on our side. "
+                "Try it again.")
+
 # A section heading as composition writes it: "## I. Introduction". Level two
 # only, so a subheading the section itself carries is never mistaken for it.
 _SECTION_HEADING = re.compile(r"^\s*##(?!#)\s+\S")
@@ -744,8 +751,11 @@ def _rewrite(event):
                 "tokens": {"input": tokens_in, "output": tokens_out}}
 
     except Exception as exc:  # noqa: BLE001 - written to the row, not raised
-        return fail("%s: %s" % (type(exc).__name__, exc),
-                    tokens_in, tokens_out)
+        # The row's error is shown to the person as written, so the
+        # exception goes to the log and the row carries the sentence.
+        print("[rewrite-error] tenant=%s memo=%s rewrite=%s %r" % (
+            tenant_id, memo_id, rewrite_id, exc))
+        return fail(REWRITE_FAULT, tokens_in, tokens_out)
 
 
 # --- claims ----------------------------------------------------------------
@@ -1277,7 +1287,11 @@ def _update(event):
                       tokens_in=tokens_in, tokens_out=tokens_out)
 
     except Exception as exc:  # noqa: BLE001 - written to the run, not raised
-        return finish("failed", error="%s: %s" % (type(exc).__name__, exc))
+        # The run's error is shown to the person as written; the exception
+        # goes to the log.
+        print("[update-error] tenant=%s memo=%s run=%s %r" % (
+            tenant_id, memo_id, run, exc))
+        return finish("failed", error=UPDATE_FAULT)
 
 
 def _update_row(tenant_id, memo_id, heading, requested_by, input_text,

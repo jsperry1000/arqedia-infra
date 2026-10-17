@@ -888,8 +888,9 @@ function Balance() {
       )}
 
       <p className="muted small">
-        The ledger is append-only. There are no reversals, because unreadable
-        material is blocked before filing rather than charged and refunded.
+        The ledger is append-only. A document paid for and then not filed
+        &mdash; one that could not be read even with OCR &mdash; is refunded as
+        a line of its own, and the charge stays beside it.
       </p>
 
       <p className="muted small">
@@ -1140,7 +1141,7 @@ function Seats() {
         </thead>
         <tbody>
           <tr><td>Upload, file and generate</td><td className="ref">yes</td><td className="ref">yes</td></tr>
-          <tr><td>Edit and publish the configuration</td><td className="ref">yes</td><td className="ref">yes</td></tr>
+          <tr><td>Edit and publish the configuration</td><td className="ref">yes</td><td className="ref">no</td></tr>
           <tr><td>Share a memorandum, and revoke</td><td className="ref">yes</td><td className="ref">yes</td></tr>
           <tr><td>Change the plan or the card</td><td className="ref">yes</td><td className="ref">no</td></tr>
           <tr><td>Invite, remove or re-rank a seat</td><td className="ref">yes</td><td className="ref">no</td></tr>

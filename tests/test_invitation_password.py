@@ -138,17 +138,19 @@ class InvitationPasswordTest(unittest.TestCase):
         self.assertTrue(db.wrote_a_seat())
         idp.describe_user_pool.assert_called_once()
 
-    def test_cognitos_own_refusal_is_400_in_its_own_words(self):
+    def test_cognitos_refusal_is_400_in_our_words(self):
         """The fallback: the policy could not be read, so the password
         reached Cognito. The seat is given back and the sentence shown is the
-        one Cognito wrote - not "the account could not be created"."""
+        requirement in our words - not Cognito's, and not "the account could
+        not be created" (copy review, 17 October 2026)."""
         said = ("Password did not conform with policy: Password must have "
                 "uppercase characters")
         reply, body, db, idp = self.accept(
             "short", policy=None,
             set_password=Refused("InvalidPasswordException", said))
         self.assertEqual(reply["statusCode"], 400)
-        self.assertEqual(body["error"], said)
+        self.assertEqual(body["error"], self.app.PASSWORD_REFUSED)
+        self.assertNotIn("conform", body["error"])
         # Written, then given back: the row does not survive the refusal.
         self.assertTrue(db.wrote_a_seat())
         self.assertTrue(any(s.startswith("DELETE FROM seat")
