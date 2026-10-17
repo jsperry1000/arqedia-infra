@@ -60,3 +60,4 @@ __pycache__/
 # Mobile app (Expo): dependencies and Expo's local cache
 mobile/**/node_modules/
 mobile/**/.expo/
+mobile/**/*.apk
