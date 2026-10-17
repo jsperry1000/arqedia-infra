@@ -384,6 +384,10 @@ export type Memo = {
     prompted_by: string;
     model_id: string | null;
     completed_at: string | null;
+    /** null at a person's prompt; "update" when Update wrote it, under
+     *  config_revision. */
+    source: "update" | null;
+    config_revision: number | null;
   }[];
 };
 
@@ -404,6 +408,12 @@ export type Rewrite = {
   created_at: string;
   completed_at: string | null;
   accepted_in_memo_id: number | null;
+  /** null at a person's prompt; "update" when Update wrote it. An Update row
+   *  for a section new in the template has an empty input and is added at
+   *  the end rather than replacing anything. */
+  source: "update" | null;
+  config_revision: number | null;
+  adds_section: boolean;
   output_text: string | null;
 };
 
@@ -418,6 +428,28 @@ export type MemoWorking = {
   prompts: Record<string, string>;         // typed, not yet sent, by section
   accepted_by: Record<string, number[]>;   // rewrites accepted, by section
   pending: Record<string, number>;         // rewrites out, by section
+  // An Update still running, so leaving and coming back picks it up again.
+  update_run?: string;
+};
+
+// How an Update is going. Finished, it carries the rows it wrote - one per
+// changed section - and says what it left alone: sections it compared and
+// found nothing new in, and saved sections with no counterpart in the
+// configuration, kept as they stand.
+export type UpdateRun = {
+  status: "running" | "done" | "failed";
+  run: string;
+  memo_id: number;
+  config_revision: number;
+  from_revision?: number;
+  error?: string;
+  changed?: number;
+  unchanged?: number;
+  kept?: string[];
+  added_sections?: string[];
+  failed_sections?: number;
+  rewrite_ids?: number[];
+  rewrites: Rewrite[];
 };
 
 export type Passage = {
@@ -1271,6 +1303,21 @@ export const api = {
     Promise<{ memo_id: number; rewrites: Rewrite[] }> =>
     call(`/memos/${memoId}/rewrites?ids=${ids.join(",")}`),
 
+  /** Update a saved memo: every section written again from the
+   *  configuration in use and the documents filed now, and what is new set
+   *  beside the saved text to accept or discard. THIS CHARGES for one
+   *  memorandum, on the click. Answers at once with the run to poll. */
+  startUpdate: (memoId: number, idempotencyKey: string): Promise<{
+    status: string; memo_id: number; run: string; config_revision: number;
+  }> =>
+    call(`/memos/${memoId}/update`, {
+      method: "POST",
+      body: JSON.stringify({ idempotency_key: idempotencyKey }),
+    }),
+
+  updateProgress: (memoId: number, run: string): Promise<UpdateRun> =>
+    call(`/memos/${memoId}/update?run=${encodeURIComponent(run)}`),
+
   // The person's unsaved work on a memo - the same copy whether they left it
   // in Rewrite or in Edit. null when there is none.
   memoWorking: (memoId: number): Promise<{ memo_id: number; working: MemoWorking | null;
@@ -1745,6 +1792,42 @@ export const viewerApi = {
       Promise<{ id_token: string; expires_in: number }> =>
     viewerCall("/viewer/sign-in/mfa", null, "POST", { email, session, code }),
 
-  mine: (idToken: string): Promise<{ shares: ViewerShare[] }> =>
+  /** trial_prompt: ask "Want to try ARQEDIA yourself?" this time. False
+   *  inside 30 days of the last answer, and always once they are a tenant. */
+  mine: (idToken: string): Promise<{ shares: ViewerShare[]; trial_prompt: boolean }> =>
     viewerCall("/viewer/shares", { kind: "signed-in", idToken }),
+
+  answerTrialPrompt: (idToken: string, answer: "yes" | "not_now"):
+      Promise<{ answer: string; ask_again_after: string }> =>
+    viewerCall("/viewer/trial-prompt", { kind: "signed-in", idToken }, "POST",
+               { answer }),
+};
+
+// --- one sign-in for both kinds of person --------------------------------------
+
+/** Which sign-in an address belongs to (feature/viewer-tenant-integration).
+ *  "both" is an address with a workspace account AND a viewer registration:
+ *  flagged, and the person chooses - nothing decides for them yet.
+ *  "unknown" is the server's answer past its rate limit, and says nothing
+ *  about the address (decision of 14 October 2026). */
+export type SignInPool = "tenant" | "viewer" | "both" | "none" | "unknown";
+
+export const lookupSignIn = (email: string): Promise<{ pool: SignInPool }> =>
+  open_("/sign-in/lookup", { email });
+
+// --- shared with me, from the application --------------------------------------
+
+/** What has been shared with this person's own address, once their workspace
+ *  account is linked to the viewer account for it. Same grants a viewer sees
+ *  at /viewer; the customer token, on routes of their own. */
+export const sharedWithMe = {
+  list: (): Promise<{ linked: boolean; shares: ViewerShare[] }> =>
+    call("/me/shared"),
+
+  open: (grantId: string): Promise<ViewerPage> =>
+    call(`/me/shared/${encodeURIComponent(grantId)}`),
+
+  download: (grantId: string): Promise<{ download_url: string }> =>
+    call(`/me/shared/${encodeURIComponent(grantId)}/download`,
+         { method: "POST", body: "{}" }),
 };

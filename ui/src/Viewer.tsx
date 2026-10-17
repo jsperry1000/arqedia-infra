@@ -45,11 +45,13 @@ function tokenFromHash(hash: string): string {
   return params.get("t") ?? "";
 }
 
-function readSession(): string {
+// Exported for the one sign-in screen (App.tsx), which signs a viewer in and
+// hands them here already signed in.
+export function readSession(): string {
   try { return sessionStorage.getItem(SESSION_KEY) ?? ""; } catch { return ""; }
 }
 
-function keepSession(idToken: string) {
+export function keepSession(idToken: string) {
   try {
     if (idToken) sessionStorage.setItem(SESSION_KEY, idToken);
     else sessionStorage.removeItem(SESSION_KEY);
@@ -78,12 +80,118 @@ function Bar({ children }: { children?: React.ReactNode }) {
   );
 }
 
+// --- the rail ----------------------------------------------------------------
+//
+// THE APPLICATION'S OWN RAIL (.rail), not new chrome
+// (feature/viewer-tenant-integration). Until now the viewing page reached
+// nothing else; a recipient with three memoranda had three emails to find.
+//
+//   Shared with you   signed in: the list. Not signed in: registering where
+//                     this page can (a share link, not yet registered),
+//                     signing in everywhere else.
+//   Register          only on a share link, not yet registered - registering
+//                     needs the link, so /viewer alone cannot offer it.
+//   Sign in / out     whichever applies.
+
+type Here = "shares" | "memo" | "sign-in" | "register";
+
+function ViewerRail({ here, signedIn, onRegister, onSignOut }: {
+  here: Here;
+  signedIn: boolean;
+  /** Present only where this page can register its recipient. */
+  onRegister?: () => void;
+  onSignOut?: () => void;
+}) {
+  const navigate = useNavigate();
+  const on = (h: Here) => (here === h ? "on" : undefined);
+  const toList = () => (signedIn || !onRegister ? navigate("/viewer") : onRegister());
+  return (
+    <nav className="rail">
+      <a className={on("shares")} onClick={toList}>Shared with you</a>
+      {here === "memo" && <a className="on">This memorandum</a>}
+      {!signedIn && onRegister && (
+        <a className={on("register")} onClick={onRegister}>Register</a>
+      )}
+      {signedIn
+        ? <a onClick={onSignOut}>Sign out</a>
+        : <a className={on("sign-in")} onClick={() => navigate("/viewer")}>Sign in</a>}
+    </nav>
+  );
+}
+
+/** The page: ARQEDIA's bar across the top, the rail beside what is shown. */
+function Frame({ bar, rail, children }: {
+  bar?: React.ReactNode;
+  rail: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="viewer public">
+      <Bar>{bar}</Bar>
+      <div className="viewer-shell">
+        {rail}
+        <div className="viewer-main">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// --- the trial prompt ----------------------------------------------------------
+
+/** "Want to try ARQEDIA yourself?" - on signing in, and right after
+ *  registering. The server says whether it is due: not inside 30 days of the
+ *  last answer, and never once this person is also a tenant. "Yes" goes to
+ *  the ordinary signup, which links the two accounts if it is finished. */
+function TrialPrompt({ idToken, due, onDone }: {
+  idToken: string;
+  /** Known already (the list read it); otherwise read here. */
+  due?: boolean;
+  onDone?: () => void;
+}) {
+  const [show, setShow] = useState(due === true);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (due !== undefined) { setShow(due); return; }
+    viewerApi.mine(idToken).then((r) => setShow(r.trial_prompt))
+      .catch(() => setShow(false));
+  }, [idToken, due]);
+
+  // The answer is recorded on a best-effort basis: if it cannot be, the
+  // worst outcome is being asked again next time.
+  async function answer(a: "yes" | "not_now") {
+    setShow(false);
+    try { await viewerApi.answerTrialPrompt(idToken, a); } catch { /* asked again */ }
+    if (a === "yes") navigate("/signup");
+    else onDone?.();
+  }
+
+  if (!show) return null;
+  return (
+    <div className="viewer-register form">
+      <h4>Want to try ARQEDIA yourself?</h4>
+      <p className="small">
+        The memoranda you have been sent were made with it. A trial is a
+        separate account of your own, for your own work.
+      </p>
+      <div className="form-actions">
+        <button onClick={() => answer("yes")}>Yes</button>
+        <a className="secondary" onClick={() => answer("not_now")}>Not now</a>
+      </div>
+    </div>
+  );
+}
+
 // --- one memorandum --------------------------------------------------------
 
-function Memorandum({ grantId, credential, onSignedIn }: {
+function Memorandum({ grantId, credential, onSignedIn, signedIn = false,
+                      onSignOut }: {
   grantId: string;
   credential: ViewerCredential;
   onSignedIn?: (idToken: string) => void;
+  /** A viewer session is held in this tab, whichever way this was opened. */
+  signedIn?: boolean;
+  onSignOut?: () => void;
 }) {
   const [page, setPage] = useState<ViewerPage | null>(null);
   const [error, setError] = useState("");
@@ -92,6 +200,8 @@ function Memorandum({ grantId, credential, onSignedIn }: {
   // This browser is not verified for the share's recipient: what the server
   // said, so the screen can name where the code goes and offer sign-in.
   const [device, setDevice] = useState<{ sentTo: string; registered: boolean } | null>(null);
+  // Just registered on this page: the token, for the trial prompt.
+  const [justRegistered, setJustRegistered] = useState("");
 
   async function load() {
     setError("");
@@ -122,20 +232,29 @@ function Memorandum({ grantId, credential, onSignedIn }: {
     }
   }
 
+  // Registering is offered only where it can happen: a share link whose
+  // recipient has not registered, in a tab with no viewer session.
+  const canRegister = credential.kind === "link" && !signedIn
+    && !!page && !page.registered;
+  const rail = (
+    <ViewerRail here={registering ? "register" : "memo"} signedIn={signedIn}
+                onRegister={canRegister ? () => setRegistering(true) : undefined}
+                onSignOut={onSignOut} />
+  );
+
   if (device && credential.kind === "link") {
     return (
-      <div className="viewer public">
-        <Bar />
+      <Frame rail={<ViewerRail here="memo" signedIn={signedIn}
+                               onSignOut={onSignOut} />}>
         <VerifyDevice grantId={grantId} token={credential.token}
                       sentTo={device.sentTo} registered={device.registered}
                       onVerified={load} />
-      </div>
+      </Frame>
     );
   }
   if (error && !page) {
     return (
-      <div className="viewer public">
-        <Bar />
+      <Frame rail={rail}>
         <div className="viewer-message">
           <p>{error}</p>
           <p className="muted small">
@@ -143,21 +262,19 @@ function Memorandum({ grantId, credential, onSignedIn }: {
             been shared with you.
           </p>
         </div>
-      </div>
+      </Frame>
     );
   }
   if (!page) {
     return (
-      <div className="viewer public">
-        <Bar />
+      <Frame rail={rail}>
         <p className="viewer-message muted">Opening&hellip;</p>
-      </div>
+      </Frame>
     );
   }
 
   return (
-    <div className="viewer public">
-      <Bar>
+    <Frame rail={rail} bar={<>
         <span className="muted small">
           {page.memo_label}{page.subject ? ` · ${page.subject}` : ""}
           {" · "}shared by {page.tenant_name}
@@ -167,13 +284,13 @@ function Memorandum({ grantId, credential, onSignedIn }: {
           <button onClick={download} disabled={downloading}>
             {downloading ? "Preparing…" : "Download"}
           </button>
-          {credential.kind === "link" && !page.registered && (
+          {canRegister && (
             <a className="secondary" onClick={() => setRegistering(true)}>
               Register to keep access
             </a>
           )}
         </span>
-      </Bar>
+      </>}>
 
       {error && <p className="error viewer-message">{error}</p>}
 
@@ -186,10 +303,14 @@ function Memorandum({ grantId, credential, onSignedIn }: {
                   onDone={(idToken, expiresAt) => {
                     setRegistering(false);
                     setPage({ ...page, registered: true, expires_at: expiresAt });
+                    setJustRegistered(idToken);
                     onSignedIn?.(idToken);
                   }}
                   onCancel={() => setRegistering(false)} />
       )}
+
+      {/* Right after registering: the trial prompt, if it is due. */}
+      {justRegistered && <TrialPrompt idToken={justRegistered} />}
 
       <iframe className="viewer-frame" src={page.view_url}
               title={`${page.memo_label} — ${page.subject ?? ""}`} />
@@ -198,7 +319,7 @@ function Memorandum({ grantId, credential, onSignedIn }: {
         Shared with {page.recipient_email}. Every page carries that address,
         and a downloaded copy also carries the time it was taken.
       </p>
-    </div>
+    </Frame>
   );
 }
 
@@ -632,10 +753,14 @@ function Mine({ idToken, onOpen, onSignOut }: {
   onSignOut: () => void;
 }) {
   const [shares, setShares] = useState<ViewerShare[] | null>(null);
+  const [prompt, setPrompt] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    viewerApi.mine(idToken).then((r) => setShares(r.shares)).catch((err) => {
+    viewerApi.mine(idToken).then((r) => {
+      setShares(r.shares);
+      setPrompt(r.trial_prompt === true);
+    }).catch((err) => {
       // An hour on, the token has run out. Back to signing in, not a dead end.
       if (statusOf(err) === 401) onSignOut();
       else setError(String((err as Error).message));
@@ -643,6 +768,9 @@ function Mine({ idToken, onOpen, onSignOut }: {
   }, [idToken]);
 
   return (
+    <>
+    {prompt && <TrialPrompt idToken={idToken} due={prompt}
+                            onDone={() => setPrompt(false)} />}
     <div className="viewer-register form">
       <h4>Shared with you</h4>
       {error && <p className="error">{error}</p>}
@@ -669,8 +797,8 @@ function Mine({ idToken, onOpen, onSignOut }: {
           </tbody>
         </table>
       )}
-      <p className="small"><a onClick={onSignOut}>Sign out</a></p>
     </div>
+    </>
   );
 }
 
@@ -681,8 +809,11 @@ export function ViewerByLink() {
   const { grantId = "" } = useParams();
   const location = useLocation();
   const token = tokenFromHash(location.hash);
+  const [idToken, setIdToken] = useState(readSession());
   return <Memorandum grantId={grantId} credential={{ kind: "link", token }}
-                     onSignedIn={keepSession} />;
+                     signedIn={!!idToken}
+                     onSignedIn={(t) => { keepSession(t); setIdToken(t); }}
+                     onSignOut={() => { keepSession(""); setIdToken(""); }} />;
 }
 
 /** /viewer - a registered viewer, signed in to the viewer pool. */
@@ -696,18 +827,19 @@ export function ViewerSignedIn() {
   if (idToken && open) {
     return (
       <>
-        <Memorandum grantId={open} credential={{ kind: "signed-in", idToken }} />
+        <Memorandum grantId={open} credential={{ kind: "signed-in", idToken }}
+                    signedIn onSignOut={signOut} />
         <p className="viewer-note small"><a onClick={() => setOpen("")}>All shared with you</a></p>
       </>
     );
   }
 
   return (
-    <div className="viewer public">
-      <Bar />
+    <Frame rail={<ViewerRail here={idToken ? "shares" : "sign-in"}
+                             signedIn={!!idToken} onSignOut={signOut} />}>
       {idToken
         ? <Mine idToken={idToken} onOpen={setOpen} onSignOut={signOut} />
         : <SignIn onSignedIn={(t) => { keepSession(t); setIdToken(t); navigate("/viewer"); }} />}
-    </div>
+    </Frame>
   );
 }

@@ -90,6 +90,17 @@ data "aws_iam_policy_document" "signup" {
     actions   = ["ses:SendEmail"]
     resources = ["*"]
   }
+
+  # A viewer account, read and linked (feature/viewer-tenant-integration).
+  # GetItem answers the sign-in lookup - has this address registered as a
+  # viewer - and UpdateItem links an existing viewer account to the customer
+  # user just made. The one table, nothing else in DynamoDB, and never the
+  # viewer pool: that stays the viewer function's alone (CLAUDE.md, One door).
+  statement {
+    effect    = "Allow"
+    actions   = ["dynamodb:GetItem", "dynamodb:UpdateItem"]
+    resources = [aws_dynamodb_table.viewer_account.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "signup" {
@@ -115,6 +126,8 @@ resource "aws_lambda_function" "signup" {
       DATABASE     = "arqedia"
       USER_POOL_ID = aws_cognito_user_pool.main.id
       SENDER       = var.signup_sender
+      # The viewer accounts the lookup reads and signup links.
+      VIEWER_ACCOUNT_TABLE = aws_dynamodb_table.viewer_account.name
     }
   }
 
@@ -138,6 +151,9 @@ resource "aws_apigatewayv2_route" "signup" {
     # Accepting an invitation, for the same reason as the other two: the
     # person has no token because they have no account.
     "POST /invitations/accept",
+    # Which sign-in an address belongs to, before anybody has a token
+    # (feature/viewer-tenant-integration).
+    "POST /sign-in/lookup",
   ])
 
   api_id             = aws_apigatewayv2_api.main.id
