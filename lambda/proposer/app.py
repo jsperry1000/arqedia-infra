@@ -386,6 +386,22 @@ suppliers, policies - is one fact with shape "table", not one fact per row.
 
 # --- the handler -----------------------------------------------------------
 
+# What the person is told about a file the extractor refused, by the kind of
+# refusal. extractors.UnreadableDocument.reason starts with one of these.
+_UNREADABLE = (
+    ("pdf-parse-failed", "The file did not open as a PDF."),
+    ("no-pages", "The PDF has no pages."),
+    ("no_text_layer", "Its pages are images, with no text on them."),
+)
+
+
+def _unreadable_said(reason):
+    for kind, said in _UNREADABLE:
+        if (reason or "").startswith(kind):
+            return said
+    return "The file could not be read."
+
+
 def _read(event):
     tenant_id = int(event["tenant_id"])
     key = event["key"]
@@ -414,8 +430,11 @@ def _read(event):
         body = obj["Body"].read()
         text, _units, method = extractors.extract(key, body)
     except extractors.UnreadableDocument as exc:
+        # The screen shows "reason" as written. The extractor's own reason
+        # carries the PDF library's exception text, so it goes to the log
+        # below and the person is given the sentence for its kind.
         proposal["status"] = "unreadable"
-        proposal["reason"] = exc.reason
+        proposal["reason"] = _unreadable_said(exc.reason)
         proposal["finished_at"] = _now()
         _publish(key, proposal)
         print("[proposal-unreadable] key=%s reason=%s" % (key, exc.reason))

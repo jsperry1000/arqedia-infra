@@ -1246,6 +1246,12 @@ def close(tenant_id, email, role, session_id):
 
 # --- the handler -----------------------------------------------------------
 
+# JSON that could not be read (copy review, 17 October 2026). Every deliberate
+# refusal is a ValueError and keeps its own sentence.
+REQUEST_UNREADABLE = ("That request could not be read. Reload the page and "
+                      "try again.")
+
+
 def _reply(status, body):
     return {"status": status, "body": body}
 
@@ -1306,6 +1312,13 @@ def lambda_handler(event, context):
         return _reply(409, {"error": str(exc), "stale": True})
     except PermissionError as exc:
         return _reply(403, {"error": str(exc)})
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        # ValueErrors - a stored review object that will not parse - so the
+        # line below would answer with the parser's own text. Logged, and the
+        # person told what to do.
+        print("[review-unreadable] action=%s tenant=%s %r" % (
+            action, tenant_id, exc))
+        return _reply(400, {"error": REQUEST_UNREADABLE})
     except ValueError as exc:
         return _reply(400, {"error": str(exc)})
     except Exception as exc:  # noqa: BLE001 - never leak internals

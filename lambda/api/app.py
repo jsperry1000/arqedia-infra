@@ -3092,6 +3092,13 @@ def share_route(route, tenant_id, email, params, event):
 
 # --- dispatch --------------------------------------------------------------
 
+# A request whose JSON could not be read (copy review, 17 October 2026). Every
+# deliberate refusal is a ValueError and keeps its own sentence; this is the
+# answer for the parser's.
+REQUEST_UNREADABLE = ("That request could not be read. Reload the page and "
+                      "try again.")
+
+
 def lambda_handler(event, context):
     """Every request, and what became of it.
 
@@ -3729,6 +3736,13 @@ def _dispatch(event, context):
         })
     except PermissionError as exc:
         return _reply(403, {"error": str(exc)})
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        # Both are ValueErrors, so without this they reached the line below
+        # and the parser's own text ("Expecting value: line 1 column 1") was
+        # the answer. Logged, and the person is told what to do.
+        print("[api-unreadable] route=%s tenant=%s %r" % (
+            route, tenant_id, exc))
+        return _reply(400, {"error": REQUEST_UNREADABLE})
     except ValueError as exc:
         return _reply(400, {"error": str(exc)})
     except Exception as exc:  # noqa: BLE001 - never leak internals to a client

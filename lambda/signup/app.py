@@ -315,6 +315,24 @@ def _cognito_refusal(exc):
     return error.get("Code"), error.get("Message")
 
 
+def _failure_detail(exc):
+    """What signup_attempt.detail keeps of a failure: the exception's class
+    and Cognito's error code where there is one. The staff console shows it,
+    so the exception's own text goes to the log instead."""
+    code, _ = _cognito_refusal(exc)
+    name = type(exc).__name__
+    return "%s %s" % (name, code) if code else name
+
+
+# Said when Cognito refuses a password that _password_problem passed - which
+# it does only where the pool's policy could not be read. auth.tf's policy,
+# written out because there is nothing to read it from at that point; it must
+# follow auth.tf if the policy there changes.
+PASSWORD_REFUSED = ("That password does not meet the rules. Use at least "
+                    "twelve characters, with upper and lower case letters "
+                    "and a number.")
+
+
 def _record(domain, email, ip, outcome, detail=None):
     _sql(
         """
@@ -889,7 +907,8 @@ def verify(event, body):
                 _idp.admin_delete_user(UserPoolId=USER_POOL_ID, Username=email)
             except Exception:
                 pass
-        _record(domain, email, ip, "failed", str(exc)[:200])
+        print("[signup-failed] domain=%s %r" % (domain, exc))
+        _record(domain, email, ip, "failed", _failure_detail(exc))
         return _reply(500, {"error": "The account could not be created. "
                                      "Nothing was charged and nothing was kept."})
 
@@ -1021,17 +1040,22 @@ def accept(event, body):
             _idp.admin_delete_user(UserPoolId=USER_POOL_ID, Username=email)
         except Exception:
             pass
-        _record(domain, email, ip, "invite_failed", str(exc)[:200])
+        print("[invite-failed] domain=%s %r" % (domain, exc))
+        _record(domain, email, ip, "invite_failed", _failure_detail(exc))
 
         # A refusal about the password is not a failure of ours, and must not
         # be dressed as one. _password_problem catches these before the seat
         # where it can; this is what answers when it could not read the
-        # policy, or when Cognito refuses for a reason it does not model -
-        # and it answers in Cognito's own words.
+        # policy, or when Cognito refuses for a reason it does not model.
+        #
+        # IN OUR WORDS, NOT COGNITO'S (copy review, 17 October 2026). Its
+        # sentence ("Password did not conform with policy: ...") is logged
+        # above and the person is told the requirement.
         code, said = _cognito_refusal(exc)
         if code in ("InvalidPasswordException", "InvalidParameterException") \
                 and said:
-            return _reply(400, {"error": said})
+            return _reply(400, {"error": _password_problem(password)
+                                or PASSWORD_REFUSED})
 
         return _reply(500, {"error": "The account could not be created. "
                                      "Nothing was kept, and the invitation is "
