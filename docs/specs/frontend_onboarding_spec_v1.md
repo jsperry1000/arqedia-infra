@@ -183,6 +183,13 @@ The interface vocabulary is how people learn the product. Three rules:
 - **Errors state what happened and what to do.** They do not apologise and are
   never vague.
 
+> **Corrected 17 October 2026.** For "version" in the first rule, read
+> **revision**. A configuration's published state is called a revision: an
+> integer on an append-only series, named by every memorandum it wrote (the
+> settled decision in `CLAUDE.md`, "A revision is an integer on an append-only
+> series"), and the product shows it as "Revision {n}". The phrase that is
+> ruled out is still "revision id".
+
 ---
 
 # 8. Onboarding — the self-serve path
