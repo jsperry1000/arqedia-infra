@@ -15,10 +15,17 @@
 :root {
   /* --- ARQEDIA brand ---------------------------------------------------- */
   --deep:   #002561;
-  --medium: #278ACA;
+  /* Darkened 17 October 2026 from #278ACA, same hue, to the lightest shade
+     that reads at 4.5:1 as small text on --paper (4.72) and --wash (4.51).
+     It is the link and citation colour, and #278ACA was 3.76 and 3.59. */
+  --medium: #2279B2;
   --light:  #C7E4F8;
   --gold:   #FFDD00;
   --green:  #9ACA3C;
+  /* The green as TEXT. --green is 1.9:1 on white, which is fine for a rule
+     or a border and unreadable as words; this is the same hue darkened to
+     4.73 on --paper and 4.51 on --wash (17 October 2026). */
+  --green-ink: #5F7D22;
 
   /* --- neutrals ---------------------------------------------------------- */
   --paper:  #ffffff;

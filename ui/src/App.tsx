@@ -4,7 +4,7 @@ import { SettingsView } from "./Settings";
 import { MemoView } from "./Memo";
 import { EngagementView } from "./Review";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { BackContext, BackPill } from "./shell";
+import { BackContext, BackPill, TableScroll } from "./shell";
 import { WelcomeView } from "./Welcome";
 import { AccountView } from "./Account";
 import { ShareView } from "./Share";
@@ -542,6 +542,7 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
         Show archived
       </label>
 
+      <TableScroll label="Engagements">
       <table>
         <tbody>
           {rows.map((r) => (
@@ -595,6 +596,7 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
           ))}
         </tbody>
       </table>
+      </TableScroll>
 
       {/* OPENING CREATES THE ROW, and opens under the name the server
           stored (13.3 stage 4, 17.3).
@@ -627,7 +629,11 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
             }}>
         <input placeholder="New engagement name" value={newName}
                onChange={(e) => setNewName(e.target.value)} />
-        <button disabled={opening}>{opening ? "Opening..." : "Open"}</button>
+        {/* Plain, not gold: gold is the generate control's alone
+            (CLAUDE.md, Brand and colour). */}
+        <button className="plain" disabled={opening}>
+          {opening ? "Opening..." : "Open"}
+        </button>
       </form>
       {openError && <p className="error">{openError}</p>}
       {differs && (
@@ -955,15 +961,21 @@ export default function App() {
           <strong>ARQEDIA</strong>
         </a>
         <span className="account" ref={account}>
-          <a aria-expanded={accountOpen}
-             onClick={() => setAccountOpen(!accountOpen)}>
+          {/* A BUTTON, because it opens and closes a panel rather than going
+              anywhere (a11y, 17 October 2026). It was an <a> with no href
+              carrying aria-expanded, which is not allowed on a link. Styled
+              as the line of header text it was. No aria-haspopup: the panel
+              is a list of links, not a menu widget with menu keyboarding. */}
+          <button type="button" className="account-toggle"
+                  aria-expanded={accountOpen} aria-controls="account-menu"
+                  onClick={() => setAccountOpen(!accountOpen)}>
             {who} {accountOpen ? "▴" : "▾"}
-          </a>
+          </button>
           {/* A panel beneath the name, not three more links strung along the
               header - in a row of white text on navy they read as part of the
               masthead and are lost. */}
           {accountOpen && (
-            <div className="account-menu">
+            <div className="account-menu" id="account-menu">
               <a onClick={() => { setAccountOpen(false); navigate("/settings/brand"); }}>
                 Brand settings
               </a>

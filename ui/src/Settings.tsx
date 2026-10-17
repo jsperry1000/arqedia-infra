@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Settings } from "./api";
-import { useBackAction, Working } from "./shell";
+import { TableScroll, useBackAction, Working } from "./shell";
 import { EnterpriseLink, UpgradePrompt } from "./upgrade";
 
 /**
@@ -159,6 +159,7 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
 
         <div className="logo-actions">
           <input type="file" accept="image/png,image/jpeg" disabled={locked}
+                 aria-label="Logo, PNG or JPEG"
                  onChange={(e) => upload(e.target.files)} />
           {settings.logo_key && !locked && (
             <a className="secondary" onClick={removeLogo}>
@@ -170,6 +171,7 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
 
       <h3>Colours</h3>
 
+      <TableScroll label="Colours">
       <table className="docs">
         <tbody>
           {SWATCHES.map(({ key, label, note }) => {
@@ -181,6 +183,7 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
                   <input
                     type="color"
                     className="swatch"
+                    aria-label={`${label} colour`}
                     value={value}
                     disabled={locked}
                     onChange={(e) => setColour(key, e.target.value)}
@@ -203,6 +206,7 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
           })}
         </tbody>
       </table>
+      </TableScroll>
 
       <h3>Preview</h3>
       <p className="muted small">

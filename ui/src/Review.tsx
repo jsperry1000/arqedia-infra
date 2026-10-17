@@ -14,7 +14,7 @@ import {
   type Quote,
 } from "./api";
 import { useNavigate } from "react-router-dom";
-import { useBackAction, Working } from "./shell";
+import { TableScroll, useBackAction, Working } from "./shell";
 import { balanceFor, UpgradePrompt } from "./upgrade";
 
 /* stored() is gone (17.4).
@@ -1067,7 +1067,8 @@ export function EngagementView({ id, onBack, onMemo }: {
         {subjectSaid && <p className="why warn">{subjectSaid}</p>}
       </div>
 
-      <input type="file" multiple onChange={(e) => upload(e.target.files)} />
+      <input type="file" multiple aria-label="Upload documents"
+             onChange={(e) => upload(e.target.files)} />
       {/* A WHOLE FOLDER, AND THE FOLDER IS RECORDED (18.7). A second input
           rather than webkitdirectory on the one above, because that attribute
           makes an input directory-ONLY: a person with three files to send
@@ -1483,6 +1484,7 @@ export function EngagementView({ id, onBack, onMemo }: {
             <span className="muted">{activeCount} of {docs.length} in use</span>
           </div>
 
+          <TableScroll label="Filed documents">
           <table className="docs">
             <thead>
               <tr>
@@ -1619,6 +1621,7 @@ export function EngagementView({ id, onBack, onMemo }: {
               })}
             </tbody>
           </table>
+          </TableScroll>
         </>
       )}
 
@@ -1732,6 +1735,7 @@ export function EngagementView({ id, onBack, onMemo }: {
         Show archived
       </label>
 
+      <TableScroll label="Memos">
       <table>
         <tbody>
           {memos.map((m) => (
@@ -1792,6 +1796,7 @@ export function EngagementView({ id, onBack, onMemo }: {
           ))}
         </tbody>
       </table>
+      </TableScroll>
 
       </>)}
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useBackAction, Working } from "./shell";
+import { TableScroll, useBackAction, Working } from "./shell";
 import {
   api, chargeKey, statusOf,
   type ShareAllowance, type ShareGrant,
@@ -255,6 +255,7 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
           {shown.length === 0 ? (
             <p className="muted">No memorandum matches the filter.</p>
           ) : (
+            <TableScroll label="Memoranda to share">
             <table className="docs">
               <thead>
                 <tr>
@@ -270,7 +271,12 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
                         ? "Unsaved changes. Save or discard them on the memo first."
                         : undefined}>
                     <td>
+                      {/* Named for the row it ticks (a11y): the memorandum,
+                          its number and its engagement, which is what tells
+                          two rows of the same template apart. */}
                       <input type="checkbox"
+                             aria-label={`${m.label} ${m.number}`
+                               + (m.engagement ? `, ${m.engagement}` : "")}
                              checked={selected.includes(m.memo_id)}
                              disabled={m.unsaved}
                              onChange={() => tick(m)} />
@@ -287,6 +293,7 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
                 ))}
               </tbody>
             </table>
+            </TableScroll>
           )}
 
           <div className="form">

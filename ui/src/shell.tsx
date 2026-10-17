@@ -51,6 +51,23 @@ export function usePinTop() {
   return top;
 }
 
+/** A wide table on a narrow window (a11y and mobile, 17 October 2026).
+ *  The table scrolls sideways inside this box and the page does not, so a
+ *  column keeps its words whole instead of breaking them a letter at a time.
+ *  Focusable and named, because a box that scrolls has to be reachable from
+ *  the keyboard, and a table with no link in it offers nothing else to tab
+ *  to. On a wide window there is nothing to scroll and it is invisible. */
+export function TableScroll({ label, children }: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="table-scroll" tabIndex={0} role="region" aria-label={label}>
+      {children}
+    </div>
+  );
+}
+
 /** The one working indicator (UX-12): what is running, named, over a moving
  *  bar. Announced to a screen reader as it changes; the bar stands still
  *  where the person has asked for less motion. */
