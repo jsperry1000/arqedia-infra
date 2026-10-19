@@ -342,6 +342,7 @@ data "archive_file" "share_viewer" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/share_viewer"
   output_path = "${path.module}/build/share_viewer.zip"
+  excludes    = ["__pycache__"]
 }
 
 resource "aws_iam_role" "share_viewer" {

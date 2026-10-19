@@ -15,6 +15,7 @@ data "archive_file" "reviewer" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/reviewer"
   output_path = "${path.module}/build/reviewer.zip"
+  excludes    = ["__pycache__"]
 }
 
 resource "aws_iam_role" "reviewer" {

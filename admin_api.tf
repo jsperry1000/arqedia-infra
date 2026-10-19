@@ -19,6 +19,7 @@ data "archive_file" "admin" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/admin"
   output_path = "${path.module}/build/admin.zip"
+  excludes    = ["__pycache__"]
 }
 
 resource "aws_iam_role" "admin" {

@@ -18,6 +18,7 @@ data "archive_file" "normalizer" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/normalizer"
   output_path = "${path.module}/build/normalizer.zip"
+  excludes    = ["__pycache__"]
 }
 
 resource "aws_iam_role" "normalizer" {

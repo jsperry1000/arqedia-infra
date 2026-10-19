@@ -17,6 +17,7 @@ data "archive_file" "proposer" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/proposer"
   output_path = "${path.module}/build/proposer.zip"
+  excludes    = ["__pycache__"]
 }
 
 resource "aws_iam_role" "proposer" {
