@@ -416,6 +416,53 @@ def refund(tenant_id, document_id, charge_entry_id, email=None):
         return {"refunded": False, "amount_cents": 0, "repeated": False,
                 "reason": "no charge recorded against this document"}
 
+    return _give_back(
+        tenant_id, charge_entry_id,
+        key="refund:%d" % int(document_id),
+        event_type="document_filed_refund",
+        reference="refund of entry %d, document %d"
+                  % (int(charge_entry_id), int(document_id)),
+        email=email, what="document")
+
+
+def refund_generation(tenant_id, charge_entry_id, email=None):
+    """Give back what one generation cost, once (UX02 20.1).
+
+    A memorandum is charged on the click and written afterwards, in another
+    function. When that function ends without writing one - the model failed,
+    or there was nothing to write from - the dollar bought nothing.
+
+    KEYED ON THE CHARGE, 'refund:memo:<entry_id>', because there is no memo to
+    key it on: the failure is precisely that none exists. One click is one
+    charge is one entry, so one entry is refunded at most once. The 'memo:'
+    keeps it out of the documents' 'refund:<document_id>' space, where a
+    document and a ledger entry sharing a number would collide and the
+    second refund would be refused as a repeat.
+
+    ONLY A GENERATION. The entry must be memo_generated; anything else is
+    refused rather than refunded, so a wrong id passed here cannot hand back
+    a filing or a top-up.
+
+    Everything else is refund()'s: the ledger row first and negative, what was
+    paid rather than today's price, a new refund bucket of thirty days, one
+    transaction."""
+    if not charge_entry_id:
+        return {"refunded": False, "amount_cents": 0, "repeated": False,
+                "reason": "no charge recorded against this generation"}
+
+    return _give_back(
+        tenant_id, charge_entry_id,
+        key="refund:memo:%d" % int(charge_entry_id),
+        event_type="memo_generated_refund",
+        reference="refund of entry %d, a memorandum that was not written"
+                  % int(charge_entry_id),
+        email=email, what="generation", only_event="memo_generated")
+
+
+def _give_back(tenant_id, charge_entry_id, key, event_type, reference,
+               email, what, only_event=None):
+    """The one way money comes back. refund() and refund_generation() differ
+    only in the key, the ledger row's type and its wording."""
     paid = _sql(
         """
         SELECT unit_cents, event_type FROM wallet_ledger
@@ -425,14 +472,17 @@ def refund(tenant_id, document_id, charge_entry_id, email=None):
     ).get("records", [])
     if not paid:
         return {"refunded": False, "amount_cents": 0, "repeated": False,
-                "reason": "the charge named by this document is not there"}
+                "reason": "the charge named by this %s is not there" % what}
+
+    if only_event and _col(paid[0], 1) != only_event:
+        return {"refunded": False, "amount_cents": 0, "repeated": False,
+                "reason": "entry %d is not a %s charge"
+                          % (int(charge_entry_id), only_event)}
 
     unit = int(_col(paid[0], 0) or 0)
     if unit <= 0:
         return {"refunded": False, "amount_cents": 0, "repeated": False,
                 "reason": "the charge was nothing"}
-
-    key = "refund:%d" % int(document_id)
 
     tx = _rds.begin_transaction(
         resourceArn=CLUSTER_ARN, secretArn=SECRET_ARN,
@@ -444,15 +494,14 @@ def refund(tenant_id, document_id, charge_entry_id, email=None):
                 INSERT INTO wallet_ledger
                   (tenant_id, event_type, quantity, unit_cents, amount_cents,
                    reference, idempotency_key, created_by)
-                VALUES (:t, 'document_filed_refund', 1, :u, :a, :ref, :k, :by)
+                VALUES (:t, :e, 1, :u, :a, :ref, :k, :by)
                 """,
                 # NEGATIVE. Nothing computes a balance from the ledger - that
                 # comes from the buckets - so this is what a person reading it
                 # months later sees, and they should see a reversal rather
                 # than a second charge.
-                [_p("t", tenant_id), _p("u", unit), _p("a", -unit),
-                 _p("ref", "refund of entry %d, document %d"
-                    % (int(charge_entry_id), int(document_id))),
+                [_p("t", tenant_id), _p("e", event_type), _p("u", unit),
+                 _p("a", -unit), _p("ref", reference),
                  _p("k", key), _p("by", email)],
                 tx=tx,
             )
