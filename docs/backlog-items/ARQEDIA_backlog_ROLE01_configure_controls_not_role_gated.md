@@ -3,6 +3,13 @@
 **Raised 17 October 2026**, from the §7 copy review (item 10, `Account.tsx`).
 **Finding only. Not fixed.** The ID is proposed.
 
+**Fixed 19 October 2026 on `fix/configure-role-gate`.** `Configure.tsx`
+reads `useRole()`; for a Member the configuration is shown read-only with
+one sentence (`MEMBER_READS`): Publish, Start editing and every Save are
+disabled, the ticks are disabled, and Rename, Duplicate, Discard, every
+delete and every add are not rendered. Not exercised as a Member on the
+live domain: no Member account was available to sign in with.
+
 ---
 
 ## What was observed

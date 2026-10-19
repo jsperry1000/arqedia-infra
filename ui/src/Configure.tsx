@@ -20,6 +20,15 @@ import type { Report as StartReport } from "./Welcome";
 import {
   slugKey, KeyLine, ColumnEditor, columnsReady, ReadModeControls, useGrows,
 } from "./config-parts";
+import { useRole } from "./upgrade";
+
+/** Said wherever a Member meets this screen (ROLE-01). Configuring and
+ *  publishing are behind _require_admin on every route (CLAUDE.md, 17.7), so
+ *  a Member is shown the configuration and told whose it is to change,
+ *  rather than offered controls that answer 403. The server is the control;
+ *  this is the screen agreeing with it. */
+const MEMBER_READS = "Changing the configuration is an administrator’s. "
+  + "You can read it here.";
 
 // --- what Get started brought -----------------------------------------------
 
@@ -94,8 +103,10 @@ type FieldDraft = {
 };
 
 function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments,
-                    error }: {
+                    error, readOnly }: {
   initial?: ConfigField;
+  /** A Member reading the card: Save is not offered (ROLE-01). */
+  readOnly?: boolean;
   onSave: (f: FieldDraft) => void;
   onCancel: () => void;
   onDelete?: () => void;
@@ -208,7 +219,7 @@ function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments,
             key and refuses if it is taken. The key is still SHOWN above -
             somebody naming a fact should see the identity it will carry -
             but showing it and claiming it are different things. */}
-        <button disabled={!f.label.trim()
+        <button disabled={readOnly || !f.label.trim()
                   || (isTable && !columnsReady(f.columns as never))}
                 onClick={() => onSave(existing ? { ...f, key }
                                                : { ...f, key: undefined })}>Save</button>
@@ -221,9 +232,11 @@ function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments,
   );
 }
 
-function TypeForm({ initial, categories, onSave, onCancel, onDelete }: {
+function TypeForm({ initial, categories, onSave, onCancel, onDelete,
+                   readOnly }: {
   initial?: ConfigDocumentType;
   categories: ConfigCategory[];
+  readOnly?: boolean;
   onSave: (t: Partial<ConfigDocumentType>) => void;
   onCancel: () => void;
   onDelete?: () => void;
@@ -295,7 +308,7 @@ function TypeForm({ initial, categories, onSave, onCancel, onDelete }: {
       <KeyLine value={key} />
 
       <div className="form-actions">
-        <button disabled={!t.label.trim() || !t.description.trim()}
+        <button disabled={readOnly || !t.label.trim() || !t.description.trim()}
                 onClick={() => onSave({ ...t, key })}>Save</button>
         <a className="secondary" onClick={leave}>Cancel</a>
         {existing && onDelete && (
@@ -310,8 +323,9 @@ function TypeForm({ initial, categories, onSave, onCancel, onDelete }: {
   );
 }
 
-function CategoryForm({ initial, onSave, onCancel, onDelete }: {
+function CategoryForm({ initial, onSave, onCancel, onDelete, readOnly }: {
   initial?: ConfigCategory;
+  readOnly?: boolean;
   onSave: (c: Partial<ConfigCategory>) => void;
   onCancel: () => void;
   onDelete?: () => void;
@@ -332,7 +346,7 @@ function CategoryForm({ initial, onSave, onCancel, onDelete }: {
       </label>
       <KeyLine value={key} />
       <div className="form-actions">
-        <button disabled={!c.label.trim()}
+        <button disabled={readOnly || !c.label.trim()}
                 onClick={() => onSave({ ...c, key })}>Save</button>
         <a className="secondary" onClick={onCancel}>Cancel</a>
         {existing && onDelete && (
@@ -343,8 +357,10 @@ function CategoryForm({ initial, onSave, onCancel, onDelete }: {
   );
 }
 
-function SectionForm({ initial, others, onSave, onCancel, onDelete }: {
+function SectionForm({ initial, others, onSave, onCancel, onDelete,
+                      readOnly }: {
   initial?: ConfigSection;
+  readOnly?: boolean;
   /** The memorandum's other sections, in the order it reads. */
   others: ConfigSection[];
   onSave: (s: Partial<ConfigSection>) => void;
@@ -492,7 +508,7 @@ function SectionForm({ initial, others, onSave, onCancel, onDelete }: {
       <KeyLine value={key} />
 
       <div className="form-actions">
-        <button disabled={!s.title.trim()}
+        <button disabled={readOnly || !s.title.trim()}
                 onClick={() => onSave({ ...s, key,
                   ...(s.kind === "composed" && readsChanged
                     ? { context_sections: reads } : {}) })}>Save</button>
@@ -623,6 +639,11 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   const [note, setNote] = useState("");
   // Publishing is asked from the bar and confirmed in a drawer.
   const [publishing, setPublishing] = useState(false);
+
+  // A Member reads the configuration and changes none of it (ROLE-01). Null
+  // while the token is read, and then everything is offered as before:
+  // useRole's rule, because the screen is not the control.
+  const readOnly = useRole() === "member";
 
   // AI Review (REV-01): the editor's second mode, open in a drawer over it.
   // Whether it is offered comes from the settings - the plan, read as the
@@ -1099,6 +1120,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           will not reach you.
         </p>
         {error && <p className="error">{error}</p>}
+        {readOnly && <p className="muted small">{MEMBER_READS}</p>}
 
         {base && (
           <p className="muted small">
@@ -1113,7 +1135,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         )}
 
         <p>
-          <a onClick={busy || !base ? undefined : ours}>
+          <a onClick={busy || !base || readOnly ? undefined : ours}>
             Select an ARQEDIA Template
           </a>
         </p>
@@ -1123,7 +1145,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </p>
 
         <p>
-          <a onClick={busy || !base ? undefined : scratch}>
+          <a onClick={busy || !base || readOnly ? undefined : scratch}>
             Draft your own from scratch
           </a>
         </p>
@@ -1133,7 +1155,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </p>
 
         <p>
-          <a onClick={busy || !base ? undefined : fromReport}>
+          <a onClick={busy || !base || readOnly ? undefined : fromReport}>
             Create your own from a report (.pdf, .docx)
           </a>
         </p>
@@ -1161,9 +1183,11 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </p>
         {error && <p className="error">{error}</p>}
 
-        <button disabled={!!busy} onClick={() => act("Opening", api.openDraft)}>
+        <button disabled={!!busy || readOnly}
+                onClick={() => act("Opening", api.openDraft)}>
           {busy ? busy + "\u2026" : "Start editing"}
         </button>
+        {readOnly && <p className="muted small">{MEMBER_READS}</p>}
 
         <h3>History</h3>
         <p className="muted small">
@@ -1185,7 +1209,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 <td>
                   {r.revision === state.active_revision ? (
                     <span className="in-use">in use</span>
-                  ) : (
+                  ) : readOnly ? null : (
                     <a className="small" onClick={() => {
                       if (!window.confirm(
                         `Use revision ${r.revision}? Memoranda generated from `
@@ -1216,7 +1240,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     const on = s.fields.includes(f.key);
     return (
       <div className="bind" key={f.key}>
-        <input type="checkbox" checked={on}
+        <input type="checkbox" checked={on} disabled={readOnly}
           onChange={() => setFields(s, on
             ? s.fields.filter((x) => x !== f.key)
             : [...s.fields, f.key])} />{" "}
@@ -1272,7 +1296,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           : [...s.fields, ...keys.filter((k) => !s.fields.includes(k))])}
         // Nothing to tick where the group is empty above the rule and below
         // it alike.
-        disabled={keys.length === 0 && shownHere.length === 0} />
+        disabled={readOnly || (keys.length === 0 && shownHere.length === 0)} />
     );
   };
 
@@ -1320,7 +1344,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         {/* Renaming is free and reaches memoranda already written: the key is
             minted once and never follows the label, so nothing stored has to
             move. */}
-        {current && renaming === null && (
+        {current && renaming === null && !readOnly && (
           <a className="small"
              onClick={() => setRenaming(current.label || current.key)}>
             Rename
@@ -1329,7 +1353,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         {/* A memorandum built from another rather than from nothing. A credit
             pack and a KYC pack share most of their sections, and rebuilding
             the second by hand is where they drift apart. */}
-        {current && (
+        {current && !readOnly && (
           <a className="small" onClick={() => act("Duplicating", async () => {
             const made = await api.duplicateTemplate(current.key);
             setTemplate(made.key);
@@ -1340,7 +1364,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         {/* Asked, with the name typed (UX-10). The last memorandum cannot go
             - the API refuses it - so the control says so rather than offering
             a delete that fails. */}
-        {current && (templates.length > 1 ? (
+        {current && !readOnly && (templates.length > 1 ? (
           <a className="danger small" onClick={() => {
             const name = current.label || current.key;
             const count = sections.length;
@@ -1375,6 +1399,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </span>
         {/* Asked every time. Nothing here can tell whether the draft differs
             from the live revision, so it cannot say more than this. */}
+        {!readOnly && (
         <a className="secondary" onClick={() => {
           if (!window.confirm(
             `Discard this draft? Every change made since revision `
@@ -1382,11 +1407,14 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             + `Revision ${state.active_revision} stays in use.`)) return;
           act("Discarding", api.discardDraft);
         }}>Discard</a>
+        )}
         {/* Plain, not gold: gold is the generate control's alone
             (CLAUDE.md, Brand and colour). The drawer's own Publish below
             matches. */}
         <button className="plain"
-          disabled={!!busy || (validation ? !validation.may_publish : false)}
+          disabled={!!busy || readOnly
+                    || (validation ? !validation.may_publish : false)}
+          title={readOnly ? MEMBER_READS : undefined}
           onClick={() => setPublishing(true)}>
           Publish
         </button>
@@ -1459,6 +1487,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             Editing a draft. Revision {state.active_revision} stays in use
             until you publish.
           </p>
+          {readOnly && <p className="muted small">{MEMBER_READS}</p>}
         </div>
       </div>
 
@@ -1596,13 +1625,14 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         <SectionForm
           initial={sections.find((x) => x.key === editSection)}
           others={sections.filter((x) => x.key !== editSection)}
+          readOnly={readOnly}
           onCancel={() => setEditSection(null)}
           onSave={(body) => act("Saving", async () => {
             await api.saveSection({ ...body,
                                     template_key: current?.key });
             setEditSection(null);
           })}
-          onDelete={editSection ? () => {
+          onDelete={editSection && !readOnly ? () => {
             const doomed = sections.find((x) => x.key === editSection);
             setDeleting({
               title: "Delete the section "
@@ -1635,7 +1665,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 whatever order the database returned. */}
             <input value={order[s.key] ?? String(i + 1)}
               style={{ width: "2.6em", textAlign: "center" }}
-              title="Position"
+              title="Position" disabled={readOnly}
               onChange={(e) => setOrder({ ...order, [s.key]: e.target.value })}
               onBlur={() => {
                 const typed = parseInt(order[s.key] ?? "", 10);
@@ -1734,12 +1764,14 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                       draft and bound to this section in one act; before this
                       they had to leave for the Facts tab, add it, come back
                       and find the section again. */}
+                  {!readOnly && (
                   <a className="small" onClick={() => {
                     setBindNewTo({ template_key: s.template_key, key: s.key });
                     setEditField("");
                   }}>
                     Add a fact
                   </a>
+                  )}
                 </div>
               </div>
 
@@ -1787,6 +1819,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </div>
       ))}
 
+      {!readOnly && (<>
       <a className="small add" onClick={() => setEditSection("")}>
         Add a section
       </a>
@@ -1810,6 +1843,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           create one from a report you already write
         </a>. We read its shape and put a configuration to you to correct.
       </p>
+      </>)}
 
       {/* 2 --- what it needs ----------------------------------------------- */}
       </>)}
@@ -1891,9 +1925,11 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </tbody>
       </table>
 
+      {!readOnly && (
       <a className="small add" onClick={() => setEditField("")}>
         Add a field
       </a>
+      )}
 
       {/* 3 --- where it is found -------------------------------------------- */}
       {/* 4 --- the documents ------------------------------------------------ */}
@@ -1905,12 +1941,13 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         <TypeForm
           initial={draft.document_types.find((x) => x.key === editType)}
           categories={draft.categories}
+          readOnly={readOnly}
           onCancel={() => setEditType(null)}
           onSave={(body) => act("Saving", async () => {
             await api.saveDocumentType(body);
             setEditType(null);
           })}
-          onDelete={editType ? () => {
+          onDelete={editType && !readOnly ? () => {
             const doomed = draft.document_types.find((x) => x.key === editType);
             setDeleting({
               title: `Delete the document type ${doomed?.label ?? editType}`,
@@ -2009,9 +2046,11 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </tbody>
       </table>
 
+      {!readOnly && (
       <a className="small add" onClick={() => setEditType("")}>
         Add a document
       </a>
+      )}
 
 
       {openType && draft && (
@@ -2049,6 +2088,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                     it is found in (22.8) - as a section's list already offers
                     (2.1). The card opens over this drawer; on save the new
                     fact is looked for in this document and ticked here. */}
+                {!readOnly && (
                 <a className="small" onClick={() => {
                   setBindNewTo(null);
                   setFindNewIn(openType);
@@ -2056,6 +2096,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 }}>
                   Add a fact
                 </a>
+                )}
               </div>
               {/* SAVE IN THE PINNED HEAD (18.2). It sat under the list, and
                   the list is every fact this tenant has grouped into columns
@@ -2063,7 +2104,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                   to a button that had left the screen. The head is already
                   held against the drawer while the facts pass under it. */}
               <div className="form-actions">
-                <button disabled={!!busy} onClick={() =>
+                <button disabled={!!busy || readOnly} onClick={() =>
                   act("Saving", async () => {
                     await api.setDocumentFields(openType, typeFields);
                     setOpenType(null);
@@ -2103,7 +2144,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                         {/* The tick and the name do different things, as on a
                             section's list. The fact opens over this drawer;
                             closing it comes back here. */}
-                        <input type="checkbox" checked={on}
+                        <input type="checkbox" checked={on} disabled={readOnly}
                           onChange={() => setTypeFields(on
                             ? typeFields.filter((x) => x !== f.key)
                             : [...typeFields, f.key])} />{" "}
@@ -2134,12 +2175,13 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       {editCategory !== null && (
         <CategoryForm
           initial={draft?.categories.find((x) => x.key === editCategory)}
+          readOnly={readOnly}
           onCancel={() => setEditCategory(null)}
           onSave={(body) => act("Saving", async () => {
             await api.saveCategory(body);
             setEditCategory(null);
           })}
-          onDelete={editCategory ? () => {
+          onDelete={editCategory && !readOnly ? () => {
             const doomed = draft?.categories.find((x) => x.key === editCategory);
             setDeleting({
               title: `Delete the group ${doomed?.label ?? editCategory}`,
@@ -2171,9 +2213,11 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </tbody>
       </table>
 
+      {!readOnly && (
       <a className="small add" onClick={() => setEditCategory("")}>
         Add a group
       </a>
+      )}
 
       </>)}
 
@@ -2254,6 +2298,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 looked like it had done nothing. */}
             <FieldForm
               error={error}
+              readOnly={readOnly}
               onShowDocuments={() => {
                 if (!editField) return;
                 setOpenField(editField);
@@ -2301,7 +2346,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 setBindNewTo(null);
                 setEditField(null);
               })}
-              onDelete={editField ? () => {
+              onDelete={editField && !readOnly ? () => {
                 setDeleting({
                   title: `Delete the fact ${fieldsByKey[editField] ?? editField}`,
                   reaches: "It is taken out of every section that renders"
@@ -2345,7 +2390,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                     const on = field?.found_in.includes(t.key) ?? false;
                     return (
                       <label className="bind" key={t.key}>
-                        <input type="checkbox" checked={on}
+                        <input type="checkbox" checked={on} disabled={readOnly}
                           onChange={() => {
                             const current = field?.found_in ?? [];
                             const next = on
