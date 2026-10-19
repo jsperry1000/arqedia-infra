@@ -74,6 +74,15 @@ data "aws_iam_policy_document" "composition" {
     resources = [aws_rds_cluster.main.master_user_secret[0].secret_arn]
   }
 
+  # The on-failure destination (20.2). Lambda writes the invocation record as
+  # the function's own identity, so the EXECUTION ROLE needs this - not a
+  # policy on the queue (reconcile.tf, the normalizer's queue).
+  statement {
+    effect    = "Allow"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.composition_failed.arn]
+  }
+
   statement {
     effect  = "Allow"
     actions = ["bedrock:InvokeModel"]
@@ -121,12 +130,21 @@ resource "aws_lambda_function" "composition" {
 # NO RETRIES (UX02 20.1, decided 19 October 2026). Every path in the function
 # catches its own failure, refunds where nothing was written, and records the
 # run, so a retry can only be a timeout or a crash - and a retry of those runs
-# every model call again on a run already paid for and already failing. A
-# timeout therefore leaves its run 'running' and unrefunded; catching that is
-# a failure destination, which is 20.2 and is not built.
+# every model call again on a run already paid for and already failing.
+#
+# WHAT IT CANNOT CATCH GOES TO THE QUEUE (20.2): a timeout, an out-of-memory
+# kill, a crash at start-up, anything raised before a path's own try. The
+# invocation record carries the original event, and composition_failed.tf
+# finishes the run from it - refund, and the run written failed.
 resource "aws_lambda_function_event_invoke_config" "composition" {
   function_name          = aws_lambda_function.composition.function_name
   maximum_retry_attempts = 0
+
+  destination_config {
+    on_failure {
+      destination = aws_sqs_queue.composition_failed.arn
+    }
+  }
 }
 
 output "composition_function" {
