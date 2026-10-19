@@ -169,8 +169,11 @@ locals {
   # The SES configuration set attached by default to arqedia.com. Made in the
   # console on 14 September 2026 (CloudTrail: CreateConfigurationSet,
   # jperry-admin) and not managed here - read as a name rather than a
-  # resource, so this stack cannot delete it. It has no event destinations:
-  # nothing watches a bounce yet (CLAUDE.md, What is open, 10.6).
+  # resource, so this stack cannot delete it. Its one event destination,
+  # sns-bounces (bounce, complaint, reject, delivery delay), was added from
+  # the CLI on 15 September 2026 and publishes to the SNS topic ses-events,
+  # also unmanaged here. That topic had no subscriber until 19 October 2026,
+  # when sperry@ebl-finance.com was subscribed by email (CLAUDE.md, 10.6).
   ses_configuration_set = "my-first-configuration-set"
 
   share_env = {
