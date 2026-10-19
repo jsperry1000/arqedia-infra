@@ -49,6 +49,8 @@ def load_composition():
 
     cleanup = types.ModuleType("cleanup")
     config = types.ModuleType("config")
+    # Composition refunds a generation it could not write (20.1).
+    wallet = types.ModuleType("wallet")
 
     env = {"CURATED_BUCKET": "curated", "CLUSTER_ARN": "arn:cluster",
            "SECRET_ARN": "arn:secret", "DATABASE": "arqedia",
@@ -56,7 +58,7 @@ def load_composition():
     modules = {"boto3": boto3, "botocore": botocore,
                "botocore.config": botocore_config,
                "botocore.exceptions": exceptions,
-               "cleanup": cleanup, "config": config}
+               "cleanup": cleanup, "config": config, "wallet": wallet}
     with mock.patch.dict(sys.modules, modules), mock.patch.dict(os.environ, env):
         spec = importlib.util.spec_from_file_location(
             "composition_app", ROOT / "lambda/composition/app.py")

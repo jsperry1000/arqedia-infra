@@ -427,8 +427,11 @@ class GenerateTest(unittest.TestCase):
         with mock.patch.object(self.app, "_sql", db.sql), \
                 mock.patch.object(self.app.config, "for_tenant",
                                   lambda t: registry), \
-                mock.patch.object(self.app.wallet, "charge") as charge, \
-                mock.patch.object(self.app, "_lambda") as invoked:
+                mock.patch.object(self.app.wallet, "charge",
+                                  return_value={"entry_id": 50,
+                                                "repeated": False}) as charge, \
+                mock.patch.object(self.app, "_lambda") as invoked, \
+                mock.patch.object(self.app, "_s3"):
             try:
                 out = self.app.generate(TENANT, "a@firm.com", NAME,
                                         "credit-memo", "key-1")

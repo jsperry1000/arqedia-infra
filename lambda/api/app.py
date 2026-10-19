@@ -2053,8 +2053,9 @@ def update_memo(tenant_id, email, memo_id, idempotency_key):
     CHARGED AS A GENERATION, memo_generated, on the click (decision of 16
     October 2026). Every refusal below is above the charge, as generate's
     are: a memo that cannot be updated must not take a dollar on its way to
-    failing. A run that fails after the charge is NOT refunded - refunds for
-    failed generation are not built (UX02 20.1), and the screen says so.
+    failing. A run that fails after the charge is refunded (UX02 20.1): here
+    when composition cannot be started, by composition when the run fails.
+    A run that finishes with some sections failed is not - it delivered.
 
     THE REVISION IN USE, read here once and carried in the event, so the
     revision charged for is the revision that runs."""
@@ -2102,25 +2103,51 @@ def update_memo(tenant_id, email, memo_id, idempotency_key):
     started_at = datetime.datetime.now(datetime.timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
 
+    entry_id = (paid or {}).get("entry_id")
+    state = {"status": "running", "run": run, "memo_id": int(memo_id),
+             "config_revision": revision, "requested_by": email,
+             "started_at": started_at}
+
     # Written before the invocation, so the first poll finds a run rather
     # than nothing.
     _s3.put_object(
         Bucket=CURATED_BUCKET, Key=_update_key(tenant_id, memo_id, run),
-        Body=json.dumps({"status": "running", "run": run,
-                         "memo_id": int(memo_id), "config_revision": revision,
-                         "requested_by": email, "started_at": started_at}
-                        ).encode("utf-8"),
+        Body=json.dumps(state).encode("utf-8"),
         ContentType="application/json")
 
-    _lambda.invoke(
-        FunctionName=COMPOSITION_FUNCTION,
-        InvocationType="Event",
-        Payload=json.dumps({"action": "update", "tenant_id": tenant_id,
-                            "memo_id": int(memo_id),
-                            "engagement_id": int(engagement),
-                            "template_key": template_key,
-                            "config_revision": revision,
-                            "run": run, "requested_by": email}))
+    try:
+        _lambda.invoke(
+            FunctionName=COMPOSITION_FUNCTION,
+            InvocationType="Event",
+            Payload=json.dumps({"action": "update", "tenant_id": tenant_id,
+                                "memo_id": int(memo_id),
+                                "engagement_id": int(engagement),
+                                "template_key": template_key,
+                                "config_revision": revision,
+                                "run": run, "requested_by": email,
+                                "entry_id": entry_id}))
+    except Exception as exc:  # noqa: BLE001 - refunded, then reported
+        # Left running, the screen would poll a run nothing will finish.
+        print("[update-not-started] tenant=%s memo=%s run=%s %r" % (
+            tenant_id, memo_id, run, exc))
+        given = _refund_generation(tenant_id, email, entry_id,
+                                   "update invoke: %s" % type(exc).__name__)
+        state.update(status="failed", error=GENERATE_NOT_STARTED,
+                     refunded=bool(given.get("refunded")),
+                     amount_cents=given.get("amount_cents") or 0)
+        try:
+            _s3.put_object(
+                Bucket=CURATED_BUCKET,
+                Key=_update_key(tenant_id, memo_id, run),
+                Body=json.dumps(state).encode("utf-8"),
+                ContentType="application/json")
+        except Exception as put_exc:  # noqa: BLE001 - the answer says it
+            print("[update-state-not-written] memo=%s run=%s %r" % (
+                memo_id, run, put_exc))
+        return {"status": "failed", "memo_id": int(memo_id), "run": run,
+                "config_revision": revision, "error": GENERATE_NOT_STARTED,
+                "refunded": state["refunded"],
+                "amount_cents": state["amount_cents"]}
 
     print("[update-started] tenant=%s memo=%s run=%s revision=%s by=%s" % (
         tenant_id, memo_id, run, revision, email))
@@ -2639,10 +2666,76 @@ def templates(tenant_id):
     return config.for_tenant(tenant_id).template_list()
 
 
+# --- a generation's run (UX02 20.1) -----------------------------------------
+#
+# A generation is charged here and written by composition, minutes later, in
+# another function. The memo list could say a memo had arrived and could not
+# say one never would: a run that failed left the screen waiting until it
+# gave up, and the dollar gone. The run's progress is an object in the curated
+# bucket, as an Update's is, and it is what says a generation failed and that
+# its charge came back.
+
+# What a person is told when composition could not even be started.
+GENERATE_NOT_STARTED = ("The memorandum could not be started because of a "
+                        "fault on our side. Try it again.")
+
+
+def _generate_key(tenant_id, engagement_id, run):
+    """MIRRORED in lambda/composition/app.py, which finishes what this
+    starts. The two must not drift."""
+    return "tenants/%d/runs/generate/%d/%s.json" % (
+        int(tenant_id), int(engagement_id), run)
+
+
+def _put_generate(tenant_id, engagement_id, run, state):
+    _s3.put_object(Bucket=CURATED_BUCKET,
+                   Key=_generate_key(tenant_id, engagement_id, run),
+                   Body=json.dumps(state).encode("utf-8"),
+                   ContentType="application/json")
+
+
+def _refund_generation(tenant_id, email, entry_id, why):
+    """Give a generation's charge back. Never raises: it is already handling
+    a failure, and a refund that throws would lose the money and the record
+    of the failure both. Returns what wallet.refund_generation answered, or
+    refunded False where it could not be asked."""
+    try:
+        given = wallet.refund_generation(tenant_id, entry_id, email)
+    except Exception as exc:  # noqa: BLE001 - reported on the run instead
+        print("[refund-failed] tenant=%s entry=%s %r" % (
+            tenant_id, entry_id, exc))
+        return {"refunded": False, "amount_cents": 0, "repeated": False}
+    print("[generation-refunded] tenant=%s entry=%s why=%s refunded=%s "
+          "repeated=%s cents=%s" % (tenant_id, entry_id, why,
+                                    given.get("refunded"), given.get("repeated"),
+                                    given.get("amount_cents")))
+    return given
+
+
+def generate_progress(tenant_id, engagement_id, run):
+    """How one generation is going, or None where nothing is recorded for it
+    - a run started before this existed, or one whose first write has not
+    landed. The screen keeps polling the memo list either way."""
+    if not _RUN.match(str(run or "")):
+        raise ValueError("no generation was named")
+    try:
+        body = _s3.get_object(
+            Bucket=CURATED_BUCKET,
+            Key=_generate_key(tenant_id, engagement_id, run))["Body"].read()
+    except ClientError as exc:
+        # As memo_working: a missing key reads as AccessDenied to a role
+        # without ListBucket.
+        code = exc.response.get("Error", {}).get("Code")
+        if code in ("NoSuchKey", "404", "AccessDenied", "403"):
+            return None
+        raise
+    return json.loads(body.decode("utf-8"))
+
+
 def generate(tenant_id, email, engagement, template_key=None,
              idempotency_key=None):
     """Composition takes over a minute, so this starts it and returns. The
-    caller polls the memo list.
+    caller polls the memo list, and the run (generate_progress).
 
     The template is validated HERE rather than left to composition. The
     invocation is asynchronous, so a bad key would otherwise fail four minutes
@@ -2676,22 +2769,75 @@ def generate(tenant_id, email, engagement, template_key=None,
     if found is None:
         raise ValueError(NO_SUCH_ENGAGEMENT % engagement)
 
-    wallet.charge(
+    paid = wallet.charge(
         tenant_id, email, "memo_generated", 1,
         reference=registry_now.label_for_template(template_key)
                   + " - " + engagement,
         idempotency_key=idempotency_key)
+    entry_id = (paid or {}).get("entry_id")
 
-    _lambda.invoke(
-        FunctionName=COMPOSITION_FUNCTION,
-        InvocationType="Event",
-        Payload=json.dumps({"tenant_id": tenant_id, "engagement": engagement,
-                            "engagement_id": found["engagement_id"],
-                            "template_key": template_key,
-                            "generated_by": email}))
-    return {"status": "started", "engagement": engagement,
-            "template_key": template_key,
-            "template": registry_now.label_for_template(template_key)}
+    answer = {"engagement": engagement, "template_key": template_key,
+              "template": registry_now.label_for_template(template_key)}
+
+    # THE RUN IS THE CHARGE'S, derived from its key, as Update's is. A repeat
+    # of the same click has paid nothing (wallet.charge answers repeated), so
+    # it is given the run already paid for rather than starting a second
+    # memo for one charge - the defect found on 16 October 2026.
+    run = hashlib.sha256(("%s|%s|%s" % (
+        tenant_id, found["engagement_id"], idempotency_key)).encode("utf-8")
+    ).hexdigest()[:32]
+    answer["run"] = run
+    if (paid or {}).get("repeated"):
+        print("[generate-repeated] tenant=%s engagement=%s run=%s" % (
+            tenant_id, found["engagement_id"], run))
+        return dict(answer, status="repeated")
+
+    state = {"status": "running", "run": run,
+             "engagement_id": int(found["engagement_id"]),
+             "template_key": template_key, "entry_id": entry_id,
+             "requested_by": email,
+             "started_at": datetime.datetime.now(
+                 datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+    # Written before the invocation, so the first poll finds a run rather
+    # than nothing. A failure to write it costs the screen its failure
+    # notice, not the memo: composition writes the run again when it ends.
+    try:
+        _put_generate(tenant_id, found["engagement_id"], run, state)
+    except Exception as exc:  # noqa: BLE001 - logged; the memo still runs
+        print("[generate-state-not-written] tenant=%s run=%s %r" % (
+            tenant_id, run, exc))
+
+    try:
+        _lambda.invoke(
+            FunctionName=COMPOSITION_FUNCTION,
+            InvocationType="Event",
+            Payload=json.dumps({"tenant_id": tenant_id,
+                                "engagement": engagement,
+                                "engagement_id": found["engagement_id"],
+                                "template_key": template_key,
+                                "generated_by": email,
+                                "entry_id": entry_id, "run": run}))
+    except Exception as exc:  # noqa: BLE001 - refunded, then reported
+        # Paid for, and nothing will ever write it. The money comes back
+        # here, because there is no other function that could do it.
+        print("[generate-not-started] tenant=%s run=%s %r" % (
+            tenant_id, run, exc))
+        given = _refund_generation(tenant_id, email, entry_id,
+                                   "invoke: %s" % type(exc).__name__)
+        state.update(status="failed", error=GENERATE_NOT_STARTED,
+                     refunded=bool(given.get("refunded")),
+                     amount_cents=given.get("amount_cents") or 0)
+        try:
+            _put_generate(tenant_id, found["engagement_id"], run, state)
+        except Exception as put_exc:  # noqa: BLE001 - the answer says it
+            print("[generate-state-not-written] tenant=%s run=%s %r" % (
+                tenant_id, run, put_exc))
+        return dict(answer, status="failed", error=GENERATE_NOT_STARTED,
+                    refunded=state["refunded"],
+                    amount_cents=state["amount_cents"])
+
+    return dict(answer, status="started")
 
 
 def document_types(tenant_id):
@@ -3260,9 +3406,17 @@ def _dispatch(event, context):
             found = engagement_named(tenant_id, engagement)
             if found is None:
                 return _reply(404, {"error": NO_SUCH_ENGAGEMENT % engagement})
-            return _reply(200, {"memos": list_memos(
+            answer = {"memos": list_memos(
                 tenant_id, found["engagement_id"],
-                _asked_for_archived(query))})
+                _asked_for_archived(query))}
+            # ?run= asks how one generation is going (20.1). On this route
+            # rather than one of its own, for the reason ?name= is on GET
+            # /engagements: the screen already polls it while it waits, and
+            # a new route is Terraform.
+            if query.get("run"):
+                answer["run"] = generate_progress(
+                    tenant_id, found["engagement_id"], query.get("run"))
+            return _reply(200, answer)
 
         # Archiving a memorandum, and bringing it back. The whole revision
         # line moves, because a memorandum and its revisions are one document
