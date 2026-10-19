@@ -54,9 +54,17 @@ data "aws_iam_policy_document" "composition" {
     resources = [aws_kms_key.data.arn]
   }
 
+  # The three transaction actions are for wallet.refund_generation (UX02
+  # 20.1): a generation that writes no memo gives its charge back, and a
+  # refund is two rows in one transaction. They are separate IAM actions
+  # from ExecuteStatement, and all four are needed (CLAUDE.md, Money).
   statement {
-    effect    = "Allow"
-    actions   = ["rds-data:ExecuteStatement", "rds-data:BatchExecuteStatement"]
+    effect = "Allow"
+    actions = [
+      "rds-data:ExecuteStatement", "rds-data:BatchExecuteStatement",
+      "rds-data:BeginTransaction", "rds-data:CommitTransaction",
+      "rds-data:RollbackTransaction",
+    ]
     resources = [aws_rds_cluster.main.arn]
   }
 
@@ -92,9 +100,9 @@ resource "aws_lambda_function" "composition" {
   # The ceiling Lambda allows. Update is a whole generation followed by its
   # comparison passes, four at a time, and a long memo's generation alone has
   # come close to 600 (decision of 16 October 2026).
-  timeout          = 900
-  memory_size      = 512
-  layers           = [aws_lambda_layer_version.docprocessing.arn]
+  timeout     = 900
+  memory_size = 512
+  layers      = [aws_lambda_layer_version.docprocessing.arn]
 
   environment {
     variables = {
@@ -108,6 +116,17 @@ resource "aws_lambda_function" "composition" {
   }
 
   tags = { Name = "${local.name_prefix}-composition" }
+}
+
+# NO RETRIES (UX02 20.1, decided 19 October 2026). Every path in the function
+# catches its own failure, refunds where nothing was written, and records the
+# run, so a retry can only be a timeout or a crash - and a retry of those runs
+# every model call again on a run already paid for and already failing. A
+# timeout therefore leaves its run 'running' and unrefunded; catching that is
+# a failure destination, which is 20.2 and is not built.
+resource "aws_lambda_function_event_invoke_config" "composition" {
+  function_name          = aws_lambda_function.composition.function_name
+  maximum_retry_attempts = 0
 }
 
 output "composition_function" {
