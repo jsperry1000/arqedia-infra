@@ -295,6 +295,47 @@ saved a file.
 `provider_abstraction_spec_v1.md`. A screening provider returns facts; a file
 source returns bytes and holds a long-lived credential.
 
+### Second region (EU)
+
+Decided 19 October 2026 on scoping alone: read-only, a dry-run plan in a
+throwaway workspace, nothing built. The root stack is written for one region
+in one account, and about a third of what it makes is named per account or
+worldwide — 7 S3 buckets, 18 IAM roles, the GitHub OIDC provider, the
+CloudFront aliases, the `arqedia.com` zone — so a second copy beside it
+collides.
+
+**A separate AWS account for the EU.** It avoids those collisions entirely, so
+the stack stays driven by variables rather than restructured. The price is
+what now crosses accounts: the `eu.app` record or a delegated
+`eu.arqedia.com` in the zone the US account holds, the certificate's
+validation records, state-bucket access, and a second set of deploy
+credentials, alarms, Bedrock access, SES production access and secret values.
+
+**A separate host, `eu.app.arqedia.com`.** A tenant is assigned to a region,
+not routed per request, so an EU tenant's data and requests never touch US
+infrastructure. Sign-up must therefore choose the region before the account
+exists, and moving a tenant later is a data migration, not a setting.
+`ui/src/config.ts` hardcodes one pool and one API, and that is what changes.
+
+**One shared EU stack**, serving every EU tenant, the same model as us-east-2.
+A tenant needing physical isolation still needs `scope = "dedicated"`, which
+nothing uses yet.
+
+**Anywhere in the EU is sufficient.** Frankfurt is not required. The `eu.`
+Bedrock inference profiles may process in any EU region, so the privacy
+policy and sub-processor list say "EU", not "Frankfurt". Both are `ACTIVE` in
+the account in `eu-central-1`: `eu.anthropic.claude-haiku-4-5-20251001-v1:0`
+and `eu.anthropic.claude-sonnet-4-6`, replacing the `us.` defaults of
+`extraction_model_id` and `composition_model_id`.
+
+What the scoping found must change: `aws_region`; the two model IDs; SES
+domain verification, DKIM and production access in the new region (the dry
+run stops at `data.aws_ses_domain_identity.sender`, `auth.tf:22`, because
+`arqedia.com` is verified in us-east-2 only); `us-east-2` hardcoded in
+`ui/src/config.ts`, `lambda/signup/app.py:762`, the three workflows'
+`AWS_REGION` and `q.ps1`. A full stack is about 319 resources, Aurora, KMS,
+7 buckets and 3 distributions among them.
+
 ---
 
 ## What is mocked, and where the fakes live
@@ -375,6 +416,9 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
   DynamoDB and S3. Nothing calls it: there is no account deletion to call it
   from. Whoever builds deletion wires it in, beside the Aurora rows and
   `tenant_domain`.
+- **The EU stack is decided, not built.** See Settled decisions, Second region
+  (EU). Nothing exists yet: no EU account, no build branch, and the region
+  choice at sign-up is still mocked in `ui/src/mock.tsx`.
 
 ---
 
