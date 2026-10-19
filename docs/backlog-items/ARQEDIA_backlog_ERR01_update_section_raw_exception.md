@@ -4,6 +4,11 @@
 fixed.** The ID is proposed. Left out of `fix/copy-review-critical` because
 that branch's brief named `composition/app.py:1280` and `:747`, not this line.
 
+**Fixed 19 October 2026 on `fix/raw-error-text`.** `compare()` logs the
+exception as `[update-section-error]` and the row carries
+`UPDATE_SECTION_FAULT`. Asserted in `test_memo_update`. Not live until
+applied.
+
 ---
 
 ## What was observed

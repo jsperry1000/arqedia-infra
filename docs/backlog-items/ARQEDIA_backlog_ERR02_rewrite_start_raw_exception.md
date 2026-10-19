@@ -3,6 +3,10 @@
 **Raised 17 October 2026**, from the §7 copy review. **Finding only. Not
 fixed.** The ID is proposed.
 
+**Fixed 19 October 2026 on `fix/raw-error-text`.** The exception is logged
+as `[rewrite-not-started]` and the row carries `REWRITE_NOT_STARTED`.
+Asserted in `test_raw_error_text`. Not live until applied.
+
 ---
 
 ## What was observed
