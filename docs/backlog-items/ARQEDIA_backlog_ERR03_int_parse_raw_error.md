@@ -4,6 +4,13 @@
 fixed.** The ID is proposed. Left out of `fix/copy-review-critical` by
 decision: that branch catches unreadable JSON only.
 
+**Fixed 19 October 2026 on `fix/raw-error-text`.** Told apart at the
+dispatcher by the interpreter's own wording (`_NOT_A_NUMBER`), logged as
+`[api-not-a-number]`, answered with `REQUEST_NOT_A_NUMBER`; a deliberate
+refusal keeps its words. API only: `share_viewer` and `reviewer` have the
+same catch-all and were not changed. Asserted in `test_raw_error_text`.
+Not live until applied.
+
 ---
 
 ## What was observed

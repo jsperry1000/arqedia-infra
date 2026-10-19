@@ -1872,6 +1872,12 @@ _REWRITE_MAX_SECTIONS = 50
 _REWRITE_MAX_PROMPT = 4000
 _REWRITE_POLL_LATEST = 10
 
+# What a person is told when composition could not be asked to rewrite a
+# section (ERR-02). The row's error is shown as written; the exception is
+# logged.
+REWRITE_NOT_STARTED = ("The rewrite could not be started because of a fault "
+                       "on our side. Try it again.")
+
 
 def start_rewrites(tenant_id, email, memo_id, sections):
     """Record each section's rewrite and start it. Returns the rows started.
@@ -1931,7 +1937,10 @@ def start_rewrites(tenant_id, email, memo_id, sections):
                                     "tenant_id": tenant_id,
                                     "rewrite_id": rewrite_id}))
         except Exception as exc:  # noqa: BLE001 - recorded on the row
-            # Left running, the row would be polled for ever.
+            # Left running, the row would be polled for ever. The row carries
+            # the sentence and the log carries the exception (ERR-02).
+            print("[rewrite-not-started] tenant=%s memo=%s rewrite=%s %r" % (
+                tenant_id, memo_id, rewrite_id, exc))
             status = "failed"
             _sql(
                 """
@@ -1939,7 +1948,7 @@ def start_rewrites(tenant_id, email, memo_id, sections):
                 SET status = 'failed', error = :e, completed_at = UTC_TIMESTAMP()
                 WHERE tenant_id = :t AND rewrite_id = :r AND status = 'running'
                 """,
-                [_p("e", ("could not be started: %s" % exc)[:1024]),
+                [_p("e", REWRITE_NOT_STARTED),
                  _p("t", tenant_id), _p("r", rewrite_id)],
             )
 
@@ -3244,6 +3253,17 @@ def share_route(route, tenant_id, email, params, event):
 REQUEST_UNREADABLE = ("That request could not be read. Reload the page and "
                       "try again.")
 
+# A number in the address, the query or the body that is not a number
+# (ERR-03): int() and float() raise ValueError, which every deliberate refusal
+# also is. Request input reaches int() in dozens of places here and in the
+# shared modules, so this is told apart at the one place they all arrive -
+# by the interpreter's own wording, which no refusal of ours begins with.
+_NOT_A_NUMBER = re.compile(
+    r"^(invalid literal for int\(\)|could not convert string to float)")
+REQUEST_NOT_A_NUMBER = ("That request carried something other than a number "
+                        "where a number belongs. Reload the page and try "
+                        "again.")
+
 
 def lambda_handler(event, context):
     """Every request, and what became of it.
@@ -3898,6 +3918,10 @@ def _dispatch(event, context):
             route, tenant_id, exc))
         return _reply(400, {"error": REQUEST_UNREADABLE})
     except ValueError as exc:
+        if _NOT_A_NUMBER.match(str(exc)):
+            print("[api-not-a-number] route=%s tenant=%s %r" % (
+                route, tenant_id, exc))
+            return _reply(400, {"error": REQUEST_NOT_A_NUMBER})
         return _reply(400, {"error": str(exc)})
     except Exception as exc:  # noqa: BLE001 - never leak internals to a client
         print("[api-error] route=%s tenant=%s %r" % (route, tenant_id, exc))

@@ -332,6 +332,10 @@ class UpdateRun(unittest.TestCase):
         self.assertEqual(row["status"], "failed")
         self.assertIsNone(row["output"])
         self.assertEqual(state["failed_sections"], 1)
+        # The row's error is shown as written: our sentence, never the
+        # exception's class and text (ERR-01).
+        self.assertEqual(row["error"], self.app.UPDATE_SECTION_FAULT)
+        self.assertNotIn("ValueError", row["error"])
 
     def test_a_finished_run_is_not_run_again(self):
         done = {"status": "done", "run": RUN}

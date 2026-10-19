@@ -600,6 +600,10 @@ REWRITE_FAULT = ("The rewrite stopped because of a fault on our side. "
                  "Try it again.")
 UPDATE_FAULT = ("The update stopped because of a fault on our side. "
                 "Try it again.")
+# One section of an Update that could not be compared (ERR-01). The rest of
+# the run is offered as usual.
+UPDATE_SECTION_FAULT = ("This section could not be compared because of a "
+                        "fault on our side. Run the update again.")
 
 # A section heading as composition writes it: "## I. Introduction". Level two
 # only, so a subheading the section itself carries is never mistaken for it.
@@ -1219,8 +1223,13 @@ def _update(event):
                     matched[section["key"]]["text"], fresh[section["key"]],
                     subject_name, section["key"]), None
             except Exception as exc:  # noqa: BLE001 - recorded on a row
-                return section["key"], None, "%s: %s" % (
-                    type(exc).__name__, exc)
+                # The row's error is shown to the person as written, so the
+                # exception goes to the log and the row carries the sentence
+                # (ERR-01).
+                print("[update-section-error] tenant=%s memo=%s run=%s "
+                      "section=%s %r" % (tenant_id, memo_id, run,
+                                         section["key"], exc))
+                return section["key"], None, UPDATE_SECTION_FAULT
 
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=_UPDATE_WORKERS) as pool:
