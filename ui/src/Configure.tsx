@@ -1029,6 +1029,9 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     jumpTo.current = null;
   });
 
+  // A failed first read is said, not left on Loading for ever: refresh()
+  // sets the error and never the state.
+  if (error && !state) return <p className="error">{error}</p>;
   if (!state) return <p className="muted">Loading&hellip;</p>;
 
   // Reading a report of the client's own. Held above every other screen: it
