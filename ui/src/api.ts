@@ -450,6 +450,33 @@ export type UpdateRun = {
   failed_sections?: number;
   rewrite_ids?: number[];
   rewrites: Rewrite[];
+  /** On a failed run: whether its charge came back (UX02 20.1), and how
+   *  much. A run that finished with some sections failed is done, not
+   *  failed, and keeps its charge - it offered the rest. */
+  refunded?: boolean;
+  amount_cents?: number;
+};
+
+/** How one generation is going (UX02 20.1). The memo list says a memo has
+ *  arrived; only this can say one never will. A failed run says whether its
+ *  charge came back. */
+export type GenerateRun = {
+  status: "running" | "done" | "failed";
+  run: string;
+  memo_id?: number;
+  error?: string;
+  refunded?: boolean;
+  amount_cents?: number;
+};
+
+/** What Generate and Update answer on the click. "failed" is composition
+ *  that could not even be started, already refunded. */
+export type Started = {
+  status: "started" | "repeated" | "failed";
+  run: string;
+  error?: string;
+  refunded?: boolean;
+  amount_cents?: number;
 };
 
 export type Passage = {
@@ -1241,9 +1268,16 @@ export const api = {
   documentValues: (documentId: number): Promise<DocumentDetail> =>
     call(`/documents/${documentId}/values`),
 
-  memos: (id: string, archived = false): Promise<{ memos: MemoRef[] }> =>
-    call(`/engagements/${encodeURIComponent(id)}/memos`
-      + (archived ? "?archived=1" : "")),
+  /** run asks how one generation is going as well, on the same call the
+   *  screen already polls; null where nothing is recorded for it yet. */
+  memos: (id: string, archived = false, run?: string):
+    Promise<{ memos: MemoRef[]; run?: GenerateRun | null }> => {
+    const query = [archived ? "archived=1" : "",
+                   run ? "run=" + encodeURIComponent(run) : ""]
+      .filter(Boolean).join("&");
+    return call(`/engagements/${encodeURIComponent(id)}/memos`
+      + (query ? "?" + query : ""));
+  },
 
   /** Archive a memorandum, or bring it back. THE WHOLE REVISION LINE moves:
    *  a memorandum and its revisions are one document, and half a line in
@@ -1265,7 +1299,8 @@ export const api = {
   /** Start composing. THIS CHARGES for one memorandum, on the click, after
    *  the template is checked - a bad key does not take a dollar on its way to
    *  failing. */
-  generate: (id: string, templateKey?: string, idempotencyKey?: string) =>
+  generate: (id: string, templateKey?: string, idempotencyKey?: string):
+    Promise<Started> =>
     call(`/engagements/${encodeURIComponent(id)}/generate`, {
       method: "POST",
       body: JSON.stringify({
@@ -1307,8 +1342,8 @@ export const api = {
    *  configuration in use and the documents filed now, and what is new set
    *  beside the saved text to accept or discard. THIS CHARGES for one
    *  memorandum, on the click. Answers at once with the run to poll. */
-  startUpdate: (memoId: number, idempotencyKey: string): Promise<{
-    status: string; memo_id: number; run: string; config_revision: number;
+  startUpdate: (memoId: number, idempotencyKey: string): Promise<Started & {
+    memo_id: number; config_revision: number;
   }> =>
     call(`/memos/${memoId}/update`, {
       method: "POST",
