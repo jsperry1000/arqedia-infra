@@ -27,7 +27,13 @@ function never opened config_section. Sections, field bindings, prompts and
 group columns now come from config.Registry, which extraction already reads.
 
 Invoke with:
-    {"tenant_id": 1, "engagement": "eng-001"}
+    {"tenant_id": 1, "engagement": "eng-001", "engagement_id": 3,
+     "template_key": "credit", "generated_by": "a@b.test",
+     "entry_id": 50, "run": "<hex>"}
+
+entry_id is the ledger entry that paid for it and run is where its progress
+is kept; both come from the API, and a run that writes no memo gives the
+charge back (see _generate).
 
 or, to rewrite one section of a memo already written, with the id of the
 memo_rewrite row the API has written for it:
@@ -53,6 +59,7 @@ from botocore.exceptions import ClientError
 
 import cleanup
 import config
+import wallet
 
 _s3 = boto3.client("s3")
 _rds = boto3.client("rds-data")
@@ -1105,12 +1112,17 @@ def _update(event):
 
     Never raises, for _rewrite's reason: Lambda retries an asynchronous
     invocation that raises, and the retry would spend the model again on a
-    run already failed. The failure is written to the progress object."""
+    run already failed. The failure is written to the progress object.
+
+    A FAILED RUN IS REFUNDED (UX02 20.1): it offered nothing, so the charge
+    bought nothing. A run that finishes with some sections failed is done,
+    not failed - it offered the rest - and is not refunded."""
     tenant_id = int(event["tenant_id"])
     memo_id = int(event["memo_id"])
     run = str(event["run"])
     revision = int(event["config_revision"])
     requested_by = event.get("requested_by") or "unknown"
+    entry_id = event.get("entry_id")
 
     state = _get_update(tenant_id, memo_id, run) or {}
     # Finished already. A second delivery must not run the model twice.
@@ -1124,6 +1136,11 @@ def _update(event):
         state["status"] = status
         state["completed_at"] = datetime.datetime.now(
             datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if status == "failed":
+            given = _refund_generation(tenant_id, entry_id, requested_by,
+                                       "update: %s" % state.get("error"))
+            state["refunded"] = bool(given.get("refunded"))
+            state["amount_cents"] = given.get("amount_cents") or 0
         try:
             _put_update(tenant_id, memo_id, run, state)
         except Exception as exc:  # noqa: BLE001 - logged; nothing else to do
@@ -1342,6 +1359,135 @@ def lambda_handler(event, context):
     if event.get("action") == "update":
         return _update(event)
 
+    return _generate(event)
+
+
+# --- a generation's run, and its money (UX02 20.1) --------------------------
+#
+# The API charged on the click and wrote the run as running. This writes how
+# it ended, and where no memo was written, gives the charge back.
+#
+# NEVER RAISES, for _rewrite's reason: Lambda retries an asynchronous
+# invocation that raises, and each retry ran every model call again on a run
+# already failed. On 24 September one failure cost the dollar and three runs
+# of Bedrock, and the event was then dropped with nothing on screen.
+#
+# A MEMO THAT EXISTS IS NOT REFUNDED. A failure after the memo row is written
+# - recording its sources or claims - leaves a memorandum that opens, and the
+# charge bought it (decided 19 October 2026).
+
+GENERATE_FAULT = ("The memorandum could not be written because of a fault on "
+                  "our side. Try it again.")
+GENERATE_REFUSED = {
+    "no-such-template": "This memorandum is not in the configuration in use.",
+    "no-engagement-id": "The request did not name an engagement.",
+    "no-values": ("No document filed in this engagement has anything read "
+                  "from it, so there was nothing to write from."),
+}
+
+
+def _generate_key(tenant_id, engagement_id, run):
+    """Where a generation's progress is kept. MIRRORED in lambda/api/app.py,
+    which writes it first and reads it for the screen; the two must not
+    drift."""
+    return "tenants/%d/runs/generate/%d/%s.json" % (
+        int(tenant_id), int(engagement_id), run)
+
+
+def _generate(event):
+    tenant_id = int(event["tenant_id"])
+    run = event.get("run")
+    engagement_id = event.get("engagement_id")
+    entry_id = event.get("entry_id")
+    by = event.get("generated_by")
+    # Somewhere to keep the run only when the API named one. An invocation
+    # made by hand, or queued before this was deployed, carries neither, and
+    # runs exactly as it did.
+    key = (_generate_key(tenant_id, engagement_id, run)
+           if run and engagement_id is not None else None)
+
+    state = {}
+    if key:
+        try:
+            state = json.loads(_s3.get_object(
+                Bucket=CURATED_BUCKET, Key=key)["Body"].read().decode("utf-8"))
+        except (ClientError, ValueError):
+            state = {}
+        # Finished already. A second delivery must not run the model twice,
+        # nor refund twice - though the refund's own key would refuse that.
+        if state.get("status") not in (None, "running"):
+            return {"status": "already-" + str(state.get("status")),
+                    "run": run}
+    state.update({"run": run, "engagement_id": engagement_id,
+                  "entry_id": entry_id})
+
+    def finish(status, **fields):
+        state.update(fields)
+        state["status"] = status
+        state["completed_at"] = datetime.datetime.now(
+            datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if key:
+            try:
+                _s3.put_object(Bucket=CURATED_BUCKET, Key=key,
+                               Body=json.dumps(state).encode("utf-8"),
+                               ContentType="application/json")
+            except Exception as exc:  # noqa: BLE001 - logged; nothing else
+                print("[generate-state-not-written] run=%s %r" % (run, exc))
+        print("[generate] tenant=%s engagement=%s run=%s status=%s memo=%s "
+              "refunded=%s" % (tenant_id, engagement_id, run, status,
+                               state.get("memo_id"), state.get("refunded")))
+
+    def fail(error, why):
+        given = _refund_generation(tenant_id, entry_id, by, why)
+        finish("failed", error=error,
+               refunded=bool(given.get("refunded")),
+               amount_cents=given.get("amount_cents") or 0)
+
+    written = {"row": False, "memo_id": None}
+    try:
+        result = _compose_memo(event, written)
+    except Exception as exc:  # noqa: BLE001 - written to the run, not raised
+        print("[generate-error] tenant=%s engagement=%s run=%s memo=%s %r" % (
+            tenant_id, engagement_id, run, written["memo_id"], exc))
+        if not written["row"]:
+            fail(GENERATE_FAULT, type(exc).__name__)
+            return {"status": "failed", "run": run}
+        # The memo is there and opens. What failed was a record about it.
+        finish("done", memo_id=written["memo_id"], incomplete=True)
+        return {"status": "ok", "memo_id": written["memo_id"],
+                "incomplete": True}
+
+    if result.get("status") != "ok":
+        fail(GENERATE_REFUSED.get(result.get("status"), GENERATE_FAULT),
+             result.get("status"))
+        return result
+
+    finish("done", memo_id=result.get("memo_id"))
+    return result
+
+
+def _refund_generation(tenant_id, entry_id, by, why):
+    """wallet.refund_generation, never raising. A refund that throws is
+    logged and reported on the run as not refunded, where somebody can see
+    it - the alternative is an exception that loses the run's record too."""
+    try:
+        given = wallet.refund_generation(tenant_id, entry_id, by)
+    except Exception as exc:  # noqa: BLE001 - reported on the run instead
+        print("[refund-failed] tenant=%s entry=%s %r" % (
+            tenant_id, entry_id, exc))
+        return {"refunded": False, "amount_cents": 0}
+    print("[generation-refunded] tenant=%s entry=%s why=%s refunded=%s "
+          "repeated=%s cents=%s reason=%s" % (
+              tenant_id, entry_id, why, given.get("refunded"),
+              given.get("repeated"), given.get("amount_cents"),
+              given.get("reason")))
+    return given
+
+
+def _compose_memo(event, written):
+    """Generation itself: assemble, draft, consolidate, render, record.
+    `written` is told the memo's id the moment its row exists, so the caller
+    knows whether a failure came before or after there was a memo."""
     tenant_id = int(event["tenant_id"])
     engagement = event["engagement"]
     generated_by = event.get("generated_by")
@@ -1456,6 +1602,9 @@ def lambda_handler(event, context):
         ],
     )
     memo_id = memo_result.get("generatedFields", [{}])[0].get("longValue")
+    # The row exists from here, whether or not its id came back with it.
+    written["row"] = True
+    written["memo_id"] = memo_id
 
     for document_id in document_ids:
         _sql(

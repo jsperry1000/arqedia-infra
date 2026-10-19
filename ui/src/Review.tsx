@@ -12,6 +12,7 @@ import {
   type Passage,
   type Template,
   type Quote,
+  type GenerateRun,
 } from "./api";
 import { useNavigate } from "react-router-dom";
 import { TableScroll, useBackAction, Working } from "./shell";
@@ -120,8 +121,17 @@ export function EngagementView({ id, onBack, onMemo }: {
   const [expected, setExpected] = useState<
     { names: string[]; known: Set<number> } | null>(null);
   // A memo asked for and not yet listed: how many memos there were when it
-  // was asked for.
-  const [generating, setGenerating] = useState<{ before: number } | null>(null);
+  // was asked for, and the run that says how it is going (20.1).
+  const [generating, setGenerating] =
+    useState<{ before: number; run: string } | null>(null);
+  // Read by refresh(), which a timer calls from an older render. The run is
+  // what it asks after, so it must be the current one.
+  const generatingRun = useRef<string | null>(null);
+  generatingRun.current = generating?.run ?? null;
+  // A generation that ended without a memo, and whether its charge came
+  // back. The list could say a memo had arrived and never that one would
+  // not; this is the run saying so.
+  const [genFailed, setGenFailed] = useState<GenerateRun | null>(null);
   // Set once nothing has changed for the ceiling, so polling stops.
   const [gaveUp, setGaveUp] = useState(false);
 
@@ -179,9 +189,11 @@ export function EngagementView({ id, onBack, onMemo }: {
    *  of something and must not have an exception land in it. */
   async function refresh() {
     let p, d, m;
+    const run = generatingRun.current;
     try {
       [p, d, m] = await Promise.all([
-        api.pending(id), api.documents(id), api.memos(id, showArchived),
+        api.pending(id), api.documents(id),
+        api.memos(id, showArchived, run ?? undefined),
       ]);
     } catch (err) {
       setLoadFailed({ status: statusOf(err), said: reason(err) });
@@ -205,8 +217,15 @@ export function EngagementView({ id, onBack, onMemo }: {
         (r) => !e.known.has(r.document_id) && r.filename === n));
       return left.length ? { ...e, names: left } : null;
     });
-    // A memo asked for is ready once the list has grown.
-    setGenerating((g) => g && m.memos.length > g.before ? null : g);
+    // A memo asked for is ready once the list has grown - or over, once its
+    // run says it failed, which no length of list could say (20.1).
+    if (run && m.run?.status === "failed") {
+      setGenFailed(m.run);
+      setGenerating(null);
+    } else {
+      setGenerating((g) => g && (m.memos.length > g.before
+                                 || m.run?.status === "done") ? null : g);
+    }
 
     // THE SAVED CHOICE IS THE ANSWER (21.1). Every change is saved as it is
     // made, so what the server holds is what somebody chose - here, or on a
@@ -778,10 +797,19 @@ export function EngagementView({ id, onBack, onMemo }: {
   async function generate() {
     setBusy("Starting a memo");
     setError("");
+    setGenFailed(null);
     try {
-      await api.generate(id, template || undefined, chargeKey());
+      const started = await api.generate(id, template || undefined,
+                                         chargeKey());
+      // Could not even be started, and already refunded (20.1).
+      if (started.status === "failed") {
+        setGenFailed({ status: "failed", run: started.run,
+                       error: started.error, refunded: started.refunded,
+                       amount_cents: started.amount_cents });
+        return;
+      }
       setGaveUp(false);
-      setGenerating({ before: memos.length });
+      setGenerating({ before: memos.length, run: started.run });
       setShut((prev) => {
         const next = new Set(prev);
         next.delete("memos");
@@ -1727,6 +1755,19 @@ export function EngagementView({ id, onBack, onMemo }: {
                 + `${activeCount === 1 ? "document" : "documents"}`
                 + (memoQuote ? ` \u00b7 ${money(memoQuote.total_cents)}` : "")}
       </button>
+
+      {/* A generation that wrote no memo, and what became of the money
+          (20.1). Beside the button that started it, in the class every
+          refusal on this screen uses. No new CSS. */}
+      {genFailed && (
+        <p className="error">
+          {genFailed.error ?? "The memorandum could not be written."}{" "}
+          {genFailed.refunded
+            ? `The ${money(genFailed.amount_cents ?? 0)} charged for it has `
+              + "been refunded to your balance."
+            : "The charge for it could not be refunded automatically."}
+        </p>
+      )}
 
       {/* The tick, above the list it changes (14.3). */}
       <label className="inline-check">

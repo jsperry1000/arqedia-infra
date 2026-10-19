@@ -103,6 +103,22 @@ function lostCitations(before: string, after: string): string[] {
   return had.filter((c) => !after.includes(c));
 }
 
+/** What became of the charge for an Update that failed (UX02 20.1). Said by
+ *  the run, which refunded or did not - never assumed here. */
+/** The run's reason, closed as a sentence. Some end in a full stop ("Try it
+ *  again.") and some do not ("the memorandum was not found"). */
+function reasonSaid(error: string | undefined): string {
+  const text = (error ?? "no reason was given").trim();
+  return /[.!?]$/.test(text) ? text : text + ".";
+}
+
+function refundSaid(run: { refunded?: boolean; amount_cents?: number }): string {
+  return run.refunded
+    ? `The ${money(run.amount_cents ?? 0)} charged for it has been refunded `
+      + "to your balance."
+    : "The charge for it could not be refunded automatically.";
+}
+
 function errorText(err: unknown): string {
   let message = String((err as Error)?.message ?? err);
   try {
@@ -350,6 +366,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
     const timer = setInterval(async () => {
       if (Date.now() - began > UPDATE_GIVES_UP_MS) {
+        // A run that never finished never reached the refund either: only a
+        // run that ends, failed, gives the charge back (20.1). Catching this
+        // one is a failure destination, 20.2, and is not built.
         stop("The update gave no answer in seventeen minutes and has been "
           + "given up on. The charge for it has not been refunded.");
         return;
@@ -359,8 +378,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
         if (!live || progress.status === "running") return;
         if (progress.status === "failed") {
           stop("The update could not be finished: "
-            + (progress.error ?? "no reason was given") + ". The charge for "
-            + "it has not been refunded.");
+            + reasonSaid(progress.error) + " "
+            + refundSaid(progress));
           return;
         }
         const sections = splitSections(draftNow.current).sections;
@@ -487,8 +506,15 @@ export function MemoView({ memoId, onBack, onOpen }: {
     try {
       const started = await api.startUpdate(memoId, updateKey.current);
       setUpdated(null);
-      setUpdateRun(started.run);
       setConfirmingUpdate(false);
+      // Could not even be started, and already refunded (20.1).
+      if (started.status === "failed") {
+        setSaveError("The update could not be started: "
+          + reasonSaid(started.error) + " "
+          + refundSaid(started));
+        return;
+      }
+      setUpdateRun(started.run);
     } catch (err) {
       setSaveError(errorText(err));
     } finally {
@@ -1047,8 +1073,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
               <p className="muted small">
                 The charge is made when the update starts, against the
                 balance rather than the card. A repeat of this click is not
-                charged twice. If the update fails, the charge is not
-                refunded.
+                charged twice. If the update fails, the charge is refunded
+                to your balance.
               </p>
             </div>
           </div>
