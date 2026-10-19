@@ -1443,7 +1443,23 @@ def _generate(event):
                refunded=bool(given.get("refunded")),
                amount_cents=given.get("amount_cents") or 0)
 
-    written = {"row": False, "memo_id": None}
+    def row_written(memo_id):
+        """The memo row exists. Said on the run AT ONCE, still running, so
+        that if this function is then killed - a timeout recording claims -
+        the failure handler finds a memo and refunds nothing (20.2). Never
+        raises: the memo is written either way, and this is a record of it."""
+        state["memo_id"] = memo_id
+        if not key:
+            return
+        try:
+            _s3.put_object(Bucket=CURATED_BUCKET, Key=key,
+                           Body=json.dumps(dict(state, status="running"))
+                           .encode("utf-8"),
+                           ContentType="application/json")
+        except Exception as exc:  # noqa: BLE001 - logged; nothing else
+            print("[generate-state-not-written] run=%s %r" % (run, exc))
+
+    written = {"row": False, "memo_id": None, "on_row": row_written}
     try:
         result = _compose_memo(event, written)
     except Exception as exc:  # noqa: BLE001 - written to the run, not raised
@@ -1605,6 +1621,8 @@ def _compose_memo(event, written):
     # The row exists from here, whether or not its id came back with it.
     written["row"] = True
     written["memo_id"] = memo_id
+    if written.get("on_row"):
+        written["on_row"](memo_id)
 
     for document_id in document_ids:
         _sql(
