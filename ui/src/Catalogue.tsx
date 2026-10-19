@@ -247,7 +247,11 @@ export function CatalogueView({ curator, onOpened }: {
         <>
           <h3>What ARQEDIA offers</h3>
 
-          {offer === null ? (
+          {/* A failed read never sets the offer, so without the first arm
+              this said Loading for ever. The error itself is at the top. */}
+          {offer === null && loadError ? (
+            <p className="muted">Not read &mdash; see the error above.</p>
+          ) : offer === null ? (
             <p className="muted">Loading&hellip;</p>
           ) : (
             <>
