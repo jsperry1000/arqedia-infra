@@ -8,6 +8,7 @@ data "archive_file" "api" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/api"
   output_path = "${path.module}/build/api.zip"
+  excludes    = ["__pycache__"]
 }
 
 resource "aws_iam_role" "api" {

@@ -87,6 +87,7 @@ data "archive_file" "render" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/render"
   output_path = "${path.module}/build/render.zip"
+  excludes    = ["__pycache__"]
 }
 
 resource "aws_iam_role" "render" {

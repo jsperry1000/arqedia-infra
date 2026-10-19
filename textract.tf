@@ -52,6 +52,7 @@ data "archive_file" "collector" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/collector"
   output_path = "${path.module}/build/collector.zip"
+  excludes    = ["__pycache__"]
 }
 
 resource "aws_iam_role" "collector" {

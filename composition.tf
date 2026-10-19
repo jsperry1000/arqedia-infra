@@ -11,6 +11,7 @@ data "archive_file" "composition" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/composition"
   output_path = "${path.module}/build/composition.zip"
+  excludes    = ["__pycache__"]
 }
 
 resource "aws_iam_role" "composition" {

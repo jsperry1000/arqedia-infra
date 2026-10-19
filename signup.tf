@@ -21,6 +21,7 @@ data "archive_file" "signup" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/signup"
   output_path = "${path.module}/build/signup.zip"
+  excludes    = ["__pycache__"]
 }
 
 resource "aws_iam_role" "signup" {

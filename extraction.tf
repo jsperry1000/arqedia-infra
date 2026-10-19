@@ -10,6 +10,7 @@ data "archive_file" "extraction" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/extraction"
   output_path = "${path.module}/build/extraction.zip"
+  excludes    = ["__pycache__"]
 }
 
 resource "aws_iam_role" "extraction" {
