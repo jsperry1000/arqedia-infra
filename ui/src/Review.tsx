@@ -38,6 +38,13 @@ function money(cents: number) {
 // died - a read that never came back - would otherwise be polled for ever.
 const WAIT_CEILING_MS = 10 * 60 * 1000;
 
+// Longer while a memo is being written (20.2). Composition may run for
+// fifteen minutes, and a run that dies is finished by composition-failed
+// moments after - refunded, and its run written failed. Stopping at ten
+// would leave the screen silent about exactly the failure it exists to
+// report. Past seventeen, as Update's own wait says, it is not coming.
+const GENERATE_CEILING_MS = 17 * 60 * 1000;
+
 /**
  * The engagement. Three states of a document are visible here:
  *
@@ -452,7 +459,9 @@ export function EngagementView({ id, onBack, onMemo }: {
   useEffect(() => {
     if (!unfinished || gaveUp) return;
     const timer = setInterval(() => {
-      if (Date.now() - changedAt.current > WAIT_CEILING_MS) {
+      const ceiling = generatingRun.current ? GENERATE_CEILING_MS
+                                            : WAIT_CEILING_MS;
+      if (Date.now() - changedAt.current > ceiling) {
         setGaveUp(true);
         setExpected(null);
         setGenerating(null);
@@ -1124,7 +1133,7 @@ export function EngagementView({ id, onBack, onMemo }: {
       {working && <Working what={working} />}
       {gaveUp && !busy && (
         <p className="muted small">
-          Nothing has changed for ten minutes, so this screen has stopped
+          Nothing has changed for a long while, so this screen has stopped
           checking. Reload to check again.
         </p>
       )}
