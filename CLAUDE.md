@@ -375,6 +375,13 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
     `arqedia.com` publishes no MX record, so a reply to `no-reply@` goes
     nowhere — which is why an invitation sets Reply-To to the administrator
     who sent it. That is 10.6 and is not built.
+    **Amended 19 October 2026.** Half of that was already wrong: the
+    configuration set has had an event destination since 15 September,
+    publishing bounces, complaints, rejects and delays to the SNS topic
+    `ses-events` — but the topic had no subscriber, so they reached nobody.
+    sperry@ebl-finance.com is now subscribed by email, from the CLI, as the
+    topic and configuration set were made (`share.tf`). Still no MX record;
+    a reply to `no-reply@` still goes nowhere.
 - **TPL-03** — `Configure.tsx`'s first-run screen offers bases while calling
   them memoranda.
 - **The marketing site's `PACKS` array** lists six memoranda where one ships.
