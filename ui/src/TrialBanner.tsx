@@ -103,8 +103,13 @@ export function TrialBanner({ tenant }: { tenant: string }) {
 
   if (view.standing !== "trial") return null;
 
+  // Calendar days in the reader's own time, not 24-hour blocks: a trial ending
+  // at 15:00 is "today" all morning, where counting hours called it tomorrow
+  // and "today" could never be said at all.
+  const midnight = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const daysLeft = Math.max(0,
-    Math.ceil((ends.getTime() - Date.now()) / 86400000));
+    Math.round((midnight(ends) - midnight(new Date())) / 86400000));
   const step = stepOf(daysLeft);
   if (step === null) return null;
 
