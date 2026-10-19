@@ -83,6 +83,13 @@ or its text renders light on white.
 printed no error had not run. A build whose hash did not change may or may not
 contain the new source. Ask the database or grep the bundle.
 
+**A branch that changes `ui/src` carries its `web/` build in the same PR.**
+`web/` is what merging deploys; `ui/src` alone deploys nothing. Twice in
+October 2026 a merge shipped no UI change: the trial banner (#313, built on
+#317) and the generate refund (#320, whose failure message was in the source
+and not the bundle until #322). Build, commit `web/` with the source, and
+say in the push summary whether `web/` is included.
+
 ---
 
 ## Paddle integration
@@ -174,6 +181,18 @@ generation is not charged. A refund is an appended `wallet.refund()` row —
 own; the charge is never edited. Built for failed OCR and filing. Not yet
 built for failed generation (UX02 20.1) or failed extraction (EXT-02). The
 ledger stays append-only.
+
+**Amended 19 October 2026 (UX02 20.1, 20.2).** Failed generation is refunded
+now. `wallet.refund_generation()` appends `memo_generated_refund`, keyed
+`refund:memo:<entry_id>`, against a `memo_generated` charge only, with a
+refund bucket of its own. An Update refunds the same way. Composition refunds
+whatever it catches itself and is never retried (#320, #322). What it cannot
+catch — a timeout, an out-of-memory kill, a crash at start-up — lands on the
+`composition-failed` queue, and `arqedia-dev-composition-failed` refunds it
+there; a generation that died after its memo row is not refunded, because the
+memo opens (#323). Both applied and walked; 20.2 with a real timeout. Failed
+extraction (EXT-02) is still not refunded. A transient model failure is still
+not retried inside the run (20.4).
 
 **Debit on the click.** The price is shown and accepted before anything is
 filed. Every charge carries an idempotency key minted where the click happens;
@@ -343,6 +362,9 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
   composition regardless. Update (`update_memo`) does not: its run is derived
   from the key and a repeat starts nothing. Found 16 October 2026 on
   `feature/memo-update`; logged, not fixed.
+  **Fixed 19 October 2026 (UX02 20.1, #320):** `generate()` derives its run
+  from the key and answers a repeat with `status: repeated` without invoking
+  composition, as Update does.
 - **Update leaves a memo's front matter as it was.** The head above the first
   section is never touched, so "Documents reviewed" and "Sources cited" keep
   the counts from the original generation after an Update brings in documents
