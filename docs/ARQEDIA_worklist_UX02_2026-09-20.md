@@ -15,6 +15,7 @@
 | Status | 28 September 2026: not "Not started". Built on main, by merge commit: Group 1 #178; 2 #180; 3 #181; 4 #185; 5 #186 (5.2 deferred); 6 #187, 6.3 #219; 7 #188; 8.1 #189, 8.2 #190; 9 #192; 10.1–10.3 #193, 10.4–10.5 #196 (in `auth.tf`; whether applied is not verified here), 10.7 #197; 11.1, 11.4, 11.6 #195, 11.3 through 18.5 #228–#230; 12.1 and 12.3 #198; 15 #203/#204; 17.3 #202; 21.3–21.4 #245; 21.1–21.2 #246. Closed as marked in their rows: 13, 14, 16 (bar 16.7, 16.10 and 16.12's Paddle data), 17.1, 17.4–17.7, 17.10, 18 (bar the rows without a mark), 19.1. Group rows other than 17.3, 17.10 and 21.1–21.4 are not individually re-marked |
 | Revised | 28 September 2026 — header status and revision log brought up to date; 17.3, 17.10 and 21.1–21.4 marked; note on "TPL-04 D8" |
 | Revised | 19 October 2026 — 19.2 marked built and walked |
+| Revised | 19 October 2026 — 20.1 and 20.2 marked built and walked; 20.4 noted open |
 
 **Numbering.** Groups are numbered 1–22. Items are numbered within their group (2.3 is Group 2, item 3). Each group has one prompt for Code, named by its group. Nothing else is numbered.
 
@@ -344,10 +345,10 @@ refunded: dev.
 
 | # | Item |
 |---|---|
-| 20.1 | The charge is taken before the work and nothing reverses it when the work fails. A failed composition must refund its charge, and the screen must say generation failed and nothing was charged |
-| 20.2 | Composition has no failure destination, so after Lambda's two retries the event is dropped with no record. Add one, and record every failed run where somebody can see it |
+| 20.1 | The charge is taken before the work and nothing reverses it when the work fails. A failed composition must refund its charge, and the screen must say generation failed and nothing was charged. **Built and walked 19 October 2026 (#320, web/ in #322, layer rebuilt, applied).** wallet.refund_generation appends memo_generated_refund keyed refund:memo:<entry_id>; composition refunds every failure it catches, for Generate and Update, and is not retried (maximum_retry_attempts 0). Each generation has a run record; the screen shows the failure and the refund in red. Walked on dev: entry 131 refunded 100 cents, the run record read failed and refunded, and the message rendered. A repeated Generate click no longer starts a second memo |
+| 20.2 | Composition has no failure destination, so after Lambda's two retries the event is dropped with no record. Add one, and record every failed run where somebody can see it. **Built and walked 19 October 2026 (#323, applied; no layer change).** On failure the invocation record goes to the composition-failed SQS queue (14 days), and arqedia-dev-composition-failed refunds a generation or Update that died with nothing written and writes its run failed; a rewrite's row is written failed. A generation that died after its memo row is not refunded: the memo opens. An alarm counts messages sent, with no action. Generate waits 17 minutes before giving up. Walked with a real timeout: [composition-died] logged, refund on the ledger, message on screen |
 | 20.3 | The charge and the composition are not linked: no idempotency key and no ledger entry id reach composition, and the memo table holds neither. Carry the ledger entry id through and store it on the memo, so a charge can be traced to its result |
-| 20.4 | A transient model failure is not retried inside the run. Retry on ServiceUnavailableException before giving up |
+| 20.4 | A transient model failure is not retried inside the run. Retry on ServiceUnavailableException before giving up. **Open, 19 October 2026: not started**, and separate from 20.1 and 20.2, which refund a run that fails but do not try it again |
 | 20.5 | Nothing tells the person. The API answers "started" and the memo simply never appears. The screen must show a failed generation |
 
 ## Group 21 — Filing at scale, and what you get out
