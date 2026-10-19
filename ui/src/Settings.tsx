@@ -33,7 +33,9 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => { api.settings().then(setSettings); }, []);
+  useEffect(() => {
+    api.settings().then(setSettings).catch((err) => setError(message(err)));
+  }, []);
 
   function message(err: unknown) {
     let text = String((err as Error)?.message ?? err);
@@ -95,6 +97,7 @@ export function SettingsView({ onBack }: { onBack: () => void }) {
     }
   }
 
+  if (error && !settings) return <p className="error">{error}</p>;
   if (!settings) return <p className="muted">Loading&hellip;</p>;
 
   // Two gates, and the server holds both: the plan, and the role. A member on

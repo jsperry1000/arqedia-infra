@@ -580,6 +580,9 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
 
   const [state, setState] = useState<ConfigState | null>(null);
   const [packs, setPacks] = useState<Pack[]>([]);
+  // Why the starting points could not be read. It was turned into [] and
+  // read as "No starting points are available yet".
+  const [packsError, setPacksError] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [validation, setValidation] = useState<Validation | null>(null);
 
@@ -775,7 +778,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   }
 
   useEffect(() => {
-    api.packs().then((p) => setPacks(p.packs)).catch(() => setPacks([]));
+    api.packs().then((p) => setPacks(p.packs))
+      .catch((e) => setPacksError(message(e)));
     refresh().catch((e) => setError(message(e)));
   }, []);
 
@@ -1029,6 +1033,9 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     jumpTo.current = null;
   });
 
+  // A failed first read is said, not left on Loading for ever: refresh()
+  // sets the error and never the state.
+  if (error && !state) return <p className="error">{error}</p>;
   if (!state) return <p className="muted">Loading&hellip;</p>;
 
   // Reading a report of the client's own. Held above every other screen: it
@@ -1100,7 +1107,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           </p>
         )}
 
-        {packs.length === 0 && (
+        {packsError && <p className="error">{packsError}</p>}
+        {!packsError && packs.length === 0 && (
           <p className="muted">No starting points are available yet.</p>
         )}
 

@@ -548,6 +548,9 @@ function Subscription() {
 function Balance() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [entries, setEntries] = useState<LedgerEntry[] | null>(null);
+  // The ledger's own failure, kept apart from `error` (which replaces the
+  // tab). It was turned into [] and read as "Nothing charged yet".
+  const [ledgerError, setLedgerError] = useState("");
   const [error, setError] = useState("");
   const [increments, setIncrements] = useState(1);
   const [busy, setBusy] = useState("");
@@ -587,7 +590,8 @@ function Balance() {
 
   useEffect(() => {
     api.wallet().then(setWallet).catch((e) => setError(String(e.message ?? e)));
-    api.walletLedger(50).then((r) => setEntries(r.ledger)).catch(() => setEntries([]));
+    api.walletLedger(50).then((r) => setEntries(r.ledger))
+      .catch((e) => setLedgerError(message(e)));
     api.subscription().then((v) => {
       setTopup(v.topup_increment_cents);
       // Enough increments to cover what was short, once the increment is
@@ -631,8 +635,10 @@ function Balance() {
         if (!fresh) continue;
         setWallet(fresh);
         if (fresh.available_cents > before) {
-          api.walletLedger(50).then((r) => setEntries(r.ledger))
-            .catch(() => undefined);
+          api.walletLedger(50).then((r) => {
+            setEntries(r.ledger);
+            setLedgerError("");
+          }).catch(() => undefined);
           break;
         }
       }
@@ -861,7 +867,8 @@ function Balance() {
       )}
 
       <h3>Ledger</h3>
-      {entries === null && <p className="muted">Loading&hellip;</p>}
+      {entries === null && ledgerError && <p className="error">{ledgerError}</p>}
+      {entries === null && !ledgerError && <p className="muted">Loading&hellip;</p>}
       {entries !== null && entries.length === 0 && (
         <p className="muted">Nothing charged yet.</p>
       )}

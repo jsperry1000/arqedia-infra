@@ -1735,6 +1735,16 @@ export function EngagementView({ id, onBack, onMemo }: {
         Show archived
       </label>
 
+      {/* Said, as "Nothing filed yet." is above. With the tick off an
+          archived memo is not sent, so the sentence does not claim there
+          are none at all. */}
+      {memos.length === 0 && (
+        <p className="muted">
+          {showArchived ? "Nothing generated yet."
+                        : "Nothing generated yet, or all of it archived."}
+        </p>
+      )}
+
       <TableScroll label="Memos">
       <table>
         <tbody>

@@ -422,6 +422,9 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState("");
+  // Why the list could not be read. Without it a failed read fell through to
+  // "Nothing yet", which tells somebody with fifty engagements they have none.
+  const [loadError, setLoadError] = useState("");
   // Which row is being archived or restored, so two clicks cannot race.
   const [busy, setBusy] = useState("");
 
@@ -459,6 +462,12 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
     try {
       const r = await api.engagements(archived);
       setRows(r.engagements);
+      setLoadError("");
+    } catch (err) {
+      // Cleared rather than left standing: rows from the list before a
+      // failed reload are not what was asked for.
+      setRows([]);
+      setLoadError(String((err as Error)?.message ?? err));
     } finally {
       setLoading(false);
     }
@@ -497,6 +506,7 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
   return (
     <div>
       <h2>Engagements</h2>
+      {loadError && <p className="error">{loadError}</p>}
       {/* IN PLACE OF "Nothing yet", not beside it (18.8). A workspace with no
           published configuration has one thing to do and it is not naming an
           engagement. Composed from .revision-note and .form-actions, the
@@ -507,7 +517,7 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
           _require_admin (CLAUDE.md, 17.7). A member is shown the same
           sentence and told whom it is for, rather than a button that answers
           403 - which is the rule UpgradePrompt was written to. */}
-      {rows.length === 0 && published === false && (
+      {!loadError && rows.length === 0 && published === false && (
         <div className="revision-note">
           <span>
             Choose your memoranda first &mdash; they decide what is read out
@@ -526,7 +536,7 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
           </div>
         </div>
       )}
-      {rows.length === 0 && published !== false && (
+      {!loadError && rows.length === 0 && published !== false && (
         <p className="muted">Nothing yet. Name an engagement below to start.</p>
       )}
       {/* The subject sits beside the name, because the name is a label

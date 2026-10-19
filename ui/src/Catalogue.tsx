@@ -50,6 +50,10 @@ export function CatalogueView({ curator, onOpened }: {
   const [reports, setReports] = useState<Row[] | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  // Why the page could not be read, apart from `error`, which an action
+  // clears. The list is left null rather than emptied: [] would say "Nothing
+  // yet" about a list nobody has seen.
+  const [loadError, setLoadError] = useState("");
 
   // The curator's half. published is the memoranda of the revision in use -
   // what can be offered, which is never the draft - and ticked is what the
@@ -88,7 +92,7 @@ export function CatalogueView({ curator, onOpened }: {
           setTicked(new Set(marks.templates));
         }
       } catch (err) {
-        if (!gone) { setError(errorText(err)); setReports([]); }
+        if (!gone) setLoadError(errorText(err));
       }
     })();
     return () => { gone = true; };
@@ -184,9 +188,10 @@ export function CatalogueView({ curator, onOpened }: {
         so adding one costs nothing until a document is filed against it.
       </p>
 
+      {loadError && <p className="error">{loadError}</p>}
       {error && <p className="error">{error}</p>}
 
-      {reports === null && <p className="muted">Loading&hellip;</p>}
+      {reports === null && !loadError && <p className="muted">Loading&hellip;</p>}
       {reports?.length === 0 && (
         <p className="muted">
           Nothing yet. Take one of ours, or start your own below.
@@ -242,7 +247,11 @@ export function CatalogueView({ curator, onOpened }: {
         <>
           <h3>What ARQEDIA offers</h3>
 
-          {offer === null ? (
+          {/* A failed read never sets the offer, so without the first arm
+              this said Loading for ever. The error itself is at the top. */}
+          {offer === null && loadError ? (
+            <p className="muted">Not read &mdash; see the error above.</p>
+          ) : offer === null ? (
             <p className="muted">Loading&hellip;</p>
           ) : (
             <>
