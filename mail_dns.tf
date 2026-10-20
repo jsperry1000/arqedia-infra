@@ -39,3 +39,32 @@ resource "aws_route53_record" "root_txt" {
     prevent_destroy = true
   }
 }
+
+# Inbound mail goes to Microsoft 365. The host is the tenant's own, issued by
+# the domain wizard on verification; priority 0, as Microsoft gives it. An
+# address Microsoft 365 does not hold, such as no-reply@, is now refused with
+# a bounce to the sender rather than going nowhere.
+resource "aws_route53_record" "root_mx" {
+  zone_id = aws_route53_zone.root.zone_id
+  name    = local.root_domain
+  type    = "MX"
+  ttl     = 3600
+  records = ["0 arqedia-com.mail.protection.outlook.com"]
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# Lets Outlook clients find the mailbox settings for an @arqedia.com address.
+resource "aws_route53_record" "autodiscover" {
+  zone_id = aws_route53_zone.root.zone_id
+  name    = "autodiscover.${local.root_domain}"
+  type    = "CNAME"
+  ttl     = 3600
+  records = ["autodiscover.outlook.com"]
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
