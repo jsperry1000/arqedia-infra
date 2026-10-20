@@ -22,6 +22,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 import config
+import wallet
 
 _s3 = boto3.client("s3")
 _rds = boto3.client("rds-data")
@@ -607,13 +608,61 @@ def lambda_handler(event, context):
               total_written, len(failures), extraction_error,
               tokens_in, tokens_out))
 
+    refunded = False
+    if extraction_error and document_id:
+        refunded = _refund_if_nothing_read(envelope["tenant_id"],
+                                           int(document_id))
+
     return {
         "status": "ok",
         "document_id": envelope.get("document_id"),
         "values_written": total_written,
         "extraction_error": extraction_error,
+        "refunded": refunded,
         "results": results,
     }
+
+
+def _refund_if_nothing_read(tenant_id, document_id):
+    """EXT-02, decided 20 October 2026: a failed extraction is not charged.
+
+    FAILED MEANS extraction_error set AND no values held for the document -
+    counted in the table, not from this run's total, so a re-extraction that
+    fails over values an earlier run wrote is not a document that read
+    nothing. A document holding some values keeps its charge (21 September).
+
+    wallet.refund(), as the collector uses for a failed OCR: a negative
+    ledger row and a refund bucket, keyed 'refund:<document_id>'. So a
+    document is refunded once whichever failure came first, and a
+    re-extraction that fails again refunds nothing more.
+
+    Called after the row is marked, never before: if the refund throws, the
+    person is still told the extraction failed, and the failure is logged
+    where it can be found and refunded by hand."""
+    found = _sql(
+        "SELECT d.charge_entry_id, "
+        "(SELECT COUNT(*) FROM extracted_value v "
+        " WHERE v.tenant_id = d.tenant_id AND v.document_id = d.document_id) "
+        "FROM document d WHERE d.tenant_id = :t AND d.document_id = :d",
+        [_p("t", tenant_id), _p("d", document_id)]).get("records", [])
+    if not found:
+        return False
+    entry = found[0][0].get("longValue")
+    held = found[0][1].get("longValue") or 0
+    if held:
+        return False
+
+    try:
+        given = wallet.refund(tenant_id, document_id, entry)
+    except Exception as exc:  # noqa: BLE001 - the failure on the row stands
+        print("[refund-failed] tenant={} doc={} entry={} {!r}".format(
+            tenant_id, document_id, entry, exc))
+        return False
+
+    print("[extraction-refund] doc={} entry={} refunded={} repeated={} "
+          "cents={}".format(document_id, entry, given.get("refunded"),
+                            given.get("repeated"), given.get("amount_cents")))
+    return bool(given.get("refunded"))
 
 
 

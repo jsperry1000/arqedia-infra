@@ -51,10 +51,17 @@ def load_extraction():
     config = types.ModuleType("config")
     config.load = mock.MagicMock()
 
+    # wallet lives in the layer, beside config. Stubbed so a test can say
+    # whether a refund was asked for, and with what (EXT-02).
+    wallet = types.ModuleType("wallet")
+    wallet.refund = mock.MagicMock(return_value={
+        "refunded": True, "amount_cents": 25, "repeated": False})
+
     env = {"CLUSTER_ARN": "arn:cluster", "SECRET_ARN": "arn:secret",
            "DATABASE": "arqedia", "MODEL_ID": "anthropic.haiku-test"}
     modules = {"boto3": boto3, "botocore": botocore,
-               "botocore.exceptions": exceptions, "config": config}
+               "botocore.exceptions": exceptions, "config": config,
+               "wallet": wallet}
     with mock.patch.dict(sys.modules, modules), \
             mock.patch.dict(os.environ, env):
         spec = importlib.util.spec_from_file_location(
@@ -89,9 +96,13 @@ class FakeDb:
     answered every SELECT with no rows would send every test below down the
     refusal path. None is that path, asked for deliberately."""
 
-    def __init__(self, subject="Cocoa Empire"):
+    def __init__(self, subject="Cocoa Empire", charge_entry_id=40, held=0):
         self.statements = []
         self.subject = subject
+        # What the refund check reads: the charge, and how many values the
+        # document holds across every run (EXT-02).
+        self.charge_entry_id = charge_entry_id
+        self.held = held
 
     def sql(self, statement, params=None):
         s = " ".join(statement.split())
@@ -101,6 +112,10 @@ class FakeDb:
             if self.subject is None:
                 return {"records": []}
             return {"records": [[{"stringValue": self.subject}]]}
+        if s.startswith("SELECT d.charge_entry_id"):
+            entry = ({"isNull": True} if self.charge_entry_id is None
+                     else {"longValue": self.charge_entry_id})
+            return {"records": [[entry, {"longValue": self.held}]]}
         return {"records": []}
 
     def matching(self, start):
@@ -339,6 +354,87 @@ class SubjectTest(unittest.TestCase):
         with mock.patch.object(self.app, "_sql",
                                lambda s, p=None: {"records": []}):
             self.assertIsNone(self.app._subject_for(2, 753))
+
+
+class RefundTest(unittest.TestCase):
+    """EXT-02, decided 20 October 2026: a failed extraction is not charged.
+
+    Failed means extraction_error set and no values held for the document.
+    The refund is wallet.refund(), the one the collector uses for a failed
+    OCR, keyed on the document so it happens once."""
+
+    def setUp(self):
+        self.app, self.config = load_extraction()
+        body = mock.MagicMock()
+        body.read.return_value = json.dumps(ENVELOPE).encode("utf-8")
+        self.app._s3.get_object.return_value = {"Body": body}
+        self.app.wallet.refund.reset_mock(side_effect=True)
+
+    def run_with(self, schemas, db):
+        self.config.load.return_value = FakeRegistry(schemas)
+        answer = ({"f_company_name": {"value": "Cocoa Empire Uganda Ltd.",
+                                      "unit": 1}},
+                  {"input_tokens": 11, "output_tokens": 7})
+        with mock.patch.object(self.app, "_sql", db.sql),                 mock.patch.object(self.app, "_invoke", return_value=answer):
+            return self.app.lambda_handler(EVENT, None)
+
+    def test_every_schema_failed_and_nothing_held_is_refunded(self):
+        result = self.run_with({"bad": {"fields": [MALFORMED_GROUP]}},
+                               FakeDb())
+        self.app.wallet.refund.assert_called_once_with(2, 753, 40)
+        self.assertTrue(result["refunded"])
+        self.assertEqual(result["extraction_error"], "group_key_missing")
+
+    def test_a_failure_that_left_values_keeps_its_charge(self):
+        """Some read, some not: the document holds facts, so it was not a
+        failed extraction (decision of 21 September, kept)."""
+        result = self.run_with({"bad": {"fields": [MALFORMED_GROUP]},
+                                "good": {"fields": [SINGLE]}},
+                               FakeDb(held=1))
+        self.app.wallet.refund.assert_not_called()
+        self.assertFalse(result["refunded"])
+
+    def test_values_from_an_earlier_run_keep_the_charge(self):
+        """Counted in the table, not from this run: a re-extraction that
+        fails over values already held did not read nothing."""
+        self.run_with({"bad": {"fields": [MALFORMED_GROUP]}},
+                      FakeDb(held=12))
+        self.app.wallet.refund.assert_not_called()
+
+    def test_a_clean_run_refunds_nothing_and_asks_nothing(self):
+        db = FakeDb()
+        result = self.run_with({"good": {"fields": [SINGLE]}}, db)
+        self.app.wallet.refund.assert_not_called()
+        self.assertFalse(result["refunded"])
+        self.assertEqual(db.matching("SELECT d.charge_entry_id"), [])
+
+    def test_a_refund_that_throws_leaves_the_failure_on_the_row(self):
+        """The row is marked first. A refund that fails is logged; the
+        person is still told the extraction failed."""
+        self.app.wallet.refund.side_effect = RuntimeError("no transaction")
+        db = FakeDb()
+        result = self.run_with({"bad": {"fields": [MALFORMED_GROUP]}}, db)
+        self.assertEqual(result["status"], "ok")
+        self.assertFalse(result["refunded"])
+        updates = db.matching("UPDATE document SET extracted_at")
+        self.assertEqual(updates[0][1]["error"], "group_key_missing")
+
+    def test_a_document_never_charged_passes_none_through(self):
+        """wallet.refund answers a missing charge itself, with nothing given
+        back; extraction does not second-guess it."""
+        self.run_with({"bad": {"fields": [MALFORMED_GROUP]}},
+                      FakeDb(charge_entry_id=None))
+        self.app.wallet.refund.assert_called_once_with(2, 753, None)
+
+    def test_no_subject_is_not_refunded(self):
+        """Refused before reading, and not through the paid path: the API
+        will not file into an engagement with no subject."""
+        db = FakeDb(subject=None)
+        self.config.load.return_value = FakeRegistry(
+            {"good": {"fields": [SINGLE]}})
+        with mock.patch.object(self.app, "_sql", db.sql):
+            self.app.lambda_handler(EVENT, None)
+        self.app.wallet.refund.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -46,9 +46,15 @@ data "aws_iam_policy_document" "extraction" {
     resources = [aws_kms_key.data.arn]
   }
 
+  # The three transaction actions are for wallet.refund() (EXT-02): a failed
+  # extraction gives its charge back in one transaction, ledger row first.
   statement {
-    effect    = "Allow"
-    actions   = ["rds-data:ExecuteStatement", "rds-data:BatchExecuteStatement"]
+    effect = "Allow"
+    actions = [
+      "rds-data:ExecuteStatement", "rds-data:BatchExecuteStatement",
+      "rds-data:BeginTransaction", "rds-data:CommitTransaction",
+      "rds-data:RollbackTransaction",
+    ]
     resources = [aws_rds_cluster.main.arn]
   }
 
