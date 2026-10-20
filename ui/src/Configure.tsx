@@ -1927,7 +1927,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
 
       {!readOnly && (
       <a className="small add" onClick={() => setEditField("")}>
-        Add a field
+        Add a fact
       </a>
       )}
 
@@ -2379,6 +2379,21 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
               Which documents this fact is expected to be found in. It is
               looked for in these and nowhere else.
             </p>
+            {/* A fact the vocabulary does not hold yet (22.8). The drill-in
+                closes as the card opens, as the card's own "found in" does
+                the other way: the card renders before this drawer, so left
+                open it would cover the card. Binds nothing, as from the
+                Facts tab. */}
+            {!readOnly && (
+            <a className="small add" onClick={() => {
+              setOpenField(null);
+              setBindNewTo(null);
+              setFindNewIn(null);
+              setEditField("");
+            }}>
+              Add a fact
+            </a>
+            )}
 
             {draft.categories.map((c) => (
               <div key={c.key}>
