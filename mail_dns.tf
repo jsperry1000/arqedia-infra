@@ -19,16 +19,20 @@ import {
   id = "${aws_route53_zone.root.zone_id}_${local.root_domain}_TXT"
 }
 
-# SPF must name every sender. Dropping amazonses.com would fail every message
-# the product sends. Outlook is added with the MX record, once Microsoft 365
-# has issued the domain's verification value and MX host.
+# SPF names BOTH senders. Dropping amazonses.com would fail every message the
+# product sends; dropping Outlook would fail every reply from the mailbox.
+#
+# MS= is Microsoft 365's proof that the tenant owns the domain. It stays after
+# verification: removing it does not unverify the domain, but Microsoft asks
+# for it again on any later re-check.
 resource "aws_route53_record" "root_txt" {
   zone_id = aws_route53_zone.root.zone_id
   name    = local.root_domain
   type    = "TXT"
   ttl     = 600
   records = [
-    "v=spf1 include:amazonses.com ~all",
+    "v=spf1 include:amazonses.com include:spf.protection.outlook.com ~all",
+    "MS=ms45274366",
   ]
 
   lifecycle {
