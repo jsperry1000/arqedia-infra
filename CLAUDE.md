@@ -385,6 +385,11 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
 - **TPL-03** — `Configure.tsx`'s first-run screen offers bases while calling
   them memoranda.
 - **The marketing site's `PACKS` array** lists six memoranda where one ships.
+  **Held 20 October 2026.** The site will show three, redone from tenant 5's
+  data, as the last step before launch; nothing changes until then. Live
+  today (tenant 0, revision 29) offers five: base, credit-memorandum,
+  kyc-customer-due-diligence-memorandum, lender-information-memorandum and
+  trade-finance-credit-memo-duplicate.
 - **A stray `configure_screen.tsx`** at the repository root, not in the build.
 - **Deleting a tenant leaves its domain claim behind.** `tenant_domain` has no
   foreign key, so removing a `tenant` row leaves `domain → tenant_id` in place
@@ -396,12 +401,27 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
   connected to Paddle sandbox on `feature/paddle-subscription`.
 - **Trial vetting**, `frontend_onboarding_spec_v1.md` §11. Self-serve sanctions
   tooling at $25 with no check on the buyer. Probably needs counsel.
+  **Decided 20 October 2026, provisionally (ONB-01):** no vetting gate for
+  beta. Self-serve signup stays as built, with no manual approval step. Stated
+  as "I think this is a pass"; settled only once confirmed outright.
+- **First screening provider** (SC-01, open item A2: OFAC or LSEG).
+  **Deferred 20 October 2026** to after launch, as the build plan already
+  places it. No provider is chosen and no screening ships at launch.
 - **Starter packs** validated by somebody who writes these memoranda.
+  **Assigned 20 October 2026** to sperry@ebl-finance.com (TPL-01): which
+  sections each starter memorandum carries is practitioner work.
 - **`signup_attempt.ip` retention**, and the privacy-policy wording for it.
+  **Before real customer data (20 October 2026):** a concrete retention
+  limit, and wording for it in the Terms/Privacy draft of #318.
 - **Does CI build the app.** `web/` is committed output; the marketing site
   builds in CI. Either bring them into line or record why not.
 - **Recipient registration to download** a shared memorandum: gate it as a lead
   source, leave it open, or let the sender choose.
+  **Decided 20 October 2026:** open. A recipient reads and downloads without
+  registering; registering is only to keep access past two weeks. The code
+  already does this — `share_rules.expires_at` gives an unregistered
+  recipient two weeks from send and a registered one six months from send,
+  with a tenant-set date as the ceiling either way — so nothing changes.
 - **`docs/HANDOFF/` and `docs/backlog-items/`** hold duplicates of four backlog
   items, including a `(1)` copy of HONE01.
 - **A repeated Generate click starts a second memo for one charge.**
@@ -417,12 +437,22 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
   section is never touched, so "Documents reviewed" and "Sources cited" keep
   the counts from the original generation after an Update brings in documents
   filed since. Found 16 October 2026; logged, not fixed.
+  **Re-checked 20 October 2026:** still not fixed. `cleanup.front_matter` is
+  called once, at generation (`lambda/composition/app.py`); `_update` never
+  calls it. Tracked for later, not a beta blocker.
 - **Account deletion must clear sharing too, and does not exist yet.**
   `share.purge_tenant(tenant_id)` in `lambda/api/share.py` removes a tenant's
   grants, their access log, its usage counters and its `shares/` PDFs from
   DynamoDB and S3. Nothing calls it: there is no account deletion to call it
   from. Whoever builds deletion wires it in, beside the Aurora rows and
   `tenant_domain`.
+  **Before real customer data (20 October 2026):** without it a deletion
+  request cannot be honoured. At the least, a written manual procedure —
+  who runs it, what it touches (the tenant's Aurora rows, `tenant_domain`,
+  `share.purge_tenant`), in what order — before anything automated.
+- **Failed extraction is charged and not refunded (EXT-02).** Filing and
+  generation refund on failure (Money, amended 19 October); extraction does
+  not. **Before real customer data (20 October 2026).**
 - **The EU stack is decided, not built.** See Settled decisions, Second region
   (EU). Nothing exists yet: no EU account, no build branch, and the region
   choice at sign-up is still mocked in `ui/src/mock.tsx`.
