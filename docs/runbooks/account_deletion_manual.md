@@ -100,8 +100,10 @@ step 6 and to `TENANT_TABLES` in the script before going on.
 If `subscription` in the inventory is not empty and its status is not
 `canceled`: cancel it **immediately** (not at period end) in the Paddle
 dashboard, using the `paddle_subscription_id` from the inventory.
-A destructive Paddle change — confirmed with the owner first (CLAUDE.md,
-Paddle integration).
+**Decided 20 October 2026:** cancelling is part of every deletion; the
+deletion request is the confirmation and no separate one is sought. It is
+not automatic: nothing in the code cancels a subscription, so whoever runs
+this procedure does it by hand, here, after the inventory has given the id.
 
 **Verify:** after the webhook lands,
 `q "SELECT paddle_status FROM subscription WHERE tenant_id = $T"` reads
@@ -223,10 +225,10 @@ standard rows have `tenant_id IS NULL` and `= $T` never matches them.
 
 **Kept, deliberately: `wallet_ledger` and `paddle_event`.** The ledger is
 append-only (CLAUDE.md, Money) and the Terms draft of 20 October says it is
-kept as an accounting record. **DECISION NEEDED:** both hold personal data —
+kept as an accounting record. Both hold personal data —
 `wallet_ledger.created_by` is the address that clicked, and `paddle_event`
-holds Paddle's payloads — and how long they are kept, and whether the
-addresses are blanked, is not decided.
+holds Paddle's payloads. **Decided 20 October 2026:** both are kept as they
+are, and the addresses are not blanked.
 
 **Not touched, and personal data:** `signup_attempt`, `pending_signup` and
 `signup_allow`, which hold no `tenant_id`. Remove the tenant's rows by
