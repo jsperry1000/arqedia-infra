@@ -97,13 +97,20 @@ step 6 and to `TENANT_TABLES` in the script before going on.
 
 ### 3. Cancel the Paddle subscription
 
-If `subscription` in the inventory is not empty and its status is not
-`canceled`: cancel it **immediately** (not at period end) in the Paddle
-dashboard, using the `paddle_subscription_id` from the inventory.
-**Decided 20 October 2026:** cancelling is part of every deletion; the
-deletion request is the confirmation and no separate one is sought. It is
-not automatic: nothing in the code cancels a subscription, so whoever runs
-this procedure does it by hand, here, after the inventory has given the id.
+```bash
+python docs/runbooks/cancel_subscription.py $T
+```
+
+It cancels the tenant's subscription **immediately** (not at period end)
+through `paddle_api.cancel_subscription`, with the Paddle settings of the
+deployed `arqedia-dev-api` function, and does nothing when there is no
+subscription or it already reads `canceled`. **Decided 20 October 2026:**
+cancelling is part of every deletion; the deletion request is the
+confirmation and no separate one is sought. Paddle cannot reinstate it.
+
+Do not go on to step 6 before this verifies: the `subscription.updated`
+webhook rewrites the subscription row for this tenant, and one landing after
+step 6 would put a row back.
 
 **Verify:** after the webhook lands,
 `q "SELECT paddle_status FROM subscription WHERE tenant_id = $T"` reads
@@ -293,3 +300,6 @@ python docs/runbooks/tenant_inventory.py $T > deletion-$T-after.json
   the same firm sign up for a new trial.
 - **Not run end to end.** No step after 2 has been exercised. The first run
   should be a throwaway tenant on dev, compared before and after.
+  `cancel_subscription.py` has a unit test for the request it sends and has
+  never been run against Paddle; its first run should cancel a sandbox
+  subscription made for that throwaway tenant.

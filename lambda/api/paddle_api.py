@@ -1,9 +1,13 @@
 """
-paddle_api.py - the three calls the API makes to Paddle.
+paddle_api.py - the calls made to Paddle.
 
   create_checkout_transaction  POST  /transactions
   charge_topup                 POST  /subscriptions/{id}/charge
   change_plan                  PATCH /subscriptions/{id}
+  cancel_subscription          POST  /subscriptions/{id}/cancel
+
+cancel_subscription is not reached from any route. Account deletion calls it
+(docs/runbooks/cancel_subscription.py, step 3 of the deletion runbook).
 
 PROPOSED: the standard library (urllib), not the Paddle SDK. The decision
 record names no client for outbound calls; the webhook side already avoids the
@@ -114,3 +118,16 @@ def change_plan(subscription_id, plan_key):
                  "proration_billing_mode": "prorated_immediately",
                  "on_payment_failure": "prevent_change",
              })
+
+
+def cancel_subscription(subscription_id):
+    """Cancel now, not at the end of the period: the tenant is being deleted
+    and nothing should bill it again. Paddle cannot reinstate a cancelled
+    subscription. Answers Paddle's status for it, which is "canceled".
+
+    The subscription row is moved by the subscription.updated webhook that
+    follows, never here."""
+    return _request("POST", "/subscriptions/%s/cancel"
+                    % urllib.parse.quote(subscription_id, safe=""), {
+                        "effective_from": "immediately",
+                    })["data"]["status"]
