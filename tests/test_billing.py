@@ -295,6 +295,18 @@ class PaddleApiTest(unittest.TestCase):
         self.assertEqual(body["items"],
                          [{"price_id": "pri_base", "quantity": 1}])
 
+    def test_cancel_is_immediate_and_answers_the_status(self):
+        paddle_api = load_billing().paddle_api
+        with mock.patch.object(paddle_api, "_request",
+                               return_value={"data": {"status": "canceled"}}
+                               ) as req:
+            self.assertEqual(
+                paddle_api.cancel_subscription("sub_1"), "canceled")
+        method, path, body = req.call_args.args
+        self.assertEqual((method, path),
+                         ("POST", "/subscriptions/sub_1/cancel"))
+        self.assertEqual(body, {"effective_from": "immediately"})
+
 
 class SeatsBoughtTest(unittest.TestCase):
     """PLAN_SEATS and DEFAULT_SEATS are gone (18.5): the count comes from the
