@@ -32,6 +32,19 @@ produced by *Pipeline v1.0*.
 > for the whole fourteen-day trial. The registered term is computed per grant
 > from its own send (§6). Nothing else in this document has been altered.
 
+> **Amended 20 October 2026 — verifying takes an emailed code (#293).** §3's
+> definition of *Verified* is changed in place to match the code. It read:
+> "*Verified* — reached by clicking the link, 2-week access, no relationship
+> with us." Since #293 (`lambda/share_viewer/app.py`, "a verified device"),
+> `GET /view/{grant_id}` and its download refuse the link on its own: the
+> browser must also present a device token, issued only once a code emailed
+> to the recipient is entered there. The code lasts 10 minutes; the device
+> token lasts 6 months, is per recipient rather than per grant, and up to 10
+> are held. A device verified in the last 15 minutes registers without a
+> second code. Added so that a forwarded link reads nothing. Registering is
+> still not needed to read or download; it only extends the term (§6).
+> Nothing else in this document has been altered.
+
 ---
 
 ## 0. Status of every claim here
@@ -84,8 +97,12 @@ billed, and it does not count toward the tenant's seat minimum.
 link, verifies by clicking it, and a viewer account is created against that
 address. First verification captures `first_opened_at`.
 
-**Two viewer states.** *Verified* — reached by clicking the link, 2-week access,
-no relationship with us. *Registered* — the viewer accepts our terms and sets a
+**Two viewer states.** *Verified* — reached by opening the link and then
+entering a code emailed to the recipient's own address, on that browser
+(`/verify/code`, `/verify`). The link alone opens nothing: reading and
+downloading take the link and a verified browser, so a forwarded link reads
+nothing without the recipient's inbox. 2-week access, no relationship with
+us. *Registered* — the viewer accepts our terms and sets a
 password and multi-factor, access extends to 6 months, and §7 applies
 (*Identity* §4). The prompt to register
 lives inside the memo view and leads with the extension, which is the honest
