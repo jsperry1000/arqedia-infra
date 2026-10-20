@@ -111,3 +111,32 @@ rebate rule reads that column.
 
 The 102 historical rows from 5 September. These are dev data and have no
 rebate to make.
+
+---
+
+### Decision, 20 October 2026, and built on `fix/ext02-refund-failed-extraction`
+
+**`wallet.refund()`, not the rebate bucket.** The proposal of 28 September is
+taken: a failed extraction refunds exactly as a failed OCR does — a negative
+`document_filed_refund` ledger row and a `refund` bucket of 30 days, keyed
+`refund:<document_id>`, so a document is refunded once whichever failure
+came first. The rebate bucket of 21 September is superseded and left
+standing above; its two proposed schema additions are not needed.
+
+**Failed means `extraction_error` set and no values held** (21 September's
+definition, kept). Counted from `extracted_value`, not from the run, so a
+re-extraction that fails over values an earlier run wrote keeps its charge.
+A document refused for having no subject is not refunded, as before.
+
+Built in `lambda/extraction/app.py` (`_refund_if_nothing_read`, after the
+row is marked). `extraction.tf` gives the extraction role
+`rds-data:BeginTransaction`, `CommitTransaction` and `RollbackTransaction`,
+which `wallet.refund()` needs. Seven tests in
+`tests/test_extraction_failure.py`.
+
+**Not covered, and still open:** an extraction that crashes, times out or
+never starts. None of those set `extraction_error`, extraction has no
+on-failure destination, and nothing refunds them. Document 862 on tenant 2
+(filed and charged 23 September, OCR succeeded 20:29:52 UTC, no extraction
+log at any time) is that case on dev and stays charged. Also not done: the
+Review screen says "extraction failed" and does not say the charge came back.
