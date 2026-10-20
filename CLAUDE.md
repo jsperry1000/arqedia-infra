@@ -382,6 +382,14 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
     sperry@ebl-finance.com is now subscribed by email, from the CLI, as the
     topic and configuration set were made (`share.tf`). Still no MX record;
     a reply to `no-reply@` still goes nowhere.
+    **Amended 20 October 2026 (`mail_dns.tf`).** arqedia.com now has an MX
+    record, to Microsoft 365 in the tenant that runs ebl-finance.com.
+    `info@arqedia.com` is an alias on the shared mailbox
+    `info@ebl-finance.com`; a message from outside was received there. A
+    reply to `no-reply@` now bounces back to its sender instead of
+    vanishing. The root TXT record (SPF, now naming SES and Outlook, plus
+    Microsoft's `MS=`) is in Terraform; DKIM and `_dmarc` stay outside it,
+    as `auth.tf` decided.
 - **TPL-03** — `Configure.tsx`'s first-run screen offers bases while calling
   them memoranda.
 - **The marketing site's `PACKS` array** lists six memoranda where one ships.
