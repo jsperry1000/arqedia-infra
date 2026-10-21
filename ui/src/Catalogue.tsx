@@ -63,6 +63,10 @@ export function CatalogueView({ curator, onOpened }: {
   const [published, setPublished] = useState<Row[]>([]);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [saved, setSaved] = useState("");
+  // Marked memoranda the revision in use does not hold. They have no box to
+  // untick, so they are left out of the ticks and named instead: sent, they
+  // made the server refuse the whole save ("revision 30 does not hold ...").
+  const [dropped, setDropped] = useState<string[]>([]);
 
   // The memoranda in the draft where one is open, since that is what will be
   // edited; otherwise the live revision's. Read once, when the page opens.
@@ -89,7 +93,9 @@ export function CatalogueView({ curator, onOpened }: {
           setOffer(marks);
           setPublished(live.templates.map(
             (t) => ({ key: t.key, label: t.label || t.key })));
-          setTicked(new Set(marks.templates));
+          const held = new Set(live.templates.map((t) => t.key));
+          setTicked(new Set(marks.templates.filter((k) => held.has(k))));
+          setDropped(marks.templates.filter((k) => !held.has(k)));
         }
       } catch (err) {
         if (!gone) setLoadError(errorText(err));
@@ -164,6 +170,7 @@ export function CatalogueView({ curator, onOpened }: {
     setSaved("");
     const result = await api.setOffer(active, Array.from(ticked));
     setOffer(await api.offer());
+    setDropped([]);
     const said = [
       result.moved_from !== null
         ? `Moved from revision ${result.moved_from} to ${result.revision}.` : "",
@@ -280,6 +287,14 @@ export function CatalogueView({ curator, onOpened }: {
                   in use. Saving moves the whole catalogue to revision{" "}
                   {active}, memoranda and base together. Marks cannot span two
                   revisions.
+                </p>
+              )}
+
+              {dropped.length > 0 && (
+                <p className="working-note">
+                  Revision {active} does not hold {dropped.join(", ")}.{" "}
+                  {dropped.length === 1 ? "It comes" : "They come"} off the
+                  offer when this is saved.
                 </p>
               )}
 
