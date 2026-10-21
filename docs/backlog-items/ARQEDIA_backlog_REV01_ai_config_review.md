@@ -466,9 +466,10 @@ writes the whole field or section with that one value changed, as for any
 accept. The edit is sent only when the wording was actually changed, so an
 edit opened and left alone writes the suggestion as it came. The stale check
 is unchanged: it compares the draft with what the review read, edit or no
-edit. Five reviewer tests pin this. A document type's description, where it
-is sought and a new fact are not editable on the screen. The reviewer accepts
-an edit for all three, but they were not asked for.
+edit. Five reviewer tests pin this. Where a fact is sought and a new fact
+are not editable on the screen. The reviewer accepts an edit for both, but
+they were not asked for. A document type's description is editable since
+21 October 2026; see below.
 
 **Edit bindings.** A suggestion or question about an assembled section, whose
 reason or question uses the words bound, unbound, bind or binding, offers
@@ -512,6 +513,27 @@ failed session lapses on its own after a day.
 `eslint` are clean on `ReviewMode.tsx`, and `Configure.tsx`'s lint findings
 are exactly `main`'s. The jump to the section is measured against the held
 bar and has not been seen.
+
+---
+
+### Built, 21 October 2026
+
+On `feature/ai-review-edit-doctype`, not merged. Screen only, plus tests.
+
+**A document type's description can be edited before it is accepted**, as a
+section prompt and a field description can. The 2 October entry above said
+it was not editable on the screen, and was true until this branch.
+`document_type_description` is added to `EDITABLE` in `ReviewMode.tsx`;
+nothing else on the screen changes. The reviewer already took the edit
+(`_value()`, `_write()` through `save_document_type`), but no test exercised
+an edited one. Three now do: the edit reaches `save_document_type` with
+label, category, read_mode and always_ocr written back as they were; an
+empty edit is refused with nothing written or charged; and a stale
+suggestion is refused, edit or no edit.
+
+Where a fact is sought and a new fact remain not editable on the screen.
+
+**Unverified.** Not rendered, not walked. `tsc` and `eslint` only.
 
 ---
 
