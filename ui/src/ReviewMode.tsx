@@ -114,7 +114,7 @@ const KIND_LABEL: Record<ReviewSuggestion["kind"], string> = {
 
 /** The kinds whose suggested text a person may edit before accepting it. */
 const EDITABLE = new Set<ReviewSuggestion["kind"]>(
-  ["section_prompt", "field_description"]);
+  ["section_prompt", "field_description", "document_type_description"]);
 
 // What a suggestion or question says about binding - "bound", "unbound",
 // "bind", "binding". Matched on the words the reviewer wrote, nothing more.

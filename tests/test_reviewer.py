@@ -414,6 +414,41 @@ class AcceptTest(unittest.TestCase):
             self.accept(sid, value="My own wording.")
         self.assertEqual([c for c in self.calls if c[0] != "quote"], [])
 
+    def test_an_edited_type_description_is_written_whole_with_the_edit(self):
+        sid = self.suggest(kind="document_type_description",
+                           target={"type_key": "register"},
+                           current="A register.",
+                           proposed="The register of members.")
+        out = self.accept(sid, value="  The register of members and stakes.  ")
+        [(_, body)] = [c for c in self.calls
+                       if c[0] == "save_document_type"]
+        self.assertEqual(body["description"],
+                         "The register of members and stakes.")
+        # The rest of the type is written back as it was.
+        self.assertEqual(body["label"], "Register")
+        self.assertEqual(body["category"], "corporate")
+        self.assertEqual(body["read_mode"], "text")
+        self.assertTrue(body["always_ocr"])
+        self.assertEqual(out["value"], "The register of members and stakes.")
+
+    def test_an_empty_type_description_edit_is_refused(self):
+        sid = self.suggest(kind="document_type_description",
+                           target={"type_key": "register"},
+                           current="A register.",
+                           proposed="The register of members.")
+        with self.assertRaises(ValueError):
+            self.accept(sid, value="   ")
+        self.assertEqual([c for c in self.calls if c[0] != "quote"], [])
+        self.r.wallet.charge.assert_not_called()
+
+    def test_a_type_description_edit_is_refused_when_the_draft_moved(self):
+        sid = self.suggest(kind="document_type_description",
+                           target={"type_key": "register"},
+                           current="Something older.", proposed="New.")
+        with self.assertRaises(self.r.Stale):
+            self.accept(sid, value="My own wording.")
+        self.assertEqual([c for c in self.calls if c[0] != "quote"], [])
+
     def test_a_question_cannot_be_accepted(self):
         sid = self.suggest(kind="question", target={"field_key": "f_name"},
                            current=None, proposed=None, question="Which?")
