@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api, type ConfigState, type TemplatePack, type Validation } from "./api";
 import { Working } from "./shell";
 import { SEATS } from "./upgrade";
+import { useWorkspace, workspacesChanged } from "./workspace";
 
 /**
  * Get started (TPL-02 step 3). The front door, and where memoranda are chosen.
@@ -35,6 +36,14 @@ import { SEATS } from "./upgrade";
  * say what each memorandum actually contains.
  *
  * DRAFT COPY for the introduction, from ARQEDIA_UI_GUIDE_DRAFT.md.
+ *
+ * IT NAMES A WORKSPACE (PACK-01). Forking the base makes a workspace, and the
+ * server refuses a fork without a name and invents none. So wherever this
+ * press will make one - a new tenant's first run, and Add a workspace from
+ * the header - the screen asks for the name first, empty, and holds the
+ * button until it is given (decision of 22 October 2026). The workspace made
+ * becomes the active one before anything is taken into it, so the
+ * memoranda, and the publish, land there.
  */
 
 /** What Get started did, handed to the configuration screen, which says so at
@@ -59,11 +68,19 @@ export type Report = {
 // worse than either. The list starts empty and the person chooses here, which
 // is the whole point of the screen.
 
-export function WelcomeView({ stopAtDraft = false, onStarted }: {
+export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
+                             onStarted }: {
   stopAtDraft?: boolean;
+  /** Add a workspace, from the header: start a new one rather than add to
+   *  the active one. */
+  newWorkspace?: boolean;
   onStarted: (report: Report) => void;
 }) {
   const navigate = useNavigate();
+  const workspace = useWorkspace();
+  // The new workspace's name. Empty, with an example as a placeholder only:
+  // nothing is invented (decision of 22 October 2026).
+  const [name, setName] = useState("");
   const [state, setState] = useState<ConfigState | null>(null);
   const [packs, setPacks] = useState<TemplatePack[] | null>(null);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
@@ -88,6 +105,8 @@ export function WelcomeView({ stopAtDraft = false, onStarted }: {
 
   const firstRun = !!state && state.revisions.length === 0;
   const draftOpen = !!state?.draft;
+  // This press makes a workspace: a tenant's first, or another one.
+  const creating = newWorkspace || firstRun;
 
   /**
    * The base where there is none, then each ticked template, then one publish
@@ -101,15 +120,20 @@ export function WelcomeView({ stopAtDraft = false, onStarted }: {
     setError("");
     setRefused([]);
     const wanted = (packs ?? []).filter((p) => ticked.has(p.pack_key));
-    if (wanted.length === 0) return;
+    if (wanted.length === 0 || (creating && !name.trim())) return;
 
     try {
       setBusy("Reading your configuration");
       const now = await api.configState();
 
-      if (now.revisions.length === 0) {
-        setBusy("Setting up your facts and document types");
-        await api.forkBase();
+      if (newWorkspace || now.revisions.length === 0) {
+        setBusy("Setting up " + name.trim());
+        const made = await api.forkBase(name.trim());
+        // Active before anything is taken into it: every call from here
+        // carries the new workspace, so the memoranda and the publish land
+        // there and not in whichever was active before.
+        workspace.adopt(made.workspace_id);
+        workspacesChanged();
       }
 
       const added = {
@@ -180,7 +204,17 @@ export function WelcomeView({ stopAtDraft = false, onStarted }: {
 
   return (
     <div className="welcome">
-      {firstRun ? (
+      {newWorkspace ? (
+        <>
+          <h2>Add a workspace</h2>
+          <p className="muted">
+            A workspace holds its own facts, document types and memoranda, and
+            its own engagements and documents. Nothing in it is shared with
+            your other workspaces: a document needed in both is uploaded to
+            each.
+          </p>
+        </>
+      ) : firstRun ? (
         <>
           <p className="muted small">Draft copy</p>
           <h2>Welcome to ARQEDIA</h2>
@@ -255,7 +289,24 @@ export function WelcomeView({ stopAtDraft = false, onStarted }: {
         </>
       )}
 
-      <h3>{firstRun ? "Choose your memoranda" : "Which memorandum"}</h3>
+      {/* THE NAME, BEFORE ANYTHING ELSE IS ASKED (PACK-01). Required and
+          empty; the placeholder is an example, not a value. */}
+      {creating && (
+        <>
+          <h3>Name this workspace</h3>
+          <input value={name} maxLength={128}
+                 placeholder="For example, Trade Finance"
+                 aria-label="Workspace name"
+                 onChange={(e) => setName(e.target.value)} />
+          <p className="muted small">
+            What it is for, in a few words. You can hold several &mdash; one
+            per line of business &mdash; and choose between them at the top
+            of the page.
+          </p>
+        </>
+      )}
+
+      <h3>{creating ? "Choose its memoranda" : "Which memorandum"}</h3>
 
       {error && <p className="error">{error}</p>}
 
@@ -273,7 +324,9 @@ export function WelcomeView({ stopAtDraft = false, onStarted }: {
               marker pushed its count eighty pixels left of the others, and a
               column of numbers that does not line up cannot be compared -
               which is the one thing the numbers are here for. */}
-          {pack.held && (
+          {/* Held by the ACTIVE workspace. A workspace being made holds
+              nothing yet, so it is not said there. */}
+          {pack.held && !creating && (
             <span className="muted small">already yours</span>
           )}
           {/* The count says how much there is; the headings say what it is.
@@ -349,9 +402,11 @@ export function WelcomeView({ stopAtDraft = false, onStarted }: {
       {busy && <Working what={busy} />}
 
       <div className="form-actions">
-        <a className={"start-pill" + (busy || ticked.size === 0 ? " off" : "")}
-           onClick={busy || ticked.size === 0 ? undefined : start}>
-          {stopAtDraft ? "Add to my draft" : "Get started"}
+        <a className={"start-pill" + (busy || ticked.size === 0
+                                      || (creating && !name.trim()) ? " off" : "")}
+           onClick={busy || ticked.size === 0 || (creating && !name.trim())
+             ? undefined : start}>
+          {stopAtDraft && !creating ? "Add to my draft" : "Get started"}
         </a>
         {firstRun && (
           <a href="https://arqedia.com" target="_blank" rel="noreferrer">
@@ -360,6 +415,9 @@ export function WelcomeView({ stopAtDraft = false, onStarted }: {
         )}
         {ticked.size === 0 && !firstRun && (
           <span className="muted small">Tick a memorandum to begin.</span>
+        )}
+        {creating && !name.trim() && (
+          <span className="muted small">Name the workspace to begin.</span>
         )}
       </div>
     </div>

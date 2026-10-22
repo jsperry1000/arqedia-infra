@@ -19,20 +19,20 @@ import { Working } from "./shell";
  * it is never something a person does by side effect while adding a report.
  */
 
-/** A draft to work in. A tenant with nothing configured takes the base first;
- *  one with only a published revision opens a copy of it.
+/** A draft to work in: one with only a published revision opens a copy of
+ *  it. False where there is nothing configured at all, and the caller sends
+ *  the person to Get started.
  *
- *  THE BASE IS TAKEN BY KEY. This forked whatever packs() returned first, and
- *  packs() sorted by revision descending - so adding a pack silently changed
- *  what a new tenant got. Memoranda are not forked here at all: that is the
- *  ARQEDIA chooser, where there is room to say what each one contains. */
-async function ensureDraft() {
-  let state = await api.configState();
-  if (!state.draft && state.revisions.length === 0) {
-    await api.forkBase();
-    state = await api.configState();
-  }
+ *  THE BASE IS NOT FORKED HERE ANY MORE (PACK-01). Forking it makes a
+ *  workspace, which needs a name, and this page has nowhere to ask for one -
+ *  Get started does, and is the one door. Memoranda were never forked here:
+ *  that is the ARQEDIA chooser, where there is room to say what each one
+ *  contains. */
+async function ensureDraft(): Promise<boolean> {
+  const state = await api.configState();
+  if (!state.draft && state.revisions.length === 0) return false;
   if (!state.draft) await api.openDraft();
+  return true;
 }
 
 function errorText(err: unknown) {
@@ -118,7 +118,7 @@ export function CatalogueView({ curator, onOpened }: {
   }
 
   const open = (key: string) => run("Opening", async () => {
-    await ensureDraft();
+    if (!(await ensureDraft())) { onOpened("/welcome"); return; }
     onOpened(`/configure?report=${encodeURIComponent(key)}`);
   });
 
@@ -133,7 +133,7 @@ export function CatalogueView({ curator, onOpened }: {
   // report already exists, because saving the same key again would rename
   // that one rather than add another.
   const scratch = () => run("Creating", async () => {
-    await ensureDraft();
+    if (!(await ensureDraft())) { onOpened("/welcome"); return; }
     const taken = new Set((await api.draft()).templates.map((t) => t.key));
     let n = 1;
     while (taken.has(n === 1 ? "untitled-report" : `untitled-report-${n}`)) n++;
@@ -148,7 +148,7 @@ export function CatalogueView({ curator, onOpened }: {
   // A report of the person's own: the proposer page, which carries its own
   // upload (UX-21). No file dialog fires from here.
   const fromReport = () => run("Opening", async () => {
-    await ensureDraft();
+    if (!(await ensureDraft())) { onOpened("/welcome"); return; }
     onOpened("/configure", { propose: true });
   });
 

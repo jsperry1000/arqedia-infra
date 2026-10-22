@@ -89,7 +89,7 @@ class NothingIsDeletedTest(unittest.TestCase):
 
     def test_archiving_an_engagement_deletes_nothing(self):
         db = self.every_statement(lambda db: self.app.set_engagement_state(
-            TENANT, WHO, NAME, "archived"))
+            TENANT, 3, WHO, NAME, "archived"))
         self.assertNotIn("DELETE", db.all())
         self.assertNotIn("DROP", db.all())
         self.assertNotIn("TRUNCATE", db.all())
@@ -101,7 +101,7 @@ class NothingIsDeletedTest(unittest.TestCase):
 
     def test_restoring_deletes_nothing(self):
         for run in (
-            lambda db: self.app.set_engagement_state(TENANT, WHO, NAME, "open"),
+            lambda db: self.app.set_engagement_state(TENANT, 3, WHO, NAME, "open"),
             lambda db: self.app.set_memo_state(TENANT, WHO, 11, "live"),
         ):
             db = self.every_statement(run)
@@ -111,7 +111,7 @@ class NothingIsDeletedTest(unittest.TestCase):
         """Nothing touches the document table at all: the column that moves
         is on the engagement, and the documents are where they were."""
         db = self.every_statement(lambda db: self.app.set_engagement_state(
-            TENANT, WHO, NAME, "archived"))
+            TENANT, 3, WHO, NAME, "archived"))
         self.assertNotIn("document", db.all())
         self.assertNotIn("extracted_value", db.all())
 
@@ -119,7 +119,7 @@ class NothingIsDeletedTest(unittest.TestCase):
         """13.3's decision. A memorandum may have been sent to a lender;
         tidying the matter it came out of must not withdraw it."""
         db = self.every_statement(lambda db: self.app.set_engagement_state(
-            TENANT, WHO, NAME, "archived"))
+            TENANT, 3, WHO, NAME, "archived"))
         self.assertNotIn("memo", db.all())
 
 
@@ -130,7 +130,7 @@ class ArchiveEngagementTest(unittest.TestCase):
     def act(self, status, engagement=(ENGAGEMENT_ID, NAME, None, "open")):
         db = Db(engagement=engagement)
         with mock.patch.object(self.app, "_sql", db.sql):
-            out = self.app.set_engagement_state(TENANT, WHO, NAME, status)
+            out = self.app.set_engagement_state(TENANT, 3, WHO, NAME, status)
         return out, db
 
     def test_archiving_records_who_and_when(self):
@@ -228,7 +228,7 @@ class ListsLeaveArchivedOutTest(unittest.TestCase):
     def engagements(self, include):
         db = Db()
         with mock.patch.object(self.app, "_sql", db.sql):
-            self.app.list_engagements(TENANT, include)
+            self.app.list_engagements(TENANT, 3, include)
         return db.statements[0]
 
     def memos(self, include):
@@ -266,7 +266,7 @@ class ListsLeaveArchivedOutTest(unittest.TestCase):
                 lambda s, p=None, tx=None: rows(
                     (ENGAGEMENT_ID, NAME, None, 0, None,
                      "archived", WHO, "2026-09-22 10:00:00"))):
-            [row] = self.app.list_engagements(TENANT, True)
+            [row] = self.app.list_engagements(TENANT, 3, True)
         self.assertEqual(row["status"], "archived")
         self.assertEqual(row["archived_by"], WHO)
         self.assertEqual(row["archived_at"], "2026-09-22 10:00:00")

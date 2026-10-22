@@ -206,7 +206,7 @@ class OneJobPerFileTest(unittest.TestCase):
             wallet.charge.return_value = {"entry_id": 9}
             textract.start.return_value = ("job-1", "text")
             out = self.app.file_documents(
-                5, "clerk@firm.com", "MANTY",
+                5, 3, "clerk@firm.com", "MANTY",
                 [{"document_id": 1058}, {"document_id": 1059}], "key-1")
 
         self.assertEqual(textract.start.call_count, 1)

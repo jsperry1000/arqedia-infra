@@ -193,7 +193,7 @@ class FilingUsesTheChoiceTest(unittest.TestCase):
                 "Body": mock.MagicMock(read=lambda: b"{}")}
             try:
                 out = self.app.file_documents(
-                    TENANT, "clerk@firm.com", ENGAGEMENT, decisions, "key-1")
+                    TENANT, 3, "clerk@firm.com", ENGAGEMENT, decisions, "key-1")
                 return out, None, wallet, db
             except ValueError as exc:
                 return None, exc, wallet, db

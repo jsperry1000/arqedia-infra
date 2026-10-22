@@ -90,7 +90,7 @@ class ResolveTest(unittest.TestCase):
 
     def resolve(self, db, name=NAME):
         with mock.patch.object(self.app, "_sql", db.sql):
-            return self.app.engagement_named(TENANT, name)
+            return self.app.engagement_named(TENANT, 3, name)
 
     def test_it_finds_the_row(self):
         db = Recorder()
@@ -133,7 +133,7 @@ class ListEngagementsTest(unittest.TestCase):
     def listing(self, *listed):
         db = Recorder(listed=listed)
         with mock.patch.object(self.app, "_sql", db.sql):
-            return self.app.list_engagements(TENANT), db
+            return self.app.list_engagements(TENANT, 3), db
 
     def test_an_engagement_with_no_documents_appears(self):
         """THE POINT OF STAGE 4 FOR THIS READ. The old list grouped document
@@ -348,7 +348,7 @@ class OpenEngagementTest(unittest.TestCase):
     def open(self, name=NAME, exists=False):
         db = self.Db(exists=exists)
         with mock.patch.object(self.app, "_sql", db.sql):
-            out = self.app.open_engagement(TENANT, "a@firm.com", name)
+            out = self.app.open_engagement(TENANT, 3, "a@firm.com", name)
         return out, db
 
     def test_a_new_name_is_created(self):
@@ -381,7 +381,8 @@ class OpenEngagementTest(unittest.TestCase):
         to exist. A second create here would be a second rule."""
         _, db = self.open()
         self.assertTrue(any(
-            s.startswith("INSERT INTO engagement (tenant_id, name, created_by)")
+            s.startswith("INSERT INTO engagement "
+                         "(tenant_id, workspace_id, name, created_by)")
             for s, _ in db.statements))
 
     def test_a_name_that_cleans_to_nothing_is_refused(self):

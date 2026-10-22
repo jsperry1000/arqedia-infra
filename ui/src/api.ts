@@ -1,6 +1,7 @@
 import { fetchAuthSession } from "aws-amplify/auth";
 import { config } from "./config";
 import type { BatchMemo } from "./shareBatch";
+import { activeWorkspace } from "./workspace";
 
 // Every request carries the token. The tenant travels inside it, signed:
 // nothing here says which tenant we are, and nothing here could.
@@ -37,9 +38,20 @@ export function statusOf(err: unknown): number {
   return err instanceof ApiError ? err.status : 0;
 }
 
+/** The path with the active workspace on it (PACK-01). Every route that reads
+ *  or writes a workspace's configuration, documents or memoranda takes
+ *  ?workspace=; the rest ignore it. Added here, once, so no screen has to
+ *  remember it - and none can send a request into the wrong workspace by
+ *  forgetting. A path naming its own workspace is left as it is. */
+function scoped(path: string): string {
+  const id = activeWorkspace();
+  if (id === null || /[?&]workspace=/.test(path)) return path;
+  return path + (path.includes("?") ? "&" : "?") + "workspace=" + id;
+}
+
 async function call(path: string, init: RequestInit = {}) {
   const headers = await authHeaders();
-  const res = await fetch(config.apiUrl + path, { ...init, headers });
+  const res = await fetch(config.apiUrl + scoped(path), { ...init, headers });
   if (!res.ok) throw new ApiError(res.status, await res.text());
   return res.json();
 }
@@ -516,6 +528,9 @@ export type DocumentDetail = {
 
 export type Settings = {
   name: string;
+  /** The tenant's workspaces, for the selector (PACK-01). Every one, for
+   *  every seat: which workspaces a member may see is not built yet. */
+  workspaces: { workspace_id: number; name: string }[];
   plan: string;
   /** The caller's own role, from the token. Branding is an administrator act,
    *  and the server refuses a member - this is what lets the screen say so
@@ -591,6 +606,8 @@ export type Draft = {
 };
 
 export type ConfigState = {
+  /** The workspace this describes (PACK-01). 0 for a tenant with none yet. */
+  workspace_id: number;
   active_revision: number;
   revisions: {
     revision: number; status: string; note: string | null;
@@ -895,16 +912,22 @@ export const api = {
 
   packs: (): Promise<{ packs: Pack[] }> => call("/config/packs"),
 
-  forkPack: (revision: number) =>
+  forkPack: (revision: number, name: string) =>
     call("/config/fork", {
       method: "POST",
-      body: JSON.stringify({ revision }),
+      body: JSON.stringify({ revision, name }),
     }),
 
   // The base, by key rather than by position. Nothing chooses a pack by
   // where it happens to sit in a list any more.
-  forkBase: (): Promise<{ forked: boolean; revision: number }> =>
-    call("/config/fork", { method: "POST", body: "{}" }),
+  //
+  // IT MAKES A WORKSPACE (PACK-01), named here: the server refuses a fork
+  // without a name and invents none. The new workspace's id comes back, and
+  // the caller makes it the active one before taking anything into it.
+  forkBase: (name: string): Promise<{
+    forked: boolean; revision: number; workspace_id: number; name: string;
+  }> =>
+    call("/config/fork", { method: "POST", body: JSON.stringify({ name }) }),
 
   // The memoranda we ship, what each contains, and whether this tenant
   // already holds it.

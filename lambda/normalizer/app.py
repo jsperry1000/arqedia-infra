@@ -7,7 +7,12 @@ does NOT start extraction: filing does that, once a person has confirmed the
 proposal.
 
 Key layout in the docs bucket:
-    tenants/<tenant_id>/docs/<engagement_id>/<file_id>--<filename>
+    tenants/<tenant_id>/w/<workspace_id>/docs/<engagement>/<filename>
+    tenants/<tenant_id>/docs/<engagement>/<filename>      before workspaces
+
+The workspace is in the key (PACK-01) for the reason the tenant is: the API
+signed it, and the key path cannot race. A key without one was signed before
+workspaces existed, and the tenant's only workspace is its answer.
 
 tenant_id is taken from the KEY PATH, never from a tag. Tags are eventually
 consistent on a fresh object and were returned null intermittently in the eBL
@@ -49,7 +54,8 @@ _THIN_CHARS_PER_PAGE = 200
 _IMAGE_BYTES_PER_PAGE = 100000
 
 _KEY_RE = re.compile(
-    r"^tenants/(?P<tenant>\d+)/docs/(?P<engagement>[^/]+)/(?P<file>.+)$")
+    r"^tenants/(?P<tenant>\d+)/(?:w/(?P<workspace>\d+)/)?"
+    r"docs/(?P<engagement>[^/]+)/(?P<file>.+)$")
 
 
 def _is_thin(text, pages, byte_size):
@@ -160,10 +166,13 @@ def _parse_key(key):
     m = _KEY_RE.match(key)
     if not m:
         raise ValueError("key does not match the expected layout: " + key)
-    return int(m.group("tenant")), m.group("engagement"), m.group("file")
+    workspace = m.group("workspace")
+    return (int(m.group("tenant")),
+            int(workspace) if workspace is not None else None,
+            m.group("engagement"), m.group("file"))
 
 
-def _engagement_id(tenant_id, name, created_by=None):
+def _engagement_id(tenant_id, workspace_id, name, created_by=None):
     """The engagement's own row, created if this name has not been seen.
 
     MIRRORED IN lambda/api/app.py's engagement_id, which creates the row when
@@ -184,23 +193,26 @@ def _engagement_id(tenant_id, name, created_by=None):
     if not name:
         return None
 
+    # In its workspace (PACK-01, migration 042), as the API's is: the same
+    # name in two workspaces is two engagements.
+    where = [_p("t", tenant_id), _p("w", workspace_id or 0), _p("n", name)]
     found = _sql(
         "SELECT engagement_id FROM engagement "
-        "WHERE tenant_id = :t AND name = :n",
-        [_p("t", tenant_id), _p("n", name)]).get("records", [])
+        "WHERE tenant_id = :t AND workspace_id = :w AND name = :n",
+        where).get("records", [])
     if found:
         return found[0][0].get("longValue")
 
     _sql(
-        "INSERT INTO engagement (tenant_id, name, created_by) "
-        "VALUES (:t, :n, :by) "
+        "INSERT INTO engagement (tenant_id, workspace_id, name, created_by) "
+        "VALUES (:t, :w, :n, :by) "
         "ON DUPLICATE KEY UPDATE engagement_id = engagement_id",
-        [_p("t", tenant_id), _p("n", name), _p("by", created_by)])
+        where + [_p("by", created_by)])
 
     found = _sql(
         "SELECT engagement_id FROM engagement "
-        "WHERE tenant_id = :t AND name = :n",
-        [_p("t", tenant_id), _p("n", name)]).get("records", [])
+        "WHERE tenant_id = :t AND workspace_id = :w AND name = :n",
+        where).get("records", [])
     return found[0][0].get("longValue") if found else None
 
 
@@ -313,7 +325,8 @@ def _record_refusal(tenant_id, engagement, filename, src_bucket, src_key,
     can fill, and a lost refusal is the defect this whole function exists to
     close."""
     try:
-        engagement_id = _engagement_id(tenant_id, engagement, uploaded_by)
+        engagement_id = _engagement_id(tenant_id, workspace_id, engagement,
+                                       uploaded_by)
     except Exception as exc:  # noqa: BLE001 - the row matters more
         print("[engagement-unresolved] key=%s %r" % (src_key, exc))
         engagement_id = None
@@ -388,7 +401,8 @@ def _record_document(envelope):
             # file as unreadable, which is a row a person can see and retry -
             # a document row with a silent gap in it is not.
             _p("engagement_id", _engagement_id(
-                envelope["tenant_id"], envelope.get("engagement"),
+                envelope["tenant_id"], envelope["workspace_id"],
+                envelope.get("engagement"),
                 envelope.get("uploaded_by"))),
             _p("s3_bucket", envelope["source_bucket"]),
             _p("s3_key", envelope["source_key"]),
@@ -447,7 +461,7 @@ def lambda_handler(event, context):
     if src_key.endswith(".analysed.json") or src_key.endswith(".normalized.json"):
         return {"status": "skipped", "reason": "already-processed"}
 
-    tenant_id, engagement, filename = _parse_key(src_key)
+    tenant_id, key_workspace, engagement, filename = _parse_key(src_key)
 
     obj = _s3.get_object(Bucket=src_bucket, Key=src_key)
     body = obj["Body"].read()
@@ -468,16 +482,15 @@ def lambda_handler(event, context):
     # input is a directory picker.
     source_folder = (obj.get("Metadata") or {}).get("source-folder")
 
-    # THE WORKSPACE IT WAS UPLOADED INTO (PACK-01), by the same route: the
-    # API resolved it against the tenant and signed it onto the link, and
-    # it is checked against the tenant again here, because metadata is
-    # whatever the browser sent. Absent on a link signed before workspaces,
-    # where the tenant's only workspace is the answer. Unresolvable - several
-    # workspaces and none named, or one that is not this tenant's - and the
-    # file is refused with a row, never classified against a guess.
+    # THE WORKSPACE IT WAS UPLOADED INTO (PACK-01), from the key: the API
+    # resolved it against the tenant and built the key from it. Checked
+    # against the tenant again here all the same - a key is only a string.
+    # A key with none was signed before workspaces, and the tenant's only
+    # workspace is the answer. Unresolvable - several workspaces and none
+    # named, or one that is not this tenant's - and the file is refused with
+    # a row, never classified against a guess.
     try:
-        workspace_id = config.workspace(
-            tenant_id, (obj.get("Metadata") or {}).get("workspace-id"))
+        workspace_id = config.workspace(tenant_id, key_workspace)
     except ValueError as exc:
         print("[workspace-unresolved] key=%s %s" % (src_key, exc))
         workspace_id = None

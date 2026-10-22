@@ -89,7 +89,7 @@ class OcrModeTest(unittest.TestCase):
             s3.get_object.return_value = {
                 "Body": mock.MagicMock(read=lambda: b"{}")}
             out = self.app.file_documents(
-                TENANT, "clerk@firm.com", ENGAGEMENT,
+                TENANT, 3, "clerk@firm.com", ENGAGEMENT,
                 [{"document_id": 7}], "key-1")
         return out, start_ocr
 

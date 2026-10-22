@@ -115,7 +115,7 @@ class ApiResolveTest(unittest.TestCase):
     def resolve(self, exists, name=NAME, by="partner@firm.com"):
         db = Db(exists=exists)
         with mock.patch.object(self.app, "_sql", db.sql):
-            return self.app.engagement_id(TENANT, name, by), db
+            return self.app.engagement_id(TENANT, 3, name, by), db
 
     def test_a_name_never_seen_before_is_created(self):
         found, db = self.resolve(exists=False)
@@ -164,7 +164,7 @@ class ApiUploadTest(unittest.TestCase):
                                       NAME, "Articles.pdf")
 
         self.assertEqual(out["key"],
-                         "tenants/7/docs/Meridian-Trading/Articles.pdf")
+                         "tenants/7/w/3/docs/Meridian-Trading/Articles.pdf")
         self.assertIn("INSERT INTO engagement", db.kinds())
         # created_by is recorded HERE or nowhere: the normalizer meets the
         # same name later with only an object and its metadata.
@@ -345,9 +345,9 @@ class NormalizerTest(unittest.TestCase):
 
         api_db, norm_db = Db(exists=False), Db(exists=False)
         with mock.patch.object(api, "_sql", api_db.sql):
-            api.engagement_id(TENANT, NAME, "partner@firm.com")
+            api.engagement_id(TENANT, 3, NAME, "partner@firm.com")
         with mock.patch.object(self.norm, "_sql", norm_db.sql):
-            self.norm._engagement_id(TENANT, NAME, "partner@firm.com")
+            self.norm._engagement_id(TENANT, 3, NAME, "partner@firm.com")
 
         self.assertEqual([s for s, _ in api_db.statements],
                          [s for s, _ in norm_db.statements])

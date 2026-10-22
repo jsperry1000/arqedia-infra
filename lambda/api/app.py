@@ -329,8 +329,10 @@ def _label_for(registry, field_id):
 
 # --- engagements -----------------------------------------------------------
 
-def engagement_id(tenant_id, name, created_by=None):
-    """The engagement's own row, created the first time the name is seen.
+def engagement_id(tenant_id, workspace_id, name, created_by=None):
+    """The engagement's own row, created the first time the name is seen
+    IN THIS WORKSPACE (PACK-01, migration 042). The same name in two
+    workspaces is two engagements.
 
     MIRRORED IN lambda/normalizer/app.py, which stamps the id on every
     document row it writes and meets a name this has usually already
@@ -354,23 +356,24 @@ def engagement_id(tenant_id, name, created_by=None):
     if not name:
         return None
 
+    where = [_p("t", tenant_id), _p("w", workspace_id), _p("n", name)]
     found = _sql(
         "SELECT engagement_id FROM engagement "
-        "WHERE tenant_id = :t AND name = :n",
-        [_p("t", tenant_id), _p("n", name)]).get("records", [])
+        "WHERE tenant_id = :t AND workspace_id = :w AND name = :n",
+        where).get("records", [])
     if found:
         return _col(found[0], 0)
 
     _sql(
-        "INSERT INTO engagement (tenant_id, name, created_by) "
-        "VALUES (:t, :n, :by) "
+        "INSERT INTO engagement (tenant_id, workspace_id, name, created_by) "
+        "VALUES (:t, :w, :n, :by) "
         "ON DUPLICATE KEY UPDATE engagement_id = engagement_id",
-        [_p("t", tenant_id), _p("n", name), _p("by", created_by)])
+        where + [_p("by", created_by)])
 
     found = _sql(
         "SELECT engagement_id FROM engagement "
-        "WHERE tenant_id = :t AND name = :n",
-        [_p("t", tenant_id), _p("n", name)]).get("records", [])
+        "WHERE tenant_id = :t AND workspace_id = :w AND name = :n",
+        where).get("records", [])
     return _col(found[0], 0) if found else None
 
 
@@ -408,7 +411,7 @@ NO_TEMPLATE_PUBLISHED = (
     "generate. Take one under Template Catalogue and publish it.")
 
 
-def engagement_subject(tenant_id, name):
+def engagement_subject(tenant_id, workspace_id, name):
     """The subject recorded for an engagement, or None.
 
     Resolved by the CLEANED name, because that is the name the row carries:
@@ -417,14 +420,15 @@ def engagement_subject(tenant_id, name):
     person typed with a space in it."""
     found = _sql(
         "SELECT subject_name FROM engagement "
-        "WHERE tenant_id = :t AND name = :n",
-        [_p("t", tenant_id), _p("n", _clean(name))]).get("records", [])
+        "WHERE tenant_id = :t AND workspace_id = :w AND name = :n",
+        [_p("t", tenant_id), _p("w", workspace_id),
+         _p("n", _clean(name))]).get("records", [])
     if not found:
         return None
     return (_col(found[0], 0) or "").strip() or None
 
 
-def set_subject(tenant_id, email, engagement, subject_name):
+def set_subject(tenant_id, workspace_id, email, engagement, subject_name):
     """Name the subject, or change it.
 
     ONE ROUTE FOR BOTH. The row is resolved or created by name through
@@ -459,7 +463,7 @@ def set_subject(tenant_id, email, engagement, subject_name):
         raise ValueError("a subject can be at most %d characters"
                          % _SUBJECT_MAX)
 
-    found = engagement_id(tenant_id, name, email)
+    found = engagement_id(tenant_id, workspace_id, name, email)
     if found is None:
         raise ValueError("that engagement could not be opened")
 
@@ -473,7 +477,7 @@ def set_subject(tenant_id, email, engagement, subject_name):
             "subject_name": subject}
 
 
-def engagement_named(tenant_id, engagement):
+def engagement_named(tenant_id, workspace_id, engagement):
     """The engagement row behind a name in the address, or None.
 
     THE ONE PLACE A NAME BECOMES A ROW (13.3 stage 4). Every read below
@@ -492,8 +496,9 @@ def engagement_named(tenant_id, engagement):
     in it."""
     found = _sql(
         "SELECT engagement_id, name, subject_name, status FROM engagement "
-        "WHERE tenant_id = :t AND name = :n",
-        [_p("t", tenant_id), _p("n", _clean(engagement))]).get("records", [])
+        "WHERE tenant_id = :t AND workspace_id = :w AND name = :n",
+        [_p("t", tenant_id), _p("w", workspace_id),
+         _p("n", _clean(engagement))]).get("records", [])
     if not found:
         return None
     return {"engagement_id": _col(found[0], 0),
@@ -502,7 +507,7 @@ def engagement_named(tenant_id, engagement):
             "status": _col(found[0], 3)}
 
 
-def open_engagement(tenant_id, email, engagement):
+def open_engagement(tenant_id, workspace_id, email, engagement):
     """Open an engagement by name, creating its row where there is none.
 
     WHY THIS EXISTS (13.3 stage 4). The reads now ask engagement_id, so a
@@ -528,11 +533,11 @@ def open_engagement(tenant_id, email, engagement):
     if not name:
         raise ValueError("an engagement needs a name")
 
-    found = engagement_named(tenant_id, name)
+    found = engagement_named(tenant_id, workspace_id, name)
     if found:
         return dict(found, created=False)
 
-    opened = engagement_id(tenant_id, name, email)
+    opened = engagement_id(tenant_id, workspace_id, name, email)
     if opened is None:
         raise ValueError("that engagement could not be opened")
 
@@ -564,7 +569,8 @@ ENGAGEMENT_STATUSES = ("open", "archived")
 MEMO_STATES = ("live", "archived")
 
 
-def set_engagement_state(tenant_id, email, engagement, status):
+def set_engagement_state(tenant_id, workspace_id, email, engagement,
+                         status):
     """Archive an engagement, or bring it back.
 
     Its memoranda are untouched: an archived engagement's memoranda stay live
@@ -577,7 +583,7 @@ def set_engagement_state(tenant_id, email, engagement, status):
     if status not in ENGAGEMENT_STATUSES:
         raise ValueError("an engagement is open or archived, not %r" % status)
 
-    found = engagement_named(tenant_id, engagement)
+    found = engagement_named(tenant_id, workspace_id, engagement)
     if found is None:
         return None
 
@@ -643,8 +649,11 @@ def set_memo_state(tenant_id, email, memo_id, state):
             "state": state, "revisions": revisions}
 
 
-def list_engagements(tenant_id, include_archived=False):
-    """What this tenant has, and what each one is about.
+def list_engagements(tenant_id, workspace_id, include_archived=False):
+    """What this workspace has, and what each one is about.
+
+    ONE WORKSPACE'S (PACK-01). An engagement belongs to the workspace it was
+    opened in (migration 042), and the list shows the active one's only.
 
     FROM THE ENGAGEMENT TABLE, not from the documents' storage keys (13.3
     stage 4). The list used to be GROUP BY over a substring of s3_key, which
@@ -684,12 +693,13 @@ def list_engagements(tenant_id, include_archived=False):
                ON d.tenant_id = e.tenant_id
               AND d.engagement_id = e.engagement_id
         WHERE e.tenant_id = :tenant_id
+          AND e.workspace_id = :workspace_id
           AND (e.status = 'open' OR :include_archived)
         GROUP BY e.engagement_id, e.name, e.subject_name, e.created_at,
                  e.status, e.archived_by, e.archived_at
         ORDER BY COALESCE(MAX(d.filed_at), e.created_at) DESC
         """,
-        [_p("tenant_id", tenant_id),
+        [_p("tenant_id", tenant_id), _p("workspace_id", workspace_id),
          _p("include_archived", bool(include_archived))],
     )
     return [
@@ -960,7 +970,8 @@ def _fail_and_refund(tenant_id, email, document_id, charge_entry_id, why):
     return 1 if given.get("refunded") else 0
 
 
-def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
+def file_documents(tenant_id, workspace_id, email, engagement, decisions,
+                   idempotency_key):
     """Confirm types and file. The deliberate act that starts extraction, and
     the point at which money changes hands.
 
@@ -987,7 +998,7 @@ def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
     charge. Extraction carries a second line of its own for a document that
     reaches it by some other route; this one is the one a person meets.
     """
-    held = engagement_subject(tenant_id, engagement)
+    held = engagement_subject(tenant_id, workspace_id, engagement)
     if not held:
         raise ValueError(SUBJECT_REQUIRED)
 
@@ -2357,7 +2368,7 @@ def _has_unsaved(tenant_id, email, memo_id):
 _ALL_MEMOS_LIMIT = 200
 
 
-def list_all_memos(tenant_id, email):
+def list_all_memos(tenant_id, workspace_id, email):
     """Every live memorandum this tenant holds, across engagements, newest
     first - what "Share a memo" picks from (feature/share-multi-memo).
 
@@ -2368,7 +2379,9 @@ def list_all_memos(tenant_id, email):
     unsaved IS PER PERSON, read from the same kept working copy the memo page
     keeps. A memorandum with unsaved changes is shown and not selectable, as
     its own Share button is disabled. The reads run side by side: one small
-    object per memorandum, and a list of them one at a time would be slow."""
+    object per memorandum, and a list of them one at a time would be slow.
+
+    THE ACTIVE WORKSPACE'S (PACK-01), as every other list is."""
     from concurrent.futures import ThreadPoolExecutor
 
     rows = _sql(
@@ -2380,11 +2393,11 @@ def list_all_memos(tenant_id, email):
         LEFT JOIN engagement e
                ON e.engagement_id = m.engagement_id
               AND e.tenant_id = m.tenant_id
-        WHERE m.tenant_id = :t AND m.state = 'live'
+        WHERE m.tenant_id = :t AND m.workspace_id = :w AND m.state = 'live'
         ORDER BY m.generated_at DESC, m.memo_id DESC
         LIMIT %d
         """ % _ALL_MEMOS_LIMIT,
-        [_p("t", tenant_id)]).get("records", [])
+        [_p("t", tenant_id), _p("w", workspace_id)]).get("records", [])
 
     memos = [{
         "memo_id": _col(r, 0),
@@ -2472,6 +2485,13 @@ def get_settings(tenant_id, role=None):
 
     return {
         "name": _col(r, 0),
+        # The tenant's workspaces, for the selector (PACK-01). Here because
+        # this route is open to any seat and needs no workspace to answer -
+        # a screen with several to choose from has to be told them before it
+        # can name one. EVERY WORKSPACE, FOR EVERY SEAT: assigning
+        # workspaces to members is Prompt 5 and not built.
+        "workspaces": [{"workspace_id": w["workspace_id"], "name": w["name"]}
+                       for w in config.workspaces(tenant_id)],
         "plan": plan,
         # What the token says this caller is, echoed rather than decided here.
         "role": role,
@@ -2663,7 +2683,7 @@ def upload_url(tenant_id, workspace_id, email, engagement, filename,
     # Nothing reads it yet: every list still matches on the S3 key, and
     # switching them over is stage 4. What this closes is the older half of
     # the problem, that an engagement with no documents did not exist at all.
-    engagement_id(tenant_id, engagement, email)
+    engagement_id(tenant_id, workspace_id, engagement, email)
 
     # THE FOLDER TRAVELS AS METADATA, as the uploader's address already does,
     # and for the same reason: this function knows it and the normalizer -
@@ -2681,14 +2701,25 @@ def upload_url(tenant_id, workspace_id, email, engagement, filename,
     if folder:
         metadata["source-folder"] = folder
 
-    # THE WORKSPACE TRAVELS AS METADATA TOO (PACK-01), for the same reason:
-    # resolved here, where the request is, and read by the normalizer, which
-    # classifies against that workspace's document types alone (decision of
-    # 22 October 2026: the workspace is chosen before upload). Always signed,
-    # so the browser always sends it back - the value is returned below.
-    metadata["workspace-id"] = str(workspace_id)
-
-    key = "tenants/%d/docs/%s/%s" % (tenant_id, engagement, filename)
+    # THE WORKSPACE IS IN THE KEY (PACK-01). Resolved here, where the request
+    # is, and read off the key by the normalizer, which classifies against
+    # that workspace's document types alone (decision of 22 October 2026:
+    # the workspace is chosen before upload).
+    #
+    # NOT METADATA. It was signed as x-amz-meta-workspace-id, and every
+    # header a presigned PUT is signed with must be sent back - a screen that
+    # did not send it had every upload refused by S3. And in the key it
+    # keeps two workspaces' engagements of one name, and the files in them,
+    # from landing on the same object: the second upload would have replaced
+    # the first.
+    #
+    # Workspace 0 - the pack tenant, which does not upload - keeps the layout
+    # every document before workspaces was stored under.
+    if workspace_id:
+        key = "tenants/%d/w/%d/docs/%s/%s" % (tenant_id, int(workspace_id),
+                                              engagement, filename)
+    else:
+        key = "tenants/%d/docs/%s/%s" % (tenant_id, engagement, filename)
     url = _s3.generate_presigned_url(
         "put_object",
         Params={"Bucket": DOCS_BUCKET, "Key": key,
@@ -2717,8 +2748,8 @@ def upload_url(tenant_id, workspace_id, email, engagement, filename,
             # at all - which is what keeps the request and the signature in
             # step (18.7).
             "source_folder": folder,
-            # Signed on every link: the browser sends it back as
-            # x-amz-meta-workspace-id, or S3 refuses the upload.
+            # Which workspace the file was filed into, for the screen to say.
+            # Carried by the key, so the browser sends nothing for it.
             "workspace_id": workspace_id}
 
 
@@ -2833,7 +2864,7 @@ def generate(tenant_id, workspace_id, email, engagement, template_key=None,
     #
     # Before the charge for the same reason the template is: an engagement
     # that does not exist must not take a dollar on its way to failing.
-    found = engagement_named(tenant_id, engagement)
+    found = engagement_named(tenant_id, workspace_id, engagement)
     if found is None:
         raise ValueError(NO_SUCH_ENGAGEMENT % engagement)
 
@@ -3407,7 +3438,7 @@ def _dispatch(event, context):
             # route for a string transformation is a route to maintain.
             asked = (query.get("name") or "").strip()
             answer = {"engagements": list_engagements(
-                tenant_id, _asked_for_archived(query))}
+                tenant_id, ws(), _asked_for_archived(query))}
             if asked:
                 answer["cleaned"] = _clean(asked)
             return _reply(200, answer)
@@ -3417,7 +3448,7 @@ def _dispatch(event, context):
         # routes would be two things to keep in step (14.1, 14.3).
         if route == "PUT /engagements/{id}/state":
             body = json.loads(event.get("body") or "{}")
-            changed = set_engagement_state(tenant_id, email, engagement,
+            changed = set_engagement_state(tenant_id, ws(), email, engagement,
                                            body.get("status", ""))
             if changed is None:
                 return _reply(404, {"error": NO_SUCH_ENGAGEMENT % engagement})
@@ -3429,7 +3460,7 @@ def _dispatch(event, context):
         if route == "POST /engagements":
             body = json.loads(event.get("body") or "{}")
             return _reply(201, open_engagement(
-                tenant_id, email, body.get("engagement", "")))
+                tenant_id, ws(), email, body.get("engagement", "")))
 
         if route == "DELETE /documents/{document_id}":
             removing = int((event.get("pathParameters") or {})
@@ -3458,7 +3489,7 @@ def _dispatch(event, context):
             # button and say why. It comes off the row this route already
             # resolved, so naming the subject costs no second query at all
             # now - it used to cost one.
-            found = engagement_named(tenant_id, engagement)
+            found = engagement_named(tenant_id, ws(), engagement)
             if found is None:
                 return _reply(404, {"error": NO_SUCH_ENGAGEMENT % engagement})
             return _reply(200, {
@@ -3468,16 +3499,16 @@ def _dispatch(event, context):
         if route == "POST /engagements/{id}/file":
             body = json.loads(event.get("body") or "{}")
             return _reply(200, file_documents(
-                tenant_id, email, engagement, body.get("decisions", []),
+                tenant_id, ws(), email, engagement, body.get("decisions", []),
                 _key(body, "file", engagement)))
 
         if route == "PUT /engagements/{id}/subject":
             body = json.loads(event.get("body") or "{}")
-            return _reply(200, set_subject(tenant_id, email, engagement,
+            return _reply(200, set_subject(tenant_id, ws(), email, engagement,
                                            body.get("subject_name")))
 
         if route == "GET /engagements/{id}/documents":
-            found = engagement_named(tenant_id, engagement)
+            found = engagement_named(tenant_id, ws(), engagement)
             if found is None:
                 return _reply(404, {"error": NO_SUCH_ENGAGEMENT % engagement})
             return _reply(200, {"documents": list_documents(
@@ -3504,10 +3535,10 @@ def _dispatch(event, context):
 
         # Every live memorandum, across engagements, for "Share a memo".
         if route == "GET /memos":
-            return _reply(200, list_all_memos(tenant_id, email))
+            return _reply(200, list_all_memos(tenant_id, ws(), email))
 
         if route == "GET /engagements/{id}/memos":
-            found = engagement_named(tenant_id, engagement)
+            found = engagement_named(tenant_id, ws(), engagement)
             if found is None:
                 return _reply(404, {"error": NO_SUCH_ENGAGEMENT % engagement})
             answer = {"memos": list_memos(

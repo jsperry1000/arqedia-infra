@@ -72,7 +72,7 @@ class GenerateTemplateTest(unittest.TestCase):
             mock.patch.object(self.app.config, "workspace",
                               side_effect=lambda t, w=None: WORKSPACE),
             mock.patch.object(self.app, "engagement_named",
-                              side_effect=lambda t, n: {
+                              side_effect=lambda t, w, n: {
                                   "engagement_id": ENGAGEMENT_ID,
                                   "engagement": NAME,
                                   "subject_name": "Meridian Trading Ltd",
