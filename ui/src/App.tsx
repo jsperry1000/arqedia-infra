@@ -735,12 +735,16 @@ function WelcomeRoute({ onOpened }: {
 }) {
   const location = useLocation();
   const arrived = location.state as
-    { stopAtDraft?: boolean; newWorkspace?: boolean } | null;
+    { stopAtDraft?: boolean; newWorkspace?: boolean;
+      start?: "scratch" | "report" } | null;
   const stopAtDraft = Boolean(arrived?.stopAtDraft);
   // Add a workspace, from the header (PACK-01): the same screen, starting a
   // new workspace rather than adding to the active one.
   const newWorkspace = Boolean(arrived?.newWorkspace);
+  // A report of their own, already chosen in the Catalogue (PACK-01).
   return <WelcomeView stopAtDraft={stopAtDraft} newWorkspace={newWorkspace}
+                      start={arrived?.start}
+                      onOpened={onOpened}
                       onStarted={(report) =>
                         onOpened("/configure?part=sections", { report })} />;
 }
