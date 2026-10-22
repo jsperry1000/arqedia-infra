@@ -19,7 +19,7 @@ ENGAGEMENT = "MERIDIAN"
 
 
 class Registry:
-    """What config.for_tenant returns, configured the old way."""
+    """What config.for_workspace returns, configured the old way."""
 
     DOCUMENT_TYPES = {"audited-statements": {}}
 
@@ -46,7 +46,7 @@ class Db:
                          "audited-statements"))
         if s.startswith("SELECT s3_key, thin_text"):
             return rows(("tenants/2/docs/MERIDIAN/accounts.pdf", self.thin,
-                         None, None))
+                         None, None, 1))
         self.writes.append(s)
         return {"records": []}
 
@@ -84,7 +84,7 @@ class OcrModeTest(unittest.TestCase):
                 mock.patch.object(self.app, "config") as config, \
                 mock.patch.object(self.app, "_s3") as s3, \
                 mock.patch.object(self.app, "_start_ocr") as start_ocr:
-            config.for_tenant.return_value = Registry()
+            config.for_workspace.return_value = Registry()
             wallet.charge.return_value = {"entry_id": 5}
             s3.get_object.return_value = {
                 "Body": mock.MagicMock(read=lambda: b"{}")}

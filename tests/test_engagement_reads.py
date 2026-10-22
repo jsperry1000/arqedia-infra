@@ -425,15 +425,15 @@ class GenerateTest(unittest.TestCase):
         registry.label_for_template.return_value = "Credit Memorandum"
 
         with mock.patch.object(self.app, "_sql", db.sql), \
-                mock.patch.object(self.app.config, "for_tenant",
-                                  lambda t: registry), \
+                mock.patch.object(self.app.config, "for_workspace",
+                                  lambda t, w: registry), \
                 mock.patch.object(self.app.wallet, "charge",
                                   return_value={"entry_id": 50,
                                                 "repeated": False}) as charge, \
                 mock.patch.object(self.app, "_lambda") as invoked, \
                 mock.patch.object(self.app, "_s3"):
             try:
-                out = self.app.generate(TENANT, "a@firm.com", NAME,
+                out = self.app.generate(TENANT, 3, "a@firm.com", NAME,
                                         "credit-memo", "key-1")
                 error = None
             except ValueError as exc:

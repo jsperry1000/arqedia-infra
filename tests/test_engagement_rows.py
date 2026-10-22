@@ -49,6 +49,9 @@ def load_composition():
 
     cleanup = types.ModuleType("cleanup")
     config = types.ModuleType("config")
+    # PACK-01: every request resolves a workspace; these tests run in one.
+    config.workspace = mock.MagicMock(return_value=3)
+    config.workspace_of = mock.MagicMock(return_value=3)
     # Composition refunds a generation it could not write (20.1).
     wallet = types.ModuleType("wallet")
 
@@ -157,7 +160,7 @@ class ApiUploadTest(unittest.TestCase):
         with mock.patch.object(self.app, "_sql", db.sql), \
                 mock.patch.object(self.app, "_s3") as s3:
             s3.generate_presigned_url.return_value = "https://signed"
-            out = self.app.upload_url(TENANT, "partner@firm.com",
+            out = self.app.upload_url(TENANT, 3, "partner@firm.com",
                                       NAME, "Articles.pdf")
 
         self.assertEqual(out["key"],
@@ -173,7 +176,8 @@ class ApiUploadTest(unittest.TestCase):
         with mock.patch.object(self.app, "_sql", db.sql), \
                 mock.patch.object(self.app, "_s3") as s3:
             s3.generate_presigned_url.return_value = "https://signed"
-            self.app.upload_url(TENANT, "partner@firm.com", NAME, "a.pdf")
+            self.app.upload_url(TENANT, 3, "partner@firm.com", NAME,
+                                "a.pdf")
         self.assertNotIn("INSERT INTO engagement", db.kinds())
 
 
@@ -192,7 +196,7 @@ class ReviseInheritsTest(unittest.TestCase):
             if s.startswith("SELECT s3_key, template_key"):
                 return rows(("tenants/7/memos/Meridian-Trading/credit.md",
                              "credit-memorandum", 11, None, 1,
-                             engagement, state))
+                             engagement, state, 3))
             if s.startswith("SELECT DISTINCT d.filename"):
                 return rows()
             if s.startswith("SELECT COALESCE(MAX(revision), 0)"):
@@ -215,6 +219,9 @@ class ReviseInheritsTest(unittest.TestCase):
         out, written = self.revise()
         self.assertEqual(out["memo_id"], 99)
         self.assertEqual(written["engagement_id"], ENGAGEMENT_ID)
+        # And in the parent's workspace (PACK-01): a revision is written under
+        # its parent's configuration series.
+        self.assertEqual(written["workspace_id"], 3)
 
     def test_revising_something_archived_does_not_unarchive_it(self):
         """The state belongs to the line. A revision that came back 'live'
@@ -254,7 +261,7 @@ class CompositionTest(unittest.TestCase):
             return rows()
 
         with mock.patch.object(self.app, "_sql", sql):
-            self.app._load_values(TENANT, ENGAGEMENT_ID)
+            self.app._load_values(TENANT, 3, ENGAGEMENT_ID)
 
         self.assertIn("d.engagement_id = :engagement_id", asked["sql"])
         self.assertNotIn("LIKE", asked["sql"])
@@ -284,7 +291,7 @@ class NormalizerTest(unittest.TestCase):
             "source_version_id": "v1", "sha256_source": "a" * 64,
             "filename": "Articles.pdf", "extraction_method": "pdf",
             "units": [], "raw_text": "", "uploaded_by": "partner@firm.com",
-            "config_revision": 7,
+            "config_revision": 7, "workspace_id": 3,
         }
 
     def record(self, exists):

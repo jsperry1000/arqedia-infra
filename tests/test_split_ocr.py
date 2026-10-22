@@ -195,14 +195,14 @@ class OneJobPerFileTest(unittest.TestCase):
                 d = [p["value"]["longValue"] for p in params
                      if p["name"] == "d"][0]
                 return rows((KEY, True, 1 if d == 1058 else 5,
-                             1 if d == 1058 else 2))
+                             1 if d == 1058 else 2, 1))
             return {"records": []}
 
         with mock.patch.object(self.app, "_sql", side_effect=sql), \
                 mock.patch.object(self.app, "wallet") as wallet, \
                 mock.patch.object(self.app, "config") as config, \
                 mock.patch.object(self.app, "textract") as textract:
-            config.for_tenant.return_value = Registry()
+            config.for_workspace.return_value = Registry()
             wallet.charge.return_value = {"entry_id": 9}
             textract.start.return_value = ("job-1", "text")
             out = self.app.file_documents(

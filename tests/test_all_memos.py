@@ -28,9 +28,9 @@ def memo_row(memo_id, parent=None, revision=1, engagement="Knightsbridge",
              subject="Knightsbridge Ltd", generated="2026-10-01 10:00:00"):
     """list_all_memos' SELECT, in column order: memo_id, template_key,
     config_revision, parent_memo_id, revision, generated_at, engagement name,
-    subject_name."""
+    subject_name, and since PACK-01 the memo's workspace."""
     return (memo_id, "lender", 3, parent, revision, generated, engagement,
-            subject)
+            subject, 2)
 
 
 class AllMemosTest(unittest.TestCase):
@@ -61,7 +61,7 @@ class AllMemosTest(unittest.TestCase):
             return rows(*memo_rows)
         with mock.patch.object(self.app, "_sql", sql), \
                 mock.patch.object(self.app.config, "load",
-                                  lambda t, r: FakeRegistry(r)):
+                                  lambda t, w, r: FakeRegistry(r)):
             return self.app.list_all_memos(7, email)["memos"]
 
     def test_the_four_columns_and_the_number_a_person_reads(self):

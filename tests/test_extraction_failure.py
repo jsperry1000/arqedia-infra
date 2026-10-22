@@ -49,6 +49,12 @@ def load_extraction():
     botocore.exceptions = exceptions
 
     config = types.ModuleType("config")
+
+    # PACK-01: every request resolves a workspace; these tests run in one.
+
+    config.workspace = mock.MagicMock(return_value=3)
+
+    config.workspace_of = mock.MagicMock(return_value=3)
     config.load = mock.MagicMock()
 
     # wallet lives in the layer, beside config. Stubbed so a test can say

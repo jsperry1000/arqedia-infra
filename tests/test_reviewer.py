@@ -187,8 +187,9 @@ class AcceptTest(unittest.TestCase):
         self.calls = []
 
         opened = self.r._stamp()
+        # The workspace the session was opened in (PACK-01), kept on it.
         self.review = {"status": "ready", "opened_at": opened,
-                       "suggestions": []}
+                       "suggestions": [], "workspace_id": 3}
         self.objects[self.r._review_key(7, self.SESSION)] = self.review
 
         self.r._get = lambda key: self.objects.get(key)
@@ -200,16 +201,16 @@ class AcceptTest(unittest.TestCase):
         editor = mock.MagicMock()
         editor.draft.return_value = self.draft
         editor.save_field.side_effect = \
-            lambda t, body: self.calls.append(("save_field", body)) \
+            lambda t, w, body: self.calls.append(("save_field", body)) \
             or {"key": body.get("key") or "f_new"}
         editor.save_section.side_effect = \
-            lambda t, body: self.calls.append(("save_section", body))
+            lambda t, w, body: self.calls.append(("save_section", body))
         editor.save_document_type.side_effect = \
-            lambda t, body: self.calls.append(("save_document_type", body))
+            lambda t, w, body: self.calls.append(("save_document_type", body))
         editor.set_field_documents.side_effect = \
-            lambda t, k, types_: self.calls.append(("found_in", k, types_))
+            lambda t, w, k, types_: self.calls.append(("found_in", k, types_))
         editor.set_section_fields.side_effect = \
-            lambda t, tpl, sec, keys: self.calls.append(("bind", sec, keys))
+            lambda t, w, tpl, sec, keys: self.calls.append(("bind", sec, keys))
         self.r.editor = editor
 
         wallet = self.r.wallet

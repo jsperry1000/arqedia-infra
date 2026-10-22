@@ -42,6 +42,7 @@ import time
 import boto3
 from botocore.exceptions import ClientError
 
+import config
 import extractors
 
 _s3 = boto3.client("s3")
@@ -176,8 +177,9 @@ def _as_json(text, fallback):
 
 # --- what the tenant already holds -----------------------------------------
 
-def _existing(tenant_id):
-    """The draft's own vocabulary, not the published one.
+def _existing(tenant_id, workspace_id):
+    """The draft's own vocabulary, not the published one - the draft of the
+    workspace the proposal will be accepted into (PACK-01).
 
     The person is configuring: what matters is what their draft holds, since
     that is what the proposal will be accepted into. A group's columns are
@@ -185,10 +187,10 @@ def _existing(tenant_id):
     fields = []
     result = _sql(
         "SELECT field_key, label, description, cardinality "
-        "FROM config_field WHERE tenant_id = :t AND revision = :r "
-        "AND (group_key IS NULL OR group_key = field_key) "
+        "FROM config_field WHERE tenant_id = :t AND workspace_id = :w "
+        "AND revision = :r AND (group_key IS NULL OR group_key = field_key) "
         "ORDER BY label",
-        [_p("t", tenant_id), _p("r", DRAFT)])
+        [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT)])
     for r in result.get("records", []):
         fields.append({"key": _col(r, 0), "label": _col(r, 1),
                        "description": _col(r, 2) or "",
@@ -197,9 +199,9 @@ def _existing(tenant_id):
     types = []
     result = _sql(
         "SELECT type_key, label, description, category_key "
-        "FROM config_document_type WHERE tenant_id = :t AND revision = :r "
-        "ORDER BY label",
-        [_p("t", tenant_id), _p("r", DRAFT)])
+        "FROM config_document_type WHERE tenant_id = :t "
+        "AND workspace_id = :w AND revision = :r ORDER BY label",
+        [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT)])
     for r in result.get("records", []):
         types.append({"key": _col(r, 0), "label": _col(r, 1),
                       "description": _col(r, 2) or "",
@@ -208,8 +210,9 @@ def _existing(tenant_id):
     groups = []
     result = _sql(
         "SELECT category_key, label FROM config_category "
-        "WHERE tenant_id = :t AND revision = :r ORDER BY sort_order",
-        [_p("t", tenant_id), _p("r", DRAFT)])
+        "WHERE tenant_id = :t AND workspace_id = :w AND revision = :r "
+        "ORDER BY sort_order",
+        [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT)])
     for r in result.get("records", []):
         groups.append({"key": _col(r, 0), "label": _col(r, 1)})
 
@@ -444,7 +447,10 @@ def _read(event):
     proposal["status"] = "outlining"
     _publish(key, proposal)
 
-    fields, types, groups = _existing(tenant_id)
+    # The API resolved the workspace against the tenant and sent it. An
+    # event without one predates workspaces; the tenant's only one answers.
+    fields, types, groups = _existing(
+        tenant_id, config.workspace(tenant_id, event.get("workspace_id")))
 
     # 2. The outline. One call, whatever the length.
     outline, usage = _outline(text, types, groups)

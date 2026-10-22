@@ -37,6 +37,15 @@ it belongs to, silently.
 None of the three was caught, so a broken revision published and reached
 fifty-six documents. Refused here, none of them can.
 
+ONE SERIES PER WORKSPACE (PACK-01, migration 040). Everything here names a
+workspace as well as a tenant: each workspace has its own draft, its own
+publishes and its own revision in use, and validation runs over one
+workspace's draft, as it ran over a tenant's. The revision NUMBER is still
+drawn from one counter per tenant, so it never repeats across a tenant's
+workspaces and a published revision is found by (tenant, revision) alone -
+which is how the catalogue's marks keep naming the pack tenant's revisions
+without a workspace of their own.
+
 Three faults are WARNINGS, shown and not blocking:
 
     a document type feeding no schema      - extracts nothing
@@ -64,6 +73,19 @@ DATABASE = os.environ["DATABASE"]
 
 DRAFT = 0
 PACK_TENANT = 0
+# The pack tenant holds no workspace row; its configuration is workspace 0.
+NO_WORKSPACE = 0
+
+# A workspace's name. workspace.name is varchar(128).
+_MAX_WORKSPACE_NAME = 128
+
+# Opening a second workspace's draft while migration 040's
+# uq_single_workspace still makes (tenant_id, revision) unique. 041 drops it,
+# once the code that names a workspace everywhere is deployed.
+ONE_DRAFT_AT_A_TIME = (
+    "Another workspace in this account has a draft open. Until the update "
+    "that allows one draft per workspace is applied, publish or discard that "
+    "draft first.")
 
 # Every table a revision spans. Order matters for the copy: nothing here has
 # foreign keys, but reading them in chain order keeps a partial failure
@@ -166,17 +188,17 @@ def valid_key(key):
 
 # --- revisions -------------------------------------------------------------
 
-def revisions(tenant_id):
-    """Every revision this tenant has, newest first, draft included."""
+def revisions(tenant_id, workspace_id):
+    """Every revision this workspace has, newest first, draft included."""
     result = _sql(
         """
         SELECT revision, status, note, created_at, created_by,
                published_at, published_by, forked_from
         FROM config_revision
-        WHERE tenant_id = :t
+        WHERE tenant_id = :t AND workspace_id = :w
         ORDER BY revision DESC
         """,
-        [_p("t", tenant_id)],
+        [_p("t", tenant_id), _p("w", workspace_id)],
     )
     return [
         {"revision": _col(r, 0),
@@ -192,19 +214,67 @@ def revisions(tenant_id):
     ]
 
 
-def _latest_published(tenant_id):
+def _latest_published(tenant_id, workspace_id):
+    """This workspace's newest published revision, or 0 where it has none."""
     result = _sql(
         """
         SELECT COALESCE(MAX(revision), 0) FROM config_revision
-        WHERE tenant_id = :t AND status = 'published'
+        WHERE tenant_id = :t AND workspace_id = :w AND status = 'published'
         """,
-        [_p("t", tenant_id)],
+        [_p("t", tenant_id), _p("w", workspace_id)],
     )
     records = result.get("records", [])
     return int(_col(records[0], 0) or 0) if records else 0
 
 
-def _copy(from_tenant, from_revision, to_tenant, to_revision, tables=None):
+def _next_revision(tenant_id, tx=None):
+    """The number the next publish takes. ONE COUNTER PER TENANT, across all
+    its workspaces (decision of 22 October 2026), so a revision number never
+    repeats within a tenant and a published revision is found by it alone.
+    The rule is the one publish always used: the newest published, plus
+    one."""
+    result = _sql(
+        """
+        SELECT COALESCE(MAX(revision), 0) FROM config_revision
+        WHERE tenant_id = :t AND status = 'published'
+        """,
+        [_p("t", tenant_id)], tx=tx,
+    )
+    records = result.get("records", [])
+    return (int(_col(records[0], 0) or 0) if records else 0) + 1
+
+
+def _workspace_of_revision(tenant_id, revision):
+    """The workspace a published revision belongs to. A published number is
+    unique within a tenant, so the tenant and the number are enough; the
+    draft is not, and is never asked for here."""
+    records = _sql(
+        "SELECT workspace_id FROM config_revision "
+        "WHERE tenant_id = :t AND revision = :r AND revision <> :d",
+        [_p("t", tenant_id), _p("r", revision), _p("d", DRAFT)],
+    ).get("records", [])
+    return int(_col(records[0], 0) or 0) if records else None
+
+
+def _set_active(tenant_id, workspace_id, revision, tx=None):
+    """Put a revision in use for one workspace.
+
+    tenant.active_revision is written as well, as a copy for readers that
+    predate workspaces - the pattern tenant.plan follows (decision of 22
+    October 2026). For a tenant with one workspace it is exact; with several
+    it is the last one set, and nothing decides on it. Workspace 0, the pack
+    tenant's, has no row of its own and keeps its selection there."""
+    if workspace_id != NO_WORKSPACE:
+        _sql("UPDATE workspace SET active_revision = :r "
+             "WHERE tenant_id = :t AND workspace_id = :w",
+             [_p("r", revision), _p("t", tenant_id), _p("w", workspace_id)],
+             tx=tx)
+    _sql("UPDATE tenant SET active_revision = :r WHERE tenant_id = :t",
+         [_p("r", revision), _p("t", tenant_id)], tx=tx)
+
+
+def _copy(from_tenant, from_workspace, from_revision,
+          to_tenant, to_workspace, to_revision, tables=None, tx=None):
     """Deep-copy one revision to another. Never a reference.
 
     A starter pack forked into a tenant must not change under them when we
@@ -217,22 +287,41 @@ def _copy(from_tenant, from_revision, to_tenant, to_revision, tables=None):
     for table, columns in (tables or TABLES):
         names = ", ".join(columns)
         _sql(
-            "INSERT INTO {t} (tenant_id, revision, {c}) "
-            "SELECT :to_tenant, :to_rev, {c} FROM {t} "
-            "WHERE tenant_id = :from_tenant AND revision = :from_rev".format(
-                t=table, c=names),
-            [_p("to_tenant", to_tenant), _p("to_rev", to_revision),
-             _p("from_tenant", from_tenant), _p("from_rev", from_revision)],
+            "INSERT INTO {t} (tenant_id, workspace_id, revision, {c}) "
+            "SELECT :to_tenant, :to_ws, :to_rev, {c} FROM {t} "
+            "WHERE tenant_id = :from_tenant AND workspace_id = :from_ws "
+            "AND revision = :from_rev".format(t=table, c=names),
+            [_p("to_tenant", to_tenant), _p("to_ws", to_workspace),
+             _p("to_rev", to_revision),
+             _p("from_tenant", from_tenant), _p("from_ws", from_workspace),
+             _p("from_rev", from_revision)],
+            tx=tx,
         )
 
 
-def _clear(tenant_id, revision):
+def _clear(tenant_id, workspace_id, revision):
     for table, _ in reversed(TABLES):
-        _sql("DELETE FROM %s WHERE tenant_id = :t AND revision = :r" % table,
-             [_p("t", tenant_id), _p("r", revision)])
+        _sql("DELETE FROM %s WHERE tenant_id = :t AND workspace_id = :w "
+             "AND revision = :r" % table,
+             [_p("t", tenant_id), _p("w", workspace_id), _p("r", revision)])
 
 
-def open_draft(tenant_id, email, from_revision=None):
+def _drafts_share_a_key():
+    """Whether migration 040's uq_single_workspace still stands, making
+    (tenant_id, revision) unique across a tenant's workspaces - and so one
+    draft per tenant. Read from the schema each time it is asked, which is
+    only when another workspace already holds a draft: 041 dropping it must
+    take effect without waiting for a container to be replaced."""
+    records = _sql(
+        """
+        SELECT COUNT(*) FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'config_revision'
+          AND INDEX_NAME = 'uq_single_workspace'
+        """).get("records", [])
+    return bool(records and int(_col(records[0], 0) or 0))
+
+
+def open_draft(tenant_id, workspace_id, email, from_revision=None):
     """Start editing.
 
     A draft opens as a copy of a published revision - by default the one in
@@ -244,46 +333,67 @@ def open_draft(tenant_id, email, from_revision=None):
     9). A tenant who selected an earlier revision is working against that one,
     and opening the newest would silently reopen work they had stepped back
     from. Falls back to the newest where nothing is selected: a tenant that
-    has never published has nothing to select."""
+    has never published has nothing to select.
+
+    ONE PER WORKSPACE, from this workspace's own revisions. A source revision
+    named by the caller must be this workspace's: opening Real Estate's draft
+    from a Trade Finance revision would carry one industry's configuration
+    into the other."""
     existing = _sql(
         "SELECT revision FROM config_revision "
-        "WHERE tenant_id = :t AND revision = :d",
-        [_p("t", tenant_id), _p("d", DRAFT)])
+        "WHERE tenant_id = :t AND workspace_id = :w AND revision = :d",
+        [_p("t", tenant_id), _p("w", workspace_id), _p("d", DRAFT)])
     if existing.get("records"):
         return {"revision": DRAFT, "created": False}
 
-    source = from_revision if from_revision is not None \
-        else (_active_revision(tenant_id) or _latest_published(tenant_id))
+    # Another workspace's draft, while the old key still allows one per
+    # tenant. Refused in words rather than by a duplicate key.
+    elsewhere = _sql(
+        "SELECT workspace_id FROM config_revision "
+        "WHERE tenant_id = :t AND workspace_id <> :w AND revision = :d",
+        [_p("t", tenant_id), _p("w", workspace_id), _p("d", DRAFT)])
+    if elsewhere.get("records") and _drafts_share_a_key():
+        raise ValueError(ONE_DRAFT_AT_A_TIME)
+
+    if from_revision is not None:
+        source = int(from_revision)
+        if _workspace_of_revision(tenant_id, source) != workspace_id:
+            raise ValueError("this workspace has no revision %d" % source)
+    else:
+        source = (_active_revision(tenant_id, workspace_id)
+                  or _latest_published(tenant_id, workspace_id))
 
     _sql(
         """
         INSERT INTO config_revision
-          (tenant_id, revision, status, note, created_by, forked_from)
-        VALUES (:t, :d, 'draft', :note, :who, :from_rev)
+          (tenant_id, workspace_id, revision, status, note, created_by,
+           forked_from)
+        VALUES (:t, :w, :d, 'draft', :note, :who, :from_rev)
         """,
-        [_p("t", tenant_id), _p("d", DRAFT),
+        [_p("t", tenant_id), _p("w", workspace_id), _p("d", DRAFT),
          _p("note", None), _p("who", email),
          _p("from_rev", "%d:%d" % (tenant_id, source) if source else None)],
     )
 
     if source:
-        _copy(tenant_id, source, tenant_id, DRAFT)
+        _copy(tenant_id, workspace_id, source, tenant_id, workspace_id, DRAFT)
 
     return {"revision": DRAFT, "created": True, "copied_from": source}
 
 
-def discard_draft(tenant_id):
+def discard_draft(tenant_id, workspace_id):
     """Throw the draft away. Published revisions are untouched - they are what
     memos were written against and are never editable."""
-    _clear(tenant_id, DRAFT)
-    _sql("DELETE FROM config_revision WHERE tenant_id = :t AND revision = :d",
-         [_p("t", tenant_id), _p("d", DRAFT)])
+    _clear(tenant_id, workspace_id, DRAFT)
+    _sql("DELETE FROM config_revision "
+         "WHERE tenant_id = :t AND workspace_id = :w AND revision = :d",
+         [_p("t", tenant_id), _p("w", workspace_id), _p("d", DRAFT)])
     return {"discarded": True}
 
 
 # --- validation ------------------------------------------------------------
 
-def validate(tenant_id, revision=DRAFT):
+def validate(tenant_id, workspace_id, revision=DRAFT):
     """The coverage surface.
 
     Returns fatal faults and warnings separately, because they mean different
@@ -292,7 +402,8 @@ def validate(tenant_id, revision=DRAFT):
     fatal, warnings = [], []
 
     def rows(sql):
-        return _sql(sql, [_p("t", tenant_id), _p("r", revision)]
+        return _sql(sql, [_p("t", tenant_id), _p("w", workspace_id),
+                           _p("r", revision)]
                     ).get("records", [])
 
     # FATAL. A template naming a field that does not exist writes a memo
@@ -302,9 +413,11 @@ def validate(tenant_id, revision=DRAFT):
         SELECT DISTINCT sf.section_key, sf.field_key
         FROM config_section_field sf
         LEFT JOIN config_field f
-          ON f.tenant_id = sf.tenant_id AND f.revision = sf.revision
+          ON f.tenant_id = sf.tenant_id AND f.workspace_id = sf.workspace_id
+         AND f.revision = sf.revision
          AND f.field_key = sf.field_key
-        WHERE sf.tenant_id = :t AND sf.revision = :r AND f.field_key IS NULL
+        WHERE sf.tenant_id = :t AND sf.workspace_id = :w
+          AND sf.revision = :r AND f.field_key IS NULL
         ORDER BY sf.section_key, sf.field_key
         """
     ):
@@ -328,7 +441,7 @@ def validate(tenant_id, revision=DRAFT):
     for r in rows(
         """
         SELECT field_key, label FROM config_field
-        WHERE tenant_id = :t AND revision = :r
+        WHERE tenant_id = :t AND workspace_id = :w AND revision = :r
           AND cardinality = 'group' AND group_key IS NULL
         ORDER BY sort_order
         """
@@ -348,9 +461,10 @@ def validate(tenant_id, revision=DRAFT):
         """
         SELECT g.field_key, g.label FROM config_field g
         LEFT JOIN config_field c
-          ON c.tenant_id = g.tenant_id AND c.revision = g.revision
+          ON c.tenant_id = g.tenant_id AND c.workspace_id = g.workspace_id
+         AND c.revision = g.revision
          AND c.group_key = g.field_key AND c.field_key <> g.field_key
-        WHERE g.tenant_id = :t AND g.revision = :r
+        WHERE g.tenant_id = :t AND g.workspace_id = :w AND g.revision = :r
           AND g.cardinality = 'group' AND g.group_key = g.field_key
           AND c.field_key IS NULL
         ORDER BY g.sort_order
@@ -369,7 +483,7 @@ def validate(tenant_id, revision=DRAFT):
     for r in rows(
         """
         SELECT field_key, label, group_key FROM config_field
-        WHERE tenant_id = :t AND revision = :r
+        WHERE tenant_id = :t AND workspace_id = :w AND revision = :r
           AND group_key IS NOT NULL AND field_key <> group_key
           AND field_key NOT LIKE CONCAT(group_key, '.%')
         ORDER BY sort_order
@@ -391,9 +505,11 @@ def validate(tenant_id, revision=DRAFT):
         SELECT t.type_key, t.label
         FROM config_document_type t
         LEFT JOIN config_type_schema m
-          ON m.tenant_id = t.tenant_id AND m.revision = t.revision
+          ON m.tenant_id = t.tenant_id AND m.workspace_id = t.workspace_id
+         AND m.revision = t.revision
          AND m.type_key = t.type_key
-        WHERE t.tenant_id = :t AND t.revision = :r AND m.type_key IS NULL
+        WHERE t.tenant_id = :t AND t.workspace_id = :w AND t.revision = :r
+          AND m.type_key IS NULL
         ORDER BY t.sort_order
         """
     ):
@@ -410,9 +526,11 @@ def validate(tenant_id, revision=DRAFT):
         SELECT s.schema_key, s.label
         FROM config_schema s
         LEFT JOIN config_type_schema m
-          ON m.tenant_id = s.tenant_id AND m.revision = s.revision
+          ON m.tenant_id = s.tenant_id AND m.workspace_id = s.workspace_id
+         AND m.revision = s.revision
          AND m.schema_key = s.schema_key
-        WHERE s.tenant_id = :t AND s.revision = :r AND m.schema_key IS NULL
+        WHERE s.tenant_id = :t AND s.workspace_id = :w AND s.revision = :r
+          AND m.schema_key IS NULL
         ORDER BY s.sort_order
         """
     ):
@@ -430,9 +548,10 @@ def validate(tenant_id, revision=DRAFT):
         SELECT f.field_key, f.label
         FROM config_field f
         LEFT JOIN config_section_field sf
-          ON sf.tenant_id = f.tenant_id AND sf.revision = f.revision
+          ON sf.tenant_id = f.tenant_id AND sf.workspace_id = f.workspace_id
+         AND sf.revision = f.revision
          AND sf.field_key = f.field_key
-        WHERE f.tenant_id = :t AND f.revision = :r
+        WHERE f.tenant_id = :t AND f.workspace_id = :w AND f.revision = :r
           AND sf.field_key IS NULL
           AND (f.group_key IS NULL OR f.group_key = f.field_key)
         ORDER BY f.sort_order
@@ -456,9 +575,10 @@ def validate(tenant_id, revision=DRAFT):
                s.context_sections, t.label
         FROM config_section s
         LEFT JOIN config_template t
-          ON t.tenant_id = s.tenant_id AND t.revision = s.revision
+          ON t.tenant_id = s.tenant_id AND t.workspace_id = s.workspace_id
+         AND t.revision = s.revision
          AND t.template_key = s.template_key
-        WHERE s.tenant_id = :t AND s.revision = :r
+        WHERE s.tenant_id = :t AND s.workspace_id = :w AND s.revision = :r
         ORDER BY s.template_key, s.sort_order
         """
     )
@@ -505,34 +625,37 @@ def validate(tenant_id, revision=DRAFT):
 
 # --- publishing ------------------------------------------------------------
 
-def publish(tenant_id, email, note=None):
-    """Copy the draft into a new immutable revision.
+def publish(tenant_id, workspace_id, email, note=None):
+    """Copy the workspace's draft into a new immutable revision.
 
     The draft survives publication. A person mid-way through a larger change
-    who publishes an intermediate state should not lose their place."""
-    report = validate(tenant_id, DRAFT)
+    who publishes an intermediate state should not lose their place.
+
+    One workspace, validated and published alone: a broken binding in Real
+    Estate's draft does not stop Trade Finance publishing. The number is the
+    tenant's next (_next_revision), whichever workspace takes it."""
+    report = validate(tenant_id, workspace_id, DRAFT)
     if not report["may_publish"]:
         return {"published": False, "validation": report}
 
-    revision = _latest_published(tenant_id) + 1
+    revision = _next_revision(tenant_id)
 
     _sql(
         """
         INSERT INTO config_revision
-          (tenant_id, revision, status, note, created_by,
+          (tenant_id, workspace_id, revision, status, note, created_by,
            published_at, published_by)
-        VALUES (:t, :r, 'published', :note, :who, UTC_TIMESTAMP(), :who)
+        VALUES (:t, :w, :r, 'published', :note, :who, UTC_TIMESTAMP(), :who)
         """,
-        [_p("t", tenant_id), _p("r", revision), _p("note", note),
-         _p("who", email)],
+        [_p("t", tenant_id), _p("w", workspace_id), _p("r", revision),
+         _p("note", note), _p("who", email)],
     )
 
-    _copy(tenant_id, DRAFT, tenant_id, revision)
+    _copy(tenant_id, workspace_id, DRAFT, tenant_id, workspace_id, revision)
 
     # New work files against it. Everything already filed keeps resolving
     # against the revision it was filed under.
-    _sql("UPDATE tenant SET active_revision = :r WHERE tenant_id = :t",
-         [_p("r", revision), _p("t", tenant_id)])
+    _set_active(tenant_id, workspace_id, revision)
 
     return {
         "published": True,
@@ -542,20 +665,28 @@ def publish(tenant_id, email, note=None):
     }
 
 
-def _active_revision(tenant_id):
-    """The revision the tenant's new work files against.
+def _active_revision(tenant_id, workspace_id):
+    """The revision the workspace's new work files against.
 
     Read here rather than through config.active_revision because registry is
-    the layer below: config loads a revision, this one writes them."""
-    result = _sql("SELECT active_revision FROM tenant WHERE tenant_id = :t",
-                  [_p("t", tenant_id)])
+    the layer below: config loads a revision, this one writes them. Workspace
+    0 is the pack tenant's, kept on the tenant row."""
+    if workspace_id == NO_WORKSPACE:
+        result = _sql(
+            "SELECT active_revision FROM tenant WHERE tenant_id = :t",
+            [_p("t", tenant_id)])
+    else:
+        result = _sql(
+            "SELECT active_revision FROM workspace "
+            "WHERE tenant_id = :t AND workspace_id = :w",
+            [_p("t", tenant_id), _p("w", workspace_id)])
     records = result.get("records", [])
     if not records:
         return 0
     return int(_col(records[0], 0) or 0)
 
 
-def select_revision(tenant_id, revision):
+def select_revision(tenant_id, workspace_id, revision):
     """Choose which published revision new work is written against.
 
     Publishing makes a revision available; this is what puts one in use, and
@@ -576,7 +707,8 @@ def select_revision(tenant_id, revision):
     The draft is refused as a selection too: it is mutable, and composition
     would be reading a configuration that changes under it. A revision
     belonging to another tenant cannot be reached - the lookup is scoped by
-    tenant_id, which comes from the token."""
+    tenant_id, which comes from the token - and nor can one belonging to
+    another of this tenant's workspaces."""
     if revision is None or isinstance(revision, bool):
         raise ValueError("choose a revision to use")
     try:
@@ -593,8 +725,9 @@ def select_revision(tenant_id, revision):
     # stake rather than being told only that something is in the way.
     draft = _sql(
         "SELECT forked_from FROM config_revision "
-        "WHERE tenant_id = :t AND revision = :d",
-        [_p("t", tenant_id), _p("d", DRAFT)]).get("records", [])
+        "WHERE tenant_id = :t AND workspace_id = :w AND revision = :d",
+        [_p("t", tenant_id), _p("w", workspace_id),
+         _p("d", DRAFT)]).get("records", [])
     if draft:
         opened_from = (_col(draft[0], 0) or "").rsplit(":", 1)[-1]
         raise ValueError(
@@ -604,15 +737,15 @@ def select_revision(tenant_id, revision):
 
     rows = _sql(
         "SELECT status FROM config_revision "
-        "WHERE tenant_id = :t AND revision = :r",
-        [_p("t", tenant_id), _p("r", revision)]).get("records", [])
+        "WHERE tenant_id = :t AND workspace_id = :w AND revision = :r",
+        [_p("t", tenant_id), _p("w", workspace_id),
+         _p("r", revision)]).get("records", [])
     if not rows:
         raise ValueError("this workspace has no revision %d" % revision)
     if _col(rows[0], 0) != "published":
         raise ValueError("revision %d is not published" % revision)
 
-    _sql("UPDATE tenant SET active_revision = :r WHERE tenant_id = :t",
-         [_p("r", revision), _p("t", tenant_id)])
+    _set_active(tenant_id, workspace_id, revision)
     return {"active_revision": revision}
 
 
@@ -715,16 +848,18 @@ def set_offer(revision, template_keys, email, pack_tenant=PACK_TENANT):
         raise ValueError("the workspace has no revision %d" % revision)
     if _col(rows[0], 0) != "published":
         raise ValueError("revision %d is not published" % revision)
+    pack_ws = _workspace_of_revision(pack_tenant, revision) or NO_WORKSPACE
 
     # The base comes with it, so the revision has to carry one. A
     # memorandum-only revision would leave every new tenant with sections over
     # a vocabulary that is not there.
-    if not _holds_facts(pack_tenant, revision):
+    if not _holds_facts(pack_tenant, pack_ws, revision):
         raise ValueError(
             "revision %d holds no facts, so it cannot carry the base"
             % revision)
 
-    held = _keys(pack_tenant, revision, "config_template", "template_key")
+    held = _keys(pack_tenant, pack_ws, revision, "config_template",
+                 "template_key")
     missing = [k for k in wanted if k not in held]
     if missing:
         raise ValueError(
@@ -734,9 +869,10 @@ def set_offer(revision, template_keys, email, pack_tenant=PACK_TENANT):
     # Item 8's refusal, landing on the curator instead of the customer. Until
     # now the only thing that noticed a memorandum binding a fact the base does
     # not define was fork_template, at the moment somebody took it.
-    defined = _keys(pack_tenant, revision, "config_field", "field_key")
+    defined = _keys(pack_tenant, pack_ws, revision, "config_field",
+                    "field_key")
     for key in wanted:
-        bound = _keys(pack_tenant, revision, "config_section_field",
+        bound = _keys(pack_tenant, pack_ws, revision, "config_section_field",
                       "field_key", "AND template_key = :tk",
                       [_p("tk", key)])
         orphans = sorted(bound - defined)
@@ -792,31 +928,36 @@ def set_offer(revision, template_keys, email, pack_tenant=PACK_TENANT):
     }
 
 
-def _holds_facts(tenant_id, revision):
+def _holds_facts(tenant_id, workspace_id, revision):
     """Whether a revision holds a vocabulary. A memorandum-only revision does
     not, and forking one as a base would give a tenant a configuration that
     cannot extract anything."""
     records = _sql(
-        "SELECT COUNT(*) FROM config_field WHERE tenant_id = :t AND revision = :r",
-        [_p("t", tenant_id), _p("r", revision)]).get("records", [])
+        "SELECT COUNT(*) FROM config_field WHERE tenant_id = :t "
+        "AND workspace_id = :w AND revision = :r",
+        [_p("t", tenant_id), _p("w", workspace_id),
+         _p("r", revision)]).get("records", [])
     return bool(records and int(_col(records[0], 0) or 0))
 
 
-def _revision_kind(tenant_id, revision):
+def _revision_kind(tenant_id, workspace_id, revision):
     records = _sql(
         "SELECT kind FROM config_revision "
-        "WHERE tenant_id = :t AND revision = :r",
-        [_p("t", tenant_id), _p("r", revision)]).get("records", [])
+        "WHERE tenant_id = :t AND workspace_id = :w AND revision = :r",
+        [_p("t", tenant_id), _p("w", workspace_id),
+         _p("r", revision)]).get("records", [])
     return _col(records[0], 0) if records else None
 
 
-def _keys(tenant_id, revision, table, column, extra="", params=None):
+def _keys(tenant_id, workspace_id, revision, table, column, extra="",
+          params=None):
     """One column of keys from one revision, as a set."""
     records = _sql(
         "SELECT DISTINCT {c} FROM {t} "
-        "WHERE tenant_id = :t AND revision = :r {x}".format(
-            c=column, t=table, x=extra),
-        [_p("t", tenant_id), _p("r", revision)] + (params or []),
+        "WHERE tenant_id = :t AND workspace_id = :w AND revision = :r "
+        "{x}".format(c=column, t=table, x=extra),
+        [_p("t", tenant_id), _p("w", workspace_id),
+         _p("r", revision)] + (params or []),
     ).get("records", [])
     return {_col(r, 0) for r in records}
 
@@ -830,73 +971,127 @@ def _in(keys, prefix="k"):
     return ", ".join(names), params
 
 
-def fork_base(tenant_id, email, pack_revision=None, pack_key="base",
+def fork_base(tenant_id, email, name, pack_revision=None, pack_key="base",
               pack_tenant=PACK_TENANT):
-    """Take a starter base as this tenant's first revision.
+    """Take a starter base as a NEW WORKSPACE of this tenant.
 
     The base is the facts, the document types, and which facts are sought in
     which type. A memorandum is not part of it - see fork_template.
 
     A deep copy, never a reference: our later edits to a pack must not reach a
-    tenant who has already forked it. Refused where the tenant already has a
-    published revision - adopting a base over existing configuration would
-    discard work, and that is a decision for a person rather than a call."""
-    if _latest_published(tenant_id):
+    tenant who has already forked it. field_key values travel unchanged, which
+    is what lets two tenants forked from one pack exchange configuration.
+
+    THE DESTINATION IS A WORKSPACE, NOT A TENANT (PACK-01). Forking used to
+    be refused where the tenant had published anything, because the only
+    place a base could land was over the tenant's own configuration. It now
+    lands beside it: a workspace of its own, with its first revision drawn
+    from the tenant's counter, so a tenant working Trade Finance can take a
+    Real Estate base without either touching the other. A tenant's first
+    fork, from Get started, is the same act and makes its first workspace.
+
+    NAMED BY THE CALLER, and refused without a name (decision of 22 October
+    2026). Nothing invents one.
+
+    ONE TRANSACTION. The workspace row, the revision and the copy land
+    together or not at all - a workspace with no configuration would be
+    offered everywhere and extract nothing."""
+    if tenant_id == PACK_TENANT:
         raise ValueError(
-            "this tenant already has a published configuration; open a draft "
-            "and edit it instead")
+            "the ARQEDIA workspace curates the catalogue and does not fork "
+            "from it")
+
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError("name the workspace this base starts")
+    if len(name) > _MAX_WORKSPACE_NAME:
+        raise ValueError("a workspace name can be at most %d characters"
+                         % _MAX_WORKSPACE_NAME)
 
     if pack_revision is not None:
-        source_tenant, revision = pack_tenant, pack_revision
+        source_tenant, revision = pack_tenant, int(pack_revision)
     else:
         offer = _offer(pack_key, "base")
         if offer is None:
             raise ValueError("no base is on offer under '%s'" % pack_key)
         source_tenant, revision = offer["tenant_id"], offer["revision"]
 
+    source_ws = _workspace_of_revision(source_tenant, revision)
+    if source_ws is None:
+        raise ValueError("revision %s of tenant %s does not exist"
+                         % (revision, source_tenant))
+
     # A memorandum-only revision holds no facts, and the legacy whole-pack
     # revision is not offered any more. The test is what the revision HOLDS
     # rather than what it is called: a marked revision is a whole tenant
     # configuration (kind 'tenant'), and reading kind would refuse it.
-    if not _holds_facts(source_tenant, revision):
+    if not _holds_facts(source_tenant, source_ws, revision):
         raise ValueError(
             "revision %s of tenant %s holds no facts, so it cannot be a base"
             % (revision, source_tenant))
 
-    _sql(
-        """
-        INSERT INTO config_revision
-          (tenant_id, revision, status, kind, forked_from, note, created_by,
-           published_at, published_by)
-        VALUES (:t, 1, 'published', 'tenant', :src,
-                'forked from a starter base', :who, UTC_TIMESTAMP(), :who)
-        """,
-        [_p("t", tenant_id),
-         _p("src", "pack:%d:%d" % (source_tenant, revision)),
-         _p("who", email)],
-    )
+    tx = _begin()
+    try:
+        created = _sql(
+            """
+            INSERT INTO workspace
+              (tenant_id, name, forked_from_workspace_id,
+               forked_from_revision_id)
+            VALUES (:t, :name, :from_ws, :from_rev)
+            """,
+            # The pack tenant's configuration is in no workspace, so a fork
+            # from it names none - as migration 040's backfill recorded.
+            [_p("t", tenant_id), _p("name", name),
+             _p("from_ws", source_ws or None), _p("from_rev", revision)],
+            tx=tx)
+        workspace_id = int(
+            created["generatedFields"][0]["longValue"])
 
-    # The vocabulary only. Our memoranda live in the same revision now, and a
-    # base fork must not bring them: which memoranda a tenant holds is their
-    # choice, made in Get started.
-    _copy(source_tenant, revision, tenant_id, 1, BASE_TABLES)
+        mine = _next_revision(tenant_id, tx=tx)
+        _sql(
+            """
+            INSERT INTO config_revision
+              (tenant_id, workspace_id, revision, status, kind, forked_from,
+               note, created_by, published_at, published_by)
+            VALUES (:t, :w, :r, 'published', 'tenant', :src,
+                    'forked from a starter base', :who, UTC_TIMESTAMP(), :who)
+            """,
+            [_p("t", tenant_id), _p("w", workspace_id), _p("r", mine),
+             _p("src", "pack:%d:%d" % (source_tenant, revision)),
+             _p("who", email)],
+            tx=tx)
 
-    _sql("UPDATE tenant SET active_revision = 1 WHERE tenant_id = :t",
-         [_p("t", tenant_id)])
+        # The vocabulary only. Our memoranda live in the same revision now,
+        # and a base fork must not bring them: which memoranda a workspace
+        # holds is the tenant's choice, made in Get started.
+        _copy(source_tenant, source_ws, revision,
+              tenant_id, workspace_id, mine, BASE_TABLES, tx=tx)
 
-    return {"forked": True, "revision": 1, "pack_key": pack_key,
+        _set_active(tenant_id, workspace_id, mine, tx=tx)
+        _commit(tx)
+    except Exception:
+        try:
+            _rollback(tx)
+        except Exception:  # noqa: BLE001 - the original error is what matters
+            pass
+        raise
+
+    return {"forked": True, "revision": mine, "workspace_id": workspace_id,
+            "name": name, "pack_key": pack_key,
             "from": "pack:%d:%d" % (source_tenant, revision)}
 
 
-def fork(tenant_id, email, pack_revision=None, pack_tenant=PACK_TENANT):
+def fork(tenant_id, email, name, pack_revision=None,
+         pack_tenant=PACK_TENANT):
     """Kept for everything that called it before the split. Forking a pack
     means forking a base, and this is that call under its old name."""
-    return fork_base(tenant_id, email, pack_revision=pack_revision,
+    return fork_base(tenant_id, email, name, pack_revision=pack_revision,
                      pack_tenant=pack_tenant)
 
 
-def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
-    """Add one of our memoranda to a tenant's configuration.
+def fork_template(tenant_id, workspace_id, email, pack_key,
+                  pack_tenant=PACK_TENANT):
+    """Add one of our memoranda to a workspace's configuration.
 
     INTO THE DRAFT, ALWAYS. A published revision is immutable and cached for
     the life of a container, so nothing may be added to one; the draft is the
@@ -922,8 +1117,11 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
     merge into it: their label and retitled sections survived, but sections
     they had deleted and facts they had unbound came back, silently. Now it
     arrives beside theirs, keyed <key>-2 and labelled "... (2)", so their own
-    work is never reached (decision record, the take rule)."""
-    if not _latest_published(tenant_id):
+    work is never reached (decision record, the take rule).
+
+    INTO ONE WORKSPACE, whose draft and live revision it reads. The pack
+    tenant's revisions are found in their own workspace, 0."""
+    if not _latest_published(tenant_id, workspace_id):
         raise ValueError(
             "fork a base before a template: a memorandum binds facts, and "
             "sections with no facts behind them cannot be published")
@@ -933,6 +1131,7 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
         raise ValueError("no memorandum is on offer under '%s'" % pack_key)
     pack_tenant = offer["tenant_id"]
     source = offer["revision"]
+    source_ws = _workspace_of_revision(pack_tenant, source) or NO_WORKSPACE
     source_key = offer["template_key"]
     if not source_key:
         raise ValueError(
@@ -943,24 +1142,29 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
         raise ValueError("no base is on offer; a memorandum's facts come "
                          "from it")
     base_tenant, base = base_offer["tenant_id"], base_offer["revision"]
+    base_ws = _workspace_of_revision(base_tenant, base) or NO_WORKSPACE
 
     # The draft, over what is live. open_draft returns an existing draft
     # untouched, so an unfinished edit is never disturbed.
-    live = _active_revision(tenant_id) or _latest_published(tenant_id)
-    opened = open_draft(tenant_id, email, live)
+    live = (_active_revision(tenant_id, workspace_id)
+            or _latest_published(tenant_id, workspace_id))
+    opened = open_draft(tenant_id, workspace_id, email, live)
 
     # --- what the template needs, worked out before anything is written ----
 
-    bound = _keys(pack_tenant, source, "config_section_field", "field_key",
+    bound = _keys(pack_tenant, source_ws, source, "config_section_field",
+                  "field_key",
                   "AND template_key = :tk", [_p("tk", source_key)])
-    held_fields = _keys(tenant_id, DRAFT, "config_field", "field_key")
+    held_fields = _keys(tenant_id, workspace_id, DRAFT, "config_field",
+                        "field_key")
     wanted = sorted(bound - held_fields)
 
     # A fact the base does not define either. Nothing in our own content does
     # this, and writing a draft that cannot publish is worse than refusing.
     if wanted:
         names, params = _in(wanted)
-        in_base = _keys(base_tenant, base, "config_field", "field_key",
+        in_base = _keys(base_tenant, base_ws, base, "config_field",
+                        "field_key",
                         "AND field_key IN (%s)" % names, params)
         orphans = [k for k in wanted if k not in in_base]
         if orphans:
@@ -974,14 +1178,14 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
     if wanted:
         names, params = _in(wanted)
         groups = sorted(_keys(
-            base_tenant, base, "config_field", "field_key",
+            base_tenant, base_ws, base, "config_field", "field_key",
             "AND group_key = field_key AND field_key IN (%s)" % names,
             params))
     columns = []
     if groups:
         names, params = _in(groups, "g")
         columns = sorted(_keys(
-            base_tenant, base, "config_field", "field_key",
+            base_tenant, base_ws, base, "config_field", "field_key",
             "AND group_key IN (%s) AND field_key <> group_key" % names,
             params))
 
@@ -990,25 +1194,31 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
     schemas, types, categories = [], [], []
     if fields:
         names, params = _in(fields, "f")
-        needs_schema = _keys(base_tenant, base, "config_field", "schema_key",
+        needs_schema = _keys(base_tenant, base_ws, base, "config_field",
+                             "schema_key",
                              "AND field_key IN (%s)" % names, params)
-        held_schemas = _keys(tenant_id, DRAFT, "config_schema", "schema_key")
+        held_schemas = _keys(tenant_id, workspace_id, DRAFT, "config_schema",
+                             "schema_key")
         schemas = sorted(needs_schema - held_schemas)
 
         if needs_schema:
             names, params = _in(sorted(needs_schema), "s")
-            feeds = _keys(base_tenant, base, "config_type_schema", "type_key",
+            feeds = _keys(base_tenant, base_ws, base, "config_type_schema",
+                          "type_key",
                           "AND schema_key IN (%s)" % names, params)
-            held_types = _keys(tenant_id, DRAFT, "config_document_type",
+            held_types = _keys(tenant_id, workspace_id, DRAFT,
+                               "config_document_type",
                                "type_key")
             types = sorted(feeds - held_types)
 
         if types:
             names, params = _in(types, "t")
-            wants_category = _keys(base_tenant, base, "config_document_type",
+            wants_category = _keys(base_tenant, base_ws, base,
+                                   "config_document_type",
                                    "category_key",
                                    "AND type_key IN (%s)" % names, params)
-            held_categories = _keys(tenant_id, DRAFT, "config_category",
+            held_categories = _keys(tenant_id, workspace_id, DRAFT,
+                                    "config_category",
                                     "category_key")
             categories = sorted(wants_category - held_categories)
 
@@ -1024,13 +1234,16 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
         listed = ", ".join(columns_)
         _sql(
             """
-            INSERT IGNORE INTO {t} (tenant_id, revision, {c})
-            SELECT :to_t, :to_r, {c} FROM {t}
-             WHERE tenant_id = :from_t AND revision = :from_r
+            INSERT IGNORE INTO {t} (tenant_id, workspace_id, revision, {c})
+            SELECT :to_t, :to_w, :to_r, {c} FROM {t}
+             WHERE tenant_id = :from_t AND workspace_id = :from_w
+               AND revision = :from_r
                AND {col} IN ({keys}) {x}
             """.format(t=table, c=listed, col=column, keys=names, x=extra),
-            [_p("to_t", tenant_id), _p("to_r", DRAFT),
-             _p("from_t", base_tenant), _p("from_r", base)] + params,
+            [_p("to_t", tenant_id), _p("to_w", workspace_id),
+             _p("to_r", DRAFT),
+             _p("from_t", base_tenant), _p("from_w", base_ws),
+             _p("from_r", base)] + params,
         )
 
     add("config_category", ["category_key", "label", "sort_order"],
@@ -1056,13 +1269,14 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
     # memorandum, retitled a section or unbound a fact keeps every one of
     # those decisions when the same template is forked again.
 
-    before = _counts(tenant_id, DRAFT)
+    before = _counts(tenant_id, workspace_id, DRAFT)
 
     # A key the draft does not already hold, and a label that says which copy
     # this is. Keys are identity and never change, so the count is minted once
     # and a rename afterwards leaves it alone - the same rule
     # editor.duplicate_template follows.
-    held_templates = _keys(tenant_id, DRAFT, "config_template", "template_key")
+    held_templates = _keys(tenant_id, workspace_id, DRAFT, "config_template",
+                           "template_key")
     new_key, suffix, copy_number = source_key, "", 1
     if source_key in held_templates:
         copy_number = 2
@@ -1071,26 +1285,29 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
         new_key = ("%s-%d" % (source_key, copy_number))[:64]
         suffix = " (%d)" % copy_number
 
-    where = (" WHERE tenant_id = :from_t AND revision = :from_r"
-             " AND template_key = :src_key")
-    params = [_p("to_t", tenant_id), _p("to_r", DRAFT),
-              _p("from_t", pack_tenant), _p("from_r", source),
+    where = (" WHERE tenant_id = :from_t AND workspace_id = :from_w"
+             " AND revision = :from_r AND template_key = :src_key")
+    params = [_p("to_t", tenant_id), _p("to_w", workspace_id),
+              _p("to_r", DRAFT),
+              _p("from_t", pack_tenant), _p("from_w", source_ws),
+              _p("from_r", source),
               _p("src_key", source_key), _p("new_key", new_key)]
 
     _sql(
         """
-        INSERT IGNORE INTO config_template (tenant_id, revision, template_key,
-               label)
-        SELECT :to_t, :to_r, :new_key, CONCAT(label, :suffix)
+        INSERT IGNORE INTO config_template (tenant_id, workspace_id,
+               revision, template_key, label)
+        SELECT :to_t, :to_w, :to_r, :new_key, CONCAT(label, :suffix)
           FROM config_template""" + where,
         params + [_p("suffix", suffix)],
     )
     _sql(
         """
         INSERT IGNORE INTO config_section
-          (tenant_id, revision, template_key, section_key, numeral, title,
-           kind, shape_key, prompt, context_sections, sort_order)
-        SELECT :to_t, :to_r, :new_key, section_key, numeral, title,
+          (tenant_id, workspace_id, revision, template_key, section_key,
+           numeral, title, kind, shape_key, prompt, context_sections,
+           sort_order)
+        SELECT :to_t, :to_w, :to_r, :new_key, section_key, numeral, title,
                kind, shape_key, prompt, context_sections, sort_order
           FROM config_section""" + where,
         params,
@@ -1100,19 +1317,21 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
     _sql(
         """
         INSERT IGNORE INTO config_section_field
-          (tenant_id, revision, template_key, section_key, field_key,
-           sort_order)
-        SELECT :to_t, :to_r, :new_key, section_key, field_key, sort_order
+          (tenant_id, workspace_id, revision, template_key, section_key,
+           field_key, sort_order)
+        SELECT :to_t, :to_w, :to_r, :new_key, section_key, field_key,
+               sort_order
           FROM config_section_field""" + where,
         params,
     )
 
-    after = _counts(tenant_id, DRAFT)
+    after = _counts(tenant_id, workspace_id, DRAFT)
 
     return {
         "forked": True,
         "pack_key": pack_key,
         "revision": DRAFT,
+        "workspace_id": workspace_id,
         "templates": [new_key],
         "template_key": new_key,
         "copy": copy_number,
@@ -1128,16 +1347,18 @@ def fork_template(tenant_id, email, pack_key, pack_tenant=PACK_TENANT):
     }
 
 
-def _counts(tenant_id, revision):
+def _counts(tenant_id, workspace_id, revision):
     """Enough of a revision to say what a fork added to it."""
     records = _sql(
         """
         SELECT (SELECT COUNT(*) FROM config_section
-                 WHERE tenant_id = :t AND revision = :r),
+                 WHERE tenant_id = :t AND workspace_id = :w
+                   AND revision = :r),
                (SELECT COUNT(*) FROM config_section_field
-                 WHERE tenant_id = :t AND revision = :r)
+                 WHERE tenant_id = :t AND workspace_id = :w
+                   AND revision = :r)
         """,
-        [_p("t", tenant_id), _p("r", revision)],
+        [_p("t", tenant_id), _p("w", workspace_id), _p("r", revision)],
     ).get("records", [])
     if not records:
         return {"sections": 0, "bindings": 0}
@@ -1157,9 +1378,13 @@ def packs(pack_tenant=PACK_TENANT):
         """
         SELECT o.revision, o.pack_key, r.note,
                (SELECT COUNT(*) FROM config_document_type t
-                 WHERE t.tenant_id = o.tenant_id AND t.revision = o.revision),
+                 WHERE t.tenant_id = o.tenant_id
+                   AND t.workspace_id = r.workspace_id
+                   AND t.revision = o.revision),
                (SELECT COUNT(*) FROM config_field f
-                 WHERE f.tenant_id = o.tenant_id AND f.revision = o.revision)
+                 WHERE f.tenant_id = o.tenant_id
+                   AND f.workspace_id = r.workspace_id
+                   AND f.revision = o.revision)
         FROM pack_offer o
         JOIN config_revision r ON r.tenant_id = o.tenant_id
          AND r.revision = o.revision AND r.status = 'published'
@@ -1174,8 +1399,8 @@ def packs(pack_tenant=PACK_TENANT):
     ]
 
 
-def template_packs(tenant_id, pack_tenant=PACK_TENANT):
-    """The memoranda on offer, and whether this tenant already holds each.
+def template_packs(tenant_id, workspace_id, pack_tenant=PACK_TENANT):
+    """The memoranda on offer, and whether this workspace already holds each.
 
     A base is a base and a template is a template. They are different lists
     because they are different acts: one is taken once, the other whenever
@@ -1184,11 +1409,16 @@ def template_packs(tenant_id, pack_tenant=PACK_TENANT):
         """
         SELECT o.revision, o.pack_key, r.note, o.tenant_id, o.template_key,
                (SELECT COUNT(*) FROM config_section s
-                 WHERE s.tenant_id = o.tenant_id AND s.revision = o.revision
+                 WHERE s.tenant_id = o.tenant_id
+                   AND s.workspace_id = r.workspace_id
+                   AND s.revision = o.revision
                    AND s.template_key = o.template_key),
                (SELECT COUNT(*) FROM config_section_field f
-                 WHERE f.tenant_id = o.tenant_id AND f.revision = o.revision
-                   AND f.template_key = o.template_key)
+                 WHERE f.tenant_id = o.tenant_id
+                   AND f.workspace_id = r.workspace_id
+                   AND f.revision = o.revision
+                   AND f.template_key = o.template_key),
+               r.workspace_id
         FROM pack_offer o
         JOIN config_revision r ON r.tenant_id = o.tenant_id
          AND r.revision = o.revision AND r.status = 'published'
@@ -1199,15 +1429,20 @@ def template_packs(tenant_id, pack_tenant=PACK_TENANT):
     packs_ = [
         {"revision": _col(r, 0), "pack_key": _col(r, 1), "note": _col(r, 2),
          "tenant_id": _col(r, 3), "template_key": _col(r, 4),
-         "sections": _col(r, 5), "facts": _col(r, 6)}
+         "sections": _col(r, 5), "facts": _col(r, 6),
+         # The mark's own workspace, read below and not returned.
+         "_ws": int(_col(r, 7) or 0)}
         for r in result.get("records", [])
     ]
 
     # What the tenant holds, live and in the draft, so a template already
     # taken is marked rather than offered again as though it were new.
-    live = _active_revision(tenant_id) or _latest_published(tenant_id)
-    held = _keys(tenant_id, live, "config_template", "template_key") \
-        | _keys(tenant_id, DRAFT, "config_template", "template_key")
+    live = (_active_revision(tenant_id, workspace_id)
+            or _latest_published(tenant_id, workspace_id))
+    held = _keys(tenant_id, workspace_id, live, "config_template",
+                 "template_key") \
+        | _keys(tenant_id, workspace_id, DRAFT, "config_template",
+                "template_key")
 
     for pack in packs_:
         # The memorandum's own name and the headings it carries. pack_key is
@@ -1216,11 +1451,12 @@ def template_packs(tenant_id, pack_tenant=PACK_TENANT):
         #
         # One memorandum per mark, so both reads name the template_key the
         # mark carries. The revision holds three others.
-        where = [_p("p", pack["tenant_id"]), _p("r", pack["revision"]),
-                 _p("k", pack["template_key"])]
+        where = [_p("p", pack["tenant_id"]), _p("w", pack.pop("_ws")),
+                 _p("r", pack["revision"]), _p("k", pack["template_key"])]
         rows = _sql(
             "SELECT template_key, label FROM config_template "
-            "WHERE tenant_id = :p AND revision = :r AND template_key = :k",
+            "WHERE tenant_id = :p AND workspace_id = :w AND revision = :r "
+            "AND template_key = :k",
             where,
         ).get("records", [])
         pack["template_keys"] = [_col(r, 0) for r in rows]
@@ -1229,8 +1465,8 @@ def template_packs(tenant_id, pack_tenant=PACK_TENANT):
 
         headings = _sql(
             "SELECT numeral, title FROM config_section "
-            "WHERE tenant_id = :p AND revision = :r AND template_key = :k "
-            "ORDER BY sort_order",
+            "WHERE tenant_id = :p AND workspace_id = :w AND revision = :r "
+            "AND template_key = :k ORDER BY sort_order",
             where,
         ).get("records", [])
         pack["section_titles"] = [

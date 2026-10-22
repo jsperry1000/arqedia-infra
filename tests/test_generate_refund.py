@@ -221,8 +221,8 @@ class GenerateRoute(unittest.TestCase):
 
         for p in [
             mock.patch.object(self.app, "_sql", side_effect=sql),
-            mock.patch.object(self.app.config, "for_tenant",
-                              lambda t: registry),
+            mock.patch.object(self.app.config, "for_workspace",
+                              lambda t, w: registry),
             mock.patch.object(self.app.wallet, "charge",
                               side_effect=lambda *a, **k: self.paid),
             mock.patch.object(self.app.wallet, "refund_generation",
@@ -239,7 +239,8 @@ class GenerateRoute(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def generate(self):
-        return self.app.generate(TENANT, EMAIL, "Meridian", "credit", "idem-1")
+        return self.app.generate(TENANT, 3, EMAIL, "Meridian", "credit",
+                                 "idem-1")
 
     def test_the_payload_carries_the_charge_and_the_run(self):
         out = self.generate()
@@ -273,12 +274,13 @@ class GenerateRoute(unittest.TestCase):
         self.assertEqual(state["error"], self.app.GENERATE_NOT_STARTED)
 
     def test_an_update_that_cannot_be_started_is_refunded(self):
-        memo = rows(("credit", ENGAGEMENT_ID, 100, 2))
+        memo = rows(("credit", ENGAGEMENT_ID, 100, 2, 3))
         self.app._sql.side_effect = lambda s, p=None, tx=None: memo
         with mock.patch.object(self.app.config, "active_revision",
                                return_value=9), \
                 mock.patch.object(self.app.config, "load",
-                                  return_value=self.app.config.for_tenant(7)):
+                                  return_value=self.app.config.for_workspace(
+                                      7, 3)):
             self.app._lambda.invoke.side_effect = RuntimeError("throttled")
             out = self.app.update_memo(TENANT, EMAIL, 120, "idem-2")
         self.assertEqual(out["status"], "failed")

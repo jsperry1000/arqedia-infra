@@ -124,8 +124,14 @@ def _col(record, i):
     return None
 
 
-def _load_values(tenant_id, engagement_id):
+def _load_values(tenant_id, workspace_id, engagement_id):
     """Every extracted value for the engagement, with its source document.
+
+    ONE WORKSPACE'S DOCUMENTS (PACK-01). A document is uploaded into one
+    workspace and read under its vocabulary; a memo is written under one
+    workspace's configuration. A Trade Finance memo must not bind values read
+    under Real Estate's field definitions, however the field keys happen to
+    coincide, so the documents are those of the memo's own workspace.
 
     BY d.engagement_id (13.3 stage 4), not by a LIKE on the storage key. The
     id arrives in the payload, resolved by the API from the name in the
@@ -144,11 +150,13 @@ def _load_values(tenant_id, engagement_id):
           AND d.state = 'filed'
           AND d.active = 1
           AND d.engagement_id = :engagement_id
+          AND d.workspace_id = :workspace_id
         ORDER BY v.document_id, v.value_id
         """,
         [
             _p("tenant_id", tenant_id),
             _p("engagement_id", int(engagement_id)),
+            _p("workspace_id", int(workspace_id)),
         ],
     )
 
@@ -1161,7 +1169,7 @@ def _update(event):
         found = _sql(
             """
             SELECT s3_bucket, s3_key, config_revision, template_key,
-                   engagement_id
+                   engagement_id, workspace_id
             FROM memo WHERE tenant_id = :t AND memo_id = :m
             """,
             [_p("t", tenant_id), _p("m", memo_id)]).get("records", [])
@@ -1174,19 +1182,22 @@ def _update(event):
         from_revision = int(_col(found[0], 2) or 1)
         template_key = event.get("template_key") or _col(found[0], 3)
         engagement_id = event.get("engagement_id") or _col(found[0], 4)
+        # The memo's own workspace, from its row: the revision the API sent
+        # is one of that workspace's series.
+        workspace_id = config.workspace_of(tenant_id, _col(found[0], 5))
         state["from_revision"] = from_revision
 
         if engagement_id is None:
             return finish("failed", error="this memorandum belongs to no "
                           "engagement, so there is nothing to update it from")
 
-        registry = config.load(tenant_id, revision)
+        registry = config.load(tenant_id, workspace_id, revision)
         if not registry.has_template(template_key):
             return finish("failed", error="this memorandum is not in the "
                           "configuration in use")
-        earlier = config.load(tenant_id, from_revision)
+        earlier = config.load(tenant_id, workspace_id, from_revision)
 
-        values = _load_values(tenant_id, engagement_id)
+        values = _load_values(tenant_id, workspace_id, engagement_id)
         if not values:
             return finish("failed", error="no document filed in this "
                           "engagement has anything read from it")
@@ -1278,12 +1289,14 @@ def _update(event):
                 if error:
                     failed += 1
                     rewrite_ids.append(_update_row(
-                        tenant_id, memo_id, heading, requested_by, saved_text,
+                        tenant_id, workspace_id, memo_id, heading,
+                        requested_by, saved_text,
                         None, None, revision, error=error))
                 elif placements[key]:
                     changed += 1
                     rewrite_ids.append(_update_row(
-                        tenant_id, memo_id, heading, requested_by, saved_text,
+                        tenant_id, workspace_id, memo_id, heading,
+                        requested_by, saved_text,
                         _insert(saved_text, placements[key]),
                         usage_of.get(key), revision))
                 else:
@@ -1295,7 +1308,8 @@ def _update(event):
                 heading = text.split("\n", 1)[0].strip()
                 added_sections.append(heading)
                 rewrite_ids.append(_update_row(
-                    tenant_id, memo_id, heading, requested_by, "", text,
+                    tenant_id, workspace_id, memo_id, heading, requested_by,
+                    "", text,
                     None, revision))
             # Otherwise the template had it when this memo was written and
             # the memo no longer does under that heading: a person removed
@@ -1320,8 +1334,8 @@ def _update(event):
         return finish("failed", error=UPDATE_FAULT)
 
 
-def _update_row(tenant_id, memo_id, heading, requested_by, input_text,
-                output_text, usage, revision, error=None):
+def _update_row(tenant_id, workspace_id, memo_id, heading, requested_by,
+                input_text, output_text, usage, revision, error=None):
     """One section of an Update as a memo_rewrite row, finished. Returns its
     id. Done where there is text to offer, failed where the comparison could
     not be made - the screen shows the second as it shows a failed rewrite,
@@ -1330,15 +1344,15 @@ def _update_row(tenant_id, memo_id, heading, requested_by, input_text,
     created = _sql(
         """
         INSERT INTO memo_rewrite
-          (tenant_id, memo_id, section_heading, prompt, prompted_by,
-           model_id, input_text, output_text, tokens_in, tokens_out,
-           status, error, completed_at, source, config_revision)
+          (tenant_id, workspace_id, memo_id, section_heading, prompt,
+           prompted_by, model_id, input_text, output_text, tokens_in,
+           tokens_out, status, error, completed_at, source, config_revision)
         VALUES
-          (:t, :m, :heading, :prompt, :who, :model, :input, :output,
+          (:t, :w, :m, :heading, :prompt, :who, :model, :input, :output,
            :tokens_in, :tokens_out, :status, :error, UTC_TIMESTAMP(),
            'update', :revision)
         """,
-        [_p("t", tenant_id), _p("m", memo_id),
+        [_p("t", tenant_id), _p("w", workspace_id), _p("m", memo_id),
          _p("heading", heading[:512]),
          _p("prompt", cleanup.UPDATE_ROW_PROMPT),
          _p("who", requested_by), _p("model", MODEL_ID),
@@ -1524,8 +1538,13 @@ def _compose_memo(event, written):
     # force now, and binds whatever values exist by field_id. Pipeline spec
     # v1.0 section 7: a document filed under revision 3 and composed under
     # revision 7 binds fine as long as the field IDs still exist.
-    revision = config.active_revision(tenant_id)
-    registry = config.load(tenant_id, revision)
+    #
+    # IN ONE WORKSPACE (PACK-01): the one the API resolved and charged in.
+    # An event without one was queued before workspaces, by a tenant that
+    # then held exactly one, and config.workspace answers that one.
+    workspace_id = config.workspace(tenant_id, event.get("workspace_id"))
+    revision = config.active_revision(tenant_id, workspace_id)
+    registry = config.load(tenant_id, workspace_id, revision)
 
     # Which memorandum is being written. A tenant may hold a credit, a KYC and
     # a lender template over the same documents; the caller says which, and an
@@ -1547,7 +1566,7 @@ def _compose_memo(event, written):
     if engagement_id is None:
         return {"status": "no-engagement-id", "engagement": engagement}
 
-    values = _load_values(tenant_id, engagement_id)
+    values = _load_values(tenant_id, workspace_id, engagement_id)
     if not values:
         return {"status": "no-values", "engagement": engagement}
 
@@ -1608,14 +1627,17 @@ def _compose_memo(event, written):
     memo_result = _sql(
         """
         INSERT INTO memo
-          (tenant_id, engagement_id, template_key, config_revision,
-           s3_bucket, s3_key, s3_version_id, sha256, generated_by)
+          (tenant_id, workspace_id, engagement_id, template_key,
+           config_revision, s3_bucket, s3_key, s3_version_id, sha256,
+           generated_by)
         VALUES
-          (:tenant_id, :engagement_id, :template_key, :config_revision,
-           :s3_bucket, :s3_key, :s3_version_id, :sha256, :generated_by)
+          (:tenant_id, :workspace_id, :engagement_id, :template_key,
+           :config_revision, :s3_bucket, :s3_key, :s3_version_id, :sha256,
+           :generated_by)
         """,
         [
             _p("tenant_id", tenant_id),
+            _p("workspace_id", workspace_id),
             _p("engagement_id", engagement_id),
             _p("template_key", template_key),
             _p("config_revision", revision),

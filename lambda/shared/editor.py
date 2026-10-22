@@ -85,8 +85,9 @@ def _col(record, i):
     return None
 
 
-def _rows(tenant_id, sql, extra_params=None):
-    return _sql(sql, [_p("t", tenant_id), _p("r", DRAFT)]
+def _rows(tenant_id, workspace_id, sql, extra_params=None):
+    return _sql(sql, [_p("t", tenant_id), _p("w", workspace_id),
+                      _p("r", DRAFT)]
                 + (extra_params or [])).get("records", [])
 
 
@@ -98,35 +99,38 @@ def _slug(label, prefix=""):
     return (prefix + (body or "item"))[:_MAX_KEY]
 
 
-def _require_draft(tenant_id):
+def _require_draft(tenant_id, workspace_id):
     if not _sql("SELECT revision FROM config_revision "
-                "WHERE tenant_id = :t AND revision = :r",
-                [_p("t", tenant_id), _p("r", DRAFT)]).get("records"):
+                "WHERE tenant_id = :t AND workspace_id = :w AND revision = :r",
+                [_p("t", tenant_id), _p("w", workspace_id),
+                 _p("r", DRAFT)]).get("records"):
         raise ValueError("no draft is open")
 
 
 # --- reading ---------------------------------------------------------------
 
-def draft(tenant_id):
+def draft(tenant_id, workspace_id):
     """The whole draft, in the order a person thinks about it: what the report
     says, what each part of it needs, and where those facts are found.
 
     The schema is not in this shape at all. It is an implementation detail of
     extraction, derived on save."""
-    _require_draft(tenant_id)
+    _require_draft(tenant_id, workspace_id)
 
     templates = []
-    for r in _rows(tenant_id, """
+    for r in _rows(tenant_id, workspace_id, """
         SELECT template_key, label
-        FROM config_template WHERE tenant_id = :t AND revision = :r
+        FROM config_template WHERE tenant_id = :t AND workspace_id = :w
+          AND revision = :r
         ORDER BY template_key"""):
         templates.append({"key": _col(r, 0), "label": _col(r, 1)})
 
     sections = []
-    for r in _rows(tenant_id, """
+    for r in _rows(tenant_id, workspace_id, """
         SELECT section_key, numeral, title, kind, prompt, template_key,
                sort_order, context_sections
-        FROM config_section WHERE tenant_id = :t AND revision = :r
+        FROM config_section WHERE tenant_id = :t AND workspace_id = :w
+          AND revision = :r
         ORDER BY template_key, sort_order"""):
         context = _col(r, 7)
         sections.append({
@@ -146,9 +150,10 @@ def draft(tenant_id):
     # and a credit memorandum's fields appear on a KYC section.
     by_key = {(s["template_key"], s["key"]): s for s in sections}
 
-    for r in _rows(tenant_id, """
+    for r in _rows(tenant_id, workspace_id, """
         SELECT template_key, section_key, field_key, sort_order
-        FROM config_section_field WHERE tenant_id = :t AND revision = :r
+        FROM config_section_field WHERE tenant_id = :t
+          AND workspace_id = :w AND revision = :r
         ORDER BY sort_order"""):
         section = by_key.get((_col(r, 0), _col(r, 1)))
         if section:
@@ -157,22 +162,24 @@ def draft(tenant_id):
     # Where each field is found, from the schema it sits in. The schema itself
     # is not reported.
     found_in = {}
-    for r in _rows(tenant_id, """
+    for r in _rows(tenant_id, workspace_id, """
         SELECT f.field_key, m.type_key
         FROM config_field f
         JOIN config_type_schema m
-          ON m.tenant_id = f.tenant_id AND m.revision = f.revision
+          ON m.tenant_id = f.tenant_id AND m.workspace_id = f.workspace_id
+         AND m.revision = f.revision
          AND m.schema_key = f.schema_key
-        WHERE f.tenant_id = :t AND f.revision = :r"""):
+        WHERE f.tenant_id = :t AND f.workspace_id = :w AND f.revision = :r"""):
         found_in.setdefault(_col(r, 0), []).append(_col(r, 1))
 
     # A group's columns are part of the group rather than fields in their own
     # right, so they are carried INSIDE it. A person creating a Shippers table
     # names its columns; they do not add four loose fields and hope.
-    rows = list(_rows(tenant_id, """
+    rows = list(_rows(tenant_id, workspace_id, """
         SELECT field_key, label, field_type, cardinality, description,
                group_key, sort_order
-        FROM config_field WHERE tenant_id = :t AND revision = :r
+        FROM config_field WHERE tenant_id = :t AND workspace_id = :w
+          AND revision = :r
         ORDER BY sort_order"""))
 
     columns = {}
@@ -203,10 +210,11 @@ def draft(tenant_id):
         })
 
     types = []
-    for r in _rows(tenant_id, """
+    for r in _rows(tenant_id, workspace_id, """
         SELECT type_key, label, category_key, description, read_mode,
                always_ocr, sort_order
-        FROM config_document_type WHERE tenant_id = :t AND revision = :r
+        FROM config_document_type WHERE tenant_id = :t
+          AND workspace_id = :w AND revision = :r
         ORDER BY sort_order"""):
         types.append({
             "key": _col(r, 0), "label": _col(r, 1), "category": _col(r, 2),
@@ -215,9 +223,10 @@ def draft(tenant_id):
         })
 
     categories = [{"key": _col(r, 0), "label": _col(r, 1)}
-                  for r in _rows(tenant_id, """
+                  for r in _rows(tenant_id, workspace_id, """
         SELECT category_key, label FROM config_category
-        WHERE tenant_id = :t AND revision = :r ORDER BY sort_order""")]
+        WHERE tenant_id = :t AND workspace_id = :w
+          AND revision = :r ORDER BY sort_order""")]
 
     return {"templates": templates, "sections": sections, "fields": fields,
             "document_types": types, "categories": categories}
@@ -225,9 +234,9 @@ def draft(tenant_id):
 
 # --- sections --------------------------------------------------------------
 
-def save_section(tenant_id, body):
+def save_section(tenant_id, workspace_id, body):
     """Add or amend a section of the report."""
-    _require_draft(tenant_id)
+    _require_draft(tenant_id, workspace_id)
 
     key = body.get("key") or _slug(body.get("title"))
     if not _KEY.match(key):
@@ -246,9 +255,11 @@ def save_section(tenant_id, body):
     # nobody configured.
     template_key = body.get("template_key")
     if not template_key:
-        rows = _rows(tenant_id, "SELECT template_key FROM config_template "
-                                "WHERE tenant_id = :t AND revision = :r "
-                                "ORDER BY template_key")
+        rows = _rows(tenant_id, workspace_id,
+                     "SELECT template_key FROM config_template "
+                     "WHERE tenant_id = :t AND workspace_id = :w AND revision "
+                     "= :r "
+                     "ORDER BY template_key")
         if len(rows) != 1:
             raise ValueError("say which memorandum this section belongs to")
         template_key = _col(rows[0], 0)
@@ -260,21 +271,24 @@ def save_section(tenant_id, body):
     # as it is", the same rule sort_order follows below.
     sent = "context_sections" in body
     context = _context_sections(
-        tenant_id, template_key, key, body.get("kind") or "extract",
+        tenant_id, workspace_id, template_key, key,
+        body.get("kind") or "extract",
         body.get("sort_order"), body.get("context_sections")) if sent else None
 
     _sql("""
         INSERT INTO config_section
-          (tenant_id, revision, template_key, section_key, numeral, title,
+          (tenant_id, workspace_id, revision, template_key, section_key,
+           numeral, title,
            kind, shape_key, prompt, context_sections, sort_order)
-        VALUES (:t, :r, :tpl, :k, :num, :title, :kind, :shape, :prompt,
+        VALUES (:t, :w, :r, :tpl, :k, :num, :title, :kind, :shape, :prompt,
                 :context, COALESCE(:sort, 0))
         ON DUPLICATE KEY UPDATE
           numeral = :num, title = :title, kind = :kind, prompt = :prompt,
           """ + ("context_sections = :context," if sent else "") + """
           sort_order = COALESCE(:sort, sort_order)
         """, [
-        _p("t", tenant_id), _p("r", DRAFT), _p("tpl", template_key),
+        _p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+        _p("tpl", template_key),
         _p("k", key), _p("num", body.get("numeral") or ""),
         _p("title", body.get("title") or key),
         _p("kind", body.get("kind") or "extract"),
@@ -301,7 +315,8 @@ def save_section(tenant_id, body):
 _MAX_CONTEXT = 255
 
 
-def _context_sections(tenant_id, template_key, key, kind, sort_order, keys):
+def _context_sections(tenant_id, workspace_id, template_key, key, kind,
+                      sort_order, keys):
     """The stored form of what a composed section reads, or a refusal.
 
     Stored as composition parses it: keys joined by commas, no spaces, NULL
@@ -327,9 +342,10 @@ def _context_sections(tenant_id, template_key, key, kind, sort_order, keys):
         raise ValueError("a section cannot read itself")
 
     held = {}
-    for r in _rows(tenant_id, """
+    for r in _rows(tenant_id, workspace_id, """
         SELECT section_key, title, kind, sort_order FROM config_section
-        WHERE tenant_id = :t AND revision = :r AND template_key = :tpl""",
+        WHERE tenant_id = :t AND workspace_id = :w AND revision = :r
+          AND template_key = :tpl""",
                    [_p("tpl", template_key)]):
         held[_col(r, 0)] = {"title": _col(r, 1), "kind": _col(r, 2),
                             "sort": _col(r, 3) or 0}
@@ -361,57 +377,66 @@ def _context_sections(tenant_id, template_key, key, kind, sort_order, keys):
     return stored
 
 
-def delete_section(tenant_id, template_key, section_key):
+def delete_section(tenant_id, workspace_id, template_key, section_key):
     """Remove a section from ONE memorandum. Its field bindings go with it -
     the fields themselves remain, and will show as unbound at publish.
 
     Scoped to the template. Deleting by section name alone removed it from
     every memorandum that happened to use that name."""
-    _require_draft(tenant_id)
+    _require_draft(tenant_id, workspace_id)
     for table in ("config_section_field", "config_section"):
-        _sql("DELETE FROM %s WHERE tenant_id = :t AND revision = :r "
+        _sql("DELETE FROM %s WHERE tenant_id = :t AND workspace_id = :w AND "
+             "revision = :r "
              "AND template_key = :tpl AND section_key = :k" % table,
-             [_p("t", tenant_id), _p("r", DRAFT), _p("tpl", template_key),
+             [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+              _p("tpl", template_key),
               _p("k", section_key)])
     return {"deleted": section_key, "template_key": template_key}
 
 
-def set_section_fields(tenant_id, template_key, section_key, field_keys):
+def set_section_fields(tenant_id, workspace_id, template_key, section_key,
+                       field_keys):
     """Which fields this section renders, in order.
 
     THE STAGE 1 FAULT LIVES HERE. A section naming a field that does not exist
     writes a memo reporting facts as absent when they were extracted and
     stored, so this is refused at SAVE rather than at publish - the one
     exception to validating late."""
-    _require_draft(tenant_id)
+    _require_draft(tenant_id, workspace_id)
 
-    known = {_col(r, 0) for r in _rows(tenant_id,
+    known = {_col(r, 0) for r in _rows(tenant_id, workspace_id,
              "SELECT field_key FROM config_field "
-             "WHERE tenant_id = :t AND revision = :r")}
+             "WHERE tenant_id = :t AND workspace_id = :w AND revision = :r")}
     unknown = [k for k in field_keys if k not in known]
     if unknown:
         raise ValueError("no such field: " + ", ".join(unknown[:5]))
 
-    rows = _rows(tenant_id, "SELECT template_key FROM config_section "
-                            "WHERE tenant_id = :t AND revision = :r "
-                            "AND template_key = :tpl AND section_key = :k",
+    rows = _rows(tenant_id, workspace_id,
+                 "SELECT template_key FROM config_section "
+                 "WHERE tenant_id = :t AND workspace_id = :w "
+                 "AND revision = :r "
+                 "AND template_key = :tpl AND section_key = :k",
                  [_p("tpl", template_key), _p("k", section_key)])
     if not rows:
         raise ValueError("no such section: %s in %s"
                          % (section_key, template_key))
 
     _sql("DELETE FROM config_section_field WHERE tenant_id = :t "
-         "AND revision = :r AND template_key = :tpl AND section_key = :k",
-         [_p("t", tenant_id), _p("r", DRAFT), _p("tpl", template_key),
+         "AND workspace_id = :w AND revision = :r AND template_key = :tpl AND "
+         "section_key = :k",
+         [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+          _p("tpl", template_key),
           _p("k", section_key)])
 
     for i, field_key in enumerate(field_keys):
         _sql("""
             INSERT INTO config_section_field
-              (tenant_id, revision, template_key, section_key, field_key,
+              (tenant_id, workspace_id, revision, template_key, section_key,
+               field_key,
                sort_order)
-            VALUES (:t, :r, :tpl, :sec, :f, :sort)
-            """, [_p("t", tenant_id), _p("r", DRAFT), _p("tpl", template_key),
+            VALUES (:t, :w, :r, :tpl, :sec, :f, :sort)
+            """, [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+             _p("tpl", template_key),
                   _p("sec", section_key), _p("f", field_key), _p("sort", i)])
 
     return {"template_key": template_key, "section": section_key,
@@ -420,14 +445,14 @@ def set_section_fields(tenant_id, template_key, section_key, field_keys):
 
 # --- templates -------------------------------------------------------------
 
-def save_template(tenant_id, body):
+def save_template(tenant_id, workspace_id, body):
     """Add or rename a memorandum.
 
     Several memoranda share one field vocabulary and one set of document
     types: a document is extracted once and read whichever way the reader
     asks for. What differs is the sections, what each renders, and how each is
     written."""
-    _require_draft(tenant_id)
+    _require_draft(tenant_id, workspace_id)
 
     key = body.get("key") or _slug(body.get("label"))
     if not _KEY.match(key):
@@ -435,15 +460,17 @@ def save_template(tenant_id, body):
                          "digits, dots, dashes or underscores")
 
     _sql("""
-        INSERT INTO config_template (tenant_id, revision, template_key, label)
-        VALUES (:t, :r, :k, :label)
+        INSERT INTO config_template (tenant_id, workspace_id, revision,
+         template_key, label)
+        VALUES (:t, :w, :r, :k, :label)
         ON DUPLICATE KEY UPDATE label = :label
-        """, [_p("t", tenant_id), _p("r", DRAFT), _p("k", key),
+        """, [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+         _p("k", key),
               _p("label", body.get("label") or key)])
     return {"key": key}
 
 
-def duplicate_template(tenant_id, template_key):
+def duplicate_template(tenant_id, workspace_id, template_key):
     """Copy a memorandum: its sections, and which facts each renders.
 
     The vocabulary is NOT copied. Facts and documents belong to the tenant,
@@ -459,11 +486,12 @@ def duplicate_template(tenant_id, template_key):
     The key is minted from the new label and never follows a later rename,
     so a copy renamed afterwards keeps the key it was born with. Nothing but
     the system reads a template key."""
-    _require_draft(tenant_id)
+    _require_draft(tenant_id, workspace_id)
 
-    rows = _rows(tenant_id,
+    rows = _rows(tenant_id, workspace_id,
                  "SELECT label FROM config_template "
-                 "WHERE tenant_id = :t AND revision = :r AND template_key = :k",
+                 "WHERE tenant_id = :t AND workspace_id = :w "
+                 "AND revision = :r AND template_key = :k",
                  [_p("k", template_key)])
     if not rows:
         raise ValueError("no such memorandum")
@@ -472,24 +500,27 @@ def duplicate_template(tenant_id, template_key):
     # A key nothing else is using. Duplicating twice should give two copies
     # rather than overwrite the first.
     taken = {_col(r, 0) for r in _rows(
-        tenant_id, "SELECT template_key FROM config_template "
-                   "WHERE tenant_id = :t AND revision = :r")}
+        tenant_id, workspace_id, "SELECT template_key FROM config_template "
+                   "WHERE tenant_id = :t AND workspace_id = :w "
+                   "AND revision = :r")}
     base = _slug(label)
     new_key, n = base, 2
     while new_key in taken:
         new_key = (base + "-" + str(n))[:64]
         n += 1
 
-    _sql("INSERT INTO config_template (tenant_id, revision, template_key, "
-         "label) VALUES (:t, :r, :k, :label)",
-         [_p("t", tenant_id), _p("r", DRAFT), _p("k", new_key),
+    _sql("INSERT INTO config_template (tenant_id, workspace_id, revision, "
+         "template_key, label) VALUES (:t, :w, :r, :k, :label)",
+         [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+          _p("k", new_key),
           _p("label", label)])
 
-    sections = _rows(tenant_id, """
+    sections = _rows(tenant_id, workspace_id, """
         SELECT section_key, numeral, title, kind, shape_key, prompt,
                context_sections, sort_order
         FROM config_section
-        WHERE tenant_id = :t AND revision = :r AND template_key = :tpl
+        WHERE tenant_id = :t AND workspace_id = :w AND revision = :r
+          AND template_key = :tpl
         ORDER BY sort_order
         """, [_p("tpl", template_key)])
 
@@ -500,32 +531,37 @@ def duplicate_template(tenant_id, template_key):
     for r in sections:
         _sql("""
             INSERT INTO config_section
-              (tenant_id, revision, template_key, section_key, numeral, title,
+              (tenant_id, workspace_id, revision, template_key, section_key,
+               numeral, title,
                kind, shape_key, prompt, context_sections, sort_order)
-            VALUES (:t, :r, :tpl, :k, :num, :title, :kind, :shape, :prompt,
+            VALUES (:t, :w, :r, :tpl, :k, :num, :title, :kind, :shape, :prompt,
                     :context, :sort)
             """, [
-            _p("t", tenant_id), _p("r", DRAFT), _p("tpl", new_key),
+            _p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+            _p("tpl", new_key),
             _p("k", _col(r, 0)), _p("num", _col(r, 1)),
             _p("title", _col(r, 2)), _p("kind", _col(r, 3)),
             _p("shape", _col(r, 4)), _p("prompt", _col(r, 5)),
             _p("context", _col(r, 6)), _p("sort", _col(r, 7) or 0),
         ])
 
-    bindings = _rows(tenant_id, """
+    bindings = _rows(tenant_id, workspace_id, """
         SELECT section_key, field_key, sort_order FROM config_section_field
-        WHERE tenant_id = :t AND revision = :r AND template_key = :tpl
+        WHERE tenant_id = :t AND workspace_id = :w AND revision = :r
+          AND template_key = :tpl
         ORDER BY section_key, sort_order
         """, [_p("tpl", template_key)])
 
     for r in bindings:
         _sql("""
             INSERT INTO config_section_field
-              (tenant_id, revision, template_key, section_key, field_key,
+              (tenant_id, workspace_id, revision, template_key, section_key,
+               field_key,
                sort_order)
-            VALUES (:t, :r, :tpl, :sec, :f, :sort)
+            VALUES (:t, :w, :r, :tpl, :sec, :f, :sort)
             """, [
-            _p("t", tenant_id), _p("r", DRAFT), _p("tpl", new_key),
+            _p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+            _p("tpl", new_key),
             _p("sec", _col(r, 0)), _p("f", _col(r, 1)),
             _p("sort", _col(r, 2) or 0),
         ])
@@ -534,45 +570,50 @@ def duplicate_template(tenant_id, template_key):
             "sections": len(sections), "bindings": len(bindings)}
 
 
-def delete_template(tenant_id, template_key):
+def delete_template(tenant_id, workspace_id, template_key):
     """Remove a memorandum and its sections.
 
     The fields it rendered remain - they belong to the tenant, not to one
     memorandum, and other memoranda may bind them. The last one cannot go:
     a configuration with no memorandum can extract but never report, which
     publishes cleanly and produces nothing."""
-    _require_draft(tenant_id)
+    _require_draft(tenant_id, workspace_id)
 
-    rows = _rows(tenant_id, "SELECT template_key FROM config_template "
-                            "WHERE tenant_id = :t AND revision = :r")
+    rows = _rows(tenant_id, workspace_id,
+                 "SELECT template_key FROM config_template "
+                 "WHERE tenant_id = :t AND workspace_id = :w "
+                 "AND revision = :r")
     if len(rows) <= 1:
         raise ValueError("a configuration needs at least one memorandum")
 
     for table in ("config_section_field", "config_section", "config_template"):
-        _sql("DELETE FROM %s WHERE tenant_id = :t AND revision = :r "
+        _sql("DELETE FROM %s WHERE tenant_id = :t AND workspace_id = :w AND "
+             "revision = :r "
              "AND template_key = :tpl" % table,
-             [_p("t", tenant_id), _p("r", DRAFT), _p("tpl", template_key)])
+             [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+              _p("tpl", template_key)])
     return {"deleted": template_key}
 
 
 # --- fields ----------------------------------------------------------------
 
-def set_field_documents(tenant_id, field_key, type_keys):
+def set_field_documents(tenant_id, workspace_id, field_key, type_keys):
     """Where a field is expected to be found.
 
     The schema is derived: this field joins the schema fed by exactly these
     document types, and one is created if none exists. A field found nowhere
     is left in place and reported as extracting nothing at publish - it is a
     legitimate mid-configuration state."""
-    _require_draft(tenant_id)
+    _require_draft(tenant_id, workspace_id)
 
     wanted = sorted(set(type_keys or []))
 
     # Which schema, if any, is fed by exactly this set of types?
     fed = {}
-    for r in _rows(tenant_id, "SELECT schema_key, type_key "
+    for r in _rows(tenant_id, workspace_id, "SELECT schema_key, type_key "
                               "FROM config_type_schema "
-                              "WHERE tenant_id = :t AND revision = :r"):
+                              "WHERE tenant_id = :t AND workspace_id = :w AND "
+                              "revision = :r"):
         fed.setdefault(_col(r, 0), set()).add(_col(r, 1))
 
     target = next((s for s, types in fed.items()
@@ -593,33 +634,36 @@ def set_field_documents(tenant_id, field_key, type_keys):
 
         _sql("""
             INSERT INTO config_schema
-              (tenant_id, revision, schema_key, label, sort_order)
-            VALUES (:t, :r, :k, :label, 0)
+              (tenant_id, workspace_id, revision, schema_key, label,
+               sort_order)
+            VALUES (:t, :w, :r, :k, :label, 0)
             ON DUPLICATE KEY UPDATE label = :label
-            """, [_p("t", tenant_id), _p("r", DRAFT), _p("k", target),
+            """, [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+             _p("k", target),
                   _p("label", label)])
 
         for type_key in wanted:
             _sql("""
                 INSERT IGNORE INTO config_type_schema
-                  (tenant_id, revision, type_key, schema_key)
-                VALUES (:t, :r, :ty, :s)
-                """, [_p("t", tenant_id), _p("r", DRAFT),
-                      _p("ty", type_key), _p("s", target)])
+                  (tenant_id, workspace_id, revision, type_key, schema_key)
+                VALUES (:t, :w, :r, :ty, :s)
+                """, [_p("t", tenant_id), _p("w", workspace_id),
+                      _p("r", DRAFT), _p("ty", type_key), _p("s", target)])
 
     # The group's columns follow the group.
     _sql("""
         UPDATE config_field SET schema_key = :s
-        WHERE tenant_id = :t AND revision = :r
+        WHERE tenant_id = :t AND workspace_id = :w AND revision = :r
           AND (field_key = :f OR group_key = :f)
-        """, [_p("s", target), _p("t", tenant_id), _p("r", DRAFT),
+        """, [_p("s", target), _p("t", tenant_id), _p("w", workspace_id),
+         _p("r", DRAFT),
               _p("f", field_key)])
 
-    _prune_schemas(tenant_id)
+    _prune_schemas(tenant_id, workspace_id)
     return {"field": field_key, "found_in": wanted}
 
 
-def set_document_fields(tenant_id, type_key, field_keys):
+def set_document_fields(tenant_id, workspace_id, type_key, field_keys):
     """Which fields are sought in one document.
 
     The same relationship as set_field_documents, read from the other end: a
@@ -630,19 +674,20 @@ def set_document_fields(tenant_id, type_key, field_keys):
     Done in ONE operation rather than a call per field. Twelve separate calls
     would each rebuild the grouping, and a half-finished sweep would leave an
     intermediate state that is nobody's intent."""
-    _require_draft(tenant_id)
+    _require_draft(tenant_id, workspace_id)
 
     wanted = set(field_keys or [])
 
     # Every field, and the documents it is currently found in.
     current = {}
-    for r in _rows(tenant_id, """
+    for r in _rows(tenant_id, workspace_id, """
         SELECT f.field_key, m.type_key
         FROM config_field f
         LEFT JOIN config_type_schema m
-          ON m.tenant_id = f.tenant_id AND m.revision = f.revision
+          ON m.tenant_id = f.tenant_id AND m.workspace_id = f.workspace_id
+         AND m.revision = f.revision
          AND m.schema_key = f.schema_key
-        WHERE f.tenant_id = :t AND f.revision = :r
+        WHERE f.tenant_id = :t AND f.workspace_id = :w AND f.revision = :r
           AND (f.group_key IS NULL OR f.group_key = f.field_key)"""):
         current.setdefault(_col(r, 0), set())
         if _col(r, 1):
@@ -656,13 +701,14 @@ def set_document_fields(tenant_id, type_key, field_keys):
             continue
         documents = set(documents)
         documents.add(type_key) if should else documents.discard(type_key)
-        set_field_documents(tenant_id, field_key, sorted(documents))
+        set_field_documents(tenant_id, workspace_id, field_key,
+                            sorted(documents))
         changed += 1
 
     return {"document": type_key, "fields": sorted(wanted), "changed": changed}
 
 
-def _prune_schemas(tenant_id):
+def _prune_schemas(tenant_id, workspace_id):
     """Remove a schema no field sits in.
 
     Left alone these accumulate as a person moves fields about, and each one
@@ -671,21 +717,25 @@ def _prune_schemas(tenant_id):
     _sql("""
         DELETE s FROM config_schema s
         LEFT JOIN config_field f
-          ON f.tenant_id = s.tenant_id AND f.revision = s.revision
+          ON f.tenant_id = s.tenant_id AND f.workspace_id = s.workspace_id
+         AND f.revision = s.revision
          AND f.schema_key = s.schema_key
-        WHERE s.tenant_id = :t AND s.revision = :r AND f.field_key IS NULL
-        """, [_p("t", tenant_id), _p("r", DRAFT)])
+        WHERE s.tenant_id = :t AND s.workspace_id = :w AND s.revision = :r
+          AND f.field_key IS NULL
+        """, [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT)])
 
     _sql("""
         DELETE m FROM config_type_schema m
         LEFT JOIN config_schema s
-          ON s.tenant_id = m.tenant_id AND s.revision = m.revision
+          ON s.tenant_id = m.tenant_id AND s.workspace_id = m.workspace_id
+         AND s.revision = m.revision
          AND s.schema_key = m.schema_key
-        WHERE m.tenant_id = :t AND m.revision = :r AND s.schema_key IS NULL
-        """, [_p("t", tenant_id), _p("r", DRAFT)])
+        WHERE m.tenant_id = :t AND m.workspace_id = :w AND m.revision = :r
+          AND s.schema_key IS NULL
+        """, [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT)])
 
 
-def save_field(tenant_id, body):
+def save_field(tenant_id, workspace_id, body):
     """Add or amend a field.
 
     The key is minted once from the label and never follows it afterwards.
@@ -705,7 +755,7 @@ def save_field(tenant_id, body):
 
     The two could not be told apart before, because the screen minted the key
     itself and sent it on both. It no longer does; nor does the proposer."""
-    _require_draft(tenant_id)
+    _require_draft(tenant_id, workspace_id)
 
     named = (body.get("key") or "").strip()
     key = named or _slug(body.get("label"), "f_").replace("-", "_")
@@ -725,9 +775,11 @@ def save_field(tenant_id, body):
                     "Shorten the table's name." % (body.get("label"),
                                                    col.get("label")))
 
-    rows = _rows(tenant_id, "SELECT schema_key, label FROM config_field "
-                            "WHERE tenant_id = :t AND revision = :r "
-                            "AND field_key = :k", [_p("k", key)])
+    rows = _rows(tenant_id, workspace_id,
+                 "SELECT schema_key, label FROM config_field "
+                 "WHERE tenant_id = :t AND workspace_id = :w "
+                 "AND revision = :r "
+                 "AND field_key = :k", [_p("k", key)])
 
     # THE REFUSAL. A create whose minted key is taken names the fact holding
     # it, because "that name is in use" is useless when the name on screen is
@@ -742,21 +794,26 @@ def save_field(tenant_id, body):
     if not rows:
         _sql("""
             INSERT IGNORE INTO config_schema
-              (tenant_id, revision, schema_key, label, sort_order)
-            VALUES (:t, :r, 'unrouted', 'Not yet routed to a document', 999)
-            """, [_p("t", tenant_id), _p("r", DRAFT)])
+              (tenant_id, workspace_id, revision, schema_key, label,
+               sort_order)
+            VALUES (:t, :w, :r, 'unrouted', 'Not yet routed to a document',
+             999)
+            """, [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT)])
 
     _sql("""
         INSERT INTO config_field
-          (tenant_id, revision, schema_key, field_key, label, field_type,
+          (tenant_id, workspace_id, revision, schema_key, field_key, label,
+           field_type,
            cardinality, description, group_key, sort_order)
-        VALUES (:t, :r, :s, :k, :label, :type, :card, :desc, :grp,
+        VALUES (:t, :w, :r, :s, :k, :label, :type, :card, :desc, :grp,
                 COALESCE(:sort, 0))
         ON DUPLICATE KEY UPDATE
           label = :label, field_type = :type, cardinality = :card,
-          description = :desc, group_key = :grp, sort_order = COALESCE(:sort, sort_order)
+          description = :desc, group_key = :grp, sort_order = COALESCE(:sort,
+           sort_order)
         """, [
-        _p("t", tenant_id), _p("r", DRAFT), _p("s", schema_key), _p("k", key),
+        _p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+        _p("s", schema_key), _p("k", key),
         _p("label", body.get("label") or key),
         _p("type", body.get("type") or "text"),
         _p("card", body.get("cardinality") or "one"),
@@ -776,28 +833,33 @@ def save_field(tenant_id, body):
     ])
 
     if body.get("cardinality") == "group":
-        _save_columns(tenant_id, schema_key, key, body.get("columns") or [])
+        _save_columns(tenant_id, workspace_id, schema_key, key,
+                      body.get("columns") or [])
     else:
         # No longer a table. Its columns go with it: left behind they point
         # at a field that is not a group, so the registry drops them from
         # every schema and the editor hides them - rows nothing can see and
         # nothing can reach.
-        _sql("DELETE FROM config_field WHERE tenant_id = :t AND revision = :r "
+        _sql("DELETE FROM config_field WHERE tenant_id = :t "
+             "AND workspace_id = :w AND revision = :r "
              "AND group_key = :g AND field_key <> :g",
-             [_p("t", tenant_id), _p("r", DRAFT), _p("g", key)])
+             [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+              _p("g", key)])
 
     return {"key": key}
 
 
-def _save_columns(tenant_id, schema_key, group_key, columns):
+def _save_columns(tenant_id, workspace_id, schema_key, group_key, columns):
     """A table's columns.
 
     Rewritten whole rather than merged: a column removed from the form has
     been removed, and reconciling additions against deletions is how a column
     nobody asked for survives three edits."""
-    _sql("DELETE FROM config_field WHERE tenant_id = :t AND revision = :r "
+    _sql("DELETE FROM config_field WHERE tenant_id = :t AND workspace_id = :w "
+         "AND revision = :r "
          "AND group_key = :g AND field_key <> :g",
-         [_p("t", tenant_id), _p("r", DRAFT), _p("g", group_key)])
+         [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+          _p("g", group_key)])
 
     for i, col in enumerate(columns):
         label = (col.get("label") or "").strip()
@@ -828,14 +890,17 @@ def _save_columns(tenant_id, schema_key, group_key, columns):
                 "Shorten one of them." % (label, group_key))
         _sql("""
             INSERT INTO config_field
-              (tenant_id, revision, schema_key, field_key, label, field_type,
+              (tenant_id, workspace_id, revision, schema_key, field_key,
+               label, field_type,
                cardinality, description, group_key, sort_order)
-            VALUES (:t, :r, :s, :k, :label, :type, 'group', :desc, :g, :sort)
+            VALUES (:t, :w, :r, :s, :k, :label, :type, 'group', :desc, :g,
+             :sort)
             ON DUPLICATE KEY UPDATE
               label = :label, field_type = :type, description = :desc,
               sort_order = :sort
             """, [
-            _p("t", tenant_id), _p("r", DRAFT), _p("s", schema_key),
+            _p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+            _p("s", schema_key),
             _p("k", key), _p("label", label),
             _p("type", col.get("type") or "text"),
             _p("desc", col.get("description")),
@@ -843,7 +908,7 @@ def _save_columns(tenant_id, schema_key, group_key, columns):
         ])
 
 
-def delete_field(tenant_id, field_key):
+def delete_field(tenant_id, workspace_id, field_key):
     """Remove a field.
 
     A REAL BREAK, and treated as one. Values already extracted under this key
@@ -851,27 +916,30 @@ def delete_field(tenant_id, field_key):
     revision is immutable - but nothing new will carry it. Its bindings are
     removed with it, so no section is left naming a field that does not
     exist."""
-    _require_draft(tenant_id)
+    _require_draft(tenant_id, workspace_id)
     _sql("DELETE FROM config_section_field WHERE tenant_id = :t "
-         "AND revision = :r AND field_key = :k",
-         [_p("t", tenant_id), _p("r", DRAFT), _p("k", field_key)])
-    _sql("DELETE FROM config_field WHERE tenant_id = :t AND revision = :r "
+         "AND workspace_id = :w AND revision = :r AND field_key = :k",
+         [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+          _p("k", field_key)])
+    _sql("DELETE FROM config_field WHERE tenant_id = :t AND workspace_id = :w "
+         "AND revision = :r "
          "AND (field_key = :k OR group_key = :k)",
-         [_p("t", tenant_id), _p("r", DRAFT), _p("k", field_key)])
-    _prune_schemas(tenant_id)
+         [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+          _p("k", field_key)])
+    _prune_schemas(tenant_id, workspace_id)
     return {"deleted": field_key}
 
 
 # --- document types and categories ----------------------------------------
 
-def save_document_type(tenant_id, body):
+def save_document_type(tenant_id, workspace_id, body):
     """Add or amend a document type.
 
     The description is not decoration: it is what the classifier reads to tell
     one type from another. Stage 1 showed the same document classified
     differently as a PDF and as a Word file until every type carried a
     sentence describing itself."""
-    _require_draft(tenant_id)
+    _require_draft(tenant_id, workspace_id)
 
     key = body.get("key") or _slug(body.get("label"))
     if not _KEY.match(key):
@@ -880,15 +948,18 @@ def save_document_type(tenant_id, body):
 
     _sql("""
         INSERT INTO config_document_type
-          (tenant_id, revision, type_key, label, category_key, description,
+          (tenant_id, workspace_id, revision, type_key, label, category_key,
+           description,
            read_mode, always_ocr, sort_order)
-        VALUES (:t, :r, :k, :label, :cat, :desc, :mode, :ocr,
+        VALUES (:t, :w, :r, :k, :label, :cat, :desc, :mode, :ocr,
                 COALESCE(:sort, 0))
         ON DUPLICATE KEY UPDATE
           label = :label, category_key = :cat, description = :desc,
-          read_mode = :mode, always_ocr = :ocr, sort_order = COALESCE(:sort, sort_order)
+          read_mode = :mode, always_ocr = :ocr, sort_order = COALESCE(:sort,
+           sort_order)
         """, [
-        _p("t", tenant_id), _p("r", DRAFT), _p("k", key),
+        _p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+        _p("k", key),
         _p("label", body.get("label") or key),
         _p("cat", body.get("category") or "other"),
         _p("desc", body.get("description") or ""),
@@ -904,32 +975,36 @@ def save_document_type(tenant_id, body):
     return {"key": key}
 
 
-def delete_document_type(tenant_id, type_key):
+def delete_document_type(tenant_id, workspace_id, type_key):
     """Remove a document type. Documents already filed under it keep
     resolving against the revision they were filed under."""
-    _require_draft(tenant_id)
+    _require_draft(tenant_id, workspace_id)
     _sql("DELETE FROM config_type_schema WHERE tenant_id = :t "
-         "AND revision = :r AND type_key = :k",
-         [_p("t", tenant_id), _p("r", DRAFT), _p("k", type_key)])
+         "AND workspace_id = :w AND revision = :r AND type_key = :k",
+         [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+          _p("k", type_key)])
     _sql("DELETE FROM config_document_type WHERE tenant_id = :t "
-         "AND revision = :r AND type_key = :k",
-         [_p("t", tenant_id), _p("r", DRAFT), _p("k", type_key)])
-    _prune_schemas(tenant_id)
+         "AND workspace_id = :w AND revision = :r AND type_key = :k",
+         [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+          _p("k", type_key)])
+    _prune_schemas(tenant_id, workspace_id)
     return {"deleted": type_key}
 
 
-def save_category(tenant_id, body):
-    _require_draft(tenant_id)
+def save_category(tenant_id, workspace_id, body):
+    _require_draft(tenant_id, workspace_id)
     key = body.get("key") or _slug(body.get("label"))
     if not _KEY.match(key):
         raise ValueError("a category key must be lower case letters, digits, "
                          "dots, dashes or underscores")
     _sql("""
         INSERT INTO config_category
-          (tenant_id, revision, category_key, label, sort_order)
-        VALUES (:t, :r, :k, :label, COALESCE(:sort, 0))
-        ON DUPLICATE KEY UPDATE label = :label, sort_order = COALESCE(:sort, sort_order)
-        """, [_p("t", tenant_id), _p("r", DRAFT), _p("k", key),
+          (tenant_id, workspace_id, revision, category_key, label, sort_order)
+        VALUES (:t, :w, :r, :k, :label, COALESCE(:sort, 0))
+        ON DUPLICATE KEY UPDATE label = :label, sort_order = COALESCE(:sort,
+         sort_order)
+        """, [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+         _p("k", key),
               _p("label", body.get("label") or key),
               # NULL where the caller did not say: the row keeps the order
               # it had.
@@ -938,12 +1013,14 @@ def save_category(tenant_id, body):
     return {"key": key}
 
 
-def delete_category(tenant_id, category_key):
+def delete_category(tenant_id, workspace_id, category_key):
     """Remove a category. A document type left pointing at it is not deleted
     - losing a type because its grouping went would be a surprise, and the
     type simply needs regrouping."""
-    _require_draft(tenant_id)
-    _sql("DELETE FROM config_category WHERE tenant_id = :t AND revision = :r "
+    _require_draft(tenant_id, workspace_id)
+    _sql("DELETE FROM config_category WHERE tenant_id = :t AND workspace_id = "
+         ":w AND revision = :r "
          "AND category_key = :k",
-         [_p("t", tenant_id), _p("r", DRAFT), _p("k", category_key)])
+         [_p("t", tenant_id), _p("w", workspace_id), _p("r", DRAFT),
+          _p("k", category_key)])
     return {"deleted": category_key}

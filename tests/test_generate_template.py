@@ -28,6 +28,7 @@ from unittest import mock
 from api_modules import load_api
 
 TENANT = 7
+WORKSPACE = 3
 EMAIL = "susan@vantage.test"
 NAME = "Meridian-Trading"
 ENGAGEMENT_ID = 42
@@ -66,8 +67,10 @@ class GenerateTemplateTest(unittest.TestCase):
         self.registry = FakeRegistry()
 
         patches = [
-            mock.patch.object(self.app.config, "for_tenant",
-                              side_effect=lambda t: self.registry),
+            mock.patch.object(self.app.config, "for_workspace",
+                              side_effect=lambda t, w: self.registry),
+            mock.patch.object(self.app.config, "workspace",
+                              side_effect=lambda t, w=None: WORKSPACE),
             mock.patch.object(self.app, "engagement_named",
                               side_effect=lambda t, n: {
                                   "engagement_id": ENGAGEMENT_ID,
@@ -86,8 +89,8 @@ class GenerateTemplateTest(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def generate(self, template_key=None):
-        return self.app.generate(TENANT, EMAIL, NAME, template_key,
-                                 "idem-key-1")
+        return self.app.generate(TENANT, WORKSPACE, EMAIL, NAME,
+                                 template_key, "idem-key-1")
 
     # --- nothing published -------------------------------------------------
 
