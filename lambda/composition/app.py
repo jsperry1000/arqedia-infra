@@ -1612,8 +1612,12 @@ def _compose_memo(event, written):
     encoded = memo_body.encode("utf-8")
     sha = hashlib.sha256(encoded).hexdigest()
 
-    memo_key = "tenants/{}/memos/{}/{}-{}.md".format(
-        tenant_id, engagement, template_key,
+    # Under its workspace (PACK-01), as its documents are: two workspaces may
+    # each hold an engagement of one name, and a memo of one template written
+    # in both in the same second must not land on one object. Every memo
+    # written before workspaces keeps the key it has.
+    memo_key = "tenants/{}/w/{}/memos/{}/{}-{}.md".format(
+        tenant_id, workspace_id, engagement, template_key,
         generated_at.strftime("%Y%m%dT%H%M%SZ"))
 
     put = _s3.put_object(

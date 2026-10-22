@@ -62,7 +62,7 @@ class AllMemosTest(unittest.TestCase):
         with mock.patch.object(self.app, "_sql", sql), \
                 mock.patch.object(self.app.config, "load",
                                   lambda t, w, r: FakeRegistry(r)):
-            return self.app.list_all_memos(7, email)["memos"]
+            return self.app.list_all_memos(7, 3, email)["memos"]
 
     def test_the_four_columns_and_the_number_a_person_reads(self):
         [m] = self.listing(memo_row(150, parent=148, revision=2))

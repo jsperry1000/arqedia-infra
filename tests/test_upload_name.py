@@ -66,7 +66,9 @@ class UploadNameTest(unittest.TestCase):
             self.assertEqual(out["engagement"], expected, typed)
             self.assertEqual(
                 out["key"],
-                "tenants/%d/docs/%s/Articles.pdf" % (TENANT, expected), typed)
+                # In its workspace (PACK-01): the key carries it.
+                "tenants/%d/w/3/docs/%s/Articles.pdf" % (TENANT, expected),
+                typed)
 
     def test_a_name_that_needed_no_cleaning_comes_back_unchanged(self):
         out = self.upload("MERIDIAN")

@@ -17,6 +17,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { TableScroll, useBackAction, Working } from "./shell";
 import { balanceFor, UpgradePrompt } from "./upgrade";
+import { activeName, useWorkspace } from "./workspace";
 
 /* stored() is gone (17.4).
  *
@@ -69,6 +70,9 @@ export function EngagementView({ id, onBack, onMemo }: {
   // Where a top-up is offered from, because the way out of "not enough
   // balance" is Account management and nothing else on this screen.
   const navigate = useNavigate();
+  // The workspace an upload here goes into (PACK-01): the active one, which
+  // this engagement belongs to. Named above the upload control.
+  const workspaceName = activeName(useWorkspace());
   const [pending, setPending] = useState<Pending[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [memos, setMemos] = useState<MemoRef[]>([]);
@@ -1104,6 +1108,17 @@ export function EngagementView({ id, onBack, onMemo }: {
         {subjectSaid && <p className="why warn">{subjectSaid}</p>}
       </div>
 
+      {/* WHICH WORKSPACE, BEFORE THE FILE IS CHOSEN (PACK-01). A document is
+          classified against this workspace's document types and no other's,
+          and nothing is shared between workspaces - a document needed in two
+          is uploaded to each. The choice itself is the selector at the top
+          of the page; this says what it is at the moment of uploading. */}
+      {workspaceName && (
+        <p className="muted small">
+          Uploading into <strong>{workspaceName}</strong>. Documents are read
+          against its document types only.
+        </p>
+      )}
       <input type="file" multiple aria-label="Upload documents"
              onChange={(e) => upload(e.target.files)} />
       {/* A WHOLE FOLDER, AND THE FOLDER IS RECORDED (18.7). A second input

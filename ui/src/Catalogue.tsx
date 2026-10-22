@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, type Offer } from "./api";
 import { Working } from "./shell";
+import { useRole } from "./upgrade";
+import { activeName, useWorkspace } from "./workspace";
 
 /**
  * The Catalogue: every memorandum this tenant writes, and the three ways to
@@ -19,21 +21,41 @@ import { Working } from "./shell";
  * it is never something a person does by side effect while adding a report.
  */
 
-/** A draft to work in. A tenant with nothing configured takes the base first;
- *  one with only a published revision opens a copy of it.
+/** A draft to work in: one with only a published revision opens a copy of
+ *  it. False where there is nothing configured at all, and the caller sends
+ *  the person to Get started.
  *
- *  THE BASE IS TAKEN BY KEY. This forked whatever packs() returned first, and
- *  packs() sorted by revision descending - so adding a pack silently changed
- *  what a new tenant got. Memoranda are not forked here at all: that is the
- *  ARQEDIA chooser, where there is room to say what each one contains. */
-async function ensureDraft() {
-  let state = await api.configState();
-  if (!state.draft && state.revisions.length === 0) {
-    await api.forkBase();
-    state = await api.configState();
-  }
+ *  THE BASE IS NOT FORKED HERE ANY MORE (PACK-01). Forking it makes a
+ *  workspace, which needs a name, and this page has nowhere to ask for one -
+ *  Get started does, and is the one door. Memoranda were never forked here:
+ *  that is the ARQEDIA chooser, where there is room to say what each one
+ *  contains. */
+async function ensureDraft(): Promise<boolean> {
+  const state = await api.configState();
+  if (!state.draft && state.revisions.length === 0) return false;
   if (!state.draft) await api.openDraft();
+  return true;
 }
+
+/** An empty report with one untitled section, in the open draft; its key.
+ *  Numbered where an untitled report already exists, because saving the same
+ *  key again would rename that one rather than add another. Shared with Get
+ *  started, which starts a new workspace this way (PACK-01). */
+export async function untitledReport(): Promise<string> {
+  const taken = new Set((await api.draft()).templates.map((t) => t.key));
+  let n = 1;
+  while (taken.has(n === 1 ? "untitled-report" : `untitled-report-${n}`)) n++;
+  const key = n === 1 ? "untitled-report" : `untitled-report-${n}`;
+  await api.saveTemplate({ key, label: n === 1 ? "Untitled report" : `Untitled report ${n}` });
+  await api.saveSection({ template_key: key, key: "untitled-section", numeral: "I",
+                          title: "Untitled section", kind: "extract", prompt: "",
+                          sort_order: 1 });
+  return key;
+}
+
+/** How a report of the tenant's own is started: empty, or read from one
+ *  they already write. */
+export type OwnStart = "scratch" | "report";
 
 function errorText(err: unknown) {
   let text = String((err as Error)?.message ?? err);
@@ -118,7 +140,7 @@ export function CatalogueView({ curator, onOpened }: {
   }
 
   const open = (key: string) => run("Opening", async () => {
-    await ensureDraft();
+    if (!(await ensureDraft())) { onOpened("/welcome"); return; }
     onOpened(`/configure?report=${encodeURIComponent(key)}`);
   });
 
@@ -129,28 +151,57 @@ export function CatalogueView({ curator, onOpened }: {
   // draft and publishes nothing.
   const ours = () => onOpened("/welcome", { stopAtDraft: true });
 
-  // An empty report with one untitled section. Numbered where an untitled
-  // report already exists, because saving the same key again would rename
-  // that one rather than add another.
+  // An empty report with one untitled section, in this workspace.
+  //
+  // NOTHING CONFIGURED YET: Get started, which asks for the workspace's name
+  // and offers this same route, already chosen (PACK-01). The base is not
+  // forked here - it makes a workspace, and this page has nowhere to name
+  // one.
   const scratch = () => run("Creating", async () => {
-    await ensureDraft();
-    const taken = new Set((await api.draft()).templates.map((t) => t.key));
-    let n = 1;
-    while (taken.has(n === 1 ? "untitled-report" : `untitled-report-${n}`)) n++;
-    const key = n === 1 ? "untitled-report" : `untitled-report-${n}`;
-    await api.saveTemplate({ key, label: n === 1 ? "Untitled report" : `Untitled report ${n}` });
-    await api.saveSection({ template_key: key, key: "untitled-section", numeral: "I",
-                            title: "Untitled section", kind: "extract", prompt: "",
-                            sort_order: 1 });
+    if (!(await ensureDraft())) {
+      onOpened("/welcome", { start: "scratch" as OwnStart });
+      return;
+    }
+    const key = await untitledReport();
     onOpened(`/configure?report=${key}&part=sections`);
   });
 
   // A report of the person's own: the proposer page, which carries its own
   // upload (UX-21). No file dialog fires from here.
   const fromReport = () => run("Opening", async () => {
-    await ensureDraft();
+    if (!(await ensureDraft())) {
+      onOpened("/welcome", { start: "report" as OwnStart });
+      return;
+    }
     onOpened("/configure", { propose: true });
   });
+
+  // WHICH WORKSPACE, asked when a person's own report is begun (PACK-01).
+  // This one, or a new one - which forks a base and so is an
+  // administrator's. Asked only where a new one is possible: a member is
+  // never offered a choice the server would refuse, and a tenant with
+  // nothing yet makes its first workspace in Get started either way.
+  const workspace = useWorkspace();
+  const here = activeName(workspace);
+  const mayAdd = useRole() === "admin" && workspace.workspaces.length > 0;
+  const [asking, setAsking] = useState<OwnStart | null>(null);
+  const begin = (how: OwnStart) => {
+    if (!mayAdd) { (how === "scratch" ? scratch : fromReport)(); return; }
+    setAsking(asking === how ? null : how);
+  };
+  const where = (how: OwnStart) => asking === how && (
+    <p className="muted small">
+      <a onClick={off(() => { setAsking(null);
+                              (how === "scratch" ? scratch : fromReport)(); })}>
+        In {here ?? "this workspace"}
+      </a>
+      {" · "}
+      <a onClick={off(() => onOpened("/welcome",
+                                     { newWorkspace: true, start: how }))}>
+        In a new workspace
+      </a>
+    </p>
+  );
 
   const off = (fn: () => void) => (busy ? undefined : fn);
 
@@ -231,16 +282,20 @@ export function CatalogueView({ curator, onOpened }: {
       </p>
 
       <p>
-        <a onClick={off(scratch)}>Create from scratch</a>
+        <a onClick={off(() => begin("scratch"))}>Create from scratch</a>
       </p>
+      {where("scratch")}
       <p className="muted small">
         An empty memorandum. You write the sections and say what each one
         renders.
       </p>
 
       <p>
-        <a onClick={off(fromReport)}>Create from a report you already write</a>
+        <a onClick={off(() => begin("report"))}>
+          Create from a report you already write
+        </a>
       </p>
+      {where("report")}
       <p className="muted small">
         Give us a report you already write. We read its shape and put a
         configuration to you to correct &mdash; the file itself is read once

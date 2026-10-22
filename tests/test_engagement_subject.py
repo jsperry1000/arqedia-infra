@@ -90,7 +90,7 @@ class FilingGateTest(unittest.TestCase):
             wallet.charge.return_value = {"entry_id": 5}
             try:
                 out = self.app.file_documents(
-                    TENANT, "partner@firm.com", NAME, decisions, "key-1")
+                    TENANT, 3, "partner@firm.com", NAME, decisions, "key-1")
                 return out, None, wallet, db
             except ValueError as exc:
                 return None, exc, wallet, db
@@ -138,7 +138,7 @@ class SetSubjectTest(unittest.TestCase):
         with mock.patch.object(self.app, "_sql", db.sql):
             try:
                 return self.app.set_subject(
-                    TENANT, "partner@firm.com", engagement, value), None, db
+                    TENANT, 3, "partner@firm.com", engagement, value), None, db
             except ValueError as exc:
                 return None, exc, db
 
@@ -204,19 +204,19 @@ class ReadSubjectTest(unittest.TestCase):
         for any name typed with a space in it."""
         db = Db()
         with mock.patch.object(self.app, "_sql", db.sql):
-            self.app.engagement_subject(TENANT, "Meridian Trading")
+            self.app.engagement_subject(TENANT, 3, "Meridian Trading")
         _, asked = db.statements[0]
         self.assertEqual(asked["n"], "Meridian-Trading")
 
     def test_an_engagement_with_no_row_has_no_subject(self):
         db = Db(engagement=None)
         with mock.patch.object(self.app, "_sql", db.sql):
-            self.assertIsNone(self.app.engagement_subject(TENANT, NAME))
+            self.assertIsNone(self.app.engagement_subject(TENANT, 3, NAME))
 
     def test_a_null_column_is_no_subject(self):
         db = Db(subject=None)
         with mock.patch.object(self.app, "_sql", db.sql):
-            self.assertIsNone(self.app.engagement_subject(TENANT, NAME))
+            self.assertIsNone(self.app.engagement_subject(TENANT, 3, NAME))
 
 
 class EngagementListTest(unittest.TestCase):
@@ -233,7 +233,7 @@ class EngagementListTest(unittest.TestCase):
             return rows((42, NAME, subject, 3, "2026-09-21 10:00:00",
                          "open", None, None))
         with mock.patch.object(self.app, "_sql", sql):
-            return self.app.list_engagements(TENANT)
+            return self.app.list_engagements(TENANT, 3)
 
     def test_the_subject_is_on_the_row(self):
         self.assertEqual(self.listing(SUBJECT)[0]["subject_name"], SUBJECT)

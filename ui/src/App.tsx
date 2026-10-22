@@ -14,6 +14,11 @@ import { ViewerByLink, ViewerSignedIn, keepSession as keepViewerSession } from "
 import { SharedWithMeView } from "./SharedWithMe";
 import { SignUp } from "./SignUp";
 import { InvitationView } from "./Invitation";
+import { WorkspacePicker } from "./WorkspacePicker";
+import {
+  WorkspaceContext, activeName, chooseWorkspace, onWorkspacesChanged,
+  setActiveWorkspace, useWorkspace, type WorkspaceRef, type WorkspaceState,
+} from "./workspace";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Amplify } from "aws-amplify";
 import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession,
@@ -416,6 +421,12 @@ function SignIn({ onDone, onCreate }: { onDone: () => void; onCreate: () => void
 function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
   const navigate = useNavigate();
   const role = useRole();
+  // Which workspace's engagements these are (PACK-01). The server answers
+  // with the active workspace's only; with more than one to choose from, the
+  // heading says which, so an empty list is never read as an empty account.
+  const workspace = useWorkspace();
+  const workspaceName = workspace.workspaces.length > 1
+    ? activeName(workspace) : null;
   const [rows, setRows] = useState<Engagement[]>([]);
   const [newName, setNewName] = useState("");
   const [cleaned, setCleaned] = useState("");
@@ -506,6 +517,12 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
   return (
     <div>
       <h2>Engagements</h2>
+      {workspaceName && (
+        <p className="muted small">
+          In {workspaceName}. Another workspace&rsquo;s engagements are under
+          its name, at the top of the page.
+        </p>
+      )}
       {loadError && <p className="error">{loadError}</p>}
       {/* IN PLACE OF "Nothing yet", not beside it (18.8). A workspace with no
           published configuration has one thing to do and it is not naming an
@@ -717,9 +734,17 @@ function WelcomeRoute({ onOpened }: {
   onOpened: (to: string, state?: unknown) => void;
 }) {
   const location = useLocation();
-  const stopAtDraft = Boolean(
-    (location.state as { stopAtDraft?: boolean } | null)?.stopAtDraft);
-  return <WelcomeView stopAtDraft={stopAtDraft}
+  const arrived = location.state as
+    { stopAtDraft?: boolean; newWorkspace?: boolean;
+      start?: "scratch" | "report" } | null;
+  const stopAtDraft = Boolean(arrived?.stopAtDraft);
+  // Add a workspace, from the header (PACK-01): the same screen, starting a
+  // new workspace rather than adding to the active one.
+  const newWorkspace = Boolean(arrived?.newWorkspace);
+  // A report of their own, already chosen in the Catalogue (PACK-01).
+  return <WelcomeView stopAtDraft={stopAtDraft} newWorkspace={newWorkspace}
+                      start={arrived?.start}
+                      onOpened={onOpened}
                       onStarted={(report) =>
                         onOpened("/configure?part=sections", { report })} />;
 }
@@ -769,6 +794,59 @@ export default function App() {
   const [tenantId, setTenantId] = useState("");
   const navigate = useNavigate();
   const location = useLocation();
+  const role = useRole();
+
+  // THE WORKSPACES, AND WHICH ONE IS ACTIVE (PACK-01). Read once signed in,
+  // and again whenever something makes one. The active one is held in
+  // workspace.ts as well, where call() reads it for every request.
+  //
+  // THE SCREENS WAIT FOR IT. A tenant with several workspaces is refused by
+  // the server on any request that does not name one, so nothing is drawn
+  // until the choice is made - a read that fails is let through with none,
+  // and the server answers for the tenant's only workspace or says to choose.
+  const [workspaces, setWorkspaces] = useState<WorkspaceRef[]>([]);
+  const [activeWs, setActiveWs] = useState<number | null>(null);
+  const [workspacesRead, setWorkspacesRead] = useState(false);
+  // Bumped when a person CHOOSES another workspace, which remounts every
+  // screen so each reads its own again. Not bumped when Get started makes
+  // one: that screen is part-way through its work in the new workspace and
+  // must not be thrown away under it.
+  const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
+
+  useEffect(() => {
+    if (!signedIn || !tenantId) return;
+    const read = () => api.settings()
+      .then((s) => {
+        const held = s.workspaces ?? [];
+        setWorkspaces(held);
+        // A workspace just made is already active; keep it if it is listed.
+        const id = chooseWorkspace(tenantId, held);
+        setActiveWorkspace(tenantId, id);
+        setActiveWs(id);
+      })
+      .catch(() => undefined)
+      .finally(() => setWorkspacesRead(true));
+    void read();
+    return onWorkspacesChanged(() => { void read(); });
+  }, [signedIn, tenantId]);
+
+  const workspaceState: WorkspaceState = {
+    workspaces,
+    active: activeWs,
+    choose: (id: number) => {
+      if (id === activeWs) return;
+      setActiveWorkspace(tenantId, id);
+      setActiveWs(id);
+      setWorkspaceEpoch((n) => n + 1);
+      // An engagement or a memo belongs to the workspace it was opened in,
+      // so its page is not there to show in another. Home, which is.
+      if (/^\/(engagements|memos)\//.test(location.pathname)) navigate("/");
+    },
+    adopt: (id: number) => {
+      setActiveWorkspace(tenantId, id);
+      setActiveWs(id);
+    },
+  };
 
   async function check() {
     try {
@@ -965,6 +1043,7 @@ export default function App() {
   };
 
   return (
+    <WorkspaceContext.Provider value={workspaceState}>
     <div className="shell" style={shellVars}>
       {/* The mark goes home, as a mark does on every site anybody has used
           (6.1). It was decoration; a person who wanted out of a screen had
@@ -976,6 +1055,12 @@ export default function App() {
           <strong>ARQEDIA</strong>
         </a>
         <span className="account" ref={account}>
+          {/* Which workspace everything below belongs to (PACK-01), beside
+              the account it belongs to. Adding one is an administrator's: it
+              forks a base, which the server refuses a member. */}
+          <WorkspacePicker admin={role === "admin"}
+                           onAdd={() => navigate("/welcome",
+                                                 { state: { newWorkspace: true } })} />
           {/* A BUTTON, because it opens and closes a panel rather than going
               anywhere (a11y, 17 October 2026). It was an <a> with no href
               carrying aria-expanded, which is not allowed on a link. Styled
@@ -1082,7 +1167,8 @@ export default function App() {
             {/* Above every working screen, so the trial ending is not news
                 kept on one tab of Account (19.2). */}
             <TrialBanner tenant={tenantId} />
-            <Routes>
+            {!workspacesRead ? <p className="muted">&hellip;</p> : (
+            <Routes key={workspaceEpoch}>
               <Route path="/" element={<EngagementsRoute />} />
               <Route path="/engagements/:id" element={<EngagementRoute />} />
               <Route path="/memos/:id" element={<MemoRoute />} />
@@ -1126,9 +1212,11 @@ export default function App() {
               {/* Anything else would render an empty page. */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            )}
           </main>
         </BackContext.Provider>
       </div>
     </div>
+    </WorkspaceContext.Provider>
   );
 }

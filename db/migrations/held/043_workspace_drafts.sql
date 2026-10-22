@@ -1,12 +1,21 @@
--- 041_workspace_drafts.sql
+-- 043_workspace_drafts.sql  (written as 041, renumbered 22 October 2026)
 -- PACK-01. One draft per workspace: the old single-workspace key comes off
--- the nine config tables.
+-- the nine config tables, and the old one-name-per-tenant key off engagement.
 --
--- NOT TO BE APPLIED UNTIL THE WORKSPACE CODE IS DEPLOYED. Order, decided 22
--- October 2026: merge feature/pack01-workspace-scope, rebuild the layer
--- (build-layer.ps1), terraform apply, confirm the deployed layer carries the
--- new registry.py and editor.py - THEN run this. db/migrate.ps1 applies every
--- pending file it finds, so it is not run for anything else in between.
+-- HELD. This file sits in db/migrations/held/, which db/migrate.ps1 does not
+-- read (it applies migrations/*.sql, not subfolders). It moves up into
+-- db/migrations/ on the day it is due, and migrate.ps1 then applies it like
+-- any other. It was 041 and pending, which meant the next run of migrate.ps1
+-- for anything at all - 042, which must run BEFORE the deploy - would have
+-- applied it too, before the code it waits for. Renumbered after 042 because
+-- it now depends on 042's column, and a database built from scratch applies
+-- in number order.
+--
+-- NOT TO BE APPLIED UNTIL THE WORKSPACE CODE IS DEPLOYED. Order: 042
+-- applied; feature/pack01-workspace-scope (#352) and
+-- feature/pack01-workspace-ui merged; the layer rebuilt (build-layer.ps1),
+-- terraform apply; the deployed layer confirmed to carry the new
+-- registry.py, editor.py and config.py - THEN move this file up and run it.
 --
 -- WHY THE ORDER IS NOT OPTIONAL. Migration 040 kept each config table's old
 -- (tenant_id, revision, key) as uq_single_workspace, because the code then
@@ -26,10 +35,9 @@
 -- come from one counter per tenant (registry._next_revision), so they do not
 -- repeat across a tenant's workspaces with or without it.
 --
--- 040 IS HEAD. Read before writing this, not assumed:
---
---   SELECT filename FROM schema_migration ORDER BY filename DESC LIMIT 1
---   -> 040_workspace.sql
+-- 040 WAS HEAD when this was first written, and 042 is applied before it
+-- now. It must be: the engagement statements below name engagement.
+-- workspace_id, which 042 adds.
 --
 -- ADDITIVE IN DATA, SUBTRACTIVE IN ONE INDEX PER TABLE. No row is deleted.
 -- The primary keys 040 widened are untouched and still carry every column
@@ -148,7 +156,26 @@ UPDATE workspace w
    SET w.active_revision = t.active_revision
  WHERE NOT (w.active_revision <=> t.active_revision);
 
--- --- then the old key ------------------------------------------------------
+-- --- and every engagement ----------------------------------------------------
+--
+-- 042's backfill, run again for the same reason as above: the previously
+-- deployed code opens engagements with no workspace_id, at 0.
+
+UPDATE engagement e
+  JOIN (SELECT tenant_id, MIN(workspace_id) AS workspace_id FROM workspace
+         GROUP BY tenant_id HAVING COUNT(*) = 1) w ON w.tenant_id = e.tenant_id
+   SET e.workspace_id = w.workspace_id
+ WHERE e.workspace_id = 0;
+
+-- --- then the old keys -----------------------------------------------------
+--
+-- uq_engagement_name (tenant_id, name) goes too, so that two workspaces may
+-- each hold an engagement of the same name. 042's
+-- uq_engagement_workspace_name (tenant_id, workspace_id, name) stays and is
+-- what the new code collides on.
+
+ALTER TABLE engagement DROP INDEX uq_engagement_name;
+
 
 ALTER TABLE config_revision DROP INDEX uq_single_workspace;
 ALTER TABLE config_category DROP INDEX uq_single_workspace;
@@ -166,7 +193,13 @@ ALTER TABLE config_section_field DROP INDEX uq_single_workspace;
 --   SELECT TABLE_NAME FROM information_schema.STATISTICS
 --    WHERE TABLE_SCHEMA = 'arqedia' AND INDEX_NAME = 'uq_single_workspace'
 --
--- Expect none.
+-- Expect none. And on engagement:
+--
+--   SELECT INDEX_NAME FROM information_schema.STATISTICS
+--    WHERE TABLE_SCHEMA = 'arqedia' AND TABLE_NAME = 'engagement'
+--      AND NON_UNIQUE = 0
+--
+-- Expect PRIMARY and uq_engagement_workspace_name only.
 --
 --   SELECT 'config_revision', COUNT(*) FROM config_revision
 --    WHERE workspace_id = 0 AND tenant_id <> 0
@@ -180,7 +213,7 @@ ALTER TABLE config_section_field DROP INDEX uq_single_workspace;
 -- section_key, field_key) and no other unique key.
 --
 --   SELECT filename FROM schema_migration
---    WHERE filename = '041_workspace_drafts.sql'
+--    WHERE filename = '043_workspace_drafts.sql'
 --
 -- Expect one row.
 --

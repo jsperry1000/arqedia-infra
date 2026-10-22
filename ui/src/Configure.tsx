@@ -21,6 +21,8 @@ import {
   slugKey, KeyLine, ColumnEditor, columnsReady, ReadModeControls, useGrows,
 } from "./config-parts";
 import { useRole } from "./upgrade";
+import { useWorkspace, workspacesChanged } from "./workspace";
+import { WorkspaceInline } from "./WorkspacePicker";
 
 /** Said wherever a Member meets this screen (ROLE-01). Configuring and
  *  publishing are behind _require_admin on every route (CLAUDE.md, 17.7), so
@@ -645,6 +647,13 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // useRole's rule, because the screen is not the control.
   const readOnly = useRole() === "member";
 
+  // The workspace this configuration belongs to (PACK-01), named ahead of
+  // everything else on the screen. Changing it - here or in the header -
+  // remounts the screen in the other workspace. A first fork makes one, and
+  // takes a name for it.
+  const workspace = useWorkspace();
+  const [workspaceName, setWorkspaceName] = useState("");
+
   // AI Review (REV-01): the editor's second mode, open in a drawer over it.
   // Whether it is offered comes from the settings - the plan, read as the
   // reviewer reads it, and the caller's role. Display only: the reviewer
@@ -1099,16 +1108,25 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     // path, and it is the chooser's.
     const ours = () => navigate("/welcome", { state: { stopAtDraft: true } });
 
+    // Forking the base makes a workspace, named here (PACK-01). It becomes
+    // the active one before its draft is opened, so the draft is its own.
+    const makeWorkspace = async () => {
+      const made = await api.forkBase(workspaceName.trim());
+      workspace.adopt(made.workspace_id);
+      workspacesChanged();
+    };
+
     const scratch = () => act("Setting up", async () => {
-      await api.forkBase();
+      await makeWorkspace();
       await api.openDraft();
     });
 
     const fromReport = () => act("Setting up", async () => {
-      await api.forkBase();
+      await makeWorkspace();
       await api.openDraft();
       setProposing(true);
     });
+    const unnamed = !workspaceName.trim();
 
     return (
       <div>
@@ -1129,6 +1147,18 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           </p>
         )}
 
+        {/* A name for the workspace these three routes make (PACK-01).
+            Required and empty. Select an ARQEDIA Template asks for it on its
+            own screen. */}
+        {!readOnly && (
+          <div className="filters">
+            <input value={workspaceName} maxLength={128}
+                   aria-label="Workspace name"
+                   placeholder="Name this workspace, e.g. Trade Finance"
+                   onChange={(e) => setWorkspaceName(e.target.value)} />
+          </div>
+        )}
+
         {packsError && <p className="error">{packsError}</p>}
         {!packsError && packs.length === 0 && (
           <p className="muted">No starting points are available yet.</p>
@@ -1145,7 +1175,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </p>
 
         <p>
-          <a onClick={busy || !base || readOnly ? undefined : scratch}>
+          <a onClick={busy || !base || readOnly || unnamed ? undefined : scratch}>
             Draft your own from scratch
           </a>
         </p>
@@ -1155,7 +1185,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </p>
 
         <p>
-          <a onClick={busy || !base || readOnly ? undefined : fromReport}>
+          <a onClick={busy || !base || readOnly || unnamed ? undefined : fromReport}>
             Create your own from a report (.pdf, .docx)
           </a>
         </p>
@@ -1176,6 +1206,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     return (
       <div>
         <h2>Configure a Report</h2>
+        <p className="muted small"><WorkspaceInline /></p>
         <p className="muted">
           Revision {state.active_revision} is in use. Memos are written against
           it, and it cannot be edited &mdash; editing opens a copy, and nothing
@@ -1323,6 +1354,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           .config-top runs on past the band. Closed after the band. */}
       <div className="config-frame">
       <div className="config-bar">
+        {/* THE WORKSPACE FIRST (PACK-01), ahead of the memorandum and of the
+            parts band beneath - Document types, Facts, Report sections all
+            belong to it, and Publish publishes it alone. */}
+        <WorkspaceInline />
         <select aria-label="Memorandum" value={current?.key ?? ""}
                 onChange={(e) => {
                   setTemplate(e.target.value);

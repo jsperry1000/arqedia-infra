@@ -80,7 +80,7 @@ NO_WORKSPACE = 0
 _MAX_WORKSPACE_NAME = 128
 
 # Opening a second workspace's draft while migration 040's
-# uq_single_workspace still makes (tenant_id, revision) unique. 041 drops it,
+# uq_single_workspace still makes (tenant_id, revision) unique. 043 drops it,
 # once the code that names a workspace everywhere is deployed.
 ONE_DRAFT_AT_A_TIME = (
     "Another workspace in this account has a draft open. Until the update "
@@ -310,7 +310,7 @@ def _drafts_share_a_key():
     """Whether migration 040's uq_single_workspace still stands, making
     (tenant_id, revision) unique across a tenant's workspaces - and so one
     draft per tenant. Read from the schema each time it is asked, which is
-    only when another workspace already holds a draft: 041 dropping it must
+    only when another workspace already holds a draft: 043 dropping it must
     take effect without waiting for a container to be replaced."""
     records = _sql(
         """
