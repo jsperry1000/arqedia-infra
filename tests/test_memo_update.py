@@ -121,6 +121,10 @@ FRESH = {
 }
 
 
+# The memo's workspace (PACK-01). Every row read here carries it.
+WORKSPACE = 3
+
+
 def value(param):
     """A Data API parameter back as Python. isNull is None, not True."""
     cell = param["value"]
@@ -141,7 +145,8 @@ class UpdateRun(unittest.TestCase):
 
         def sql(statement, params=None):
             if "FROM memo WHERE" in statement:
-                return rows(("curated", "memos/120.md", 3, "credit", 42))
+                return rows(("curated", "memos/120.md", 3, "credit", 42,
+                             WORKSPACE))
             if "INSERT INTO memo_rewrite" in statement:
                 self.rows.append({p["name"]: value(p) for p in params})
                 return {"generatedFields": [{"longValue": 500 + len(self.rows)}]}
@@ -174,7 +179,7 @@ class UpdateRun(unittest.TestCase):
             mock.patch.object(self.app._s3, "put_object",
                               side_effect=lambda **k: self.puts.append(k)),
             mock.patch.object(self.app.config, "load",
-                              side_effect=lambda t, r: self.registries[r]),
+                              side_effect=lambda t, w, r: self.registries[r]),
             mock.patch.object(self.app, "_load_values",
                               return_value=[{"document_id": 1}]),
             mock.patch.object(self.app, "_subject_of", return_value=None),
@@ -376,7 +381,7 @@ class UpdateRoute(unittest.TestCase):
     def setUp(self):
         self.app = load_api()
         self.charges, self.invocations, self.puts = [], [], []
-        self.memo = (("credit", 42, 100, 2),)
+        self.memo = (("credit", 42, 100, 2, WORKSPACE),)
         self.registry = FakeRegistry(REVISION_9)
 
         patches = [
@@ -385,7 +390,7 @@ class UpdateRoute(unittest.TestCase):
             mock.patch.object(self.app.config, "active_revision",
                               return_value=9),
             mock.patch.object(self.app.config, "load",
-                              side_effect=lambda t, r: self.registry),
+                              side_effect=lambda t, w, r: self.registry),
             mock.patch.object(self.app.wallet, "charge",
                               side_effect=lambda *a, **k:
                                   self.charges.append((a, k))),
@@ -427,14 +432,14 @@ class UpdateRoute(unittest.TestCase):
         self.assertEqual(len(self.puts), 1)
 
     def test_no_engagement_is_refused_before_the_charge(self):
-        self.memo = (("credit", None, 100, 2),)
+        self.memo = (("credit", None, 100, 2, WORKSPACE),)
         with self.assertRaises(ValueError):
             self.app.update_memo(TENANT, EMAIL, MEMO, "idem-1")
         self.assertEqual(self.charges, [])
         self.assertEqual(self.invocations, [])
 
     def test_a_template_not_in_use_is_refused_before_the_charge(self):
-        self.memo = (("kyc", 42, 100, 2),)
+        self.memo = (("kyc", 42, 100, 2, WORKSPACE),)
         with self.assertRaises(ValueError):
             self.app.update_memo(TENANT, EMAIL, MEMO, "idem-1")
         self.assertEqual(self.charges, [])
@@ -462,7 +467,7 @@ class ReviseFromUpdate(unittest.TestCase):
             self.statements.append((statement, values))
             if "SELECT s3_key, template_key, config_revision" in statement:
                 return rows(("memos/100.md", "credit", 3, None, 1, 42,
-                             "live"))
+                             "live", WORKSPACE))
             if "FROM memo_source ms" in statement:
                 return rows(("a.pdf",))
             if "state = 'filed' AND active = 1" in statement:

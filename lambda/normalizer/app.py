@@ -280,7 +280,7 @@ def _refusal_code(reason):
 
 def _record_refusal(tenant_id, engagement, filename, src_bucket, src_key,
                     version_id, sha, byte_size, uploaded_by, code,
-                    source_folder=None):
+                    source_folder=None, workspace_id=None):
     """A document nobody could read, recorded so somebody can see it.
 
     THE POINT OF STAGE 1. Every exit below the fetch used to return a dict to
@@ -302,6 +302,11 @@ def _record_refusal(tenant_id, engagement, filename, src_bucket, src_key,
     config_revision is NOT NULL and active_revision falls back to 1 for a
     tenant that has none, so this cannot fail for want of a configuration.
 
+    THE WORKSPACE IS RECORDED WHERE IT WAS RESOLVED, and 0 where it was not -
+    an upload naming no workspace for a tenant holding several. The row is
+    still written, for the reason the engagement's is: a refusal nobody can
+    see is the defect.
+
     THE ENGAGEMENT IS RESOLVED, NOT REQUIRED. This row is the only record a
     person will ever see of a file nobody could read, so it is written even
     if the engagement cannot be looked up: a NULL id is a gap that stage 4
@@ -316,16 +321,17 @@ def _record_refusal(tenant_id, engagement, filename, src_bucket, src_key,
     _sql(
         """
         INSERT INTO document
-          (tenant_id, engagement_id, s3_bucket, s3_key, s3_version_id,
-           sha256, filename, source_folder, byte_size, state, refusal_code,
-           refusal_reason, uploaded_by, config_revision)
+          (tenant_id, workspace_id, engagement_id, s3_bucket, s3_key,
+           s3_version_id, sha256, filename, source_folder, byte_size, state,
+           refusal_code, refusal_reason, uploaded_by, config_revision)
         VALUES
-          (:tenant_id, :engagement_id, :s3_bucket, :s3_key, :s3_version_id,
-           :sha256, :filename, :source_folder, :byte_size, 'unreadable',
-           :code, :reason, :uploaded_by, :config_revision)
+          (:tenant_id, :workspace_id, :engagement_id, :s3_bucket, :s3_key,
+           :s3_version_id, :sha256, :filename, :source_folder, :byte_size,
+           'unreadable', :code, :reason, :uploaded_by, :config_revision)
         """,
         [
             _p("tenant_id", tenant_id),
+            _p("workspace_id", workspace_id or 0),
             _p("engagement_id", engagement_id),
             _p("s3_bucket", src_bucket),
             _p("s3_key", src_key),
@@ -340,7 +346,9 @@ def _record_refusal(tenant_id, engagement, filename, src_bucket, src_key,
             _p("code", code),
             _p("reason", _REFUSAL_TEXT.get(code, _REFUSAL_TEXT["error"])),
             _p("uploaded_by", uploaded_by),
-            _p("config_revision", config.active_revision(tenant_id)),
+            _p("config_revision",
+               config.active_revision(tenant_id, workspace_id)
+               if workspace_id is not None else 1),
         ],
     )
 
@@ -349,8 +357,9 @@ def _record_document(envelope):
     result = _sql(
         """
         INSERT INTO document
-          (tenant_id, engagement_id, s3_bucket, s3_key, s3_version_id,
-           sha256, filename, source_folder, page_count, part_index,
+          (tenant_id, workspace_id, engagement_id, s3_bucket, s3_key,
+           s3_version_id, sha256, filename, source_folder, page_count,
+           part_index,
            page_from, page_to,
            extraction_method, document_type,
            state, thin_text, char_count, byte_size,
@@ -358,8 +367,9 @@ def _record_document(envelope):
            classify_tokens_in, classify_tokens_out,
            uploaded_by, config_revision)
         VALUES
-          (:tenant_id, :engagement_id, :s3_bucket, :s3_key, :s3_version_id,
-           :sha256, :filename, :source_folder, :page_count, :part_index,
+          (:tenant_id, :workspace_id, :engagement_id, :s3_bucket, :s3_key,
+           :s3_version_id, :sha256, :filename, :source_folder, :page_count,
+           :part_index,
            :page_from, :page_to,
            :extraction_method, :document_type,
            :state, :thin_text, :char_count, :byte_size,
@@ -369,6 +379,9 @@ def _record_document(envelope):
         """,
         [
             _p("tenant_id", envelope["tenant_id"]),
+            # The workspace it was uploaded into (PACK-01), whose
+            # configuration it is classified, filed and extracted under.
+            _p("workspace_id", envelope["workspace_id"]),
             # The engagement's row, found or created from the name in the key
             # (migration 030). Not caught here, unlike the refusal path: if
             # this cannot be resolved the handler's own catch records the
@@ -455,10 +468,24 @@ def lambda_handler(event, context):
     # input is a directory picker.
     source_folder = (obj.get("Metadata") or {}).get("source-folder")
 
+    # THE WORKSPACE IT WAS UPLOADED INTO (PACK-01), by the same route: the
+    # API resolved it against the tenant and signed it onto the link, and
+    # it is checked against the tenant again here, because metadata is
+    # whatever the browser sent. Absent on a link signed before workspaces,
+    # where the tenant's only workspace is the answer. Unresolvable - several
+    # workspaces and none named, or one that is not this tenant's - and the
+    # file is refused with a row, never classified against a guess.
+    try:
+        workspace_id = config.workspace(
+            tenant_id, (obj.get("Metadata") or {}).get("workspace-id"))
+    except ValueError as exc:
+        print("[workspace-unresolved] key=%s %s" % (src_key, exc))
+        workspace_id = None
+
     def refuse(code, log_reason):
         _record_refusal(tenant_id, engagement, filename, src_bucket, src_key,
                         obj.get("VersionId"), sha, len(body), uploaded_by,
-                        code, source_folder)
+                        code, source_folder, workspace_id)
         print("[unreadable] key=%s reason=%s code=%s" % (
             src_key, log_reason, code))
         return {"status": "unreadable", "reason": log_reason, "code": code,
@@ -479,6 +506,7 @@ def lambda_handler(event, context):
         completes and has nowhere to put the result."""
         envelope = {
             "tenant_id": tenant_id,
+            "workspace_id": workspace_id,
             "document_type": None,
             "document_type_proposed": None,
             "document_type_confidence": None,
@@ -500,7 +528,8 @@ def lambda_handler(event, context):
             "sha256_source": sha,
             "extraction_method": None,
             "extracted_at": _now(),
-            "config_revision": config.active_revision(tenant_id),
+            "config_revision": config.active_revision(tenant_id,
+                                                      workspace_id),
             "page_count": exc.pages,
             "char_count": exc.chars,
             "raw_text": "",
@@ -517,9 +546,13 @@ def lambda_handler(event, context):
                 "pages": exc.pages, "chars": exc.chars,
                 "review_key": review_key, "key": src_key}
 
+    if workspace_id is None:
+        return refuse("error", "no workspace")
+
     try:
-        return _analyse(src_bucket, src_key, tenant_id, engagement, filename,
-                        obj, body, sha, uploaded_by, source_folder)
+        return _analyse(src_bucket, src_key, tenant_id, workspace_id,
+                        engagement, filename, obj, body, sha, uploaded_by,
+                        source_folder)
     except extractors.UnreadableDocument as exc:
         if exc.reason == "no_text_layer":
             return scan(exc)
@@ -542,8 +575,8 @@ def lambda_handler(event, context):
             raise
 
 
-def _analyse(src_bucket, src_key, tenant_id, engagement, filename, obj, body,
-             sha, uploaded_by, source_folder=None):
+def _analyse(src_bucket, src_key, tenant_id, workspace_id, engagement,
+             filename, obj, body, sha, uploaded_by, source_folder=None):
     """Read the document and record what it is. Everything below the fetch.
 
     Split out so lambda_handler can wrap the whole of it in one try: an exit
@@ -551,10 +584,12 @@ def _analyse(src_bucket, src_key, tenant_id, engagement, filename, obj, body,
     sure there is not a fifth one is to catch the lot."""
     raw_text, units, method = extractors.extract(src_key, body)
 
-    # The tenant's own type list, at whatever revision they are working
-    # under. A firm doing shipping finance is offered shipping documents.
-    revision = config.active_revision(tenant_id)
-    registry = config.load(tenant_id, revision)
+    # The workspace's own type list, at whatever revision it is working
+    # under. A firm doing shipping finance is offered shipping documents, and
+    # a document uploaded into Real Estate is offered Real Estate's alone
+    # (decision of 22 October 2026: no classification across workspaces).
+    revision = config.active_revision(tenant_id, workspace_id)
+    registry = config.load(tenant_id, workspace_id, revision)
 
     # THE FILE NAME GOES WITH IT (18.13). The prompt says it is a hint that
     # may mislead and that the content decides; see segment.segment. The
@@ -585,6 +620,7 @@ def _analyse(src_bucket, src_key, tenant_id, engagement, filename, obj, body,
 
         envelope = {
             "tenant_id": tenant_id,
+            "workspace_id": workspace_id,
             "document_type": part["document_type"],
             "document_type_proposed": part["document_type"],
             "document_type_confidence": part["confidence"],

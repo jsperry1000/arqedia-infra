@@ -50,8 +50,8 @@ class RewriteNotStarted(unittest.TestCase):
         self.updates = []
 
         def sql(statement, params=None, tx=None):
-            if "SELECT memo_id FROM memo" in statement:
-                return rows((120,))
+            if "SELECT memo_id, workspace_id FROM memo" in statement:
+                return rows((120, 3))
             if "INSERT INTO memo_rewrite" in statement:
                 return {"generatedFields": [{"longValue": 501}]}
             if "UPDATE memo_rewrite" in statement:

@@ -67,7 +67,7 @@ def main():
     args.add_argument("--by", required=True, help="who is doing this")
     opts = args.parse_args()
 
-    active = registry._active_revision(TENANT)
+    active = registry._active_revision(TENANT, registry.NO_WORKSPACE)
     offered = registry.offer()
     draft_open = bool(registry._sql(
         "SELECT revision FROM config_revision "
@@ -96,7 +96,7 @@ def main():
         print("Dry run. Nothing written. Run again with --apply.")
         return 0
 
-    registry.open_draft(TENANT, opts.by)
+    registry.open_draft(TENANT, registry.NO_WORKSPACE, opts.by)
     registry._sql(
         "UPDATE config_document_type SET read_mode = 'text', always_ocr = 0 "
         "WHERE tenant_id = :t AND revision = :d "
@@ -105,13 +105,13 @@ def main():
     left = changing(registry.DRAFT)
     if left:
         print("STOPPED: the draft still has", left, "- discarding it.")
-        registry.discard_draft(TENANT)
+        registry.discard_draft(TENANT, registry.NO_WORKSPACE)
         return 1
 
-    published = registry.publish(TENANT, opts.by, NOTE)
+    published = registry.publish(TENANT, registry.NO_WORKSPACE, opts.by, NOTE)
     if not published.get("published"):
         print("STOPPED: publish refused:", published.get("validation"))
-        registry.discard_draft(TENANT)
+        registry.discard_draft(TENANT, registry.NO_WORKSPACE)
         return 1
     revision = published["revision"]
     print("published revision", revision)
@@ -119,7 +119,7 @@ def main():
     moved = registry.set_offer(revision, offered["templates"], opts.by)
     print("offer moved:", moved)
 
-    registry.discard_draft(TENANT)
+    registry.discard_draft(TENANT, registry.NO_WORKSPACE)
     print("draft discarded. Types still claiming FORMS or always-OCR at "
           "revision %d: %d" % (revision, len(changing(revision))))
     return 0

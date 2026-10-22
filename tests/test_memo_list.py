@@ -15,6 +15,7 @@ from unittest import mock
 from api_modules import load_api, rows
 
 TEMPLATE = "credit-memo"
+WORKSPACE = 2
 
 # The same template, named differently in two published revisions. Renaming is
 # free and mints no new key (Configure.tsx: "the key is minted once and never
@@ -44,10 +45,11 @@ def memo_row(memo_id, config_revision, template_key=TEMPLATE,
     """One row of list_memos' SELECT, in its column order:
     memo_id, template_key, generated_at, generated_by, parent_memo_id,
     revision, modified_by, modified_at, pdf_key, config_revision, and since
-    Group 14 state, archived_by, archived_at."""
+    Group 14 state, archived_by, archived_at, and since PACK-01 the memo's
+    workspace."""
     return (memo_id, template_key, "2026-03-04 10:00:00", "a@firm.com",
             parent, revision, None, None, pdf_key, config_revision,
-            "live", None, None)
+            "live", None, None, WORKSPACE)
 
 
 class MemoListTest(unittest.TestCase):
@@ -57,8 +59,8 @@ class MemoListTest(unittest.TestCase):
 
     def listing(self, *memo_rows):
         """list_memos over the given rows, with the registry faked."""
-        def load(tenant_id, revision):
-            self.loaded.append((tenant_id, revision))
+        def load(tenant_id, workspace_id, revision):
+            self.loaded.append((tenant_id, workspace_id, revision))
             return FakeRegistry(revision)
 
         with mock.patch.object(self.app, "_sql",
@@ -75,7 +77,7 @@ class MemoListTest(unittest.TestCase):
         # it must keep working.
         self.assertEqual(memo["template"], TEMPLATE)
         # Read from the memo's revision, not from the tenant's active one.
-        self.assertEqual(self.loaded, [(7, 3)])
+        self.assertEqual(self.loaded, [(7, WORKSPACE, 3)])
 
     def test_a_rename_does_not_rename_a_memo_already_written(self):
         # Memo 11 was written in March under revision 3; the memorandum was
@@ -96,7 +98,7 @@ class MemoListTest(unittest.TestCase):
         # braces: what it must not do is raise and take the whole list with it.
         [memo] = self.listing(memo_row(14, None))
         self.assertEqual(memo["template_label"], TEMPLATE)
-        self.assertEqual(self.loaded, [(7, 1)])
+        self.assertEqual(self.loaded, [(7, WORKSPACE, 1)])
 
     def test_every_other_field_is_as_it_was(self):
         [memo] = self.listing(memo_row(11, 3, parent=9, revision=2,

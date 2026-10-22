@@ -30,6 +30,18 @@ One revision covers all of them. Versioning a template separately would mean a
 memo pinning a template revision AND a field revision, with cross-object
 references to resolve at each; extracted_value carries one config_revision, and
 a snapshot is one integer.
+
+A WORKSPACE OWNS THE SERIES (PACK-01, migration 040). A tenant holds one or
+more workspaces - Trade Finance, Real Estate - each with its own draft, its own
+publishes and its own revision in use. A revision is (tenant_id, workspace_id,
+revision). The NUMBER still comes from one counter per tenant, so two
+workspaces are never issued the same one; the workspace is in the key so a
+draft - revision 0 in every workspace - is one per workspace.
+
+Workspace 0 is "in no workspace": the pack tenant, which curates rather than
+works, and any row written before the code that names a workspace was
+deployed. workspace_of() reads the second kind as the tenant's only workspace,
+which is what it was written in.
 """
 
 import os
@@ -44,8 +56,23 @@ CLUSTER_ARN = os.environ["CLUSTER_ARN"]
 SECRET_ARN = os.environ["SECRET_ARN"]
 DATABASE = os.environ["DATABASE"]
 
-# (tenant_id, revision) -> Registry. Immutable, so this never goes stale.
+# (tenant_id, workspace_id, revision) -> Registry. Immutable, so this never
+# goes stale.
 _CACHE = {}
+
+# A tenant with no workspace row. The pack tenant, and nothing else today.
+NO_WORKSPACE = 0
+
+# Asked when a tenant holds several workspaces and the request named none.
+# Never guessed: work landing in the wrong workspace is filed, extracted and
+# charged under a configuration nobody chose (decision of 22 October 2026).
+CHOOSE_A_WORKSPACE = ("This account has more than one workspace. Choose the "
+                      "workspace to work in.")
+
+
+class WorkspaceRequired(ValueError):
+    """Several workspaces, and nothing said which. A ValueError, so every
+    route already answers it as 400 with the sentence."""
 
 
 def _sql(statement, params=None):
@@ -89,8 +116,9 @@ class Registry(object):
     rather than a rewrite artefact.
     """
 
-    def __init__(self, tenant_id, revision):
+    def __init__(self, tenant_id, workspace_id, revision):
         self.tenant_id = tenant_id
+        self.workspace_id = workspace_id
         self.CONFIG_REVISION = revision
 
         self.CATEGORIES = {}
@@ -109,9 +137,10 @@ class Registry(object):
 
     def _rows(self, table, columns, extra=""):
         result = _sql(
-            "SELECT %s FROM %s WHERE tenant_id = :t AND revision = :r %s"
-            % (", ".join(columns), table, extra),
-            [_p("t", self.tenant_id), _p("r", self.CONFIG_REVISION)])
+            "SELECT %s FROM %s WHERE tenant_id = :t AND workspace_id = :w "
+            "AND revision = :r %s" % (", ".join(columns), table, extra),
+            [_p("t", self.tenant_id), _p("w", self.workspace_id),
+             _p("r", self.CONFIG_REVISION)])
         return result.get("records", [])
 
     def _load(self):
@@ -330,27 +359,88 @@ class Registry(object):
         return [s for s in sections if s["kind"] == kind]
 
 
-def load(tenant_id, revision):
+def load(tenant_id, workspace_id, revision):
     """A revision, cached. Immutable, so the cache cannot go stale."""
-    key = (int(tenant_id), int(revision))
+    key = (int(tenant_id), int(workspace_id), int(revision))
     if key not in _CACHE:
         _CACHE[key] = Registry(*key)
     return _CACHE[key]
 
 
-def active_revision(tenant_id):
-    """The revision a tenant's NEW work files against.
+def workspaces(tenant_id):
+    """The tenant's workspaces, oldest first."""
+    result = _sql(
+        "SELECT workspace_id, name, active_revision FROM workspace "
+        "WHERE tenant_id = :t ORDER BY workspace_id",
+        [_p("t", int(tenant_id))])
+    return [{"workspace_id": _col(r, 0), "name": _col(r, 1),
+             "active_revision": _col(r, 2)}
+            for r in result.get("records", [])]
+
+
+def workspace(tenant_id, workspace_id=None):
+    """Which workspace a request works in.
+
+    NAMED, it must be one of this tenant's: the tenant comes from the token
+    and a workspace number from the request, so this is the check that keeps
+    one tenant out of another's configuration.
+
+    NOT NAMED, the tenant's only workspace, and a refusal where it holds
+    several (decision of 22 October 2026). A tenant with none - the pack
+    tenant - is workspace 0."""
+    held = workspaces(tenant_id)
+    if workspace_id not in (None, ""):
+        try:
+            asked = int(workspace_id)
+        except (TypeError, ValueError):
+            raise ValueError("a workspace is named by its number")
+        if asked == NO_WORKSPACE and not held:
+            return NO_WORKSPACE
+        if not any(w["workspace_id"] == asked for w in held):
+            raise ValueError("this account has no workspace %d" % asked)
+        return asked
+    if not held:
+        return NO_WORKSPACE
+    if len(held) > 1:
+        raise WorkspaceRequired(CHOOSE_A_WORKSPACE)
+    return held[0]["workspace_id"]
+
+
+def workspace_of(tenant_id, workspace_id):
+    """The workspace a stored row belongs to.
+
+    A row carries its own, and that is the answer - except 0 on a tenant that
+    has workspaces, which is a row written by code that predates them. It was
+    written in the tenant's only workspace, so it is read as that one; with
+    several, nothing can say which, and the request is refused rather than
+    answered from the wrong configuration."""
+    if workspace_id:
+        return int(workspace_id)
+    return workspace(tenant_id)
+
+
+def active_revision(tenant_id, workspace_id):
+    """The revision a workspace's NEW work files against.
 
     Absent one, revision 1 - which is the pack every tenant was forked from
-    and has in fact been extracting against all along."""
-    result = _sql("SELECT active_revision FROM tenant WHERE tenant_id = :t",
-                  [_p("t", int(tenant_id))])
+    and has in fact been extracting against all along. Workspace 0 reads the
+    tenant's own column, which is where the pack tenant keeps it."""
+    if int(workspace_id) == NO_WORKSPACE:
+        result = _sql(
+            "SELECT active_revision FROM tenant WHERE tenant_id = :t",
+            [_p("t", int(tenant_id))])
+    else:
+        result = _sql(
+            "SELECT active_revision FROM workspace "
+            "WHERE tenant_id = :t AND workspace_id = :w",
+            [_p("t", int(tenant_id)), _p("w", int(workspace_id))])
     records = result.get("records", [])
     if not records:
         return 1
     return int(_col(records[0], 0) or 1)
 
 
-def for_tenant(tenant_id):
-    """The tenant's active configuration."""
-    return load(tenant_id, active_revision(tenant_id))
+def for_workspace(tenant_id, workspace_id):
+    """The workspace's active configuration."""
+    return load(tenant_id, workspace_id,
+                active_revision(tenant_id, workspace_id))

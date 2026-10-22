@@ -157,6 +157,22 @@ def _subject_for(tenant_id, document_id):
     return (cell.get("stringValue") or "").strip() or None
 
 
+def _workspace_for(tenant_id, document_id):
+    """The workspace this document was uploaded into (PACK-01).
+
+    FROM THE DOCUMENT ROW, not the envelope. An envelope analysed before
+    workspaces existed carries none, and the row is the record either way:
+    the normalizer wrote it there, and migration 040 gave every older row
+    its tenant's workspace. config.workspace_of reads a row still at 0 as
+    the tenant's only workspace."""
+    found = _sql(
+        "SELECT workspace_id FROM document "
+        "WHERE tenant_id = :t AND document_id = :d",
+        [_p("t", tenant_id), _p("d", int(document_id))]).get("records", [])
+    stored = found[0][0].get("longValue") if found else None
+    return config.workspace_of(tenant_id, stored)
+
+
 # Opens every extraction prompt. The name entered is INDICATIVE, not
 # dispositive: "Cocoa Empire" has to reach "Cocoa Empire Uganda Limited",
 # "Cocoa Empire Uganda Ltd" and "CE", and no normalisation we could write
@@ -318,16 +334,17 @@ def _write_value(envelope, field_id, value, row_ordinal,
     _sql(
         """
         INSERT INTO extracted_value
-          (tenant_id, document_id, field_id, value, row_ordinal,
-           config_revision, locator_kind, locator_index,
+          (tenant_id, workspace_id, document_id, field_id, value,
+           row_ordinal, config_revision, locator_kind, locator_index,
            char_start, char_end, cell_range)
         VALUES
-          (:tenant_id, :document_id, :field_id, :value, :row_ordinal,
-           :config_revision, :locator_kind, :locator_index,
+          (:tenant_id, :workspace_id, :document_id, :field_id, :value,
+           :row_ordinal, :config_revision, :locator_kind, :locator_index,
            :char_start, :char_end, :cell_range)
         """,
         [
             _p("tenant_id", envelope["tenant_id"]),
+            _p("workspace_id", envelope["workspace_id"]),
             _p("document_id", envelope["document_id"]),
             _p("field_id", field_id),
             _p("value", str(value)),
@@ -494,7 +511,12 @@ def lambda_handler(event, context):
     # one. A document filed under revision 11 resolves against revision 11 for
     # ever - that is what a snapshot is for, and it is why a memo written in
     # March still reproduces in September.
-    registry = config.load(envelope["tenant_id"],
+    #
+    # And in the WORKSPACE it was uploaded into, whose series that revision
+    # belongs to. Set on the envelope so every value written carries it.
+    envelope["workspace_id"] = _workspace_for(envelope["tenant_id"],
+                                              envelope.get("document_id"))
+    registry = config.load(envelope["tenant_id"], envelope["workspace_id"],
                            envelope.get("config_revision") or 1)
 
     schema_keys = registry.schemas_for(envelope.get("document_type"))

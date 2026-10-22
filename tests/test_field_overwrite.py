@@ -95,7 +95,7 @@ class CreateTest(unittest.TestCase):
     def save(self, body, held=()):
         db = Db(held)
         with mock.patch.object(self.editor, "_sql", db.sql):
-            out = self.editor.save_field(TENANT, body)
+            out = self.editor.save_field(TENANT, 3, body)
         return out, db
 
     def test_a_new_name_is_created(self):
@@ -120,7 +120,7 @@ class CreateTest(unittest.TestCase):
         db = Db({EXISTING_KEY: EXISTING_LABEL})
         with mock.patch.object(self.editor, "_sql", db.sql):
             with self.assertRaises(ValueError):
-                self.editor.save_field(TENANT, {
+                self.editor.save_field(TENANT, 3, {
                     "label": EXISTING_LABEL,
                     "cardinality": "many",
                     "description": "Something else entirely",
@@ -147,7 +147,7 @@ class EditTest(unittest.TestCase):
     def test_editing_an_existing_fact_still_saves(self):
         db = Db({EXISTING_KEY: EXISTING_LABEL})
         with mock.patch.object(self.editor, "_sql", db.sql):
-            out = self.editor.save_field(TENANT, {
+            out = self.editor.save_field(TENANT, 3, {
                 "key": EXISTING_KEY,
                 "label": "Company Summary",
                 "cardinality": "many",
@@ -169,7 +169,7 @@ class EditTest(unittest.TestCase):
     def save_with_key(self):
         db = Db({EXISTING_KEY: EXISTING_LABEL})
         with mock.patch.object(self.editor, "_sql", db.sql):
-            out = self.editor.save_field(TENANT, {
+            out = self.editor.save_field(TENANT, 3, {
                 "key": "f_own_key", "label": "Own Key"})
         return out, db
 
@@ -178,7 +178,7 @@ class EditTest(unittest.TestCase):
         db = Db({EXISTING_KEY: EXISTING_LABEL})
         with mock.patch.object(self.editor, "_sql", db.sql):
             with self.assertRaises(ValueError):
-                self.editor.save_field(TENANT, {
+                self.editor.save_field(TENANT, 3, {
                     "key": "  ", "label": EXISTING_LABEL})
 
 

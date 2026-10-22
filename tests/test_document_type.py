@@ -30,6 +30,7 @@ from unittest import mock
 from api_modules import load_api, rows
 
 TENANT = 7
+WORKSPACE = 3
 DOC = 41
 ENGAGEMENT = "Meridian"
 
@@ -63,16 +64,17 @@ class Db:
         values = {p["name"]: plain(p["value"]) for p in params or []}
         self.ran.append((s, values))
 
-        if s.startswith("SELECT state FROM document"):
+        if s.startswith("SELECT state, workspace_id FROM document"):
             doc = self.docs.get(values["d"])
-            return rows((doc[0],)) if doc else rows()
+            return rows((doc[0], WORKSPACE)) if doc else rows()
         if s.startswith("SELECT subject_name FROM engagement"):
             return rows((self.subject,))
         if s.startswith("SELECT document_id, filename, state, chosen_type"):
             return rows(*[(d, "file-%d.pdf" % d, st, chosen, proposal)
                           for d, (st, chosen, proposal) in self.docs.items()])
         if s.startswith("SELECT s3_key, thin_text, page_from, part_index"):
-            return rows(("tenants/7/docs/Meridian/file.pdf", False, None, None))
+            return rows(("tenants/7/docs/Meridian/file.pdf", False, None, None,
+                         WORKSPACE))
         return rows()
 
     def writes(self, prefix):
@@ -94,7 +96,7 @@ class ChooseTypeTest(unittest.TestCase):
         db = db or Db()
         with mock.patch.object(self.app, "_sql", db.sql), \
                 mock.patch.object(self.app, "config") as config:
-            config.for_tenant.return_value = registry_with(*types)
+            config.for_workspace.return_value = registry_with(*types)
             reply = self.app._dispatch(
                 event("PUT /documents/{document_id}/type",
                       body={"type": type_key}), None)
@@ -184,7 +186,7 @@ class FilingUsesTheChoiceTest(unittest.TestCase):
                 mock.patch.object(self.app, "wallet") as wallet, \
                 mock.patch.object(self.app, "config") as config, \
                 mock.patch.object(self.app, "_s3") as s3:
-            config.for_tenant.return_value = registry_with("invoice",
+            config.for_workspace.return_value = registry_with("invoice",
                                                            "bank_statement")
             wallet.charge.return_value = {"entry_id": 5}
             s3.get_object.return_value = {

@@ -6,6 +6,9 @@ The database is replaced. Run from the repository root:
 
 The SQL itself is exercised on dev, not here; what is tested here is what the
 code decides and which statements it sends.
+
+PACK-01: forking a base makes a new workspace beside whatever the tenant
+already holds, and a memorandum is taken into one workspace's draft.
 """
 
 import importlib.util
@@ -20,6 +23,9 @@ from unittest import mock
 from api_modules import rows
 
 ROOT = Path(__file__).resolve().parents[1]
+
+WORKSPACE = 3          # the customer's workspace a memorandum is taken into
+NEW_WORKSPACE = 12     # what INSERT INTO workspace answers
 
 
 def load_registry():
@@ -66,11 +72,22 @@ class FakeDb:
         self.published = published
         self.active = active
         self.statements = []
+        self.in_tx = []
 
-    def sql(self, statement, params=None):
+    def sql(self, statement, params=None, tx=None):
         s = " ".join(statement.split())
         values = {p["name"]: plain(p["value"]) for p in params or []}
         self.statements.append((s, values))
+        self.in_tx.append((s, tx))
+
+        if s.startswith("INSERT INTO workspace"):
+            return {"generatedFields": [{"longValue": NEW_WORKSPACE}]}
+        if s.startswith("SELECT workspace_id FROM config_revision "
+                        "WHERE tenant_id = :t AND workspace_id <> :w"):
+            return rows()              # no other workspace has a draft
+        if s.startswith("SELECT workspace_id FROM config_revision"):
+            # The pack tenant's revisions are in no workspace.
+            return rows((0 if values["t"] == 0 else WORKSPACE,))
 
         if s.startswith("SELECT o.tenant_id, o.revision, o.template_key"):
             found = self.marks.get((values["key"], values["k"]))
@@ -79,7 +96,7 @@ class FakeDb:
             return rows((5,))          # the marked revision holds facts
         if "COALESCE(MAX(revision), 0)" in s:
             return rows((self.published,))
-        if s.startswith("SELECT active_revision FROM tenant"):
+        if s.startswith("SELECT active_revision FROM workspace"):
             return rows((self.active,))
         if s.startswith("SELECT revision FROM config_revision WHERE tenant_id"):
             return rows((0,))          # a draft is open
@@ -142,9 +159,9 @@ class ForkBaseTest(unittest.TestCase):
     def setUp(self):
         self.registry = load_registry()
 
-    def fork(self, db, **kw):
+    def fork(self, db, name="Real Estate", tenant_id=7, **kw):
         with mock.patch.object(self.registry, "_sql", db.sql):
-            return self.registry.fork_base(7, "a@firm.com", **kw)
+            return self.registry.fork_base(tenant_id, "a@firm.com", name, **kw)
 
     def test_takes_the_vocabulary_and_not_our_memoranda(self):
         db = FakeDb(published=0)
@@ -163,10 +180,56 @@ class ForkBaseTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.fork(db)
 
-    def test_refuses_a_tenant_that_already_published(self):
+    def test_a_tenant_that_already_published_gets_a_new_workspace(self):
+        """It used to be refused: the only place a base could land was over
+        the tenant's own configuration. It now lands beside it, numbered from
+        the tenant's one counter, and nothing of the existing workspace is
+        written."""
         db = FakeDb(published=3)
+        result = self.fork(db)
+        self.assertEqual((result["workspace_id"], result["revision"],
+                          result["name"]), (NEW_WORKSPACE, 4, "Real Estate"))
+        [(_, made)] = db.sent("INSERT INTO workspace")
+        self.assertEqual((made["t"], made["name"], made["from_ws"],
+                          made["from_rev"]), (7, "Real Estate", None, 9))
+        [(_, revision)] = db.sent("INSERT INTO config_revision")
+        self.assertEqual((revision["w"], revision["r"]), (NEW_WORKSPACE, 4))
+        for s, values in db.statements:
+            if s.startswith("INSERT INTO config_") and "to_ws" in values:
+                self.assertEqual(values["to_ws"], NEW_WORKSPACE)
+                self.assertEqual(values["from_ws"], 0)
+        [(_, active)] = db.sent("UPDATE workspace SET active_revision")
+        self.assertEqual((active["w"], active["r"]), (NEW_WORKSPACE, 4))
+
+    def test_a_first_fork_makes_the_first_workspace(self):
+        db = FakeDb(published=0)
+        result = self.fork(db, name="Trade Finance")
+        self.assertEqual((result["workspace_id"], result["revision"]),
+                         (NEW_WORKSPACE, 1))
+
+    def test_refused_without_a_name(self):
+        for name in (None, "", "   "):
+            with self.subTest(name=name):
+                db = FakeDb(published=0)
+                with self.assertRaises(ValueError):
+                    self.fork(db, name=name)
+                self.assertEqual(db.sent("INSERT"), [])
+
+    def test_the_pack_tenant_does_not_fork_from_itself(self):
+        db = FakeDb(published=9)
         with self.assertRaises(ValueError):
-            self.fork(db)
+            self.fork(db, tenant_id=0)
+        self.assertEqual(db.sent("INSERT"), [])
+
+    def test_the_whole_fork_is_one_transaction(self):
+        """A workspace with no configuration would be offered everywhere and
+        extract nothing, so the row, the revision and the copy go together."""
+        db = FakeDb(published=0)
+        self.fork(db)
+        writes = [(s, tx) for s, tx in db.in_tx
+                  if s.startswith(("INSERT", "UPDATE"))]
+        self.assertTrue(writes)
+        self.assertTrue(all(tx is not None for _, tx in writes))
 
 
 class ForkTemplateTest(unittest.TestCase):
@@ -175,7 +238,8 @@ class ForkTemplateTest(unittest.TestCase):
 
     def fork(self, db, pack_key="TRADEFINANCE-KYC"):
         with mock.patch.object(self.registry, "_sql", db.sql):
-            return self.registry.fork_template(7, "a@firm.com", pack_key)
+            return self.registry.fork_template(7, WORKSPACE, "a@firm.com",
+                                               pack_key)
 
     def keys_used(self, db):
         [(_, values)] = db.sent("INSERT IGNORE INTO config_template")
@@ -229,6 +293,17 @@ class ForkTemplateTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.fork(db)
 
+    def test_it_lands_in_the_workspaces_own_draft(self):
+        db = FakeDb(held_fields={"f_borrower"})
+        self.fork(db)
+        for prefix in ("INSERT IGNORE INTO config_template",
+                       "INSERT IGNORE INTO config_section ",
+                       "INSERT IGNORE INTO config_section_field"):
+            [(_, values)] = db.sent(prefix)
+            self.assertEqual((values["to_w"], values["to_r"]), (WORKSPACE, 0))
+            # From the pack tenant's revision, which is in no workspace.
+            self.assertEqual(values["from_w"], 0)
+
     def test_refuses_a_fact_the_base_does_not_define(self):
         # Bound in the memorandum, held by neither the draft nor the base.
         db = FakeDb(bound_fields={"f_invented"}, held_fields=set())
@@ -253,7 +328,7 @@ class PacksTest(unittest.TestCase):
     def test_template_packs_counts_one_memorandum_per_mark(self):
         db = FakeDb()
         with mock.patch.object(self.registry, "_sql", db.sql):
-            self.registry.template_packs(7)
+            self.registry.template_packs(7, WORKSPACE)
         [(sent, _)] = db.sent("SELECT o.revision, o.pack_key, r.note, o.tenant_id")
         self.assertIn("FROM pack_offer o", sent)
         self.assertIn("s.template_key = o.template_key", sent)

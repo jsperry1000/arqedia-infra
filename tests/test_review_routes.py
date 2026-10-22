@@ -109,8 +109,11 @@ class ReviewRoutesTest(unittest.TestCase):
         [call] = self.invocations
         self.assertEqual(call["FunctionName"], "reviewer")
         self.assertEqual(call["InvocationType"], "RequestResponse")
+        # The workspace is resolved against the tenant before the relay. The
+        # faked database holds no workspace row, so it is workspace 0.
         self.assertEqual(self.payload(), {"action": "open", "tenant_id": TENANT,
-                                          "email": EMAIL, "role": "admin"})
+                                          "email": EMAIL, "role": "admin",
+                                          "workspace_id": 0})
         self.assertEqual(reply["statusCode"], 202)
         self.assertEqual(json.loads(reply["body"])["session_id"], SESSION)
 

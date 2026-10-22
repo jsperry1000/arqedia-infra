@@ -64,6 +64,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+import config
 import editor
 import registry
 import wallet
@@ -264,16 +265,27 @@ def _charged(tenant_id, session_id):
     return _col(rows[0], 0) if rows else None
 
 
+def _workspace(tenant_id, review):
+    """The workspace whose draft a session reviews (PACK-01).
+
+    FIXED AT OPEN and kept on the session, so every later act - the read,
+    an accept, an answer - writes into the draft that was reviewed, whatever
+    workspace the screen has moved to since. A session opened before
+    workspaces carries none, and the tenant's only workspace answers."""
+    return config.workspace_of(tenant_id, (review or {}).get("workspace_id"))
+
+
 # --- open ------------------------------------------------------------------
 
-def open_session(tenant_id, email, role):
+def open_session(tenant_id, workspace_id, email, role):
     """Check everything that can be checked now, then start the read.
 
     Refused here rather than after a minute of reading: no draft, the wrong
     plan, no price, or not enough to pay for it. Charges nothing."""
     _require_admin(role)
     _require_plan(tenant_id)
-    editor.draft(tenant_id)          # "no draft is open" is raised here
+    workspace_id = config.workspace(tenant_id, workspace_id)
+    editor.draft(tenant_id, workspace_id)   # "no draft is open" is raised here
 
     quote = wallet.quote(tenant_id, EVENT)   # Unpriced is raised here
     if not quote["affordable"]:
@@ -284,6 +296,7 @@ def open_session(tenant_id, email, role):
     session_id = uuid.uuid4().hex
     review = {
         "tenant_id": tenant_id,
+        "workspace_id": workspace_id,
         "session_id": session_id,
         "requested_by": email,
         "opened_at": _stamp(),
@@ -654,8 +667,9 @@ def _read(tenant_id, session_id):
     if review is None:
         raise ValueError("no such review")
 
-    draft = editor.draft(tenant_id)
-    report = registry.validate(tenant_id, registry.DRAFT)
+    workspace_id = _workspace(tenant_id, review)
+    draft = editor.draft(tenant_id, workspace_id)
+    report = registry.validate(tenant_id, workspace_id, registry.DRAFT)
     findings = [f["detail"] for f in report["fatal"] + report["warnings"]]
 
     fields = draft["fields"]
@@ -837,6 +851,7 @@ def accept(tenant_id, email, role, session_id, suggestion_id, value=None,
     _require_admin(role)
     _require_plan(tenant_id)
     review = _usable(tenant_id, session_id)
+    workspace_id = _workspace(tenant_id, review)
 
     suggestion = _find(tenant_id, session_id, review, suggestion_id)
     if suggestion is None:
@@ -849,7 +864,7 @@ def accept(tenant_id, email, role, session_id, suggestion_id, value=None,
     if done and done.get("status") == "accepted":
         return dict(done, repeated=True)
 
-    draft = editor.draft(tenant_id)
+    draft = editor.draft(tenant_id, workspace_id)
 
     # STALE IS REFUSED, NOT OVERWRITTEN. Another administrator's edit since
     # the review read the draft is never undone by a suggestion made before
@@ -882,7 +897,8 @@ def accept(tenant_id, email, role, session_id, suggestion_id, value=None,
                                            quote["available_cents"],
                                            quote["purchased_only"])
 
-    written = _write(tenant_id, draft, suggestion, proposed, bind_to)
+    written = _write(tenant_id, workspace_id, draft, suggestion, proposed,
+                     bind_to)
 
     charge = None
     if entry_id is None:
@@ -987,7 +1003,7 @@ def _value(suggestion, value, draft):
     raise ValueError("nothing to write")
 
 
-def _write(tenant_id, draft, suggestion, proposed, bind_to):
+def _write(tenant_id, workspace_id, draft, suggestion, proposed, bind_to):
     """One suggestion, through editor.py.
 
     WHOLE OBJECTS. No editor save is partial: save_field, save_section and
@@ -998,7 +1014,7 @@ def _write(tenant_id, draft, suggestion, proposed, bind_to):
 
     if kind == "field_description":
         f = _field(draft, target["field_key"])
-        editor.save_field(tenant_id, {
+        editor.save_field(tenant_id, workspace_id, {
             "key": f["key"], "label": f["label"], "type": f["type"],
             "cardinality": f["cardinality"], "description": proposed,
             "columns": [{"key": c["key"], "label": c["label"],
@@ -1011,7 +1027,7 @@ def _write(tenant_id, draft, suggestion, proposed, bind_to):
         s = _section(draft, target["template_key"], target["section_key"])
         # context_sections and sort_order are left out, and the section keeps
         # both (editor.save_section).
-        editor.save_section(tenant_id, {
+        editor.save_section(tenant_id, workspace_id, {
             "key": s["key"], "template_key": s["template_key"],
             "numeral": s["numeral"], "title": s["title"], "kind": s["kind"],
             "prompt": proposed,
@@ -1020,7 +1036,7 @@ def _write(tenant_id, draft, suggestion, proposed, bind_to):
 
     if kind == "document_type_description":
         t = _type(draft, target["type_key"])
-        editor.save_document_type(tenant_id, {
+        editor.save_document_type(tenant_id, workspace_id, {
             "key": t["key"], "label": t["label"], "category": t["category"],
             "description": proposed, "read_mode": t["read_mode"],
             "always_ocr": t["always_ocr"],
@@ -1028,20 +1044,23 @@ def _write(tenant_id, draft, suggestion, proposed, bind_to):
         return {"type": t["key"]}
 
     if kind == "field_found_in":
-        editor.set_field_documents(tenant_id, target["field_key"], proposed)
+        editor.set_field_documents(tenant_id, workspace_id,
+                                   target["field_key"], proposed)
         return {"field": target["field_key"], "found_in": proposed}
 
     if kind == "new_field":
-        return _write_new_field(tenant_id, draft, target, proposed, bind_to)
+        return _write_new_field(tenant_id, workspace_id, draft, target,
+                                proposed, bind_to)
 
     raise ValueError("nothing to write")
 
 
-def _write_new_field(tenant_id, draft, target, proposed, bind_to):
+def _write_new_field(tenant_id, workspace_id, draft, target, proposed,
+                     bind_to):
     """A create, so no key is sent: save_field mints one and refuses a taken
     one. Then where it is found, and - where asked (D5) - the section that
     renders it, with that section's existing fields kept in their order."""
-    created = editor.save_field(tenant_id, {
+    created = editor.save_field(tenant_id, workspace_id, {
         "label": proposed["label"],
         "type": "text",
         "cardinality": "group" if proposed["is_table"] else "one",
@@ -1052,7 +1071,8 @@ def _write_new_field(tenant_id, draft, target, proposed, bind_to):
     })
     key = created["key"]
     if proposed["found_in"]:
-        editor.set_field_documents(tenant_id, key, proposed["found_in"])
+        editor.set_field_documents(tenant_id, workspace_id, key,
+                                   proposed["found_in"])
 
     bound = None
     if bind_to:
@@ -1060,7 +1080,8 @@ def _write_new_field(tenant_id, draft, target, proposed, bind_to):
             raise ValueError("say which section should render it")
         s = _section(draft, bind_to.get("template_key"),
                      bind_to.get("section_key"))
-        editor.set_section_fields(tenant_id, s["template_key"], s["key"],
+        editor.set_section_fields(tenant_id, workspace_id, s["template_key"],
+                                  s["key"],
                                   list(s["fields"]) + [key])
         bound = {"template_key": s["template_key"], "section": s["key"]}
 
@@ -1182,7 +1203,7 @@ def _answer_read(tenant_id, session_id, suggestion_id):
     if question is None:
         raise ValueError("the question has gone")
 
-    draft = editor.draft(tenant_id)
+    draft = editor.draft(tenant_id, _workspace(tenant_id, review))
     text, usage, stop = _invoke(_answering(draft, question, record["answer"]),
                                 _SYSTEM)
     allowed = tuple(k for k in KINDS if k != "question")
@@ -1273,8 +1294,9 @@ def lambda_handler(event, context):
 
     try:
         if action == "open":
-            return _reply(202, open_session(tenant_id, event.get("email"),
-                                            event.get("role")))
+            return _reply(202, open_session(
+                tenant_id, event.get("workspace_id"), event.get("email"),
+                event.get("role")))
 
         session_id = _session(event.get("session_id"))
 

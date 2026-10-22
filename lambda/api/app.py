@@ -88,6 +88,16 @@ Paying for a plan. Nothing here grants money; Paddle's webhooks do.
 
 Sharing a memorandum with somebody outside the workspace (share.py). The
 recipient's half is the share-viewer function, not this one.
+
+WHICH WORKSPACE (PACK-01). A tenant's configuration is held in workspaces,
+each with its own draft and revisions. Every route that reads or writes
+configuration - uploads, filing, generating, the editors, publishing - takes
+?workspace=<id> in the query string, and resolves it through
+config.workspace: one of this tenant's, or, where none is named, the tenant's
+only workspace, refused where it holds several. A query parameter rather than
+a body field so that GET and POST carry it the same way, and rather than a
+header so that no gateway CORS rule has to change. Rows already stored - a
+document, a memo - carry their own workspace and are read in it.
   GET  /memos                            every live memo, for Share a memo
   GET  /shares                           what has been sent, and the allowance
   POST /memos/{memo_id}/shares           send one, or send it again
@@ -775,7 +785,7 @@ def set_document_type(tenant_id, email, document_id, type_key):
     type settled or has none to settle; changing it there would be a record
     that says something nobody can act on. Returns None where there is no
     such document, which the route answers as 404."""
-    found = _sql("SELECT state FROM document "
+    found = _sql("SELECT state, workspace_id FROM document "
                  "WHERE tenant_id = :t AND document_id = :d",
                  [_p("t", tenant_id), _p("d", int(document_id))]
                  ).get("records", [])
@@ -785,8 +795,12 @@ def set_document_type(tenant_id, email, document_id, type_key):
         raise ValueError("this document is no longer waiting to be filed, "
                          "so its type cannot be changed here")
 
+    # The types of the workspace the document was uploaded into, which is
+    # the configuration it will be filed and extracted under.
     chosen = (type_key or "").strip()
-    if chosen and chosen not in config.for_tenant(tenant_id).DOCUMENT_TYPES:
+    workspace_id = config.workspace_of(tenant_id, _col(found[0], 1))
+    if chosen and chosen not in config.for_workspace(
+            tenant_id, workspace_id).DOCUMENT_TYPES:
         raise ValueError("%s is not one of this workspace's document types"
                          % chosen)
 
@@ -977,7 +991,16 @@ def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
     if not held:
         raise ValueError(SUBJECT_REQUIRED)
 
-    registry = config.for_tenant(tenant_id)
+    # Each document is read under its own workspace's configuration, the one
+    # it was uploaded into. Loaded once per workspace in the filing.
+    registries = {}
+
+    def registry_for(workspace_id):
+        workspace_id = config.workspace_of(tenant_id, workspace_id)
+        if workspace_id not in registries:
+            registries[workspace_id] = config.for_workspace(
+                tenant_id, workspace_id)
+        return registries[workspace_id]
 
     # A document nobody could read is not fileable, and must not be counted
     # before the charge. The screen does not offer it, so reaching here means a
@@ -1060,8 +1083,8 @@ def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
 
         document_type = type_of(d)
 
-        row = _sql("SELECT s3_key, thin_text, page_from, part_index "
-                   "FROM document "
+        row = _sql("SELECT s3_key, thin_text, page_from, part_index, "
+                   "workspace_id FROM document "
                    "WHERE tenant_id = :t AND document_id = :d",
                    [_p("t", tenant_id), _p("d", document_id)])
         records = row.get("records", [])
@@ -1070,6 +1093,7 @@ def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
         s3_key = _col(records[0], 0)
         thin = bool(_col(records[0], 1))
         suffix = _envelope_suffix(_col(records[0], 2), _col(records[0], 3))
+        registry = registry_for(_col(records[0], 4))
 
         # Which entry paid for it, before anything can fail. A refund has to
         # name the charge, and one click is one ledger row for every document
@@ -1088,7 +1112,7 @@ def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
             # shares one read (ocr-split-parts). Started after the loop.
             to_ocr.setdefault(
                 (s3_key, _ocr_mode(registry, document_type)), []
-            ).append((document_id, document_type))
+            ).append((document_id, document_type, registry))
             continue
 
         # Everything here is after the charge too. A missing envelope, a KMS
@@ -1125,10 +1149,12 @@ def file_documents(tenant_id, email, engagement, decisions, idempotency_key):
     # been paid for.
     for (s3_key, _mode), parts in to_ocr.items():
         try:
-            _start_ocr(registry, tenant_id, s3_key, parts)
+            # Parts of one file share its upload, and so its workspace.
+            _start_ocr(parts[0][2], tenant_id, s3_key,
+                       [(d, t) for d, t, _reg in parts])
             reading += len(parts)
         except Exception as exc:  # noqa: BLE001 - refunded, then reported
-            for document_id, _type in parts:
+            for document_id, _type, _reg in parts:
                 refunded += _fail_and_refund(
                     tenant_id, email, document_id, charge_entry_id,
                     "textract.start: %s" % type(exc).__name__)
@@ -1318,7 +1344,7 @@ def document_values(tenant_id, document_id):
     head = _sql(
         """
         SELECT filename, document_type, page_count, extraction_method,
-               config_revision
+               config_revision, workspace_id
         FROM document WHERE tenant_id = :t AND document_id = :d
         """,
         [_p("t", tenant_id), _p("d", int(document_id))],
@@ -1339,7 +1365,9 @@ def document_values(tenant_id, document_id):
 
     # The revision the document was filed under, so "looked for, not found"
     # names the fields that were actually looked for at the time.
-    registry = config.load(tenant_id, _col(records[0], 4) or 1)
+    registry = config.load(
+        tenant_id, config.workspace_of(tenant_id, _col(records[0], 5)),
+        _col(records[0], 4) or 1)
 
     values, found = [], set()
     for r in result.get("records", []):
@@ -1485,13 +1513,13 @@ def list_memos(tenant_id, engagement_id, include_archived=False):
     what the memo was called. The key is returned beside it, unchanged - it is
     the identity, and the name is only what a person reads.
 
-    Loaded through config.load, which caches on (tenant, revision), so a page
-    of memos sharing a revision is one load."""
+    Loaded through config.load, which caches on (tenant, workspace,
+    revision), so a page of memos sharing a revision is one load."""
     result = _sql(
         """
         SELECT memo_id, template_key, generated_at, generated_by,
                parent_memo_id, revision, modified_by, modified_at, pdf_key,
-               config_revision, state, archived_by, archived_at
+               config_revision, state, archived_by, archived_at, workspace_id
         FROM memo
         WHERE tenant_id = :tenant_id
           AND engagement_id = :engagement_id
@@ -1509,7 +1537,8 @@ def list_memos(tenant_id, engagement_id, include_archived=False):
          # key, which is what label_for_template does and is better than a
          # blank column.
          "template_label": config.load(
-             tenant_id, _col(r, 9) or 1).label_for_template(_col(r, 1)),
+             tenant_id, config.workspace_of(tenant_id, _col(r, 13)),
+             _col(r, 9) or 1).label_for_template(_col(r, 1)),
          "generated_at": _col(r, 2),
          "generated_by": _col(r, 3),
          "parent_memo_id": _col(r, 4),
@@ -1646,7 +1675,7 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
     parent = _sql(
         """
         SELECT s3_key, template_key, config_revision, parent_memo_id, revision,
-               engagement_id, state
+               engagement_id, state, workspace_id
         FROM memo WHERE tenant_id = :t AND memo_id = :m
         """,
         [_p("t", tenant_id), _p("m", int(memo_id))],
@@ -1667,6 +1696,9 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
     # unarchive it and put it back in the list.
     parent_engagement = _col(records[0], 5)
     parent_state = _col(records[0], 6) or "live"
+    # And the workspace: a revision is written under its parent's
+    # configuration series, and Update's revision is one of that series.
+    parent_workspace = config.workspace_of(tenant_id, _col(records[0], 7))
 
     # A citation naming a file that is not one of this memo's sources cannot
     # be checked against anything. Refuse the save rather than accept an
@@ -1691,9 +1723,11 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
                 """
                 SELECT document_id, filename FROM document
                 WHERE tenant_id = :t AND engagement_id = :e
+                  AND workspace_id = :w
                   AND state = 'filed' AND active = 1
                 """,
-                [_p("t", tenant_id), _p("e", int(parent_engagement))],
+                [_p("t", tenant_id), _p("e", int(parent_engagement)),
+                 _p("w", parent_workspace)],
         ).get("records", []):
             if _col(r, 1) not in known:
                 filed_since.setdefault(_col(r, 1), []).append(_col(r, 0))
@@ -1769,16 +1803,17 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
     created = _sql(
         """
         INSERT INTO memo
-          (tenant_id, engagement_id, template_key, config_revision,
-           s3_bucket, s3_key, s3_version_id, sha256, parent_memo_id, revision,
-           state, modified_by, modified_at)
+          (tenant_id, workspace_id, engagement_id, template_key,
+           config_revision, s3_bucket, s3_key, s3_version_id, sha256,
+           parent_memo_id, revision, state, modified_by, modified_at)
         VALUES
-          (:tenant_id, :engagement_id, :template_key, :config_revision,
-           :s3_bucket, :s3_key, :s3_version_id, :sha256, :parent_memo_id,
-           :revision, :state, :modified_by, UTC_TIMESTAMP())
+          (:tenant_id, :workspace_id, :engagement_id, :template_key,
+           :config_revision, :s3_bucket, :s3_key, :s3_version_id, :sha256,
+           :parent_memo_id, :revision, :state, :modified_by, UTC_TIMESTAMP())
         """,
         [
             _p("tenant_id", tenant_id),
+            _p("workspace_id", parent_workspace),
             _p("engagement_id", parent_engagement),
             _p("template_key", template_key),
             _p("config_revision", config_revision),
@@ -1884,10 +1919,13 @@ def start_rewrites(tenant_id, email, memo_id, sections):
 
     Every section is checked before any row is written, so a bad section
     refuses the Go rather than starting half of it."""
-    memo = _sql("SELECT memo_id FROM memo WHERE tenant_id = :t AND memo_id = :m",
+    memo = _sql("SELECT memo_id, workspace_id FROM memo "
+                "WHERE tenant_id = :t AND memo_id = :m",
                 [_p("t", tenant_id), _p("m", int(memo_id))])
     if not memo.get("records"):
         return None
+    workspace_id = config.workspace_of(tenant_id,
+                                       _col(memo["records"][0], 1))
 
     if not isinstance(sections, list) or not sections:
         raise ValueError("no sections were given to rewrite")
@@ -1917,12 +1955,12 @@ def start_rewrites(tenant_id, email, memo_id, sections):
         created = _sql(
             """
             INSERT INTO memo_rewrite
-              (tenant_id, memo_id, section_heading, prompt, prompted_by,
-               input_text, status)
+              (tenant_id, workspace_id, memo_id, section_heading, prompt,
+               prompted_by, input_text, status)
             VALUES
-              (:t, :m, :heading, :prompt, :who, :input, 'running')
+              (:t, :w, :m, :heading, :prompt, :who, :input, 'running')
             """,
-            [_p("t", tenant_id), _p("m", int(memo_id)),
+            [_p("t", tenant_id), _p("w", workspace_id), _p("m", int(memo_id)),
              _p("heading", heading), _p("prompt", prompt),
              _p("who", email), _p("input", text)],
         )
@@ -2070,13 +2108,17 @@ def update_memo(tenant_id, email, memo_id, idempotency_key):
     revision charged for is the revision that runs."""
     found = _sql(
         """
-        SELECT template_key, engagement_id, parent_memo_id, revision
+        SELECT template_key, engagement_id, parent_memo_id, revision,
+               workspace_id
         FROM memo WHERE tenant_id = :t AND memo_id = :m
         """,
         [_p("t", tenant_id), _p("m", int(memo_id))]).get("records", [])
     if not found:
         return None
     template_key = _col(found[0], 0)
+    # The memo's own workspace: an Update rewrites it under the configuration
+    # now in use THERE, never another workspace's.
+    workspace_id = config.workspace_of(tenant_id, _col(found[0], 4))
     engagement = _col(found[0], 1)
     label = "%s.%s" % (_col(found[0], 2) or int(memo_id), _col(found[0], 3))
 
@@ -2084,8 +2126,8 @@ def update_memo(tenant_id, email, memo_id, idempotency_key):
         raise ValueError("this memorandum belongs to no engagement, so there "
                          "is nothing to update it from")
 
-    revision = config.active_revision(tenant_id)
-    registry_now = config.load(tenant_id, revision)
+    revision = config.active_revision(tenant_id, workspace_id)
+    registry_now = config.load(tenant_id, workspace_id, revision)
     if not registry_now.has_template(template_key):
         raise ValueError("this memorandum is not in the configuration in "
                          "use, so it cannot be updated")
@@ -2129,6 +2171,7 @@ def update_memo(tenant_id, email, memo_id, idempotency_key):
             FunctionName=COMPOSITION_FUNCTION,
             InvocationType="Event",
             Payload=json.dumps({"action": "update", "tenant_id": tenant_id,
+                                "workspace_id": workspace_id,
                                 "memo_id": int(memo_id),
                                 "engagement_id": int(engagement),
                                 "template_key": template_key,
@@ -2332,7 +2375,7 @@ def list_all_memos(tenant_id, email):
         """
         SELECT m.memo_id, m.template_key, m.config_revision,
                m.parent_memo_id, m.revision, m.generated_at,
-               e.name, e.subject_name
+               e.name, e.subject_name, m.workspace_id
         FROM memo m
         LEFT JOIN engagement e
                ON e.engagement_id = m.engagement_id
@@ -2345,7 +2388,9 @@ def list_all_memos(tenant_id, email):
 
     memos = [{
         "memo_id": _col(r, 0),
-        "label": config.load(tenant_id, _col(r, 2) or 1)
+        "label": config.load(tenant_id,
+                             config.workspace_of(tenant_id, _col(r, 8)),
+                             _col(r, 2) or 1)
                        .label_for_template(_col(r, 1)),
         "number": "%s.%s" % (_col(r, 3) or _col(r, 0), _col(r, 4)),
         "generated_at": _col(r, 5),
@@ -2595,7 +2640,8 @@ def _folder(name):
     return text[:_FOLDER_MAX] or None
 
 
-def upload_url(tenant_id, email, engagement, filename, source_folder=None):
+def upload_url(tenant_id, workspace_id, email, engagement, filename,
+               source_folder=None):
     """A short-lived signed link. The browser uploads straight to S3; the file
     never passes through here. The key is built from the token's tenant, so a
     caller cannot place a file in another tenant's space.
@@ -2635,6 +2681,13 @@ def upload_url(tenant_id, email, engagement, filename, source_folder=None):
     if folder:
         metadata["source-folder"] = folder
 
+    # THE WORKSPACE TRAVELS AS METADATA TOO (PACK-01), for the same reason:
+    # resolved here, where the request is, and read by the normalizer, which
+    # classifies against that workspace's document types alone (decision of
+    # 22 October 2026: the workspace is chosen before upload). Always signed,
+    # so the browser always sends it back - the value is returned below.
+    metadata["workspace-id"] = str(workspace_id)
+
     key = "tenants/%d/docs/%s/%s" % (tenant_id, engagement, filename)
     url = _s3.generate_presigned_url(
         "put_object",
@@ -2663,16 +2716,19 @@ def upload_url(tenant_id, email, engagement, filename, source_folder=None):
             # Null where there was none, and the browser then sends no header
             # at all - which is what keeps the request and the signature in
             # step (18.7).
-            "source_folder": folder}
+            "source_folder": folder,
+            # Signed on every link: the browser sends it back as
+            # x-amz-meta-workspace-id, or S3 refuses the upload.
+            "workspace_id": workspace_id}
 
 
-def templates(tenant_id):
-    """The memoranda this tenant can write, at its active revision.
+def templates(tenant_id, workspace_id):
+    """The memoranda this workspace can write, at its active revision.
 
     A tenant may hold a credit, a KYC and a lender template over the same
     documents. The documents are extracted once; which memo is written from
     them is a choice made at generation."""
-    return config.for_tenant(tenant_id).template_list()
+    return config.for_workspace(tenant_id, workspace_id).template_list()
 
 
 # --- a generation's run (UX02 20.1) -----------------------------------------
@@ -2741,7 +2797,7 @@ def generate_progress(tenant_id, engagement_id, run):
     return json.loads(body.decode("utf-8"))
 
 
-def generate(tenant_id, email, engagement, template_key=None,
+def generate(tenant_id, workspace_id, email, engagement, template_key=None,
              idempotency_key=None):
     """Composition takes over a minute, so this starts it and returns. The
     caller polls the memo list, and the run (generate_progress).
@@ -2754,8 +2810,11 @@ def generate(tenant_id, email, engagement, template_key=None,
     TWO REFUSALS, NOT ONE (18.12). Nothing published and a key that does not
     exist are different faults and read differently: the first is a workspace
     that has not been set up, the second is a bad request. Both are 400 and
-    neither charges - the money moves below."""
-    registry_now = config.for_tenant(tenant_id)
+    neither charges - the money moves below.
+
+    ONE WORKSPACE. The memo is written under that workspace's configuration
+    in use, from that workspace's documents, and records the workspace."""
+    registry_now = config.for_workspace(tenant_id, workspace_id)
 
     # Asked for nothing, and there is no default to fall back on.
     if not template_key and registry_now.TEMPLATE_KEY is None:
@@ -2822,6 +2881,7 @@ def generate(tenant_id, email, engagement, template_key=None,
             FunctionName=COMPOSITION_FUNCTION,
             InvocationType="Event",
             Payload=json.dumps({"tenant_id": tenant_id,
+                                "workspace_id": workspace_id,
                                 "engagement": engagement,
                                 "engagement_id": found["engagement_id"],
                                 "template_key": template_key,
@@ -2849,13 +2909,13 @@ def generate(tenant_id, email, engagement, template_key=None,
     return dict(answer, status="started")
 
 
-def document_types(tenant_id):
+def document_types(tenant_id, workspace_id):
     """The tenant's own type list, with what filing each one will do - so the
     screen can say whether confirming a type triggers OCR.
 
     Read mode and always-OCR are properties of the TYPE now, not of a
     hard-coded table, because the type is what a person confirms."""
-    return config.for_tenant(tenant_id).document_type_list()
+    return config.for_workspace(tenant_id, workspace_id).document_type_list()
 
 
 # --- configuration ---------------------------------------------------------
@@ -2878,10 +2938,11 @@ def _require_seats_admin(role):
             "only an administrator may change seats, the plan or the card")
 
 
-def config_state(tenant_id):
-    """Where this tenant stands: what is published, whether a draft is open,
-    and what publishing it would flag."""
-    revisions = registry.revisions(tenant_id)
+def config_state(tenant_id, workspace_id):
+    """Where this workspace stands: what is published, whether a draft is
+    open, and what publishing it would flag - with the tenant's workspaces,
+    so a screen can say which one it is showing."""
+    revisions = registry.revisions(tenant_id, workspace_id)
     draft = next((r for r in revisions if r["is_draft"]), None)
 
     # forked_pack was returned here to pre-tick Get started. Signup stopped
@@ -2890,24 +2951,36 @@ def config_state(tenant_id):
     # always null is not a field, it is a question nobody answers.
 
     state = {
-        "active_revision": config.active_revision(tenant_id),
+        "workspace_id": workspace_id,
+        "workspaces": [{"workspace_id": w["workspace_id"], "name": w["name"]}
+                       for w in config.workspaces(tenant_id)],
+        "active_revision": config.active_revision(tenant_id, workspace_id),
         "revisions": [r for r in revisions if not r["is_draft"]],
         "draft": draft,
         # Which memoranda exist, so a screen can name the one being edited
         # rather than leaving a person to infer it.
-        "templates": config.for_tenant(tenant_id).template_list(),
+        "templates": config.for_workspace(
+            tenant_id, workspace_id).template_list(),
     }
     if draft:
-        state["validation"] = registry.validate(tenant_id, registry.DRAFT)
+        state["validation"] = registry.validate(tenant_id, workspace_id,
+                                                registry.DRAFT)
     return state
 
 
-def config_read(tenant_id, revision):
+def config_read(tenant_id, workspace_id, revision):
     """A whole revision, for an editor to work on or a reader to inspect.
 
     Loaded through the same path the pipeline uses, so what an editor sees is
-    what extraction will do."""
-    reg = config.load(tenant_id, int(revision))
+    what extraction will do. It must be a revision of the workspace asked
+    about; another workspace's revision is not found here."""
+    held = _sql("SELECT revision FROM config_revision "
+                "WHERE tenant_id = :t AND workspace_id = :w AND revision = :r",
+                [_p("t", tenant_id), _p("w", workspace_id),
+                 _p("r", int(revision))]).get("records", [])
+    if not held:
+        raise ValueError("this workspace has no revision %d" % int(revision))
+    reg = config.load(tenant_id, workspace_id, int(revision))
     return {
         "revision": int(revision),
         "categories": [{"key": k, "label": v}
@@ -2949,25 +3022,26 @@ def _sample_prefix(tenant_id):
     return "tenants/%d/proposals/" % tenant_id
 
 
-def _require_open_draft(tenant_id):
+def _require_open_draft(tenant_id, workspace_id):
     """A proposal is accepted into the draft, so refusing here rather than
     after two minutes of reading is the difference between a sentence and a
     wasted wait."""
     result = _sql("SELECT revision FROM config_revision "
-                  "WHERE tenant_id = :t AND revision = 0",
-                  [_p("t", tenant_id)])
+                  "WHERE tenant_id = :t AND workspace_id = :w "
+                  "AND revision = 0",
+                  [_p("t", tenant_id), _p("w", workspace_id)])
     if not result.get("records"):
         raise ValueError("open a draft before reading a memorandum into it")
 
 
-def sample_upload_url(tenant_id, email, role, filename):
+def sample_upload_url(tenant_id, workspace_id, email, role, filename):
     """A signed link for the sample, as documents and logos use.
 
     The key is built from the token's tenant, so a caller cannot place a file
     in another tenant's space - and the prefix is proposals/, so it cannot
     place one where the normalizer would find it either."""
     _require_admin(role)
-    _require_open_draft(tenant_id)
+    _require_open_draft(tenant_id, workspace_id)
 
     filename = _clean(filename)
     if not filename:
@@ -3000,11 +3074,11 @@ def _own_sample(tenant_id, key):
     return key
 
 
-def propose(tenant_id, email, role, key):
+def propose(tenant_id, workspace_id, email, role, key):
     """Start the read and return. One model call per section, so this takes
     minutes and the caller polls - the same shape as generating a memo."""
     _require_admin(role)
-    _require_open_draft(tenant_id)
+    _require_open_draft(tenant_id, workspace_id)
     key = _own_sample(tenant_id, key)
 
     # The object must be there. An invocation against a key the browser never
@@ -3017,7 +3091,8 @@ def propose(tenant_id, email, role, key):
     _lambda.invoke(
         FunctionName=PROPOSER_FUNCTION,
         InvocationType="Event",
-        Payload=json.dumps({"tenant_id": tenant_id, "key": key,
+        Payload=json.dumps({"tenant_id": tenant_id,
+                            "workspace_id": workspace_id, "key": key,
                             "requested_by": email}))
 
     print("[proposal-started] tenant=%s key=%s by=%s" % (
@@ -3148,15 +3223,17 @@ def _require_review_admin(role):
                               "configuration")
 
 
-def review(tenant_id, email, role, action, **fields):
+def review(tenant_id, workspace_id, email, role, action, **fields):
     """One act of a review session, relayed. Returns the reply to send.
 
     The tenant, email and role come from the token, via caller(), and go
-    last so a field from the request can never replace them."""
+    last so a field from the request can never replace them. The workspace
+    was resolved against that tenant before it got here, and goes last for
+    the same reason."""
     _require_review_admin(role)
 
     payload = dict(fields, action=action, tenant_id=tenant_id, email=email,
-                   role=role)
+                   role=role, workspace_id=workspace_id)
     response = _lambda.invoke(
         FunctionName=REVIEWER_FUNCTION,
         InvocationType="RequestResponse",
@@ -3308,6 +3385,13 @@ def _dispatch(event, context):
     engagement = urllib.parse.unquote(params.get("id", "")) \
         if params.get("id") else None
 
+    # The workspace a route works in (PACK-01), from ?workspace= against this
+    # tenant's own. Resolved only by the routes that touch configuration, so
+    # a tenant with several workspaces is never asked to choose one to read
+    # its wallet. Raises ValueError, answered as 400 below.
+    def ws():
+        return config.workspace(tenant_id, query.get("workspace"))
+
     try:
         if route == "GET /engagements":
             # ?name= asks what a typed name would become, and is how the
@@ -3453,7 +3537,7 @@ def _dispatch(event, context):
         if route == "POST /engagements/{id}/generate":
             body = json.loads(event.get("body") or "{}")
             return _reply(202, generate(
-                tenant_id, email, engagement, body.get("template_key"),
+                tenant_id, ws(), email, engagement, body.get("template_key"),
                 _key(body, "generate", engagement)))
 
         # --- the wallet ----------------------------------------------------
@@ -3614,7 +3698,7 @@ def _dispatch(event, context):
 
         if route == "POST /uploads":
             body = json.loads(event.get("body") or "{}")
-            return _reply(200, upload_url(tenant_id, email,
+            return _reply(200, upload_url(tenant_id, ws(), email,
                                           body.get("engagement", ""),
                                           body.get("filename", ""),
                                           body.get("source_folder")))
@@ -3646,20 +3730,20 @@ def _dispatch(event, context):
                                             body.get("key", "")))
 
         if route == "GET /templates":
-            return _reply(200, {"templates": templates(tenant_id)})
+            return _reply(200, {"templates": templates(tenant_id, ws())})
 
         if route == "GET /config":
-            return _reply(200, config_state(tenant_id))
+            return _reply(200, config_state(tenant_id, ws()))
 
         if route == "GET /config/{revision}":
-            return _reply(200, config_read(tenant_id,
+            return _reply(200, config_read(tenant_id, ws(),
                                            params.get("revision")))
 
         if route == "POST /config/draft":
             _require_admin(role)
             body = json.loads(event.get("body") or "{}")
             return _reply(201, registry.open_draft(
-                tenant_id, email, body.get("from_revision")))
+                tenant_id, ws(), email, body.get("from_revision")))
 
         # Which published revision new work is written against. Publishing
         # makes a revision available; this puts one in use, and reverting is
@@ -3669,7 +3753,7 @@ def _dispatch(event, context):
             _require_admin(role)
             body = json.loads(event.get("body") or "{}")
             return _reply(200, registry.select_revision(
-                tenant_id, body.get("revision")))
+                tenant_id, ws(), body.get("revision")))
 
         # What every other tenant is offered. The ARQEDIA workspace only -
         # _curation_only refuses both of these to anybody else before the
@@ -3689,15 +3773,17 @@ def _dispatch(event, context):
 
         if route == "DELETE /config/draft":
             _require_admin(role)
-            return _reply(200, registry.discard_draft(tenant_id))
+            return _reply(200, registry.discard_draft(tenant_id, ws()))
 
         if route == "GET /config/draft/validate":
-            return _reply(200, registry.validate(tenant_id, registry.DRAFT))
+            return _reply(200, registry.validate(tenant_id, ws(),
+                                                 registry.DRAFT))
 
         if route == "POST /config/publish":
             _require_admin(role)
             body = json.loads(event.get("body") or "{}")
-            result = registry.publish(tenant_id, email, body.get("note"))
+            result = registry.publish(tenant_id, ws(), email,
+                                      body.get("note"))
             # A refused publish is not an error: the person is told what to
             # fix and the draft is untouched.
             return _reply(200 if result["published"] else 409, result)
@@ -3705,19 +3791,21 @@ def _dispatch(event, context):
         if route == "GET /config/packs":
             return _reply(200, {"packs": registry.packs()})
 
+        # A base forked becomes a NEW workspace of this tenant (PACK-01),
+        # named by the caller. No workspace is resolved: this makes one.
         if route == "POST /config/fork":
             _require_admin(role)
             body = json.loads(event.get("body") or "{}")
             revision = body.get("revision")
             return _reply(201, registry.fork_base(
-                tenant_id, email,
+                tenant_id, email, body.get("name"),
                 pack_revision=int(revision) if revision is not None else None))
 
         # The memoranda we ship, and whether this tenant already holds each.
         if route == "GET /config/templates/available":
             _require_admin(role)
             return _reply(200, {
-                "templates": registry.template_packs(tenant_id)})
+                "templates": registry.template_packs(tenant_id, ws())})
 
         # Adding one. It lands in the draft and says what it brought with it,
         # so a fact that was deleted and is now back is explained rather than
@@ -3726,17 +3814,17 @@ def _dispatch(event, context):
             _require_admin(role)
             body = json.loads(event.get("body") or "{}")
             return _reply(201, registry.fork_template(
-                tenant_id, email, body.get("pack_key") or ""))
+                tenant_id, ws(), email, body.get("pack_key") or ""))
 
         # --- configuring from the client's own memorandum ---------------
         if route == "POST /config/draft/sample":
             body = json.loads(event.get("body") or "{}")
             return _reply(200, sample_upload_url(
-                tenant_id, email, role, body.get("filename", "")))
+                tenant_id, ws(), email, role, body.get("filename", "")))
 
         if route == "POST /config/draft/propose":
             body = json.loads(event.get("body") or "{}")
-            return _reply(202, propose(tenant_id, email, role,
+            return _reply(202, propose(tenant_id, ws(), email, role,
                                        body.get("key", "")))
 
         if route == "GET /config/draft/proposal":
@@ -3757,15 +3845,15 @@ def _dispatch(event, context):
 
         # --- AI Review of the draft (REV-01) -----------------------------
         if route == "POST /config/draft/review":
-            return review(tenant_id, email, role, "open")
+            return review(tenant_id, ws(), email, role, "open")
 
         if route == "GET /config/draft/review":
-            return review(tenant_id, email, role, "poll",
+            return review(tenant_id, ws(), email, role, "poll",
                           session_id=query.get("session", ""))
 
         if route == "POST /config/draft/review/accept":
             body = json.loads(event.get("body") or "{}")
-            return review(tenant_id, email, role, "accept",
+            return review(tenant_id, ws(), email, role, "accept",
                           session_id=body.get("session", ""),
                           suggestion_id=body.get("suggestion_id"),
                           value=body.get("value"),
@@ -3773,7 +3861,7 @@ def _dispatch(event, context):
 
         if route == "POST /config/draft/review/close":
             body = json.loads(event.get("body") or "{}")
-            return review(tenant_id, email, role, "close",
+            return review(tenant_id, ws(), email, role, "close",
                           session_id=body.get("session", ""))
 
         # A question the review asked, answered. The reviewer turns the
@@ -3781,19 +3869,19 @@ def _dispatch(event, context):
         # or charged until that suggestion is accepted.
         if route == "POST /config/draft/review/answer":
             body = json.loads(event.get("body") or "{}")
-            return review(tenant_id, email, role, "answer",
+            return review(tenant_id, ws(), email, role, "answer",
                           session_id=body.get("session", ""),
                           suggestion_id=body.get("suggestion_id"),
                           answer=body.get("answer"))
 
         # --- editing the draft -----------------------------------------
         if route == "GET /config/draft":
-            return _reply(200, editor.draft(tenant_id))
+            return _reply(200, editor.draft(tenant_id, ws()))
 
         if route == "POST /config/draft/sections":
             _require_admin(role)
             return _reply(200, editor.save_section(
-                tenant_id, json.loads(event.get("body") or "{}")))
+                tenant_id, ws(), json.loads(event.get("body") or "{}")))
 
         # The memorandum is part of the address. Two memoranda may each carry
         # a section called "summary"; identified by section alone, deleting
@@ -3803,75 +3891,75 @@ def _dispatch(event, context):
                      "/sections/{key}"):
             _require_admin(role)
             return _reply(200, editor.delete_section(
-                tenant_id, params.get("template"), params.get("key")))
+                tenant_id, ws(), params.get("template"), params.get("key")))
 
         if route == ("PUT /config/draft/templates/{template}"
                      "/sections/{key}/fields"):
             _require_admin(role)
             body = json.loads(event.get("body") or "{}")
             return _reply(200, editor.set_section_fields(
-                tenant_id, params.get("template"), params.get("key"),
+                tenant_id, ws(), params.get("template"), params.get("key"),
                 body.get("fields") or []))
 
         if route == "POST /config/draft/templates":
             _require_admin(role)
             return _reply(200, editor.save_template(
-                tenant_id, json.loads(event.get("body") or "{}")))
+                tenant_id, ws(), json.loads(event.get("body") or "{}")))
 
         if route == "POST /config/draft/templates/{template}/duplicate":
             _require_admin(role)
             return _reply(200, editor.duplicate_template(
-                tenant_id, params.get("template")))
+                tenant_id, ws(), params.get("template")))
 
         if route == "DELETE /config/draft/templates/{template}":
             _require_admin(role)
             return _reply(200, editor.delete_template(
-                tenant_id, params.get("template")))
+                tenant_id, ws(), params.get("template")))
 
         if route == "POST /config/draft/fields":
             _require_admin(role)
             return _reply(200, editor.save_field(
-                tenant_id, json.loads(event.get("body") or "{}")))
+                tenant_id, ws(), json.loads(event.get("body") or "{}")))
 
         if route == "DELETE /config/draft/fields/{key}":
             _require_admin(role)
-            return _reply(200, editor.delete_field(tenant_id,
+            return _reply(200, editor.delete_field(tenant_id, ws(),
                                                    params.get("key")))
 
         if route == "PUT /config/draft/fields/{key}/documents":
             _require_admin(role)
             body = json.loads(event.get("body") or "{}")
             return _reply(200, editor.set_field_documents(
-                tenant_id, params.get("key"), body.get("documents") or []))
+                tenant_id, ws(), params.get("key"), body.get("documents") or []))
 
         if route == "PUT /config/draft/types/{key}/fields":
             _require_admin(role)
             body = json.loads(event.get("body") or "{}")
             return _reply(200, editor.set_document_fields(
-                tenant_id, params.get("key"), body.get("fields") or []))
+                tenant_id, ws(), params.get("key"), body.get("fields") or []))
 
         if route == "POST /config/draft/types":
             _require_admin(role)
             return _reply(200, editor.save_document_type(
-                tenant_id, json.loads(event.get("body") or "{}")))
+                tenant_id, ws(), json.loads(event.get("body") or "{}")))
 
         if route == "DELETE /config/draft/types/{key}":
             _require_admin(role)
             return _reply(200, editor.delete_document_type(
-                tenant_id, params.get("key")))
+                tenant_id, ws(), params.get("key")))
 
         if route == "POST /config/draft/categories":
             _require_admin(role)
             return _reply(200, editor.save_category(
-                tenant_id, json.loads(event.get("body") or "{}")))
+                tenant_id, ws(), json.loads(event.get("body") or "{}")))
 
         if route == "DELETE /config/draft/categories/{key}":
             _require_admin(role)
             return _reply(200, editor.delete_category(
-                tenant_id, params.get("key")))
+                tenant_id, ws(), params.get("key")))
 
         if route == "GET /document-types":
-            return _reply(200, {"types": document_types(tenant_id)})
+            return _reply(200, {"types": document_types(tenant_id, ws())})
 
         return _reply(404, {"error": "unknown route"})
 

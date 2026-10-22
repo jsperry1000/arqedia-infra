@@ -169,7 +169,8 @@ def _memo(tenant_id, memo_id):
     found = _sql(
         """
         SELECT m.memo_id, m.template_key, m.config_revision,
-               m.parent_memo_id, m.revision, e.subject_name, e.name
+               m.parent_memo_id, m.revision, e.subject_name, e.name,
+               m.workspace_id
         FROM memo m
         LEFT JOIN engagement e
                ON e.engagement_id = m.engagement_id
@@ -180,8 +181,9 @@ def _memo(tenant_id, memo_id):
     if not found:
         return None
     r = found[0]
-    label = config.load(tenant_id, _col(r, 2) or 1).label_for_template(
-        _col(r, 1))
+    label = config.load(tenant_id,
+                        config.workspace_of(tenant_id, _col(r, 7)),
+                        _col(r, 2) or 1).label_for_template(_col(r, 1))
     return {"memo_id": int(_col(r, 0)),
             "label": "%s %s.%s" % (label, _col(r, 3) or _col(r, 0),
                                    _col(r, 4)),

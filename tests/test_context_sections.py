@@ -100,7 +100,7 @@ class SaveTest(unittest.TestCase):
         base = {"key": "financing-requested", "template_key": MEMO,
                 "title": "Financing requested", "kind": "composed"}
         with mock.patch.object(self.editor, "_sql", db.sql):
-            self.editor.save_section(TENANT, {**base, **body})
+            self.editor.save_section(TENANT, 3, {**base, **body})
         return db.upsert()
 
     def test_absent_leaves_the_stored_value_alone(self):
@@ -151,7 +151,7 @@ class PublishTest(unittest.TestCase):
     def fatal(self, context):
         db = Db(context)
         with mock.patch.object(self.registry, "_sql", db.sql):
-            return self.registry.validate(TENANT)["fatal"]
+            return self.registry.validate(TENANT, 3)["fatal"]
 
     def test_a_composed_section_reading_nothing_refuses(self):
         found = self.fatal({"summary": "identity", "outlook": "identity"})

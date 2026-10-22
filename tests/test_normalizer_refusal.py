@@ -49,6 +49,12 @@ def load_normalizer():
     extractors.extract = mock.MagicMock()
 
     config = types.ModuleType("config")
+
+    # PACK-01: every request resolves a workspace; these tests run in one.
+
+    config.workspace = mock.MagicMock(return_value=3)
+
+    config.workspace_of = mock.MagicMock(return_value=3)
     config.active_revision = mock.MagicMock(return_value=7)
     config.load = mock.MagicMock()
 
