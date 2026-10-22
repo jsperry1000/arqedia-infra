@@ -128,6 +128,26 @@ UPDATE memo_rewrite c
    SET c.workspace_id = w.workspace_id
  WHERE c.workspace_id = 0;
 
+-- --- and which revision each workspace is using ---------------------------
+--
+-- The previously deployed code selects a revision - on publish, and on
+-- Revert - by writing tenant.active_revision alone, and knows nothing of
+-- workspace.active_revision. A tenant that published in that window has the
+-- new number on its tenant row and the old one on its workspace, and the new
+-- code reads the workspace's. Found on dev on 22 October: tenant 1 published
+-- revision 46, and its workspace still said 45.
+--
+-- The tenant row is the one that was written last, so it is copied onto the
+-- workspace - for tenants holding exactly one, for the same reason as above.
+-- <=> so a NULL on either side is compared rather than skipped.
+
+UPDATE workspace w
+  JOIN tenant t ON t.tenant_id = w.tenant_id
+  JOIN (SELECT tenant_id FROM workspace
+         GROUP BY tenant_id HAVING COUNT(*) = 1) one ON one.tenant_id = w.tenant_id
+   SET w.active_revision = t.active_revision
+ WHERE NOT (w.active_revision <=> t.active_revision);
+
 -- --- then the old key ------------------------------------------------------
 
 ALTER TABLE config_revision DROP INDEX uq_single_workspace;
