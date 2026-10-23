@@ -1108,22 +1108,22 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     // path, and it is the chooser's.
     const ours = () => navigate("/welcome", { state: { stopAtDraft: true } });
 
-    // Forking the base makes a workspace, named here (PACK-01). It becomes
-    // the active one before its draft is opened, so the draft is its own.
+    // A report of their own makes a workspace, named here (PACK-01) - and
+    // an EMPTY one (PACK-02, settled item 7): it starts from whatever the
+    // workspace holds, which is nothing. No base is forked. It becomes the
+    // active one, its draft already open, so the draft is its own.
     const makeWorkspace = async () => {
-      const made = await api.forkBase(workspaceName.trim());
+      const made = await api.newWorkspace(workspaceName.trim());
       workspace.adopt(made.workspace_id);
       workspacesChanged();
     };
 
     const scratch = () => act("Setting up", async () => {
       await makeWorkspace();
-      await api.openDraft();
     });
 
     const fromReport = () => act("Setting up", async () => {
       await makeWorkspace();
-      await api.openDraft();
       setProposing(true);
     });
     const unnamed = !workspaceName.trim();
@@ -1132,18 +1132,21 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       <div>
         <h2>Configure a Report</h2>
         <p className="muted">
-          You start with our list of facts and the documents they are found
-          in. What you choose here is what is written over them. Everything is
-          copied into your own configuration, so later changes we make to it
-          will not reach you.
+          One of our memoranda brings our facts and the documents they are
+          found in, copied into your own configuration so later changes we
+          make will not reach you. A report of your own starts empty: you add
+          the facts and document types it needs, or correct what we read from
+          your report.
         </p>
         {error && <p className="error">{error}</p>}
         {readOnly && <p className="muted small">{MEMBER_READS}</p>}
 
-        {base && (
+        {/* One offering's counts, so only where there is one: with several,
+            which facts come depends on which is chosen (PACK-02). */}
+        {base && packs.length === 1 && (
           <p className="muted small">
-            {base.document_types} document types &middot; {base.fields} facts,
-            whichever you choose.
+            {base.document_types} document types &middot; {base.fields} facts
+            with any of our memoranda.
           </p>
         )}
 
@@ -1174,8 +1177,9 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           many as you want, now or later.
         </p>
 
+        {/* No base needed on these two: they start empty. */}
         <p>
-          <a onClick={busy || !base || readOnly || unnamed ? undefined : scratch}>
+          <a onClick={busy || readOnly || unnamed ? undefined : scratch}>
             Draft your own from scratch
           </a>
         </p>
@@ -1185,7 +1189,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         </p>
 
         <p>
-          <a onClick={busy || !base || readOnly || unnamed ? undefined : fromReport}>
+          <a onClick={busy || readOnly || unnamed ? undefined : fromReport}>
             Create your own from a report (.pdf, .docx)
           </a>
         </p>
@@ -1428,18 +1432,24 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
 
         {/* What Publish covers, beside it (UX-05). The whole configuration,
             not the report on screen. */}
+        {/* Nothing live is said as nothing live (PACK-02): an empty
+            workspace has no revision, and this said revision 1. */}
         <span className="live muted small">
-          Live: revision {state.active_revision} &middot; Publish applies to
-          all memoranda
+          {state.active_revision === null
+            ? "Nothing published yet"
+            : `Live: revision ${state.active_revision}`}
+          {" "}&middot; Publish applies to all memoranda
         </span>
         {/* Asked every time. Nothing here can tell whether the draft differs
             from the live revision, so it cannot say more than this. */}
         {!readOnly && (
         <a className="secondary" onClick={() => {
-          if (!window.confirm(
-            `Discard this draft? Every change made since revision `
-            + `${state.active_revision} is lost, in every memorandum. `
-            + `Revision ${state.active_revision} stays in use.`)) return;
+          if (!window.confirm(state.active_revision === null
+            ? "Discard this draft? Everything in it is lost, in every "
+              + "memorandum. Nothing has been published."
+            : `Discard this draft? Every change made since revision `
+              + `${state.active_revision} is lost, in every memorandum. `
+              + `Revision ${state.active_revision} stays in use.`)) return;
           act("Discarding", api.discardDraft);
         }}>Discard</a>
         )}
@@ -1519,8 +1529,11 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
         <div>
           <h2>Configure a Report</h2>
           <p className="muted">
-            Editing a draft. Revision {state.active_revision} stays in use
-            until you publish.
+            {state.active_revision === null
+              ? "Editing a draft. Nothing is published yet, so nothing can "
+                + "be filed in this workspace until you publish."
+              : `Editing a draft. Revision ${state.active_revision} stays in `
+                + "use until you publish."}
           </p>
           {readOnly && <p className="muted small">{MEMBER_READS}</p>}
         </div>
@@ -2282,7 +2295,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             )}
 
             <p className="muted small">
-              Revision {state.active_revision} is live. Publishing makes this
+              {state.active_revision === null
+                ? "Nothing is live yet. "
+                : `Revision ${state.active_revision} is live. `}
+              Publishing makes this
               draft the configuration new work is filed against, and applies
               every change in it across all memoranda at once &mdash; not just
               the report on screen. Everything already filed keeps resolving

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type ConfigState, type TemplatePack, type Validation } from "./api";
+import {
+  api, type ConfigState, type Pack, type TemplatePack, type Validation,
+} from "./api";
 import { Working } from "./shell";
 import { SEATS } from "./upgrade";
 import { useWorkspace, workspacesChanged } from "./workspace";
@@ -51,6 +53,13 @@ import { untitledReport, type OwnStart } from "./Catalogue";
  * to the configuration screen in the new workspace, exactly as the
  * Catalogue's two routes of the same name do in an existing one. Arriving
  * from either of those, the route is already chosen.
+ *
+ * WHICH OF OUR OFFERINGS (PACK-02). One of our memoranda comes from an
+ * offering - Trade Finance, Real Estate - whose base the new workspace takes,
+ * and whose memoranda its Catalogue offers from then on. Asked where there is
+ * more than one; named where there is one. A report of the tenant's own takes
+ * no offering at all: it starts from what the workspace holds, which is
+ * nothing (settled item 7).
  */
 
 /** What Get started did, handed to the configuration screen, which says so at
@@ -105,16 +114,26 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
     startWith ?? (offering ? "scratch" : "ours"));
   const [state, setState] = useState<ConfigState | null>(null);
   const [packs, setPacks] = useState<TemplatePack[] | null>(null);
+  // Our offerings, and the one a new workspace is taken from (PACK-02).
+  const [offerings, setOfferings] = useState<Pack[] | null>(null);
+  const [chosen, setChosen] = useState<number | null>(null);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [refused, setRefused] = useState<string[]>([]);
 
   useEffect(() => {
-    Promise.all([api.configState(), api.templatesAvailable()])
-      .then(([s, t]) => {
+    Promise.all([api.configState(), api.templatesAvailable(), api.packs()])
+      .then(([s, t, o]) => {
         setState(s);
-        setPacks(t.templates);
+        // The active workspace's memoranda, unless this makes a workspace
+        // from one of ours - then the chosen offering's, loaded below, and
+        // this answer must not land on top of them.
+        const making = newWorkspace || s.revisions.length === 0;
+        if (!making || offering) setPacks(t.templates);
+        setOfferings(o.packs);
+        // One offering is the offering: nothing to choose.
+        if (o.packs.length === 1) setChosen(o.packs[0].workspace_id);
       })
       .catch((err) => setError(message(err)));
   }, []);
@@ -129,29 +148,38 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
   const draftOpen = !!state?.draft;
   // This press makes a workspace: a tenant's first, or another one.
   const creating = newWorkspace || firstRun;
+  // Taking ours into a workspace not yet made: the memoranda listed are the
+  // chosen offering's, not the active workspace's (PACK-02).
+  const fromOffering = creating && !offering;
+
+  useEffect(() => {
+    if (!fromOffering) return;
+    setTicked(new Set());
+    if (chosen === null) { setPacks([]); return; }
+    setPacks(null);
+    api.templatesAvailable(chosen)
+      .then((t) => setPacks(t.templates))
+      .catch((err) => setError(message(err)));
+  }, [fromOffering, chosen]);
+
+  const chosenOffering = offerings?.find((o) => o.workspace_id === chosen);
 
   /**
-   * A new workspace started from a report of the tenant's own: the base
-   * forked and named, made active, a draft opened in it, and then the
+   * A new workspace started from a report of the tenant's own: EMPTY and
+   * named, made active with its draft already open, and then the
    * configuration screen - on an empty report, or on the reader. Nothing is
-   * published: the draft is theirs to shape first.
+   * forked and nothing published (PACK-02, settled item 7): it starts from
+   * what the workspace holds, which is nothing. An offering is made the same
+   * way.
    */
   async function startOwn(how: OwnStart) {
     setError("");
     if (!name.trim()) return;
     try {
       setBusy("Setting up " + name.trim());
-      // An offering is made empty, its draft already open (PACK-02); a
-      // client's workspace forks the base and opens one.
-      const made = offering
-        ? await api.newWorkspace(name.trim())
-        : await api.forkBase(name.trim());
+      const made = await api.newWorkspace(name.trim());
       workspace.adopt(made.workspace_id);
       workspacesChanged();
-      if (!offering) {
-        setBusy("Opening a draft");
-        await api.openDraft();
-      }
       if (how === "scratch") {
         const key = await untitledReport();
         onOpened(`/configure?report=${key}&part=sections`);
@@ -178,6 +206,7 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
     setRefused([]);
     const wanted = (packs ?? []).filter((p) => ticked.has(p.pack_key));
     if (wanted.length === 0 || (creating && !name.trim())) return;
+    if (fromOffering && chosen === null) return;
 
     try {
       setBusy("Reading your configuration");
@@ -185,7 +214,8 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
 
       if (newWorkspace || now.revisions.length === 0) {
         setBusy("Setting up " + name.trim());
-        const made = await api.forkBase(name.trim());
+        // From the chosen offering (PACK-02), which the workspace records.
+        const made = await api.forkBase(name.trim(), chosen ?? undefined);
         // Active before anything is taken into it: every call from here
         // carries the new workspace, so the memoranda and the publish land
         // there and not in whichever was active before.
@@ -421,11 +451,48 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
             From a report you already write (.pdf, .docx)
           </label>
           <p className="muted small">
-            Every way starts from our facts and the documents they are found
-            in. A report of your own goes on to the configuration screen,
-            where you write it or correct what we read from yours. Nothing is
+            Our memoranda bring the facts and document types they rest on. A
+            report of your own starts empty and goes on to the configuration
+            screen, where you write it, or correct what we read from yours,
+            and add the facts and document types it needs. Nothing is
             published until you publish it.
           </p>
+
+          {/* WHICH OFFERING, for ours only (PACK-02). Asked where there are
+              several; named where there is one. Composed from the radios and
+              notes above. No new CSS. */}
+          {route === "ours" && offerings !== null && (
+            offerings.length === 0 ? (
+              <p className="muted">Nothing of ours is on offer yet.</p>
+            ) : offerings.length === 1 ? (
+              <p className="muted small">
+                From our {chosenOffering?.name ?? "one"} offering:{" "}
+                {chosenOffering?.document_types} document types and{" "}
+                {chosenOffering?.fields} facts.
+              </p>
+            ) : (
+              <>
+                <h3>Which of our offerings</h3>
+                {offerings.map((o) => (
+                  <label className="inline-check" key={o.workspace_id}>
+                    <input type="radio" name="offering"
+                           checked={chosen === o.workspace_id}
+                           onChange={() => setChosen(o.workspace_id)} />
+                    {o.name ?? "Unnamed"}{" "}
+                    <span className="muted small">
+                      {o.document_types} document types &middot; {o.fields}{" "}
+                      facts
+                    </span>
+                  </label>
+                ))}
+                <p className="muted small">
+                  The workspace takes its facts and document types, and its
+                  Catalogue offers that offering&rsquo;s memoranda and no
+                  other&rsquo;s.
+                </p>
+              </>
+            )
+          )}
         </>
       )}
 
@@ -436,7 +503,14 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
 
       {packs === null && !error && <p className="muted">Loading&hellip;</p>}
       {packs?.length === 0 && (
-        <p className="muted">No memoranda are available yet.</p>
+        <p className="muted">
+          {fromOffering
+            ? (chosen === null ? "Choose one of our offerings above."
+                               : "That offering has no memoranda on offer.")
+            : "None of our memoranda are offered to this workspace. It was "
+              + "not started from one of our offerings, or that offering "
+              + "offers none."}
+        </p>
       )}
 
       {packs?.map((pack) => (
@@ -549,8 +623,11 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
           </a>
         ) : (
         <a className={"start-pill" + (busy || ticked.size === 0
-                                      || (creating && !name.trim()) ? " off" : "")}
+                                      || (creating && !name.trim())
+                                      || (fromOffering && chosen === null)
+                                      ? " off" : "")}
            onClick={busy || ticked.size === 0 || (creating && !name.trim())
+                    || (fromOffering && chosen === null)
              ? undefined : start}>
           {stopAtDraft && !creating ? "Add to my draft" : "Get started"}
         </a>
