@@ -120,10 +120,62 @@ class DeletionTest(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 self.ws.restore(TENANT, ADMIN, "member", WS)
 
-    def test_an_offering_is_not_deleted_here(self):
-        with self.use(FakeDb()):
-            with self.assertRaises(PermissionError):
+    # --- an offering (amended 23 October 2026) ----------------------------
+
+    def offering_db(self, clients=0, offered=0):
+        db = FakeDb()
+        real = db.sql
+
+        def sql(statement, params=None):
+            s = " ".join(statement.split())
+            if "WHERE forked_from_workspace_id = :w" in s:
+                return rows((clients,))
+            if s.startswith("SELECT COUNT(*) FROM pack_offer"):
+                return rows((offered,))
+            return real(statement, params)
+        db.sql = sql
+        return db
+
+    def test_an_offering_nothing_depends_on_may_be_deleted(self):
+        db = self.offering_db()
+        with self.use(db):
+            out = self.ws.request_code(0, ADMIN, "admin", WS)
+        self.assertTrue(out["sent"])
+
+    def test_an_offering_clients_started_from_is_refused(self):
+        db = self.offering_db(clients=5)
+        with self.use(db):
+            with self.assertRaises(self.ws.Refused) as raised:
                 self.ws.request_code(0, ADMIN, "admin", WS)
+        self.assertIn("5 client workspaces were started from this offering",
+                      str(raised.exception))
+        self.ws.mail.send.assert_not_called()
+
+    def test_an_offering_with_memoranda_on_offer_is_refused(self):
+        db = self.offering_db(offered=2)
+        with self.use(db):
+            with self.assertRaises(self.ws.Refused) as raised:
+                self.ws.request_code(0, ADMIN, "admin", WS)
+        self.assertIn("on offer", str(raised.exception))
+
+    def test_the_offering_rule_is_asked_again_at_the_delete(self):
+        """A client could start from it between the code and the press."""
+        db = self.offering_db(clients=1)
+        db.code_row = self.good_code()
+        with self.use(db):
+            with self.assertRaises(self.ws.Refused):
+                self.ws.delete(0, ADMIN, "admin", WS,
+                               {"name": "Real Estate", "code": "123456"})
+        self.assertEqual(db.wrote(r"^UPDATE workspace SET"), [])
+
+    def test_a_client_tenant_is_not_asked_the_offering_rule(self):
+        db = FakeDb()
+        seen = []
+        real = db.sql
+        db.sql = lambda s, p=None: seen.append(s) or real(s, p)
+        with self.use(db):
+            self.ws.request_code(TENANT, ADMIN, "admin", WS)
+        self.assertFalse(any("pack_offer" in s for s in seen))
 
     def test_another_tenants_number_is_not_found(self):
         with self.use(FakeDb()):

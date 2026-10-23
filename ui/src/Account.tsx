@@ -1463,9 +1463,18 @@ function Workspaces() {
               <td className="ref">{w.memos}</td>
               <td className="ref">{w.shares}</td>
               <td>
+                {/* An offering something depends on is kept, and says why
+                    (amended 23 October 2026). The server refuses it too. */}
                 {onlyOne
                   ? <span className="muted small">your only one</span>
-                  : <a className="small" onClick={() => open(w)}>Delete</a>}
+                  : (w.clients ?? 0) > 0
+                    ? <span className="muted small">
+                        {w.clients} client{" "}
+                        {w.clients === 1 ? "workspace" : "workspaces"} use it
+                      </span>
+                    : (w.on_offer ?? 0) > 0
+                      ? <span className="muted small">on offer</span>
+                      : <a className="small" onClick={() => open(w)}>Delete</a>}
               </td>
             </tr>
           ))}

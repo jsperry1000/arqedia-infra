@@ -198,6 +198,14 @@ so its shape was asked rather than proposed:
   hidden workspace is **not counted** against the plan, and a restore asks
   for room; **hide and restore first**, the removal job a branch of its own
   due before the first date (April 2027); **offerings are not deleted in D**.
+- **Amended 23 October 2026, asked in-session:** an offering may be deleted
+  where **no client workspace was started from it** (deleted ones counted -
+  a restore would bring them back to an offering that is gone) and **it
+  offers nothing** (no `pack_offer` row). Otherwise refused, saying which;
+  the Workspaces tab shows the reason in place of Delete. Same steps and
+  six months as any workspace. On dev that day: Trade Finance (12) kept by 5
+  client workspaces and 5 offer rows; PACK-02 walkthrough (13) and REAL
+  ESTATE (16) free to delete.
 - Built on `feature/pack02-delete-workspace`: migration 047
   (`workspace.deleted_at`, `deleted_by`, `remove_after`; table
   `workspace_deletion`, the code hashed, fifteen minutes, five tries, one a
