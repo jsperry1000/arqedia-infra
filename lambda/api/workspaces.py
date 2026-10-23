@@ -23,10 +23,12 @@ WHAT DELETING ASKS, in order (settled):
 NEVER TOUCHED: the ledger. Charges stay charged and nothing is refunded by
 deleting.
 
-NOT HERE: the ARQEDIA workspace's offerings. A client workspace records which
-offering it came from and its Catalogue reads it; deleting one is a separate
-question (settled: not in D). And the last workspace a tenant holds, which
-is account deletion and a separate act.
+NOT HERE: the last workspace a tenant holds, which is account deletion and a
+separate act.
+
+THE ARQEDIA WORKSPACE'S OFFERINGS were left out at first (settled: not in
+D). Amended 23 October 2026: an offering may be deleted where no client
+workspace was started from it and it offers nothing - see _offering_use.
 """
 
 import hashlib
@@ -98,10 +100,44 @@ def _require_admin(tenant_id, role):
     if role != "admin":
         raise PermissionError(
             "only an administrator may delete or restore a workspace")
-    if int(tenant_id) == PACK_TENANT:
-        raise PermissionError(
-            "an offering is not deleted here: client workspaces were started "
-            "from it")
+
+
+# --- an offering (the ARQEDIA workspace's) ---------------------------------
+#
+# AMENDED 23 October 2026. D first left offerings out: a client workspace
+# records the offering it was started from, and its Catalogue reads it. An
+# offering may now be deleted where nothing depends on it - NO CLIENT
+# WORKSPACE WAS STARTED FROM IT, deleted ones included (a restore would bring
+# them back to an offering that is gone), and IT OFFERS NOTHING (pack_offer
+# holds no row for it, so no new client can take it either). Otherwise it is
+# refused, saying which. The steps and the six months are D's own.
+
+def _offering_use(workspace_id):
+    """(client workspaces started from it, memoranda it offers)."""
+    clients = _sql(
+        "SELECT COUNT(*) FROM workspace "
+        "WHERE forked_from_workspace_id = :w AND tenant_id <> :pack",
+        [_p("w", workspace_id), _p("pack", PACK_TENANT)]).get("records", [])
+    offered = _sql(
+        "SELECT COUNT(*) FROM pack_offer WHERE workspace_id = :w",
+        [_p("w", workspace_id)]).get("records", [])
+    return (int(_col(clients[0], 0)) if clients else 0,
+            int(_col(offered[0], 0)) if offered else 0)
+
+
+def _require_offering_unused(tenant_id, workspace_id):
+    if int(tenant_id) != PACK_TENANT:
+        return
+    clients, offered = _offering_use(workspace_id)
+    if clients:
+        raise Refused(
+            "%d client %s started from this offering, so it cannot be "
+            "deleted." % (clients, "workspace was" if clients == 1
+                          else "workspaces were"))
+    if offered:
+        raise Refused("This offering has memoranda on offer. Untick them in "
+                      "its Report Catalogue first, so no client can take it "
+                      "while it goes.")
 
 
 def _hash(tenant_id, workspace_id, code):
@@ -202,6 +238,10 @@ def listing(tenant_id, role):
             w.update(_counts(tenant_id, w["workspace_id"]))
             w["members_only_here"] = [e for _, e in seats]
             w["invitations_only_here"] = [e for _, e in invitations]
+            # What keeps an offering (amended 23 October 2026). Said on the
+            # list, so a Delete that would be refused is not offered.
+            if int(tenant_id) == PACK_TENANT:
+                w["clients"], w["on_offer"] = _offering_use(w["workspace_id"])
             live.append(w)
         else:
             w.update({"deleted_at": _col(r, 2), "deleted_by": _col(r, 3),
@@ -225,6 +265,7 @@ def _live(tenant_id, workspace_id):
     if held <= 1:
         raise Refused("This is your only workspace, so it cannot be deleted. "
                       "Closing the account is a separate step.")
+    _require_offering_unused(tenant_id, found["workspace_id"])
     return found
 
 

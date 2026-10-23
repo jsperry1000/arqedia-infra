@@ -136,6 +136,10 @@ export type HeldWorkspace = {
    *  Deleting it moves them; the administrator says where. */
   members_only_here: string[];
   invitations_only_here: string[];
+  /** The ARQEDIA workspace's offerings only: client workspaces started from
+   *  it, and memoranda it offers. Either keeps it from being deleted. */
+  clients?: number;
+  on_offer?: number;
 };
 
 /** A deleted workspace: hidden, and removed for good after remove_after. */
