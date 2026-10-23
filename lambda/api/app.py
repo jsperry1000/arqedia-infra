@@ -2981,12 +2981,20 @@ def config_state(tenant_id, workspace_id):
     # created from now on and the pre-tick could never fire. A field that is
     # always null is not a field, it is a question nobody answers.
 
+    published = [r for r in revisions if not r["is_draft"]]
+
     state = {
         "workspace_id": workspace_id,
         "workspaces": [{"workspace_id": w["workspace_id"], "name": w["name"]}
                        for w in config.workspaces(tenant_id)],
-        "active_revision": config.active_revision(tenant_id, workspace_id),
-        "revisions": [r for r in revisions if not r["is_draft"]],
+        # NULL WHERE NOTHING IS PUBLISHED (PACK-02). config.active_revision
+        # answers 1 for a workspace with none, which is right for the
+        # pipeline's oldest readers and wrong on a screen: an empty
+        # workspace showed "Live: revision 1", and revision 1 is another
+        # workspace's - in the pack tenant, Trade Finance's.
+        "active_revision": (config.active_revision(tenant_id, workspace_id)
+                            if published else None),
+        "revisions": published,
         "draft": draft,
         # Which memoranda exist, so a screen can name the one being edited
         # rather than leaving a person to infer it.

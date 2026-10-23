@@ -138,5 +138,44 @@ class OfferingRoutesTest(unittest.TestCase):
             WORKSPACE, 9, ["credit"], "someone@firm.com")
 
 
+class ConfigStateRevisionTest(unittest.TestCase):
+    """An empty workspace has no revision in use, and GET /config says so
+    rather than passing on config.active_revision's fallback of 1, which is
+    another workspace's revision (found walking PACK-02)."""
+
+    def setUp(self):
+        self.app = load_api()
+        for name, value in (
+                ("workspaces", []),
+                ("active_revision", 1),
+                ("for_workspace", mock.MagicMock()),
+        ):
+            p = mock.patch.object(self.app.config, name,
+                                  value if callable(value)
+                                  else mock.MagicMock(return_value=value))
+            p.start()
+            self.addCleanup(p.stop)
+
+    def state(self, revisions):
+        with mock.patch.object(self.app.registry, "revisions",
+                               return_value=revisions), \
+             mock.patch.object(self.app.registry, "validate",
+                               return_value={}):
+            return self.app.config_state(0, 13)
+
+    def test_nothing_published_is_null(self):
+        found = self.state([{"revision": 0, "is_draft": True}])
+        self.assertIsNone(found["active_revision"])
+        self.assertEqual(found["revisions"], [])
+        self.app.config.active_revision.assert_not_called()
+
+    def test_a_published_workspace_says_its_revision(self):
+        self.app.config.active_revision.return_value = 34
+        found = self.state([{"revision": 34, "is_draft": False},
+                            {"revision": 0, "is_draft": True}])
+        self.assertEqual(found["active_revision"], 34)
+        self.assertEqual([r["revision"] for r in found["revisions"]], [34])
+
+
 if __name__ == "__main__":
     unittest.main()

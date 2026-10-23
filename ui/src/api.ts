@@ -608,7 +608,9 @@ export type Draft = {
 export type ConfigState = {
   /** The workspace this describes (PACK-01). 0 for a tenant with none yet. */
   workspace_id: number;
-  active_revision: number;
+  /** Null where the workspace has published nothing (PACK-02): an empty
+   *  workspace has no revision in use, and is never said to have one. */
+  active_revision: number | null;
   revisions: {
     revision: number; status: string; note: string | null;
     published_at: string | null; published_by: string | null;
@@ -686,11 +688,17 @@ export type TemplateFork = {
   };
 };
 
+/** One of our OFFERINGS (PACK-02): a base of facts and document types, and
+ *  the memoranda offered over it. A client workspace is started from one. */
 export type Pack = {
   revision: number;
   note: string | null;
   document_types: number;
   fields: number;
+  /** The offering's own workspace, which is what names it to the server. */
+  workspace_id: number;
+  /** Its name, as a client chooses it. */
+  name: string | null;
 };
 
 // --- configuring from the client's own memorandum -------------------------
@@ -924,15 +932,24 @@ export const api = {
   // IT MAKES A WORKSPACE (PACK-01), named here: the server refuses a fork
   // without a name and invents none. The new workspace's id comes back, and
   // the caller makes it the active one before taking anything into it.
-  forkBase: (name: string): Promise<{
+  //
+  // FROM AN OFFERING (PACK-02), named by its workspace. Unnamed, the server
+  // takes the only one on offer, and refuses where there are several.
+  forkBase: (name: string, offering?: number): Promise<{
     forked: boolean; revision: number; workspace_id: number; name: string;
   }> =>
-    call("/config/fork", { method: "POST", body: JSON.stringify({ name }) }),
+    call("/config/fork", {
+      method: "POST",
+      body: JSON.stringify(offering === undefined ? { name }
+                                                  : { name, offering }),
+    }),
 
   // An EMPTY workspace, with its draft open (PACK-02): no facts, no document
   // types, no memoranda, and nothing published. In the ARQEDIA workspace it
-  // is a new offering; it is built by hand, or from a report read by the
-  // proposer. The caller makes it the active one, as after forkBase.
+  // is a new offering; anywhere else, a workspace begun from a report of the
+  // tenant's own, which starts from nothing (settled item 7). Built by hand,
+  // or from a report read by the proposer. The caller makes it the active
+  // one, as after forkBase.
   newWorkspace: (name: string): Promise<{
     workspace_id: number; name: string; revision: number; empty: boolean;
   }> =>
@@ -941,9 +958,12 @@ export const api = {
     }),
 
   // The memoranda we ship, what each contains, and whether this tenant
-  // already holds it.
-  templatesAvailable: (): Promise<{ templates: TemplatePack[] }> =>
-    call("/config/templates/available"),
+  // already holds it: the active workspace's offering's (PACK-02). Named, an
+  // offering's own - for a workspace not yet made, which holds nothing.
+  templatesAvailable: (offering?: number):
+    Promise<{ templates: TemplatePack[] }> =>
+    call("/config/templates/available"
+         + (offering === undefined ? "" : `?offering=${offering}`)),
 
   // Adding one. It lands in the draft and returns what it brought with it -
   // facts, document types, schemas and categories the tenant lacked.

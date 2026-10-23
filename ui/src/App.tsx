@@ -797,7 +797,13 @@ export default function App() {
   const [tenantId, setTenantId] = useState("");
   const navigate = useNavigate();
   const location = useLocation();
-  const role = useRole();
+  // The signed-in person's role, from the same claims check() reads. NOT
+  // useRole(): that reads the session once, when it mounts, and the shell
+  // mounts before anybody signs in - so an administrator who signed in on a
+  // tab already open was a role-less shell until a reload, with no workspace
+  // picker and no Add a workspace (found walking PACK-02, 23 October 2026).
+  // Screens mounted after signing in read it themselves, and are unaffected.
+  const [role, setRole] = useState<"admin" | "member" | null>(null);
 
   // THE WORKSPACES, AND WHICH ONE IS ACTIVE (PACK-01). Read once signed in,
   // and again whenever something makes one. The active one is held in
@@ -857,6 +863,8 @@ export default function App() {
       const session = await fetchAuthSession();
       const claims: any = session.tokens?.idToken?.payload ?? {};
       const tenant = String(claims["custom:tenant_id"] ?? "");
+      const claimed = String(claims["custom:role"] ?? "");
+      setRole(claimed === "admin" || claimed === "member" ? claimed : null);
       setWho(`${claims.email ?? ""} - tenant ${tenant || "?"}`);
       setCurator(tenant === "0");
       setTenantId(tenant);
