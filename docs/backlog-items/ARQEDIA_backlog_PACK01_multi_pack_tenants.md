@@ -9,6 +9,66 @@
 | Type | Architecture — schema migration + Config Registry + Config Editors + Pipeline + Identity & Seats + Wallet & Entitlement |
 | Raised | 21 October 2026, from chat |
 | Updated | 22 October 2026 — CC read the live schema under Prompt 1; the spec's object model was never built, this document is rewritten against what's actually live |
+| Status, 23 October 2026 | Built, deployed and walked on dev. See "Where it stands" directly below; the sections after it are the record as it was written and are left as they were. |
+
+---
+
+### Where it stands — 23 October 2026
+
+Read from `main`, `schema_migration` and the deployed Lambdas on dev, not
+from the record below. Everything the record leaves "in progress", "not
+deployed" or "awaiting" has since landed.
+
+**Migrations, all applied on dev:** 040 (22 Oct 18:04), 042 (22 Oct 23:14),
+043 (22 Oct 23:31, out of `held/`), then PACK-02's 044-047 and 048
+(`config_field`'s schema index given `workspace_id`, 23 Oct 17:10).
+
+**Prompts 3 and 4: merged and deployed together.** #352
+(`feature/pack01-workspace-scope`) was squash-merged as `b90821b`, so the
+"second commit hash" under Open no longer exists to be found. #353
+(`feature/pack01-workspace-ui`), #354 (043 out of `held/`) and #357
+followed. The deploy order under Prompt 4 was the one used.
+
+**The Open items below, answered:**
+
+- **Ownership check on an explicit `?workspace=`** — answered in code.
+  `config.workspace` refuses any number that is not one of the token's
+  tenant's live workspaces (400, "this account has no workspace N"), before
+  anything is read; a member is further refused one not assigned to them
+  (403, PACK-02 C). A memo, document or share named by its own number is
+  answered "not found" when its workspace is not the caller's to reach or
+  has been deleted (`_outside_assignment`).
+- **Second commit hash on #352** — moot; squash-merged as above.
+- **Share history by workspace** — built, #371 (G11).
+- **Three-way "Add a workspace"** — built in #353 (one of ours, from
+  scratch, or from a report, each named first); PACK-02 added which of our
+  offerings "one of ours" comes from (#368).
+- **Enterprise workspace-count ceiling** — settled and built (#376,
+  migration 046): Base 1, Small Business 5, Enterprise a per-tenant number
+  in `tenant.workspace_limit`, no limit until it is set. A downgrade below
+  the workspaces held is refused.
+- **Still open, unchanged:** schema/section ceilings per workspace or
+  aggregated across a tenant's workspaces (settled item 3), and the billing
+  unit (settled item 5).
+
+**Settled items, as built:**
+
+1. Document scope at upload — built: the storage key carries the workspace
+   (`tenants/<t>/w/<w>/docs/…`), and classification reads that workspace's
+   document types only. Since #380 (G8), nothing is uploaded or filed into
+   a workspace with nothing published.
+2. No cross-workspace document reuse — as settled; nothing was built for
+   it.
+3. Workspace count by plan — built, as above.
+4. Seats and workspaces — built as PACK-02 C (#372-#375, migration 045): an
+   administrator sees every workspace; a member only those assigned, at
+   least one.
+
+**Beyond this item, in PACK-02:** offerings (a workspace of tenant 0's is
+what a client starts from), and deleting a workspace (hidden for six
+months, then removed; restorable until then — #377, migration 047). The
+removal after six months is not built. See
+`ARQEDIA_backlog_PACK02_workspace_offerings.md`.
 
 ---
 
