@@ -534,16 +534,26 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
           _require_admin (CLAUDE.md, 17.7). A member is shown the same
           sentence and told whom it is for, rather than a button that answers
           403 - which is the rule UpgradePrompt was written to. */}
+      {/* TWO CASES SINCE PACK-02. A tenant with no workspace has Get started
+          to go through. A workspace that exists and has published nothing -
+          one begun empty, from a report of the tenant's own - has its
+          configuration to finish, and Get started would offer to make
+          another workspace. Same note, same control, different door. */}
       {!loadError && rows.length === 0 && published === false && (
         <div className="revision-note">
           <span>
-            Choose your memoranda first &mdash; they decide what is read out
-            of your documents.
+            {workspace.workspaces.length === 0
+              ? "Choose your memoranda first — they decide what is read "
+                + "out of your documents."
+              : `Nothing in ${activeName(workspace) ?? "this workspace"} is `
+                + "published yet. Finish its configuration and publish it "
+                + "— it decides what is read out of your documents."}
           </span>
           <div className="form-actions">
             <button disabled={role === "member"}
-                    onClick={() => navigate("/welcome")}>
-              Get started
+                    onClick={() => navigate(workspace.workspaces.length === 0
+                                            ? "/welcome" : "/configure")}>
+              {workspace.workspaces.length === 0 ? "Get started" : "Configure"}
             </button>
             {role === "member" && (
               <span className="muted small">

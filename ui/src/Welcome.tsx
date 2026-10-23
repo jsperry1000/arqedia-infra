@@ -122,6 +122,15 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
   const [error, setError] = useState("");
   const [refused, setRefused] = useState<string[]>([]);
 
+  // A NEW TENANT'S FIRST RUN is a tenant with no workspace at all - not a
+  // workspace with nothing published, which since PACK-02 is also an empty
+  // workspace begun from a report of the tenant's own. Taken that way, Select
+  // an ARQEDIA Template in one showed the new-tenant welcome and offered to
+  // make another workspace (found walking PACK-02). Read once, as the screen
+  // opens - the shell reads the workspaces before any screen is drawn - and
+  // held: the list is read again the moment this screen makes one.
+  const [firstRun] = useState(() => workspace.workspaces.length === 0);
+
   useEffect(() => {
     Promise.all([api.configState(), api.templatesAvailable(), api.packs()])
       .then(([s, t, o]) => {
@@ -129,7 +138,7 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
         // The active workspace's memoranda, unless this makes a workspace
         // from one of ours - then the chosen offering's, loaded below, and
         // this answer must not land on top of them.
-        const making = newWorkspace || s.revisions.length === 0;
+        const making = newWorkspace || firstRun;
         if (!making || offering) setPacks(t.templates);
         setOfferings(o.packs);
         // One offering is the offering: nothing to choose.
@@ -144,7 +153,6 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
     return text;
   }
 
-  const firstRun = !!state && state.revisions.length === 0;
   const draftOpen = !!state?.draft;
   // This press makes a workspace: a tenant's first, or another one.
   const creating = newWorkspace || firstRun;
@@ -194,12 +202,14 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
   }
 
   /**
-   * The base where there is none, then each ticked template, then one publish
-   * unless stopAtDraft says not to.
+   * A new workspace where this screen makes one, then each ticked template,
+   * then one publish unless stopAtDraft says not to.
    *
-   * Read again at the start rather than trusting what the screen loaded with:
-   * a tenant who forked in another tab must not have the base forked twice,
-   * and that is the call that refuses.
+   * THE SCREEN DECIDES WHETHER IT MAKES ONE, not "nothing published". The
+   * fork used to follow an empty configuration, which was a new tenant and
+   * nothing else; since PACK-02 an empty workspace begun from a report of
+   * the tenant's own is empty too, and adding a memorandum to it would have
+   * forked a whole new workspace instead.
    */
   async function start() {
     setError("");
@@ -209,10 +219,7 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
     if (fromOffering && chosen === null) return;
 
     try {
-      setBusy("Reading your configuration");
-      const now = await api.configState();
-
-      if (newWorkspace || now.revisions.length === 0) {
+      if (creating) {
         setBusy("Setting up " + name.trim());
         // From the chosen offering (PACK-02), which the workspace records.
         const made = await api.forkBase(name.trim(), chosen ?? undefined);
