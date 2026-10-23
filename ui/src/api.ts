@@ -929,6 +929,17 @@ export const api = {
   }> =>
     call("/config/fork", { method: "POST", body: JSON.stringify({ name }) }),
 
+  // An EMPTY workspace, with its draft open (PACK-02): no facts, no document
+  // types, no memoranda, and nothing published. In the ARQEDIA workspace it
+  // is a new offering; it is built by hand, or from a report read by the
+  // proposer. The caller makes it the active one, as after forkBase.
+  newWorkspace: (name: string): Promise<{
+    workspace_id: number; name: string; revision: number; empty: boolean;
+  }> =>
+    call("/config/fork", {
+      method: "POST", body: JSON.stringify({ name, empty: true }),
+    }),
+
   // The memoranda we ship, what each contains, and whether this tenant
   // already holds it.
   templatesAvailable: (): Promise<{ templates: TemplatePack[] }> =>

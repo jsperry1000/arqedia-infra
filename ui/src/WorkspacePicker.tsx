@@ -17,9 +17,14 @@ import { activeName, useWorkspace } from "./workspace";
  *
  * EVERY WORKSPACE, FOR EVERY SEAT. Which workspaces a member is assigned is
  * Prompt 5 and is not built; until it is, the list is all of the tenant's.
+ *
+ * IN THE ARQEDIA WORKSPACE EACH ONE IS AN OFFERING (PACK-02): what a client
+ * starts a workspace from. The list is the same; adding one is called what
+ * it is.
  */
-export function WorkspacePicker({ admin, onAdd }: {
+export function WorkspacePicker({ admin, curator = false, onAdd }: {
   admin: boolean;
+  curator?: boolean;
   onAdd: () => void;
 }) {
   const state = useWorkspace();
@@ -66,7 +71,7 @@ export function WorkspacePicker({ admin, onAdd }: {
             <>
               <span className="sep" />
               <a onClick={() => { setOpen(false); onAdd(); }}>
-                Add a workspace
+                {curator ? "Add an offering" : "Add a workspace"}
               </a>
             </>
           )}

@@ -730,7 +730,8 @@ function SettingsRoute() {
  *  what makes a new tenant's first run one press. The rail's panel and the
  *  first-run screen arrive with stopAtDraft, and then nothing is published:
  *  their draft is their own, and shipping it is their decision. */
-function WelcomeRoute({ onOpened }: {
+function WelcomeRoute({ curator, onOpened }: {
+  curator: boolean;
   onOpened: (to: string, state?: unknown) => void;
 }) {
   const location = useLocation();
@@ -742,7 +743,9 @@ function WelcomeRoute({ onOpened }: {
   // new workspace rather than adding to the active one.
   const newWorkspace = Boolean(arrived?.newWorkspace);
   // A report of their own, already chosen in the Catalogue (PACK-01).
+  // In the ARQEDIA workspace a new workspace is a new OFFERING (PACK-02).
   return <WelcomeView stopAtDraft={stopAtDraft} newWorkspace={newWorkspace}
+                      offering={curator && newWorkspace}
                       start={arrived?.start}
                       onOpened={onOpened}
                       onStarted={(report) =>
@@ -1058,7 +1061,7 @@ export default function App() {
           {/* Which workspace everything below belongs to (PACK-01), beside
               the account it belongs to. Adding one is an administrator's: it
               forks a base, which the server refuses a member. */}
-          <WorkspacePicker admin={role === "admin"}
+          <WorkspacePicker admin={role === "admin"} curator={curator}
                            onAdd={() => navigate("/welcome",
                                                  { state: { newWorkspace: true } })} />
           {/* A BUTTON, because it opens and closes a panel rather than going
@@ -1187,7 +1190,8 @@ export default function App() {
                   stops at the draft instead, and says so: taking a
                   memorandum is not the moment to ship somebody's own
                   unpublished work. */}
-              <Route path="/welcome" element={<WelcomeRoute onOpened={opened} />} />
+              <Route path="/welcome"
+                     element={<WelcomeRoute curator={curator} onOpened={opened} />} />
               {/* Signing up ends here. onSignedUp navigates to /welcome and
                   then check() flips signedIn, but react-router applies the new
                   location inside a transition while setSignedIn is urgent - so

@@ -89,6 +89,11 @@ export function CatalogueView({ curator, onOpened }: {
   // untick, so they are left out of the ticks and named instead: sent, they
   // made the server refuse the whole save ("revision 30 does not hold ...").
   const [dropped, setDropped] = useState<string[]>([]);
+  // Whether this workspace has published anything. A new offering starts
+  // empty (PACK-02), and until it publishes there is no revision to offer -
+  // the server reports revision 1 in use for a workspace with none, which
+  // is not this one's to offer.
+  const [hasPublished, setHasPublished] = useState(true);
 
   // The memoranda in the draft where one is open, since that is what will be
   // edited; otherwise the live revision's. Read once, when the page opens.
@@ -103,6 +108,7 @@ export function CatalogueView({ curator, onOpened }: {
         if (gone) return;
         setReports(found.map((t) => ({ key: t.key, label: t.label || t.key })));
         setActive(state.active_revision ?? null);
+        setHasPublished(state.revisions.length > 0);
 
         // The published revision's memoranda, read separately from the list
         // above: that one follows the draft when there is one, and a draft is
@@ -198,7 +204,7 @@ export function CatalogueView({ curator, onOpened }: {
       {" · "}
       <a onClick={off(() => onOpened("/welcome",
                                      { newWorkspace: true, start: how }))}>
-        In a new workspace
+        {curator ? "In a new offering" : "In a new workspace"}
       </a>
     </p>
   );
@@ -304,10 +310,15 @@ export function CatalogueView({ curator, onOpened }: {
 
       {/* The ARQEDIA workspace only. The server refuses these two calls to
           everybody else; this decides what is drawn, which is not the same
-          thing and is not a control. */}
+          thing and is not a control.
+
+          ONE OFFERING AT A TIME (PACK-02). The active workspace is the
+          offering, and what is read and saved here is its catalogue alone -
+          the request carries the workspace, as every request does. Another
+          offering's is set by choosing it at the top of the page. */}
       {curator && (
         <>
-          <h3>What ARQEDIA offers</h3>
+          <h3>What {here ?? "this offering"} offers</h3>
 
           {/* A failed read never sets the offer, so without the first arm
               this said Loading for ever. The error itself is at the top. */}
@@ -315,12 +326,18 @@ export function CatalogueView({ curator, onOpened }: {
             <p className="muted">Not read &mdash; see the error above.</p>
           ) : offer === null ? (
             <p className="muted">Loading&hellip;</p>
+          ) : !hasPublished ? (
+            <p className="muted small">
+              Nothing in {here ?? "this offering"} is published yet, so there
+              is nothing to offer. Publish it on the configuration screen,
+              then tick its memoranda here.
+            </p>
           ) : (
             <>
               <p className="muted small">
                 {marked === null
-                  ? "Nothing is on offer. A new tenant has no base to fork "
-                    + "and no memorandum to take."
+                  ? "Nothing is on offer. A client cannot start a workspace "
+                    + "from it."
                   : `Offered from revision ${marked}`
                     + (offer.marked_by ? `, marked by ${offer.marked_by}` : "")
                     + "."}
@@ -331,9 +348,10 @@ export function CatalogueView({ curator, onOpened }: {
                   base on offer, so one marked at another revision refuses at
                   the customer rather than here. */}
               <p className="muted small">
-                Ticking one offers it to every new tenant, from the revision
-                in use. The facts behind it go with it &mdash; the base is
-                this revision's base and is not a separate choice.
+                Ticking one offers it to every client workspace started from{" "}
+                {here ?? "this offering"}, from the revision in use. The facts
+                behind it go with it &mdash; the base is this revision's base
+                and is not a separate choice.
               </p>
 
               {moving && (

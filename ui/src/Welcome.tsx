@@ -76,11 +76,16 @@ export type Report = {
 // is the whole point of the screen.
 
 export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
+                             offering = false,
                              start: startWith, onStarted, onOpened }: {
   stopAtDraft?: boolean;
   /** Add a workspace, from the header: start a new one rather than add to
    *  the active one. */
   newWorkspace?: boolean;
+  /** Add an OFFERING, in the ARQEDIA workspace (PACK-02). It starts empty -
+   *  no base is forked, because the pack tenant forks from nobody - and is
+   *  built by hand or from a report. One of our memoranda is not a route. */
+  offering?: boolean;
   /** A report of the tenant's own, already chosen: from the Catalogue's
    *  "Create from scratch" or "Create from a report you already write". */
   start?: OwnStart;
@@ -94,8 +99,10 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
   // The new workspace's name. Empty, with an example as a placeholder only:
   // nothing is invented (decision of 22 October 2026).
   const [name, setName] = useState("");
-  // How a workspace being made starts: one of ours, or one of their own.
-  const [route, setRoute] = useState<"ours" | OwnStart>(startWith ?? "ours");
+  // How a workspace being made starts: one of ours, or one of their own. An
+  // offering has no "ours" to start from.
+  const [route, setRoute] = useState<"ours" | OwnStart>(
+    startWith ?? (offering ? "scratch" : "ours"));
   const [state, setState] = useState<ConfigState | null>(null);
   const [packs, setPacks] = useState<TemplatePack[] | null>(null);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
@@ -134,11 +141,17 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
     if (!name.trim()) return;
     try {
       setBusy("Setting up " + name.trim());
-      const made = await api.forkBase(name.trim());
+      // An offering is made empty, its draft already open (PACK-02); a
+      // client's workspace forks the base and opens one.
+      const made = offering
+        ? await api.newWorkspace(name.trim())
+        : await api.forkBase(name.trim());
       workspace.adopt(made.workspace_id);
       workspacesChanged();
-      setBusy("Opening a draft");
-      await api.openDraft();
+      if (!offering) {
+        setBusy("Opening a draft");
+        await api.openDraft();
+      }
       if (how === "scratch") {
         const key = await untitledReport();
         onOpened(`/configure?report=${key}&part=sections`);
@@ -248,7 +261,18 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
 
   return (
     <div className="welcome">
-      {newWorkspace ? (
+      {offering ? (
+        <>
+          <h2>Add an offering</h2>
+          <p className="muted">
+            An offering is what a client starts a workspace from: its own
+            document types, facts and memoranda, partitioned from every other
+            offering. It starts empty. Nothing in it reaches a client until it
+            is published and its memoranda are ticked in the Report
+            Catalogue.
+          </p>
+        </>
+      ) : newWorkspace ? (
         <>
           <h2>Add a workspace</h2>
           <p className="muted">
@@ -335,7 +359,39 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
 
       {/* THE NAME, BEFORE ANYTHING ELSE IS ASKED (PACK-01). Required and
           empty; the placeholder is an example, not a value. */}
-      {creating && (
+      {creating && offering && (
+        <>
+          <h3>Name this offering</h3>
+          <input value={name} maxLength={128}
+                 placeholder="For example, Real Estate"
+                 aria-label="Offering name"
+                 onChange={(e) => setName(e.target.value)} />
+          <p className="muted small">
+            The line of business it serves. Clients choose it by this name
+            when they add a workspace.
+          </p>
+
+          <h3>How it starts</h3>
+          <label className="inline-check">
+            <input type="radio" name="start" checked={route === "scratch"}
+                   onChange={() => setRoute("scratch")} />
+            By hand, from an empty memorandum
+          </label>
+          <label className="inline-check">
+            <input type="radio" name="start" checked={route === "report"}
+                   onChange={() => setRoute("report")} />
+            From a report (.pdf, .docx)
+          </label>
+          <p className="muted small">
+            Either way it holds no facts and no document types until you add
+            them: by hand, or by correcting what we read from the report. The
+            draft is the offering&rsquo;s own, and nothing is published until
+            you publish it.
+          </p>
+        </>
+      )}
+
+      {creating && !offering && (
         <>
           <h3>Name this workspace</h3>
           <input value={name} maxLength={128}
@@ -416,6 +472,13 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
 
       </>)}
 
+      {/* The memoranda list carries the error above, and is not drawn for a
+          report of their own or an offering - where a refusal to create the
+          workspace was otherwise shown nowhere. */}
+      {creating && route !== "ours" && error && (
+        <p className="error">{error}</p>
+      )}
+
       {refused.length > 0 && (
         <div className="revision-note fatal">
           <strong>The memoranda are in your draft, but it cannot be
@@ -478,8 +541,11 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
           <a className={"start-pill" + (busy || !name.trim() ? " off" : "")}
              onClick={busy || !name.trim() ? undefined
                : () => startOwn(route)}>
-            {route === "scratch" ? "Create the workspace"
-                                 : "Create the workspace and read my report"}
+            {offering
+              ? (route === "scratch" ? "Create the offering"
+                                     : "Create the offering and read a report")
+              : (route === "scratch" ? "Create the workspace"
+                                     : "Create the workspace and read my report")}
           </a>
         ) : (
         <a className={"start-pill" + (busy || ticked.size === 0
@@ -498,7 +564,10 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
           <span className="muted small">Tick a memorandum to begin.</span>
         )}
         {creating && !name.trim() && (
-          <span className="muted small">Name the workspace to begin.</span>
+          <span className="muted small">
+            {offering ? "Name the offering to begin."
+                      : "Name the workspace to begin."}
+          </span>
         )}
       </div>
     </div>
