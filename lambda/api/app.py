@@ -2539,7 +2539,10 @@ def get_settings(tenant_id, role=None):
         "role": role,
         "may_brand": plan in ("business", "enterprise"),
         "may_remove_footer": plan == "enterprise",
-        "may_review": review_plan in ("business", "enterprise"),
+        # The ARQEDIA workspace reviews whatever its plan, as the reviewer
+        # allows it (_curator there, decision of 23 October 2026).
+        "may_review": (review_plan in ("business", "enterprise")
+                       or tenant_id == registry.PACK_TENANT),
         "logo_key": logo_key,
         "logo_url": logo_url,
         "deep": _col(r, 3),
