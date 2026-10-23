@@ -420,6 +420,30 @@ NO_TEMPLATE_PUBLISHED = (
     "This workspace has no published memorandum, so there is nothing to "
     "generate. Take one under Template Catalogue and publish it.")
 
+# Uploading or filing where the workspace has published nothing (PACK-01 G8).
+# An empty workspace - one begun from a report of the tenant's own, or Add a
+# workspace's empty route - has no revision in use, and active_revision()
+# falls back to revision 1, which holds nothing in a new workspace. A document
+# was read against nothing, and filing it still charged.
+NOTHING_PUBLISHED = (
+    "This workspace has nothing published yet, so there is nothing to read a "
+    "document against. Publish its configuration first, under Report "
+    "Catalogue.")
+
+
+def _require_published(tenant_id, workspace_id):
+    """Refuses work in a workspace with no revision in use. Workspace 0 - the
+    pack tenant, and rows from before workspaces - reads the tenant's own
+    revision and is not asked."""
+    if int(workspace_id) == config.NO_WORKSPACE:
+        return
+    found = _sql("SELECT active_revision FROM workspace "
+                 "WHERE tenant_id = :t AND workspace_id = :w",
+                 [_p("t", tenant_id), _p("w", int(workspace_id))]
+                 ).get("records", [])
+    if not found or _col(found[0], 0) is None:
+        raise ValueError(NOTHING_PUBLISHED)
+
 
 def engagement_subject(tenant_id, workspace_id, name):
     """The subject recorded for an engagement, or None.
@@ -1007,6 +1031,9 @@ def file_documents(tenant_id, workspace_id, email, engagement, decisions,
     for - so this is the gate, and it is the FIRST thing here, above the
     charge. Extraction carries a second line of its own for a document that
     reaches it by some other route; this one is the one a person meets.
+
+    NOR INTO A WORKSPACE WITH NOTHING PUBLISHED (PACK-01 G8): refused by the
+    route, before this is called and so before the charge.
     """
     held = engagement_subject(tenant_id, workspace_id, engagement)
     if not held:
@@ -3631,6 +3658,9 @@ def _dispatch(event, context):
 
         if route == "POST /engagements/{id}/file":
             body = json.loads(event.get("body") or "{}")
+            # Nothing to read against, so nothing filed and nothing charged
+            # (PACK-01 G8).
+            _require_published(tenant_id, ws())
             return _reply(200, file_documents(
                 tenant_id, ws(), email, engagement, body.get("decisions", []),
                 _key(body, "file", engagement)))
@@ -3905,6 +3935,9 @@ def _dispatch(event, context):
 
         if route == "POST /uploads":
             body = json.loads(event.get("body") or "{}")
+            # Before the engagement row is made, so a refusal leaves nothing
+            # behind (PACK-01 G8).
+            _require_published(tenant_id, ws())
             return _reply(200, upload_url(tenant_id, ws(), email,
                                           body.get("engagement", ""),
                                           body.get("filename", ""),
