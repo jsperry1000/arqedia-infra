@@ -72,7 +72,7 @@ class FakeDb:
 
     def __init__(self, marks=None, held_templates=(), held_fields=(),
                  bound_fields=("f_borrower",), published=1, active=1,
-                 offerings=(OFFERING,), link=OFFERING):
+                 offerings=(OFFERING,), link=OFFERING, names=()):
         self.marks = dict(MARKS if marks is None else marks)
         self.held_templates = set(held_templates)
         self.held_fields = set(held_fields)
@@ -83,6 +83,8 @@ class FakeDb:
         # workspace was started from (None: unlinked or made empty).
         self.offerings = list(offerings)
         self.link = link
+        # The names of the tenant's live workspaces.
+        self.names = list(names)
         self.statements = []
         self.in_tx = []
 
@@ -102,6 +104,8 @@ class FakeDb:
             return rows((OFFERING if values["t"] == 0 else WORKSPACE,))
         if s.startswith("SELECT forked_from_workspace_id FROM workspace"):
             return rows((self.link,))
+        if s.startswith("SELECT name FROM workspace"):
+            return rows(*[(n,) for n in self.names])
 
         if s.startswith("SELECT o.revision, o.pack_key, r.note, (SELECT"):
             # packs(): one base per offering.
@@ -355,6 +359,38 @@ class NewWorkspaceTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.make(db, name=name)
                 self.assertEqual(db.sent("INSERT"), [])
+
+    # --- a name already used (found walking PACK-02, 23 October 2026) ------
+
+    def test_a_name_already_held_is_refused_whatever_its_case_or_spacing(self):
+        for asked in ("REAL ESTATE", "Real Estate", "  real   estate "):
+            with self.subTest(asked=asked):
+                db = FakeDb(names=["Trade Finance", "REAL ESTATE"])
+                with self.assertRaises(ValueError) as raised:
+                    self.make(db, name=asked)
+                self.assertIn("already have a workspace called",
+                              str(raised.exception))
+                self.assertEqual(db.sent("INSERT"), [])
+
+    def test_only_live_workspaces_are_asked(self):
+        """A deleted workspace's name is free to use again."""
+        db = FakeDb(names=["Trade Finance"])
+        self.make(db, name="Real Estate")
+        [(sent, values)] = db.sent("SELECT name FROM workspace")
+        self.assertIn("deleted_at IS NULL", sent)
+        self.assertEqual(values["t"], 7)
+
+    def test_a_different_name_goes_ahead(self):
+        db = FakeDb(names=["Trade Finance", "Real Estate"])
+        result = self.make(db, name="Real Estate II")
+        self.assertEqual(result["name"], "Real Estate II")
+
+    def test_forking_a_base_is_refused_a_name_held_too(self):
+        db = FakeDb(published=0, names=["Real Estate"])
+        with mock.patch.object(self.registry, "_sql", db.sql):
+            with self.assertRaises(ValueError):
+                self.registry.fork_base(7, "a@firm.com", "real estate")
+        self.assertEqual(db.sent("INSERT"), [])
 
 
 class ForkTemplateTest(unittest.TestCase):
