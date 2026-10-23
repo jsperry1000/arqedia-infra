@@ -760,8 +760,26 @@ def _view(grant, registered=None):
     return out
 
 
-def listing(tenant_id):
-    """Every grant this tenant has made, newest first, and the allowance."""
+def _workspace_memos(tenant_id, workspace_id):
+    """Every memorandum in one workspace, by id - the set a grant's memo_id
+    is checked against. A grant carries its memo and not its workspace: it
+    lives in DynamoDB, which the viewer reads without waking Aurora, and the
+    memo row is where the workspace is recorded."""
+    rows = _sql("SELECT memo_id FROM memo "
+                "WHERE tenant_id = :t AND workspace_id = :w",
+                [_p("t", tenant_id), _p("w", int(workspace_id))]
+                ).get("records", [])
+    return {int(_col(r, 0)) for r in rows}
+
+
+def listing(tenant_id, workspace_id=None):
+    """Every grant this tenant has made, newest first, and the allowance.
+
+    ONE WORKSPACE'S, where one is named (PACK-01; built 23 October 2026). A
+    share belongs to the workspace of the memorandum it sends, as Share a
+    memo already lists that workspace's memoranda only. THE ALLOWANCE IS
+    STILL THE TENANT'S: it comes with the plan, and the plan is the
+    tenant's, so it counts every workspace's shares together."""
     found, start = [], None
     while True:
         kwargs = {"IndexName": "tenant-index",
@@ -778,6 +796,9 @@ def listing(tenant_id):
 
     # Pending is not a share - nothing was sent - so it is not listed.
     grants = [g for g in found if g.get("status") == rules.ACTIVE]
+    if workspace_id is not None:
+        held = _workspace_memos(tenant_id, workspace_id)
+        grants = [g for g in grants if int(g.get("memo_id", -1)) in held]
     viewers = {g["viewer_account_id"] for g in grants}
     registered = {v: _registered(v) for v in viewers}
     return {"grants": [_view(g, registered[g["viewer_account_id"]])

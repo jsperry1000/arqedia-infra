@@ -3305,8 +3305,12 @@ SHARE_ROUTES = frozenset({
 })
 
 
-def share_route(route, tenant_id, email, params, event):
+def share_route(route, tenant_id, email, params, event, workspace=None):
     """The three share routes, and what each refusal means.
+
+    workspace resolves the request's workspace, and is asked only by the
+    History list (PACK-01): sending, revoking and notifying act on a memo or
+    a grant that is already the tenant's, wherever it sits.
 
     ANY SEAT. Sending is the work, as filing and generating are; revoking is
     a reduction of access, and is open in every state - capped included -
@@ -3316,7 +3320,8 @@ def share_route(route, tenant_id, email, params, event):
 
     try:
         if route == "GET /shares":
-            return _reply(200, share.listing(tenant_id))
+            return _reply(200, share.listing(
+                tenant_id, workspace() if workspace else None))
 
         if route == "POST /memos/{memo_id}/shares":
             body = json.loads(event.get("body") or "{}")
@@ -3670,7 +3675,7 @@ def _dispatch(event, context):
 
         # --- sharing -------------------------------------------------------
         if route in SHARE_ROUTES:
-            return share_route(route, tenant_id, email, params, event)
+            return share_route(route, tenant_id, email, params, event, ws)
 
         if route == "POST /memos/{memo_id}/revise":
             body = json.loads(event.get("body") or "{}")
