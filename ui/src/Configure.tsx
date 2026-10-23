@@ -1114,7 +1114,20 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     // an EMPTY one (PACK-02, settled item 7): it starts from whatever the
     // workspace holds, which is nothing. No base is forked. It becomes the
     // active one, its draft already open, so the draft is its own.
+    //
+    // UNLESS THE WORKSPACE IS ALREADY HERE. This screen is also what an
+    // existing workspace shows once it holds no draft and has never
+    // published - a new one whose draft was discarded, for instance. Making
+    // another workspace from there is how a tenant came to hold two called
+    // REAL ESTATE (found walking PACK-02, 23 October 2026). With a workspace
+    // active, its own draft is opened again instead, empty, and nothing is
+    // named. Only a tenant with no workspace at all makes one here.
+    const here = workspace.active !== null;
     const makeWorkspace = async () => {
+      if (here) {
+        await api.openDraft();
+        return;
+      }
       const made = await api.newWorkspace(workspaceName.trim());
       workspace.adopt(made.workspace_id);
       workspacesChanged();
@@ -1128,7 +1141,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       await makeWorkspace();
       setProposing(true);
     });
-    const unnamed = !workspaceName.trim();
+    const unnamed = !here && !workspaceName.trim();
 
     return (
       <div>
@@ -1154,10 +1167,11 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           </p>
         )}
 
-        {/* A name for the workspace these three routes make (PACK-01).
-            Required and empty. Select an ARQEDIA Template asks for it on its
-            own screen. */}
-        {!readOnly && (
+        {/* A name for the workspace these three routes make (PACK-01), for a
+            tenant with none yet. Required and empty. Select an ARQEDIA
+            Template asks for it on its own screen. Not asked in a workspace
+            that is already here: its draft is reopened instead. */}
+        {!readOnly && !here && (
           <div className="filters">
             <input value={workspaceName} maxLength={128}
                    aria-label="Workspace name"

@@ -87,6 +87,35 @@ NOT_FROM_AN_OFFERING = (
 # A workspace's name. workspace.name is varchar(128).
 _MAX_WORKSPACE_NAME = 128
 
+# A name the tenant already uses (found walking PACK-02, 23 October 2026: two
+# offerings called REAL ESTATE). Two workspaces of one name cannot be told
+# apart in the picker, the seats screen or a member's assignment.
+NAME_TAKEN = ("You already have a workspace called %s. Give this one a "
+              "different name.")
+
+
+def _same_name(name):
+    """A name as compared: case and runs of spacing are not the name."""
+    return " ".join(str(name or "").split()).lower()
+
+
+def _workspace_name(tenant_id, name, missing):
+    """The name, checked: given, not too long, and not one of this tenant's
+    live workspaces' already. A deleted workspace's name is free - it is
+    hidden, and may never come back."""
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError(missing)
+    if len(name) > _MAX_WORKSPACE_NAME:
+        raise ValueError("a workspace name can be at most %d characters"
+                         % _MAX_WORKSPACE_NAME)
+    held = _sql("SELECT name FROM workspace "
+                "WHERE tenant_id = :t AND deleted_at IS NULL",
+                [_p("t", tenant_id)]).get("records", [])
+    if any(_same_name(_col(r, 0)) == _same_name(name) for r in held):
+        raise ValueError(NAME_TAKEN % name)
+    return name
+
 # Opening a second workspace's draft while migration 040's
 # uq_single_workspace still makes (tenant_id, revision) unique. 043 drops it,
 # once the code that names a workspace everywhere is deployed.
@@ -1080,12 +1109,8 @@ def fork_base(tenant_id, email, name, pack_revision=None, pack_key="base",
             "the ARQEDIA workspace curates the catalogue and does not fork "
             "from it")
 
-    name = str(name or "").strip()
-    if not name:
-        raise ValueError("name the workspace this base starts")
-    if len(name) > _MAX_WORKSPACE_NAME:
-        raise ValueError("a workspace name can be at most %d characters"
-                         % _MAX_WORKSPACE_NAME)
+    name = _workspace_name(tenant_id, name,
+                           "name the workspace this base starts")
 
     if pack_revision is not None:
         source_tenant, revision = pack_tenant, int(pack_revision)
@@ -1184,12 +1209,7 @@ def new_workspace(tenant_id, email, name):
 
     ONE TRANSACTION, as fork_base: the workspace and its draft land together
     or not at all."""
-    name = str(name or "").strip()
-    if not name:
-        raise ValueError("name the workspace")
-    if len(name) > _MAX_WORKSPACE_NAME:
-        raise ValueError("a workspace name can be at most %d characters"
-                         % _MAX_WORKSPACE_NAME)
+    name = _workspace_name(tenant_id, name, "name the workspace")
 
     tx = _begin()
     try:
