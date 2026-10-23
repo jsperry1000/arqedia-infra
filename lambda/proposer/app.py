@@ -296,6 +296,26 @@ not there.
 
 # --- slicing ---------------------------------------------------------------
 
+def _find(text, heading, start=0):
+    """Where a heading begins in the text, and where it ends: (-1, -1) where
+    it is not there.
+
+    WHITESPACE AND CASE ARE NOT THE HEADING. A PDF's text layer puts a tab, a
+    line break or two spaces where the page shows one space - the Real Estate
+    sample walked on 23 October 2026 reads "Executive\\tSummary" - and the
+    model answers with one space. Matched character for character, none of its
+    eight headings was found and every section was read against the whole
+    report: twenty facts each, most of them another section's. Any run of
+    whitespace matches any other, and case is ignored. The words themselves
+    must still all be there, in order."""
+    words = heading.split()
+    if not words:
+        return -1, -1
+    found = re.compile(r"\s+".join(re.escape(w) for w in words),
+                       re.IGNORECASE).search(text, start)
+    return (found.start(), found.end()) if found else (-1, -1)
+
+
 def _slice_sections(text, sections):
     """Each section's own text, found by locating its heading.
 
@@ -310,12 +330,12 @@ def _slice_sections(text, sections):
     cursor = 0
     for section in sections:
         heading = (section.get("heading") or "").strip()
-        at = text.find(heading, cursor) if heading else -1
+        at, end = _find(text, heading, cursor)
         if at == -1 and heading:
-            at = text.find(heading)
+            at, end = _find(text, heading)
         marks.append(at)
         if at != -1:
-            cursor = at + len(heading)
+            cursor = end
 
     out = []
     for i, section in enumerate(sections):

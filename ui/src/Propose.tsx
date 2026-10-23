@@ -516,6 +516,24 @@ export function ProposeView({ onDone, onCancel }: {
 
   const factList = Object.entries(facts);
   const keptCount = proposal.sections.length - skipped.size;
+
+  /** Tick or untick every fact named in the given sections - one section's,
+   *  or every kept section's. A fact named in two sections is one tick, so
+   *  ticking one section's facts ticks them wherever else they are named,
+   *  as ticking one by one always has. Nothing starts ticked: a report names
+   *  far more facts than anyone wants configured, and these are a quicker
+   *  way to choose, not a default. */
+  const tickAll = (sections: number[], chosen: boolean) => {
+    const next = { ...facts };
+    for (const [fid, f] of factList) {
+      if (f.sections.some((i) => sections.includes(i))) {
+        next[fid] = { ...f, chosen };
+      }
+    }
+    setFacts(next);
+  };
+  const keptSections = proposal.sections.map((_, i) => i)
+    .filter((i) => !skipped.has(i));
   const taken = factList.filter(([, f]) => live(f));
   const newCount = taken.filter(([, f]) => !f.existing).length;
   const heldCount = taken.length - newCount;
@@ -558,6 +576,12 @@ export function ProposeView({ onDone, onCancel }: {
         In the order they appear in your report. Untick a section to leave it
         out. A fact named in two sections is the same tick in both.
       </p>
+      <p className="muted small">
+        Every fact in the sections kept:{" "}
+        <a onClick={() => tickAll(keptSections, true)}>Tick all</a>
+        {" · "}
+        <a onClick={() => tickAll(keptSections, false)}>Untick all</a>
+      </p>
 
       {proposal.sections.map((s, i) => {
         const kept = !skipped.has(i);
@@ -579,13 +603,24 @@ export function ProposeView({ onDone, onCancel }: {
               </label>
               <span className="muted small">
                 {ticked} of {here.length} {here.length === 1 ? "fact" : "facts"}
+                {kept && here.length > 0 && (
+                  <>
+                    {" · "}
+                    <a onClick={() => tickAll([i], ticked < here.length)}>
+                      {ticked < here.length ? "Tick all" : "Untick all"}
+                    </a>
+                  </>
+                )}
               </span>
             </div>
             {s.purpose && <p className="why">{s.purpose}</p>}
+            {/* Rare since the heading is matched whatever its spacing; said
+                plainly where it still happens. */}
             {!s.located && (
               <p className="why warn">
-                We could not find this heading again in the text, so it was
-                read against the whole report. Worth checking.
+                We could not tell where this section starts in your report, so
+                its facts were picked from the whole report. Some may belong
+                to other sections &mdash; untick any that do not belong here.
               </p>
             )}
             {kept && here.map(([fid, f]) => (
