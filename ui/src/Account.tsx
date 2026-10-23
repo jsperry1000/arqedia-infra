@@ -94,6 +94,12 @@ const ROWS: PlanRow[] = [
   { label: "Seats",
     of: (p) => p.seat_count,
     enterprise: ENTERPRISE_COLUMN.seats },
+  // PACK-02: in the app only until the pricing page is redone before launch.
+  // A dash for null, as the limits below: a plan with no number set has no
+  // limit, which is not the same as none.
+  { label: "Workspaces",
+    of: (p) => limit(p.workspace_count),
+    enterprise: ENTERPRISE_COLUMN.workspaces },
   { label: "Monthly credit toward metered use",
     of: (p) => money(p.monthly_credit_cents),
     enterprise: ENTERPRISE_COLUMN.monthly_credit },

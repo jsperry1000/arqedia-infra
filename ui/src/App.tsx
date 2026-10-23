@@ -831,6 +831,11 @@ export default function App() {
   // one: that screen is part-way through its work in the new workspace and
   // must not be thrown away under it.
   const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
+  // The plan's workspace limit and the tenant's count (PACK-02), read with
+  // the list. Null is no limit; an unread count leaves room, and the server
+  // refuses past the limit whatever the screen thought.
+  const [wsLimit, setWsLimit] = useState<number | null>(null);
+  const [wsHeld, setWsHeld] = useState(0);
 
   useEffect(() => {
     if (!signedIn || !tenantId) return;
@@ -838,6 +843,8 @@ export default function App() {
       .then((s) => {
         const held = s.workspaces ?? [];
         setWorkspaces(held);
+        setWsLimit(s.workspace_limit ?? null);
+        setWsHeld(s.workspaces_held ?? held.length);
         // A workspace just made is already active; keep it if it is listed.
         const id = chooseWorkspace(tenantId, held);
         setActiveWorkspace(tenantId, id);
@@ -879,6 +886,8 @@ export default function App() {
       setActiveWorkspace(tenantId, id);
       setActiveWs(id);
     },
+    limit: wsLimit,
+    room: wsLimit === null || wsHeld < wsLimit,
   };
 
   async function check() {

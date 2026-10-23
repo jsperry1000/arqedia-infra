@@ -77,11 +77,16 @@ export type WorkspaceState = {
   /** Make a just-forked workspace the active one, before the list that
    *  names it has been read again. */
   adopt: (id: number) => void;
+  /** How many workspaces the plan holds, null for no limit, and whether the
+   *  tenant may add another (PACK-02). Display only: the server refuses past
+   *  the limit itself. */
+  limit: number | null;
+  room: boolean;
 };
 
 export const WorkspaceContext = createContext<WorkspaceState>({
   workspaces: [], active: null, choose: () => undefined,
-  adopt: () => undefined,
+  adopt: () => undefined, limit: null, room: true,
 });
 
 export function useWorkspace() {

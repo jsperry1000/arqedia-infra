@@ -17,15 +17,17 @@ DUPLICATE_MESSAGE = ("Duplicate entry '7-k' for key "
                      "'topup_request.uq_idempotency'; Error code: 1062; "
                      "SQLState: 23000")
 
-# Nine columns, because _plans() selects nine since migration 033 (18.5).
-# The three limits are last: field sets, sections, daily classification.
-PLANS = rows(("base", "Base", 2, 2500, 500, 5, 3, 12, 500),
-             ("business", "Small Business", 5, 6500, 1500, None, 5, 25, 1500))
+# Ten columns: nine since migration 033 (18.5) - the three limits are field
+# sets, sections, daily classification - and workspace_count since 046.
+PLANS = rows(("base", "Base", 2, 2500, 500, 5, 3, 12, 500, 1),
+             ("business", "Small Business", 5, 6500, 1500, None, 5, 25, 1500,
+              5))
 
 
 class FakeBillingDb:
-    def __init__(self, subscription=None):
+    def __init__(self, subscription=None, workspaces=1):
         self.subscription = subscription   # (sub_id, status, ends, plan_key)
+        self.workspaces = workspaces       # how many the tenant holds
         self.inserted_requests = []
         self.checkout_offered_at = None
         self.clock = 0
@@ -40,6 +42,8 @@ class FakeBillingDb:
             return rows(self.subscription) if self.subscription else rows()
         if "FROM plan" in s:
             return PLANS
+        if s.startswith("SELECT COUNT(*) FROM workspace"):
+            return rows((self.workspaces,))
         if s.startswith("INSERT INTO topup_request"):
             values = {p["name"]: p["value"] for p in params}
             key = values["k"]["stringValue"]
@@ -148,6 +152,27 @@ class BillingTest(unittest.TestCase):
                 self.billing.change_plan(7, "a@firm.com", "admin",
                                          {"plan": "base"})
         self.paddle.change_plan.assert_not_called()
+
+    def test_downgrade_refused_over_workspaces(self):
+        """PACK-02: Base holds 1. Nothing is deleted to make it fit."""
+        db = FakeBillingDb(("sub_1", "active", None, "business"), workspaces=2)
+        listing = {"taken": 1, "reserved": 0}
+        with self.use(db), mock.patch.object(self.billing.seats, "listing",
+                                             return_value=listing):
+            with self.assertRaises(self.billing.Refused) as raised:
+                self.billing.change_plan(7, "a@firm.com", "admin",
+                                         {"plan": "base"})
+        self.assertIn("holds 2 workspaces, and Base holds 1",
+                      str(raised.exception))
+        self.paddle.change_plan.assert_not_called()
+
+    def test_downgrade_that_fits_goes_ahead(self):
+        db = FakeBillingDb(("sub_1", "active", None, "business"), workspaces=1)
+        listing = {"taken": 1, "reserved": 0}
+        with self.use(db), mock.patch.object(self.billing.seats, "listing",
+                                             return_value=listing):
+            self.billing.change_plan(7, "a@firm.com", "admin", {"plan": "base"})
+        self.paddle.change_plan.assert_called_once_with("sub_1", "base")
 
     def test_checkout_takes_the_tenant_from_the_token_not_the_body(self):
         self.paddle.create_checkout_transaction.return_value = "txn_1"
@@ -280,6 +305,102 @@ class TopUpFigureTest(unittest.TestCase):
             view = self.billing.subscription_view(7)
         self.assertEqual(charged["amount_cents"],
                          view["topup_increment_cents"] * 3)
+
+
+class WorkspaceLimitTest(unittest.TestCase):
+    """How many workspaces a tenant may hold (PACK-02, settled 23 October
+    2026): the subscription's plan, tenant.plan on a trial, the negotiated
+    number on Enterprise, and none for tenant 0. The stub answers by
+    statement, as SeatsBoughtTest's does."""
+
+    def setUp(self):
+        self.billing = load_billing()
+
+    def db(self, subscription=None, tenant=None, by_key=None, cheapest=None,
+           held=1):
+        asked = []
+
+        def sql(statement, params=None):
+            s = " ".join(statement.split())
+            asked.append(s)
+            if "FROM subscription" in s:
+                return rows(subscription) if subscription else rows()
+            if "FROM tenant" in s:
+                return rows(tenant) if tenant else rows()
+            if "WHERE plan_key" in s:
+                return rows(by_key) if by_key else rows()
+            if "ORDER BY monthly_price_cents" in s:
+                return rows(cheapest) if cheapest else rows()
+            if s.startswith("SELECT COUNT(*) FROM workspace"):
+                return rows((held,))
+            return rows()
+
+        return sql, asked
+
+    def limit(self, tenant_id=7, **kw):
+        sql, asked = self.db(**kw)
+        with mock.patch.object(self.billing, "_sql", sql):
+            return self.billing.workspace_limit(tenant_id), asked
+
+    def test_the_subscription_s_plan_decides(self):
+        got, asked = self.limit(subscription=(5,))
+        self.assertEqual(got, 5)
+        self.assertEqual(len(asked), 1)
+
+    def test_a_trial_reads_tenant_plan_through_the_table(self):
+        got, _ = self.limit(tenant=("base", None), by_key=(1,))
+        self.assertEqual(got, 1)
+
+    def test_enterprise_is_its_negotiated_number(self):
+        got, asked = self.limit(tenant=("enterprise", 12))
+        self.assertEqual(got, 12)
+        self.assertFalse(any("WHERE plan_key" in s for s in asked))
+
+    def test_enterprise_with_none_set_has_no_limit(self):
+        got, _ = self.limit(tenant=("enterprise", None))
+        self.assertIsNone(got)
+
+    def test_the_negotiated_number_is_ignored_on_another_plan(self):
+        got, _ = self.limit(tenant=("base", 12), by_key=(1,))
+        self.assertEqual(got, 1)
+
+    def test_an_unknown_plan_gets_the_smallest_active_one(self):
+        got, _ = self.limit(tenant=("nobody-has-seen", None), cheapest=(1,))
+        self.assertEqual(got, 1)
+
+    def test_tenant_0_has_no_limit_and_asks_nothing(self):
+        got, asked = self.limit(tenant_id=0, subscription=(1,))
+        self.assertIsNone(got)
+        self.assertEqual(asked, [])
+
+    def room(self, tenant_id=7, **kw):
+        sql, _ = self.db(**kw)
+        with mock.patch.object(self.billing, "_sql", sql):
+            self.billing.require_workspace_room(tenant_id)
+
+    def test_at_the_limit_is_refused(self):
+        with self.assertRaises(self.billing.Refused) as raised:
+            self.room(subscription=(1,), held=1)
+        self.assertEqual(str(raised.exception),
+                         "Your plan holds 1 workspace, and it is in use. A "
+                         "bigger plan is how a tenant gets more.")
+
+    def test_over_the_limit_is_refused_and_says_how_many(self):
+        with self.assertRaises(self.billing.Refused) as raised:
+            self.room(subscription=(5,), held=5)
+        self.assertIn("5 workspaces, and all 5 are in use",
+                      str(raised.exception))
+
+    def test_below_the_limit_goes_ahead(self):
+        self.room(subscription=(5,), held=4)
+
+    def test_no_workspace_yet_goes_ahead_on_base(self):
+        """A new tenant's first workspace, made by Get started."""
+        self.room(subscription=(1,), held=0)
+
+    def test_no_limit_goes_ahead(self):
+        self.room(tenant=("enterprise", None), held=40)
+        self.room(tenant_id=0, held=40)
 
 
 class PaddleApiTest(unittest.TestCase):

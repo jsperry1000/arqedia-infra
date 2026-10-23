@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Status | Steps 1-5 built and deployed on dev (#361-#371). C built on a branch; plan limits and D decided, not built. |
+| Status | Steps 1-5 built and deployed on dev (#361-#371). C deployed and walked (#372-#375, migration 045). Plan limits built on a branch (migration 046). D decided, not built. |
 | Depends on | PACK-01 (migrations 040, 042, 043; #352, #353, #354), all merged and applied on dev |
 | Type | Architecture — schema migration + Config Registry + API + Get started + Catalogue + curator screens |
 | Raised | 23 October 2026, from chat |
@@ -157,6 +157,16 @@ this ships no Base client holds more than one (read on dev: tenants 1, 9,
 10 hold one each), so nothing is deleted then either; had one, the extras
 were to be deleted and Trade Finance kept. Tenant 0 is exempt (proposed, not
 asked): its workspaces are offerings. Not built.
+
+**Settled further, 23 October 2026, all asked in-session:** Enterprise's
+negotiated number is `tenant.workspace_limit`, read only on Enterprise;
+tenant 0 is exempt; the limit is shown in the app only, and joins the
+pricing page when the site is redone before launch. Built on
+`feature/pack02-workspace-limit`: migration 046 (`plan.workspace_count`,
+`tenant.workspace_limit`), `billing.workspace_limit` and
+`require_workspace_room` before `POST /config/fork`, the downgrade refusal,
+a Workspaces row on the plan table, and the picker and Add a workspace
+saying so at the limit. A hidden workspace (D) is not yet counted apart.
 
 **D. An administrator deletes a workspace from the tenant**, with
 sufficient warnings and steps. This is the first delete in the product and

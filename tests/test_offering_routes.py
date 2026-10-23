@@ -36,6 +36,9 @@ class OfferingRoutesTest(unittest.TestCase):
             mock.patch.object(self.app, "registry", self.registry),
             mock.patch.object(self.app.config, "workspace",
                               mock.MagicMock(return_value=WORKSPACE)),
+            # Room for another workspace, unless a test says otherwise.
+            mock.patch.object(self.app.billing, "require_workspace_room",
+                              mock.MagicMock(return_value=None)),
         ]
         for p in patches:
             p.start()
@@ -94,6 +97,21 @@ class OfferingRoutesTest(unittest.TestCase):
                 status, _ = self.dispatch("POST /config/fork", role="member",
                                           body=body)
                 self.assertEqual(status, 403)
+        self.registry.new_workspace.assert_not_called()
+        self.registry.fork_base.assert_not_called()
+
+    def test_at_the_plan_s_limit_nothing_is_made_either_way(self):
+        """PACK-02: asked before either route makes anything, and a 409 with
+        the sentence billing wrote."""
+        self.app.billing.require_workspace_room.side_effect = \
+            self.app.billing.Refused("Your plan holds 1 workspace, and it is "
+                                     "in use.")
+        for body in ({"name": "x", "empty": True}, {"name": "x"}):
+            with self.subTest(body=body):
+                status, out = self.dispatch("POST /config/fork", body=body)
+                self.assertEqual(status, 409)
+                self.assertIn("Your plan holds 1", out["error"])
+        self.app.billing.require_workspace_room.assert_called_with(5)
         self.registry.new_workspace.assert_not_called()
         self.registry.fork_base.assert_not_called()
 

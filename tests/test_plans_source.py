@@ -43,7 +43,7 @@ PADDLE = ROOT / "config" / "paddle" / "sandbox.json"
 FIELDS = (
     "plan_key", "name", "seat_count", "monthly_price_cents",
     "monthly_credit_cents", "share_allowance",
-    "sections_per_template",
+    "sections_per_template", "workspace_count",
     "paddle_price_name", "how_it_starts", "active",
 )
 
@@ -212,7 +212,7 @@ class ShapeTest(unittest.TestCase):
             with self.subTest(plan=plan["plan_key"]):
                 for field in ("seat_count", "monthly_price_cents",
                               "monthly_credit_cents",
-                              "sections_per_template"):
+                              "sections_per_template", "workspace_count"):
                     self.assertIsInstance(plan[field], int, field)
                 # share_allowance alone may be null: null is unlimited, as
                 # migration 018 says, and it is the one nullable column.
@@ -224,7 +224,7 @@ class ShapeTest(unittest.TestCase):
         everywhere else."""
         e = [p for p in self.plans if p["plan_key"] == "enterprise"][0]
         for field in ("seat_count", "monthly_credit_cents", "share_allowance",
-                      "sections_per_template"):
+                      "sections_per_template", "workspace_count"):
             with self.subTest(field=field):
                 self.assertIsInstance(e[field], str, field)
 
@@ -323,6 +323,25 @@ class MonthlyCreditTest(unittest.TestCase):
             if plan["plan_key"] in written:
                 with self.subTest(plan=plan["plan_key"]):
                     self.assertEqual(plan["monthly_credit_cents"],
+                                     written[plan["plan_key"]])
+
+
+class WorkspaceCountTest(unittest.TestCase):
+    """How many workspaces a plan holds (PACK-02). Published here, enforced
+    by the plan table that migration 046 writes - two copies, compared."""
+
+    MIGRATION = ROOT / "db" / "migrations" / "046_workspace_limit.sql"
+
+    def test_the_published_count_is_the_one_the_migration_writes(self):
+        sql = self.MIGRATION.read_text(encoding="utf-8")
+        written = {m.group(2): int(m.group(1)) for m in re.finditer(
+            r"UPDATE plan SET workspace_count = (\d+) "
+            r"WHERE plan_key = '(\w+)'", sql)}
+        self.assertEqual(written, {"base": 1, "business": 5})
+        for plan in plans():
+            if plan["plan_key"] in written:
+                with self.subTest(plan=plan["plan_key"]):
+                    self.assertEqual(plan["workspace_count"],
                                      written[plan["plan_key"]])
 
 
