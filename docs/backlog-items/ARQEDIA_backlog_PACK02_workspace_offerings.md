@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Status | Shape agreed in chat 23 October 2026; nothing built. A, B and D answered; restore period for D not set. |
+| Status | Steps 1-5 built and deployed on dev (#361-#371). C built on a branch; plan limits and D decided, not built. |
 | Depends on | PACK-01 (migrations 040, 042, 043; #352, #353, #354), all merged and applied on dev |
 | Type | Architecture — schema migration + Config Registry + API + Get started + Catalogue + curator screens |
 | Raised | 23 October 2026, from chat |
@@ -129,11 +129,34 @@ To be exercised before items 6 and 7 are called built.
 
 **C. An administrator assigns workspaces to member seats.** Already
 settled under PACK-01 (its item 4: a workspace is assigned to a member, an
-administrator sees all) and **not built**: today every seat sees every
-workspace. Needs a seat-to-workspace table (proposed:
-`seat_workspace(tenant_id, seat_id, workspace_id)`), a filter on the
-workspace list and on every `?workspace=` the API resolves, and the
-control on the seats screen.
+administrator sees all). **Settled 23 October 2026, all asked in-session:**
+
+- Table `seat_workspace(tenant_id, seat_id, workspace_id)`: approved as
+  proposed (migration 045, with `assigned_by` and `assigned_at`).
+- An invitation's workspaces wait in a second table,
+  `seat_invitation_workspace(invitation_id, workspace_id)`, and are copied
+  to the seat when the invitation is accepted.
+- Existing members get every workspace their tenant holds when this ships.
+- A member's invitation names at least one workspace; an administrator's
+  names none.
+- An administrator made a member keeps every current workspace.
+- A new workspace is assigned to no member.
+
+Built on `feature/pack02-seat-workspaces`. Unprompted choices made in the
+build: a member asking for a memo, document or share in a workspace not
+theirs is answered "not found", as another tenant's number is; the invite
+form starts with the workspace in use ticked; a member's own seat edit
+needs at least one workspace.
+
+**Workspace count by plan (PACK-01 settled 3), settled 23 October 2026:**
+Base 1, Small Business 5, Enterprise **to be negotiated** - a per-tenant
+number set when negotiated, **no limit until it is set**. A downgrade to a
+plan that holds fewer workspaces than the tenant has is **refused**, as a
+seat downgrade already is; nothing is deleted for the tenant. On the day
+this ships no Base client holds more than one (read on dev: tenants 1, 9,
+10 hold one each), so nothing is deleted then either; had one, the extras
+were to be deleted and Trade Finance kept. Tenant 0 is exempt (proposed, not
+asked): its workspaces are offerings. Not built.
 
 **D. An administrator deletes a workspace from the tenant**, with
 sufficient warnings and steps. This is the first delete in the product and
@@ -148,7 +171,8 @@ so its shape was asked rather than proposed:
   charged; nothing is refunded by deleting.
 - **Settled 23 October 2026:**
   - **Hidden, then removed.** Hidden at once and restorable for a period,
-    then removed for good. The period is not set; 30 days proposed.
+    then removed for good. **The period is six months** (set 23 October
+    2026; 30 days had been proposed).
   - **The last workspace cannot be deleted.** Removing everything is
     account deletion, a separate act.
   - **Steps:** the counts it holds shown (engagements, documents, memos,

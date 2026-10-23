@@ -3366,6 +3366,63 @@ def share_route(route, tenant_id, email, params, event, workspace=None):
     return _reply(404, {"error": "unknown route"})
 
 
+# --- which workspaces a member may reach (PACK-02 C) -------------------------
+
+NOT_YOUR_WORKSPACE = ("That workspace is not one of yours. An administrator "
+                      "can add you to it on the seats screen.")
+NO_WORKSPACE_ASSIGNED = ("No workspace is assigned to you yet. Ask an "
+                         "administrator to add you to one on the seats "
+                         "screen.")
+
+
+REVIEW_ROUTES = frozenset({
+    "POST /config/draft/review",
+    "GET /config/draft/review",
+    "POST /config/draft/review/accept",
+    "POST /config/draft/review/close",
+    "POST /config/draft/review/answer",
+})
+
+
+def _visible(workspaces, mine):
+    """A list of workspaces narrowed to a member's own; untouched for an
+    administrator (mine is None)."""
+    if mine is None:
+        return workspaces
+    return [w for w in workspaces if int(w["workspace_id"]) in mine]
+
+
+def _outside_assignment(tenant_id, params, allowed):
+    """Whether a memo, document or share named in the path is in a workspace
+    this member may not reach. False where the row is not found: the route
+    answers that itself, exactly as it does for anybody.
+
+    A grant's id begins with its memo's ("<memo_id>#<viewer>", share_rules),
+    so a share is placed by its memo."""
+    if params.get("memo_id"):
+        table, key = "memo", "memo_id"
+        value = params.get("memo_id")
+    elif params.get("document_id"):
+        table, key = "document", "document_id"
+        value = params.get("document_id")
+    elif params.get("grant_id"):
+        table, key = "memo", "memo_id"
+        value = urllib.parse.unquote(params.get("grant_id")).split("#", 1)[0]
+    else:
+        return False
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return False
+    found = _sql("SELECT workspace_id FROM %s WHERE tenant_id = :t "
+                 "AND %s = :v" % (table, key),
+                 [_p("t", tenant_id), _p("v", value)]).get("records", [])
+    if not found:
+        return False
+    mine = allowed()
+    return mine is not None and int(_col(found[0], 0) or 0) not in mine
+
+
 # --- dispatch --------------------------------------------------------------
 
 # A request whose JSON could not be read (copy review, 17 October 2026). Every
@@ -3429,14 +3486,56 @@ def _dispatch(event, context):
     engagement = urllib.parse.unquote(params.get("id", "")) \
         if params.get("id") else None
 
+    # Which workspaces this caller may work in (PACK-02 C): None for an
+    # administrator, the seat's assigned set for a member. Read at most once
+    # a request, and only by a request that needs it.
+    held = []
+
+    def allowed():
+        if not held:
+            held.append(seats.allowed_workspaces(tenant_id, email, role))
+        return held[0]
+
     # The workspace a route works in (PACK-01), from ?workspace= against this
     # tenant's own. Resolved only by the routes that touch configuration, so
     # a tenant with several workspaces is never asked to choose one to read
     # its wallet. Raises ValueError, answered as 400 below.
+    #
+    # A MEMBER, ONLY ONE ASSIGNED TO THEM (PACK-02 C). Named, it must be one
+    # of theirs - refused as 403 otherwise, after the tenant check, so another
+    # tenant's number is still a 400. Unnamed, the one rule as before, over
+    # their own workspaces instead of the tenant's.
     def ws():
-        return config.workspace(tenant_id, query.get("workspace"))
+        mine = allowed()
+        if mine is None:
+            return config.workspace(tenant_id, query.get("workspace"))
+        if query.get("workspace") not in (None, ""):
+            resolved = config.workspace(tenant_id, query.get("workspace"))
+            if resolved not in mine:
+                raise PermissionError(NOT_YOUR_WORKSPACE)
+            return resolved
+        if not mine:
+            raise PermissionError(NO_WORKSPACE_ASSIGNED)
+        if len(mine) == 1:
+            return next(iter(mine))
+        raise config.WorkspaceRequired(config.CHOOSE_A_WORKSPACE)
 
     try:
+        # AI Review is an administrator's, and says so before anything else
+        # is asked of the request - a member is told that, not which
+        # workspaces are theirs (PACK-02 C put a workspace check ahead of it).
+        if route in REVIEW_ROUTES:
+            _require_review_admin(role)
+
+        # A MEMO OR A DOCUMENT NAMED BY ITS NUMBER is in a workspace too, and
+        # a member reaches it only if that workspace is theirs (PACK-02 C).
+        # Checked here, once, for every route that names one - a check at
+        # each route is a check somebody forgets at the next. Answered as
+        # not found, as another tenant's number already is.
+        if role != "admin" and _outside_assignment(tenant_id, params,
+                                                   allowed):
+            return _reply(404, {"error": "not found"})
+
         if route == "GET /engagements":
             # ?name= asks what a typed name would become, and is how the
             # screen shows "Will be saved as TEST-2" while somebody types
@@ -3635,9 +3734,12 @@ def _dispatch(event, context):
         if route == "POST /seats/invitations":
             _require_seats_admin(role)
             body = json.loads(event.get("body") or "{}")
+            # A member's invitation names the workspaces they will see, at
+            # least one (PACK-02 C); seats.invite refuses otherwise.
             invited = seats.invite(tenant_id, email,
                                    body.get("email", ""),
-                                   body.get("role", "member"))
+                                   body.get("role", "member"),
+                                   body.get("workspaces"))
             # The token is returned once, in clear, and never again. The
             # screen still shows the link to copy: it is the fallback when an
             # invitation is lost, filtered or sent to the wrong address, and
@@ -3663,11 +3765,24 @@ def _dispatch(event, context):
             return _reply(200, seats.revoke_invitation(
                 tenant_id, params.get("invitation_id")))
 
+        # The seat's rights, its workspaces (PACK-02 C), or both. Each is
+        # changed only where the body names it: a body carrying only
+        # workspaces must not reset the role to its default and demote an
+        # administrator. A body naming neither is the role change it always
+        # was, so a screen that predates workspaces behaves as before.
         if route == "PUT /seats/{seat_id}":
             _require_seats_admin(role)
             body = json.loads(event.get("body") or "{}")
-            return _reply(200, seats.set_role(
-                tenant_id, params.get("seat_id"), body.get("role", "member")))
+            changed = {"seat_id": int(params.get("seat_id"))}
+            if "role" in body or "workspaces" not in body:
+                changed.update(seats.set_role(
+                    tenant_id, params.get("seat_id"),
+                    body.get("role", "member")))
+            if "workspaces" in body:
+                changed.update(seats.set_workspaces(
+                    tenant_id, email, params.get("seat_id"),
+                    body.get("workspaces")))
+            return _reply(200, changed)
 
         if route == "DELETE /seats/{seat_id}":
             _require_seats_admin(role)
@@ -3751,7 +3866,10 @@ def _dispatch(event, context):
             settings = get_settings(tenant_id, role)
             if settings is None:
                 return _reply(404, {"error": "not found"})
-            return _reply(200, settings)
+            # A member is shown the workspaces assigned to them, and no
+            # others (PACK-02 C) - the list the header's picker draws.
+            return _reply(200, dict(settings, workspaces=_visible(
+                settings["workspaces"], allowed())))
 
         if route == "POST /settings":
             body = json.loads(event.get("body") or "{}")
@@ -3777,7 +3895,9 @@ def _dispatch(event, context):
             return _reply(200, {"templates": templates(tenant_id, ws())})
 
         if route == "GET /config":
-            return _reply(200, config_state(tenant_id, ws()))
+            state = config_state(tenant_id, ws())
+            return _reply(200, dict(state, workspaces=_visible(
+                state["workspaces"], allowed())))
 
         if route == "GET /config/{revision}":
             return _reply(200, config_read(tenant_id, ws(),

@@ -148,8 +148,11 @@ class EngagementScopeTest(unittest.TestCase):
                 return rows(*held)
             return rows()
         db = Recorder(answer)
+        # A member assigned both (PACK-02 C).
         with mock.patch.object(self.app, "_sql", db.sql), \
-                mock.patch.object(self.app.config, "_sql", db.sql):
+                mock.patch.object(self.app.config, "_sql", db.sql), \
+                mock.patch.object(self.app.seats, "allowed_workspaces",
+                                  return_value={3, 9}):
             reply = self.app._dispatch({
                 "routeKey": "GET /engagements",
                 "queryStringParameters": {"workspace": "9"},
@@ -167,8 +170,12 @@ class EngagementScopeTest(unittest.TestCase):
                 return rows((3, "Trade Finance", 5))
             return rows()
         db = Recorder(answer)
+        # A member with nothing assigned: another tenant's number is still a
+        # 400, refused by the tenant check before the member's own.
         with mock.patch.object(self.app, "_sql", db.sql), \
-                mock.patch.object(self.app.config, "_sql", db.sql):
+                mock.patch.object(self.app.config, "_sql", db.sql), \
+                mock.patch.object(self.app.seats, "allowed_workspaces",
+                                  return_value=set()):
             reply = self.app._dispatch({
                 "routeKey": "GET /engagements",
                 "queryStringParameters": {"workspace": "12"},

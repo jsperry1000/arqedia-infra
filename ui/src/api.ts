@@ -104,6 +104,9 @@ export type Seat = {
   you: boolean;
   /** Outside the tenant's own domain. Allowed, and marked. */
   external: boolean;
+  /** The workspaces a member may see (PACK-02 C). Null for an
+   *  administrator, who sees every one. */
+  workspaces: number[] | null;
 };
 
 export type SeatInvitation = {
@@ -114,6 +117,9 @@ export type SeatInvitation = {
   created_at: string;
   expires_at: string;
   external: boolean;
+  /** What the member will see once they accept; null for an
+   *  administrator's invitation. */
+  workspaces: number[] | null;
 };
 
 export type Seats = {
@@ -1548,10 +1554,22 @@ export const api = {
   /** Reserve a seat and mint an invitation. Administrator only.
    *
    *  Refuses with 409 when every seat is taken or reserved. */
-  invite: (email: string, role: "admin" | "member"): Promise<Invited> =>
+  invite: (email: string, role: "admin" | "member",
+           workspaces: number[] = []): Promise<Invited> =>
     call("/seats/invitations", {
       method: "POST",
-      body: JSON.stringify({ email, role }),
+      // A member's invitation names the workspaces they will see, at least
+      // one (PACK-02 C); an administrator's names none.
+      body: JSON.stringify(role === "member" ? { email, role, workspaces }
+                                             : { email, role }),
+    }),
+
+  /** Which workspaces a member may see (PACK-02 C). At least one. The role
+   *  is left as it is. */
+  setSeatWorkspaces: (seatId: number, workspaces: number[]) =>
+    call(`/seats/${seatId}`, {
+      method: "PUT",
+      body: JSON.stringify({ workspaces }),
     }),
 
   revokeInvitation: (invitationId: number) =>

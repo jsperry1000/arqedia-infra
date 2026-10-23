@@ -7,6 +7,7 @@ import { api, chargeKey, type Wallet, type LedgerEntry,
          type Seats as SeatState, type Invited,
          type SubscriptionView, type Plan } from "./api";
 import { openCheckout } from "./paddle";
+import { useWorkspace } from "./workspace";
 import { INVOICES, Inert, NotConnected } from "./mock";
 
 /** Cents, as money. One place, so a balance and a ledger row never disagree
@@ -928,6 +929,36 @@ function Seats() {
   const [invited, setInvited] = useState<Invited | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // WHICH WORKSPACES A MEMBER SEES (PACK-02 C). An administrator sees every
+  // one; a member only those ticked here, at least one. The list is the
+  // tenant's, which an administrator - the only one on this screen who can
+  // change it - is shown in full. The invitation starts with the workspace
+  // in use ticked, so the common case is no extra click.
+  const workspace = useWorkspace();
+  const nameOf = (id: number) =>
+    workspace.workspaces.find((w) => w.workspace_id === id)?.name
+      ?? `Workspace ${id}`;
+  const [inviteTo, setInviteTo] = useState<number[]>(
+    workspace.active !== null ? [workspace.active] : []);
+  // The member whose workspaces are being changed, and the ticks so far.
+  const [editing, setEditing] = useState<number | null>(null);
+  const [editTo, setEditTo] = useState<number[]>([]);
+  const flip = (list: number[], id: number) =>
+    list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+  const ticks = (chosen: number[], change: (next: number[]) => void,
+                 name: string) => (
+    <>
+      {workspace.workspaces.map((w) => (
+        <label className="inline-check" key={w.workspace_id}>
+          <input type="checkbox" name={name}
+                 checked={chosen.includes(w.workspace_id)}
+                 onChange={() => change(flip(chosen, w.workspace_id))} />
+          {w.name}
+        </label>
+      ))}
+    </>
+  );
+
   const load = () =>
     api.seats().then(setState).catch((e) => setError(message(e)));
 
@@ -955,7 +986,8 @@ function Seats() {
     setInvited(null);
     setCopied(false);
     try {
-      const result = await api.invite(email, role);
+      const result = await api.invite(email, role,
+                                      role === "member" ? inviteTo : []);
       setInvited(result);
       setEmail("");
       await load();
@@ -987,7 +1019,7 @@ function Seats() {
       <TableScroll label="Seats">
       <table className="docs">
         <thead>
-          <tr><th>Person</th><th>Rights</th><th>Since</th><th></th></tr>
+          <tr><th>Person</th><th>Rights</th><th>Workspaces</th><th>Since</th><th></th></tr>
         </thead>
         <tbody>
           {state.seats.map((s) => (
@@ -1009,6 +1041,42 @@ function Seats() {
                 </select>
                 {s.role === "admin" && onlyAdmin && (
                   <div className="muted small">the only one</div>
+                )}
+              </td>
+              <td>
+                {s.workspaces === null ? (
+                  <span className="muted small">Every workspace</span>
+                ) : editing === s.seat_id ? (
+                  <>
+                    {ticks(editTo, setEditTo, `seat-${s.seat_id}`)}
+                    <div className="form-actions">
+                      <button disabled={!!busy || editTo.length === 0}
+                              onClick={() => act("Saving workspaces", async () => {
+                                await api.setSeatWorkspaces(s.seat_id, editTo);
+                                setEditing(null);
+                              })}>
+                        Save
+                      </button>
+                      <a className="secondary small"
+                         onClick={() => setEditing(null)}>Cancel</a>
+                      {editTo.length === 0 && (
+                        <span className="muted small">At least one.</span>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {s.workspaces.length === 0
+                      ? <span className="warn small">None &mdash; sees nothing</span>
+                      : <span className="small">
+                          {s.workspaces.map(nameOf).join(", ")}
+                        </span>}
+                    {" "}
+                    <a className="small" onClick={() => {
+                      setEditing(s.seat_id);
+                      setEditTo(s.workspaces ?? []);
+                    }}>Change</a>
+                  </>
                 )}
               </td>
               <td className="ref">{(s.accepted_at ?? "").slice(0, 10)}</td>
@@ -1035,6 +1103,10 @@ function Seats() {
               </td>
               <td className="muted">
                 {i.role === "admin" ? "Administrator" : "Member"}
+              </td>
+              <td className="muted small">
+                {i.workspaces === null ? "Every workspace"
+                  : i.workspaces.map(nameOf).join(", ")}
               </td>
               <td className="ref">reserved</td>
               <td>
@@ -1085,9 +1157,25 @@ function Seats() {
             <option value="admin">Administrator</option>
           </select>
         </label>
+        {/* A member sees only the workspaces ticked here (PACK-02 C); an
+            administrator sees every one, so is asked nothing. */}
+        {role === "member" && (
+          <div className="row">
+            <span>Workspaces</span>
+            <div>
+              {ticks(inviteTo, setInviteTo, "invite-workspaces")}
+              {inviteTo.length === 0 && (
+                <p className="muted small">
+                  Tick at least one. A member sees only these.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
         <div className="form-actions">
           <button onClick={sendInvite}
-                  disabled={!!busy || !email.includes("@") || state.free === 0}>
+                  disabled={!!busy || !email.includes("@") || state.free === 0
+                            || (role === "member" && inviteTo.length === 0)}>
             {state.free === 0 ? "No seat free" : "Invite"}
           </button>
           <span className="muted small">
@@ -1164,6 +1252,7 @@ function Seats() {
           <tr><td>Invite, remove or re-rank a seat</td><td className="ref">yes</td><td className="ref">no</td></tr>
           <tr><td>Set the brand</td><td className="ref">yes</td><td className="ref">no</td></tr>
           <tr><td>Close the account</td><td className="ref">yes</td><td className="ref">no</td></tr>
+          <tr><td>See a workspace</td><td className="ref">every one</td><td className="ref">those ticked</td></tr>
         </tbody>
       </table>
 
