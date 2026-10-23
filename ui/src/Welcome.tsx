@@ -429,8 +429,10 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
       {/* Publish is not selective: it ships the whole draft. Somebody with
           their own unpublished work in it needs to know that before they
           press the button, not afterwards. A first-run tenant has nothing of
-          their own to ship, so there is nothing to say. */}
-      {draftOpen && !firstRun && !stopAtDraft && (
+          their own to ship, so there is nothing to say - nor has a workspace
+          being made: the open draft is the ACTIVE workspace's, and this press
+          publishes the new one's (PACK-01). */}
+      {draftOpen && !creating && !stopAtDraft && (
         <p className="working-note">
           You have an open draft. Get started publishes it &mdash; the
           memoranda you tick here and any changes already in it, together.
