@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Status | Shape agreed in chat 23 October 2026; nothing built. A and B answered; C and D raised, D's shape open. |
+| Status | Shape agreed in chat 23 October 2026; nothing built. A, B and D answered; restore period for D not set. |
 | Depends on | PACK-01 (migrations 040, 042, 043; #352, #353, #354), all merged and applied on dev |
 | Type | Architecture — schema migration + Config Registry + API + Get started + Catalogue + curator screens |
 | Raised | 23 October 2026, from chat |
@@ -138,7 +138,7 @@ control on the seats screen.
 **D. An administrator deletes a workspace from the tenant**, with
 sufficient warnings and steps. This is the first delete in the product and
 sits against "additive and non-destructive" and "read once, never again",
-so its shape is open rather than proposed:
+so its shape was asked rather than proposed:
 
 - What it removes: its configuration and revisions, engagements,
   documents and their S3 objects, extracted values, claims, memos and
@@ -146,11 +146,16 @@ so its shape is open rather than proposed:
   per-workspace counterpart of `share.purge_tenant`, which nothing calls).
 - What it never touches: `wallet_ledger` and its buckets. Charges stay
   charged; nothing is refunded by deleting.
-- Open: removed at once, or hidden first and removed after a period in
-  which it can be restored. Whether the last workspace can be deleted.
-  What a member assigned only to it sees afterwards. What the steps are —
-  proposed: the counts it holds shown, its name typed to confirm, and the
-  administrator who did it recorded.
+- **Settled 23 October 2026:**
+  - **Hidden, then removed.** Hidden at once and restorable for a period,
+    then removed for good. The period is not set; 30 days proposed.
+  - **The last workspace cannot be deleted.** Removing everything is
+    account deletion, a separate act.
+  - **Steps:** the counts it holds shown (engagements, documents, memos,
+    active shares), its name typed, and a code emailed to the
+    administrator entered before it goes. The administrator is recorded.
+  - **Members are reassigned on delete.** Deleting asks which workspace
+    the members assigned only to this one move to. Depends on C.
 - The written manual procedure for account deletion (What is open, 20
   October 2026) is the same list for a whole tenant; one should be built
   from the other.
@@ -163,6 +168,6 @@ so its shape is open rather than proposed:
 4. Client screens: choose an offering, Catalogue scoped. `web/` with it.
 5. Apply; 044 out of held and applied; walk both tenants signed in.
 6. C: seat-to-workspace assignment.
-7. D: deleting a workspace, once its open points are decided.
+7. D: deleting a workspace.
 
 One branch per step, stopping at the end of each for review.
