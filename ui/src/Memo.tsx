@@ -671,6 +671,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
         <div>
           <h2>Memo {memo.label}</h2>
           <p className="muted">
+            {memo.workspace ? `Workspace ${memo.workspace} · ` : ""}
             Generated {(memo.generated_at ?? "").slice(0, 16)}
             {memo.generated_by ? " by " + memo.generated_by : ""}
             {memo.modified_by

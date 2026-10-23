@@ -1090,10 +1090,19 @@ def _tenant(tenant_id):
 
 
 def _memo(tenant_id, memo_id):
+    """The memo's row, with what identifies it: its number (the root of its
+    revision line), its version and its workspace's name. From the row, not
+    the markdown, which is written before the row numbers it (23 October
+    2026) - so every memo carries them, including those written before."""
     result = _sql(
         """
-        SELECT s3_bucket, s3_key, generated_at
-        FROM memo WHERE tenant_id = :t AND memo_id = :m
+        SELECT m.s3_bucket, m.s3_key, m.generated_at, m.parent_memo_id,
+               m.revision, w.name
+        FROM memo m
+        LEFT JOIN workspace w
+               ON w.workspace_id = m.workspace_id
+              AND w.tenant_id = m.tenant_id
+        WHERE m.tenant_id = :t AND m.memo_id = :m
         """,
         [_p("t", tenant_id), _p("m", memo_id)],
     )
@@ -1104,6 +1113,9 @@ def _memo(tenant_id, memo_id):
         "bucket": _col(records[0], 0),
         "key": _col(records[0], 1),
         "generated_at": _col(records[0], 2),
+        "number": _col(records[0], 3) or memo_id,
+        "version": _col(records[0], 4),
+        "workspace": _col(records[0], 5),
     }
 
 
@@ -1153,10 +1165,15 @@ def _branding(tenant):
 
 # --- building --------------------------------------------------------------
 
-def _build(tenant, markdown):
+def _build(tenant, markdown, memo=None):
     """The memorandum as PDF bytes, branded for its tenant. Written nowhere:
     the caller decides where a render goes, which is what lets a share render
-    the same memorandum without touching the tenant's own copy."""
+    the same memorandum without touching the tenant's own copy.
+
+    THE HEADING NAMES THE DOCUMENT (23 October 2026): its title, number and
+    version above the subject, and its workspace beside the engagement; the
+    running band on later pages repeats the number and version. memo is the
+    row _memo reads; a preview has none and is headed as it always was."""
     palette, logo, show_footer = _branding(tenant)
     styles = style.build_styles(palette)
     _set_cite_colour(palette)
@@ -1165,13 +1182,23 @@ def _build(tenant, markdown):
     engagement = _front(markdown, "Engagement")
     generated = _front(markdown, "Generated")
     memo_title = _title(markdown)
+    memo = memo or {}
 
-    detail = "  ·  ".join(x for x in (engagement, generated) if x)
+    kicker = memo_title
     runner = "%s  ·  %s" % (subject, memo_title)
+    if memo.get("version") is not None:
+        kicker = "%s  ·  No. %s  ·  Version %s" % (
+            memo_title, memo["number"], memo["version"])
+        runner = "%s  ·  No. %s, version %s" % (
+            runner, memo["number"], memo["version"])
+    workspace = ("Workspace: " + memo["workspace"]
+                 if memo.get("workspace") else "")
+
+    detail = "  ·  ".join(x for x in (engagement, workspace, generated) if x)
 
     buffer = io.BytesIO()
     doc = MemoDoc(buffer, palette, subject,
-                  memo_title, detail, runner,
+                  kicker, detail, runner,
                   logo, show_footer,
                   title=subject, author=tenant["name"])
 
@@ -1273,7 +1300,7 @@ def lambda_handler(event, context):
             Bucket=memo["bucket"],
             Key=memo["key"])["Body"].read().decode("utf-8")
 
-    pdf = _build(tenant, markdown)
+    pdf = _build(tenant, markdown, None if preview else memo)
 
     if not preview and event.get("share"):
         return _share(tenant_id, memo_id, tenant, pdf, event["share"])

@@ -430,6 +430,10 @@ export type Memo = {
   label: string;
   modified_by: string | null;
   modified_at: string | null;
+  /** The workspace's name; null for a memo from before workspaces. */
+  workspace: string | null;
+  /** Its title block carries Number, Version and Workspace rows, filled in
+   *  by the server from the memo row and taken out again on revise. */
   markdown: string;
   /** Every document this memo was written from. `removed` is a source whose
    *  document has been deleted: the memo still cites it, the citation still

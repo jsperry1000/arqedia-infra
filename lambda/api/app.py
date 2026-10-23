@@ -1602,18 +1602,81 @@ def list_memos(tenant_id, engagement_id, include_archived=False):
     ]
 
 
+# --- a memo's identity in its front matter (23 October 2026) ----------------
+#
+# Number, version and workspace, as rows of the title block. NOT STORED: the
+# markdown is written, and hashed, before the memo row that numbers it exists,
+# and a revision's text is its parent's edited - a stored "Version 1" would be
+# wrong in every revision after it. So they are filled in from the memo row
+# whenever a memo is read, and taken out again before a revision is saved.
+# Every memo has them, including those written before this, and none is wrong.
+#
+# The renderer draws the same three in the PDF's masthead from the same row.
+
+_IDENTITY_ROW = re.compile(
+    r"^\|\s*\*\*(?:Number|Version|Workspace)\*\*\s*\|.*\|\s*$")
+_SECTION_START = re.compile(r"^##(?!#)\s+\S")
+_EMPTY_HEADER = re.compile(r"^\|\s*\|\s*\|\s*$")
+
+
+def _head_length(lines):
+    """How many lines come before the first section: the title block."""
+    for i, line in enumerate(lines):
+        if _SECTION_START.match(line):
+            return i
+    return len(lines)
+
+
+def _without_identity(markdown):
+    """The text with the identity rows taken out of its title block, and
+    nothing else touched. A body table whose first cell happens to read
+    Number is below the first section, and is left alone."""
+    lines = (markdown or "").split("\n")
+    end = _head_length(lines)
+    head = [line for line in lines[:end] if not _IDENTITY_ROW.match(line)]
+    return "\n".join(head + lines[end:])
+
+
+def _with_identity(markdown, number, version, workspace):
+    """The text with the identity rows at the foot of its title block. A memo
+    with no title block - nothing composition writes, but a person can delete
+    one - is returned as it is."""
+    lines = _without_identity(markdown).split("\n")
+    end = _head_length(lines)
+    for i in range(end - 1):
+        if _EMPTY_HEADER.match(lines[i]) \
+                and lines[i + 1].lstrip().startswith("|"):
+            j = i + 2
+            while j < end and lines[j].lstrip().startswith("|"):
+                j += 1
+            rows = ["| **Number** | %s |" % number,
+                    "| **Version** | %s |" % version]
+            if workspace:
+                rows.append("| **Workspace** | %s |"
+                            % str(workspace).replace("|", "\\|"))
+            return "\n".join(lines[:j] + rows + lines[j:])
+    return "\n".join(lines)
+
+
 def get_memo(tenant_id, memo_id):
     """A memo, a signed link to its PDF, and the documents behind it.
 
     The sources are returned so the reader can turn a citation - which names a
     filename - into something it can open. The memo text has no document
-    identifiers in it; this is the map."""
+    identifiers in it; this is the map.
+
+    The text carries the memo's number, version and workspace in its title
+    block, filled in here (see _with_identity)."""
     result = _sql(
         """
-        SELECT s3_bucket, s3_key, generated_at, generated_by, pdf_key,
-               parent_memo_id, revision, modified_by, modified_at
-        FROM memo
-        WHERE tenant_id = :tenant_id AND memo_id = :memo_id
+        SELECT m.s3_bucket, m.s3_key, m.generated_at, m.generated_by,
+               m.pdf_key, m.parent_memo_id, m.revision, m.modified_by,
+               m.modified_at, w.name
+        FROM memo m
+        LEFT JOIN workspace w
+               ON w.workspace_id = m.workspace_id
+              AND w.tenant_id = m.tenant_id
+        WHERE m.tenant_id = :tenant_id AND m.memo_id = :memo_id
         """,
         [_p("tenant_id", tenant_id), _p("memo_id", int(memo_id))],
     )
@@ -1624,6 +1687,9 @@ def get_memo(tenant_id, memo_id):
 
     markdown = _s3.get_object(
         Bucket=_col(r, 0), Key=_col(r, 1))["Body"].read().decode("utf-8")
+    workspace = _col(r, 9)
+    markdown = _with_identity(markdown, _col(r, 5) or int(memo_id),
+                              _col(r, 6), workspace)
 
     # LEFT JOIN, and the name from whichever side still holds it.
     #
@@ -1679,6 +1745,8 @@ def get_memo(tenant_id, memo_id):
         "label": "%s.%s" % (_col(r, 5) or int(memo_id), _col(r, 6)),
         "modified_by": _col(r, 7),
         "modified_at": _col(r, 8),
+        # The workspace's name, null for a memo from before workspaces.
+        "workspace": workspace,
         "markdown": markdown,
         "sources": [{"document_id": _col(s, 0),
                      # A source deleted before migration 028 ran has no name
@@ -1719,7 +1787,13 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
     text cites is checked against the engagement's filed, active documents
     and added to the new revision's sources; the check refuses anything else
     exactly as it did.
+
+    THE IDENTITY ROWS ARE TAKEN OUT FIRST. get_memo fills the parent's number
+    and version into the text the editor started from; stored, they would
+    name the parent in the revision. They are filled in again, right, when
+    the revision is read.
     """
+    markdown = _without_identity(markdown)
     parent = _sql(
         """
         SELECT s3_key, template_key, config_revision, parent_memo_id, revision,
