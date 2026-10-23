@@ -486,8 +486,11 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
             ) : offerings.length === 1 ? (
               <p className="muted small">
                 From our {chosenOffering?.name ?? "one"} offering:{" "}
-                {chosenOffering?.document_types} document types and{" "}
-                {chosenOffering?.fields} facts.
+                {chosenOffering?.document_types}{" "}
+                {chosenOffering?.document_types === 1
+                  ? "document type" : "document types"} and{" "}
+                {chosenOffering?.fields}{" "}
+                {chosenOffering?.fields === 1 ? "fact" : "facts"}.
               </p>
             ) : (
               <>
@@ -499,8 +502,10 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
                            onChange={() => setChosen(o.workspace_id)} />
                     {o.name ?? "Unnamed"}{" "}
                     <span className="muted small">
-                      {o.document_types} document types &middot; {o.fields}{" "}
-                      facts
+                      {o.document_types}{" "}
+                      {o.document_types === 1 ? "document type"
+                                              : "document types"}{" "}
+                      &middot; {o.fields} {o.fields === 1 ? "fact" : "facts"}
                     </span>
                   </label>
                 ))}
