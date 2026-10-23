@@ -51,6 +51,9 @@ first accepted suggestion, keyed review:<session_id>. The order is quote,
 write, charge: a write that is refused or fails never takes the dollar. A
 session nobody accepts anything from costs nothing, and a read that fails
 offers nothing to accept, so there is nothing to refund.
+
+THE ARQEDIA WORKSPACE (tenant 0) IS EXEMPT from the plan gate and the charge
+(decision of 23 October 2026). See _curator.
 """
 
 import datetime
@@ -248,7 +251,19 @@ def _plan_key(tenant_id):
     return plan.strip().lower().replace(" ", "_")
 
 
+def _curator(tenant_id):
+    """The ARQEDIA workspace (decision of 23 October 2026). It curates the
+    catalogue every tenant forks from, and reviewing that draft is the work.
+    It holds no subscription and may not buy one (CURATOR_REFUSED_ROUTES in
+    lambda/api/app.py), so the plan gate would refuse it for ever; and it
+    pays for nothing, as billing.workspace_limit gives it no limit. Neither
+    the plan gate nor the charge applies to it."""
+    return int(tenant_id) == registry.PACK_TENANT
+
+
 def _require_plan(tenant_id):
+    if _curator(tenant_id):
+        return
     if _plan_key(tenant_id) not in REVIEW_PLANS:
         raise PermissionError("AI Review is available on Business and "
                               "Enterprise")
@@ -287,11 +302,15 @@ def open_session(tenant_id, workspace_id, email, role):
     workspace_id = config.workspace(tenant_id, workspace_id)
     editor.draft(tenant_id, workspace_id)   # "no draft is open" is raised here
 
-    quote = wallet.quote(tenant_id, EVENT)   # Unpriced is raised here
-    if not quote["affordable"]:
-        raise wallet.InsufficientFunds(quote["total_cents"],
-                                       quote["available_cents"],
-                                       quote["purchased_only"])
+    # The curator is not charged, so not quoted: a price of nothing, which
+    # the screen reads as no price to accept.
+    quote = {"unit_cents": 0}
+    if not _curator(tenant_id):
+        quote = wallet.quote(tenant_id, EVENT)   # Unpriced is raised here
+        if not quote["affordable"]:
+            raise wallet.InsufficientFunds(quote["total_cents"],
+                                           quote["available_cents"],
+                                           quote["purchased_only"])
 
     session_id = uuid.uuid4().hex
     review = {
@@ -888,9 +907,11 @@ def accept(tenant_id, email, role, session_id, suggestion_id, value=None,
     proposed = _value(suggestion, value, draft)
 
     # The price, before anything is written - unless this session is already
-    # paid for, in which case the balance no longer matters to it.
-    entry_id = _charged(tenant_id, session_id)
-    if entry_id is None:
+    # paid for, in which case the balance no longer matters to it. The
+    # curator pays for nothing (_curator), so is neither quoted nor charged.
+    free = _curator(tenant_id)
+    entry_id = None if free else _charged(tenant_id, session_id)
+    if entry_id is None and not free:
         quote = wallet.quote(tenant_id, EVENT)
         if not quote["affordable"]:
             raise wallet.InsufficientFunds(quote["total_cents"],
@@ -901,7 +922,7 @@ def accept(tenant_id, email, role, session_id, suggestion_id, value=None,
                      bind_to)
 
     charge = None
-    if entry_id is None:
+    if entry_id is None and not free:
         try:
             charge = wallet.charge(
                 tenant_id, email, EVENT, 1,

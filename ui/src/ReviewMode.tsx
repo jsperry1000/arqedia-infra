@@ -323,7 +323,8 @@ export function ReviewMode({ draft, onClose, onChanged, onEditBindings }: {
 
   const accept = async (s: ReviewSuggestion, group: Group) => {
     if (!session) return;
-    if (!charged && paying !== s.id) {
+    // A review with no price - the ARQEDIA workspace's - has none to accept.
+    if (!charged && price > 0 && paying !== s.id) {
       setPaying(s.id);
       return;
     }
