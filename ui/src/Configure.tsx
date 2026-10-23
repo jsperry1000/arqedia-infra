@@ -1453,9 +1453,9 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
           act("Discarding", api.discardDraft);
         }}>Discard</a>
         )}
-        {/* Plain, not gold: gold is the generate control's alone
-            (CLAUDE.md, Brand and colour). The drawer's own Publish below
-            matches. */}
+        {/* Plain, not gold: publishing charges nothing, and gold is an act
+            that charges (CLAUDE.md, Brand and colour, amended 23 October
+            2026). The drawer's own Publish below matches. */}
         <button className="plain"
           disabled={!!busy || readOnly
                     || (validation ? !validation.may_publish : false)}

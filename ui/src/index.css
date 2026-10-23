@@ -238,12 +238,15 @@ button {
 button:hover:not(:disabled) { background: var(--medium); }
 button:disabled { background: var(--line); color: var(--muted); cursor: default; }
 
-/* Generating is the deliberate act - and the one that will cost money.
-   Gold appears here and nowhere else. */
-main button { background: var(--gold); color: var(--deep); }
-main button:hover:not(:disabled) { background: #f5d400; }
-main button:disabled { background: var(--line); color: var(--muted); }
-/* Not gold: a choice that is not generating (Share a memo's shortfall). */
+/* GOLD IS THE ACT THAT COSTS MONEY, and only that (decided 23 October
+   2026): filing, generating, an Update, a top-up, a plan bought or changed,
+   a share past the allowance. Marked .spend where it is drawn. Every other
+   button is the navy above - until then every button in main was gold, and
+   gold said nothing. */
+main button.spend { background: var(--gold); color: var(--deep); }
+main button.spend:hover:not(:disabled) { background: #f5d400; }
+main button.spend:disabled { background: var(--line); color: var(--muted); }
+/* What the default is now. Kept where it was written to say "not gold". */
 main button.plain { background: var(--deep); color: #fff; }
 main button.plain:hover:not(:disabled) { background: var(--medium); }
 main button.plain:disabled { background: var(--line); color: var(--muted); }

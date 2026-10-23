@@ -394,7 +394,8 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
 
           <div className="form-actions">
             {failed.length > 0 && !sending && (
-              <button className="plain" onClick={retry}>
+              <button className={retryCost > 0 ? "spend" : "plain"}
+                      onClick={retry}>
                 Retry the {failed.length === 1 ? "one" : failed.length} that failed
                 {retryCost > 0 && ` — charges up to ${money(retryCost)}`}
               </button>
@@ -454,7 +455,7 @@ function Shortfall({ plan, name, onRemove, onIncludedOnly, onAll, onTopUp,
           </button>
         )}
         {plan.unitCents !== null && (
-          <button className="plain" onClick={onAll}>
+          <button className="spend" onClick={onAll}>
             Send all and charge {money(plan.totalCents)}
           </button>
         )}

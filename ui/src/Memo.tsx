@@ -1059,7 +1059,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
                 ) : (
                   // Held until priced: the price is on the button that
                   // spends, and a button with no price on it is not offered.
-                  <button disabled={!updateQuote || startingUpdate}
+                  <button className="spend"
+                          disabled={!updateQuote || startingUpdate}
                           onClick={startUpdate}>
                     {startingUpdate ? "Starting…" : updateQuote
                       ? `Update · ${money(updateQuote.total_cents)}`

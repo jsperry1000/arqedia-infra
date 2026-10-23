@@ -1173,7 +1173,8 @@ export function EngagementView({ id, onBack, onMemo }: {
               ticked count; a button that spends must not show a figure it
               has not been told. Rows that could not be read are ticked for
               removal only and are never sent. */}
-          <button disabled={!!busy || !subject || pickedToFile.length === 0
+          <button className="spend"
+                  disabled={!!busy || !subject || pickedToFile.length === 0
                             || !pickedQuote || !pickedQuote.affordable}
                   onClick={() => fileRows(pickedToFile)}
                   title={!subject ? "Name the subject of this engagement first."
@@ -1470,7 +1471,7 @@ export function EngagementView({ id, onBack, onMemo }: {
           )}
           {firstAffordable.length > 0 && fileQuote && (
             <div className="form-actions">
-              <button disabled={!!busy || !subject}
+              <button className="spend" disabled={!!busy || !subject}
                       onClick={fileFirstAffordable}
                       title="Ticks the first of them, in upload order, and
                              files those.">
@@ -1491,7 +1492,7 @@ export function EngagementView({ id, onBack, onMemo }: {
               apart that did different things under the same word. It now
               files the ticked rows, priced by the same quote, held on the
               same conditions. Select all above ticks the whole batch. */}
-          <button onClick={() => fileRows(pickedToFile)}
+          <button className="spend" onClick={() => fileRows(pickedToFile)}
                   disabled={!!busy || !subject || pickedToFile.length === 0
                             || !pickedQuote || !pickedQuote.affordable}
                   title={!subject ? "Name the subject of this engagement first."
@@ -1766,7 +1767,7 @@ export function EngagementView({ id, onBack, onMemo }: {
           opens the confirmation; the charge happens on the one inside it.
           Filing has shown its cost before the click since the wallet was
           built - this is that, for the other act that spends. */}
-      <button onClick={() => setConfirming(true)}
+      <button className="spend" onClick={() => setConfirming(true)}
               disabled={blocked || activeCount === 0 || nothingToWrite
                         || (memoQuote ? !memoQuote.affordable : false)}>
         {reading > 0
@@ -1949,7 +1950,8 @@ export function EngagementView({ id, onBack, onMemo }: {
                     Top up
                   </button>
                 ) : (
-                  <button disabled={blocked || activeCount === 0}
+                  <button className="spend"
+                          disabled={blocked || activeCount === 0}
                           onClick={() => { setConfirming(false); generate(); }}>
                     Generate{memoQuote
                       ? ` · ${money(memoQuote.total_cents)}` : ""}

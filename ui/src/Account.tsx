@@ -493,7 +493,8 @@ function Subscription() {
       <div className="form-actions">
         {active ? (
           <>
-            <button disabled={!!busy || !chosen || chosen === view.plan}
+            <button className="spend"
+                    disabled={!!busy || !chosen || chosen === view.plan}
                     onClick={() => chosen && change(chosen)}>
               {target && chosen !== view.plan
                 ? `Change to ${target.name}` : "Change plan"}
@@ -518,7 +519,7 @@ function Subscription() {
           </>
         ) : (
           <>
-            <button disabled={!!busy || !chosen}
+            <button className="spend" disabled={!!busy || !chosen}
                     onClick={() => chosen && subscribe(chosen)}>
               {target ? `Subscribe on ${target.name}` : "Subscribe"}
             </button>
@@ -744,7 +745,7 @@ function Balance() {
         {/* This press opens the confirmation; the card is charged on the one
             inside it (4.2). Every other act that spends is asked for twice,
             and this is the only one that reaches a card. */}
-        <button onClick={() => setConfirming(true)}
+        <button className="spend" onClick={() => setConfirming(true)}
                 disabled={!!busy || topup === null}
                 title={topup === null
                   ? "Reading what an increment costs." : undefined}>
@@ -815,7 +816,7 @@ function Balance() {
               )}
 
               <div className="form-actions">
-                <button disabled={!!busy}
+                <button className="spend" disabled={!!busy}
                         onClick={() => { setConfirming(false); topUp(); }}>
                   Charge {money(increments * topup)}
                 </button>

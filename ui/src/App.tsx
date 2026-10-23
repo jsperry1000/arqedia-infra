@@ -667,8 +667,8 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
             }}>
         <input placeholder="New engagement name" value={newName}
                onChange={(e) => setNewName(e.target.value)} />
-        {/* Plain, not gold: gold is the generate control's alone
-            (CLAUDE.md, Brand and colour). */}
+        {/* Plain, not gold: gold is an act that charges, and this is not
+            one (CLAUDE.md, Brand and colour, amended 23 October 2026). */}
         <button className="plain" disabled={opening}>
           {opening ? "Opening..." : "Open"}
         </button>
