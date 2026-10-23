@@ -368,10 +368,15 @@ def load(tenant_id, workspace_id, revision):
 
 
 def workspaces(tenant_id):
-    """The tenant's workspaces, oldest first."""
+    """The tenant's workspaces, oldest first.
+
+    NOT A DELETED ONE (PACK-02 D). A deleted workspace is hidden for six
+    months before it is removed, and this is where it is hidden: every list,
+    every lookup by number and the one-workspace default read through here.
+    Restoring it clears deleted_at, and it is back."""
     result = _sql(
         "SELECT workspace_id, name, active_revision FROM workspace "
-        "WHERE tenant_id = :t ORDER BY workspace_id",
+        "WHERE tenant_id = :t AND deleted_at IS NULL ORDER BY workspace_id",
         [_p("t", int(tenant_id))])
     return [{"workspace_id": _col(r, 0), "name": _col(r, 1),
              "active_revision": _col(r, 2)}

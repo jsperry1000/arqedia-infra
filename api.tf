@@ -368,6 +368,13 @@ locals {
     "PUT /seats/{seat_id}",
     "DELETE /seats/{seat_id}",
 
+    # Deleting a workspace (PACK-02 D): hidden for six months, then removed,
+    # restorable until then. Administrators only, refused in the handler.
+    "GET /workspaces",
+    "POST /workspaces/{workspace_id}/delete/code",
+    "POST /workspaces/{workspace_id}/delete",
+    "POST /workspaces/{workspace_id}/restore",
+
     # Sharing (share-recipient). Any seat may send and revoke - revoking
     # works in every state, capped included (share_viewer_spec section 6).
     # Sending opens from the memorandum's own page; the list is /shares.

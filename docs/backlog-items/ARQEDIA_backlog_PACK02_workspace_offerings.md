@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Status | Steps 1-5 built and deployed on dev (#361-#371). C deployed and walked (#372-#375, migration 045). Plan limits built on a branch (migration 046). D decided, not built. |
+| Status | Steps 1-5 built and deployed on dev (#361-#371). C deployed and walked (#372-#375, migration 045). Plan limits deployed and walked (#376, migration 046). D's hide and restore built on a branch (migration 047); its removal after six months not built. |
 | Depends on | PACK-01 (migrations 040, 042, 043; #352, #353, #354), all merged and applied on dev |
 | Type | Architecture — schema migration + Config Registry + API + Get started + Catalogue + curator screens |
 | Raised | 23 October 2026, from chat |
@@ -193,6 +193,21 @@ so its shape was asked rather than proposed:
 - The written manual procedure for account deletion (What is open, 20
   October 2026) is the same list for a whole tenant; one should be built
   from the other.
+- **Settled further, 23 October 2026, all asked in-session:** shares are
+  **suspended**, not revoked, while hidden, and a restore lifts them; a
+  hidden workspace is **not counted** against the plan, and a restore asks
+  for room; **hide and restore first**, the removal job a branch of its own
+  due before the first date (April 2027); **offerings are not deleted in D**.
+- Built on `feature/pack02-delete-workspace`: migration 047
+  (`workspace.deleted_at`, `deleted_by`, `remove_after`; table
+  `workspace_deletion`, the code hashed, fifteen minutes, five tries, one a
+  minute), `lambda/api/workspaces.py` and four routes, `config.workspaces`
+  and the seat queries hiding a deleted workspace, a memo, document or share
+  in one answered not found for anybody, `share_rules.refusal` refusing a
+  suspended grant, and a Workspaces tab under Account management. The rows
+  that assign a hidden workspace to members are kept, so a restore gives
+  back the access there was; members moved away keep where they were moved
+  as well.
 
 ### Sequence
 

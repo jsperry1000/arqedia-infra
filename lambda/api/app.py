@@ -86,6 +86,15 @@ Paying for a plan. Nothing here grants money; Paddle's webhooks do.
   POST /billing/plan                     upgrade or downgrade
   POST /wallet/top-up                    buy $5 increments on the stored card
 
+Deleting a workspace (PACK-02 D, workspaces.py): hidden for six months, then
+removed; restorable until then. Administrators only, never the ARQEDIA
+workspace's offerings.
+  GET  /workspaces                       each, with what it holds; the deleted
+  POST /workspaces/{workspace_id}/delete/code   email the administrator a code
+  POST /workspaces/{workspace_id}/delete        the name, the code, and where
+                                                its only members move
+  POST /workspaces/{workspace_id}/restore       bring it back
+
 Sharing a memorandum with somebody outside the workspace (share.py). The
 recipient's half is the share-viewer function, not this one.
 
@@ -125,6 +134,7 @@ import registry
 import seats
 import textract
 import wallet
+import workspaces
 
 _s3 = boto3.client("s3")
 _rds = boto3.client("rds-data")
@@ -3399,7 +3409,8 @@ def _visible(workspaces, mine):
 
 def _outside_assignment(tenant_id, params, allowed):
     """Whether a memo, document or share named in the path is in a workspace
-    this member may not reach. False where the row is not found: the route
+    this caller may not reach: a DELETED one, for anybody (PACK-02 D), or one
+    not assigned to a member (C). False where the row is not found: the route
     answers that itself, exactly as it does for anybody.
 
     A grant's id begins with its memo's ("<memo_id>#<viewer>", share_rules),
@@ -3419,11 +3430,16 @@ def _outside_assignment(tenant_id, params, allowed):
         value = int(value)
     except (TypeError, ValueError):
         return False
-    found = _sql("SELECT workspace_id FROM %s WHERE tenant_id = :t "
-                 "AND %s = :v" % (table, key),
+    found = _sql("SELECT x.workspace_id, w.deleted_at IS NOT NULL "
+                 "FROM %s x LEFT JOIN workspace w "
+                 "ON w.workspace_id = x.workspace_id "
+                 "AND w.tenant_id = x.tenant_id "
+                 "WHERE x.tenant_id = :t AND x.%s = :v" % (table, key),
                  [_p("t", tenant_id), _p("v", value)]).get("records", [])
     if not found:
         return False
+    if _col(found[0], 1):
+        return True
     mine = allowed()
     return mine is not None and int(_col(found[0], 0) or 0) not in mine
 
@@ -3533,12 +3549,12 @@ def _dispatch(event, context):
             _require_review_admin(role)
 
         # A MEMO OR A DOCUMENT NAMED BY ITS NUMBER is in a workspace too, and
-        # a member reaches it only if that workspace is theirs (PACK-02 C).
-        # Checked here, once, for every route that names one - a check at
-        # each route is a check somebody forgets at the next. Answered as
-        # not found, as another tenant's number already is.
-        if role != "admin" and _outside_assignment(tenant_id, params,
-                                                   allowed):
+        # a member reaches it only if that workspace is theirs (PACK-02 C);
+        # nobody reaches it in a deleted one (D). Checked here, once, for
+        # every route that names one - a check at each route is a check
+        # somebody forgets at the next. Answered as not found, as another
+        # tenant's number already is.
+        if _outside_assignment(tenant_id, params, allowed):
             return _reply(404, {"error": "not found"})
 
         if route == "GET /engagements":
@@ -3792,6 +3808,33 @@ def _dispatch(event, context):
         if route == "DELETE /seats/{seat_id}":
             _require_seats_admin(role)
             return _reply(200, seats.remove(tenant_id, params.get("seat_id")))
+
+        # --- deleting a workspace (PACK-02 D) ------------------------------
+        # Hidden for six months, then removed; restorable until then. The
+        # steps and their refusals are workspaces.py's. No ws(): these name
+        # their workspace in the path, and a hidden one is exactly what
+        # config.workspace would refuse.
+        if route == "GET /workspaces":
+            return _reply(200, workspaces.listing(tenant_id, role))
+
+        if route == "POST /workspaces/{workspace_id}/delete/code":
+            out = workspaces.request_code(tenant_id, email, role,
+                                          params.get("workspace_id"))
+            return _reply(200, out) if out is not None \
+                else _reply(404, {"error": "not found"})
+
+        if route == "POST /workspaces/{workspace_id}/delete":
+            out = workspaces.delete(tenant_id, email, role,
+                                    params.get("workspace_id"),
+                                    json.loads(event.get("body") or "{}"))
+            return _reply(200, out) if out is not None \
+                else _reply(404, {"error": "not found"})
+
+        if route == "POST /workspaces/{workspace_id}/restore":
+            out = workspaces.restore(tenant_id, email, role,
+                                     params.get("workspace_id"))
+            return _reply(200, out) if out is not None \
+                else _reply(404, {"error": "not found"})
 
         # --- sharing -------------------------------------------------------
         if route in SHARE_ROUTES:
@@ -4182,6 +4225,8 @@ def _dispatch(event, context):
                             "paddle_code": exc.code})
     except seats.SeatsFull as exc:
         # 409: nothing is wrong with the request - there is simply no room.
+        return _reply(409, {"error": str(exc)})
+    except workspaces.Refused as exc:
         return _reply(409, {"error": str(exc)})
     except seats.LastAdmin as exc:
         return _reply(409, {"error": str(exc)})

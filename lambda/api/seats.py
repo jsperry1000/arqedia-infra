@@ -191,10 +191,18 @@ def _admins(tenant_id):
 
 # --- which workspaces (PACK-02 C) ------------------------------------------
 
+# A DELETED WORKSPACE IS NOT HERE (PACK-02 D). Hidden for six months, it is
+# not one a seat can be given, nor one a member works in - but the rows that
+# assign it are kept, and nothing below deletes them, so a restore gives back
+# exactly the access there was.
+_LIVE = ("SELECT workspace_id FROM workspace "
+         "WHERE tenant_id = :t AND deleted_at IS NULL")
+
+
 def _tenant_workspaces(tenant_id):
     return [int(_col(r, 0)) for r in _sql(
-        "SELECT workspace_id FROM workspace WHERE tenant_id = :t "
-        "ORDER BY workspace_id", [_p("t", tenant_id)]).get("records", [])]
+        _LIVE + " ORDER BY workspace_id", [_p("t", tenant_id)]
+    ).get("records", [])]
 
 
 def _checked_workspaces(tenant_id, workspace_ids):
@@ -235,7 +243,8 @@ def allowed_workspaces(tenant_id, email, role):
         JOIN seat_workspace sw ON sw.seat_id = s.seat_id
          AND sw.tenant_id = s.tenant_id
         WHERE s.tenant_id = :t AND s.email = :e
-        """,
+          AND sw.workspace_id IN (%s)
+        """ % _LIVE,
         [_p("t", tenant_id), _p("e", (email or "").strip().lower())],
     ).get("records", [])
     return {int(_col(r, 0)) for r in rows}
@@ -261,8 +270,11 @@ def set_workspaces(tenant_id, email, seat_id, workspace_ids):
     for i, w in enumerate(wanted):
         names.append(":w%d" % i)
         params.append(_p("w%d" % i, w))
+    # Live workspaces only: a hidden one is not on the screen to be ticked,
+    # and its row is what a restore gives back.
     _sql("DELETE FROM seat_workspace WHERE tenant_id = :t AND seat_id = :s "
-         "AND workspace_id NOT IN (%s)" % ", ".join(names),
+         "AND workspace_id NOT IN (%s) AND workspace_id IN (%s)"
+         % (", ".join(names), _LIVE),
          [_p("t", tenant_id), _p("s", int(seat_id))] + params)
     for w in wanted:
         _sql("INSERT IGNORE INTO seat_workspace "
@@ -277,7 +289,8 @@ def _seat_workspaces(tenant_id):
     """Every member seat's workspaces, by seat."""
     out = {}
     for r in _sql("SELECT seat_id, workspace_id FROM seat_workspace "
-                  "WHERE tenant_id = :t ORDER BY workspace_id",
+                  "WHERE tenant_id = :t AND workspace_id IN (%s) "
+                  "ORDER BY workspace_id" % _LIVE,
                   [_p("t", tenant_id)]).get("records", []):
         out.setdefault(int(_col(r, 0)), []).append(int(_col(r, 1)))
     return out
@@ -289,7 +302,8 @@ def _invitation_workspaces(tenant_id):
             "SELECT iw.invitation_id, iw.workspace_id "
             "FROM seat_invitation_workspace iw "
             "JOIN seat_invitation i ON i.invitation_id = iw.invitation_id "
-            "WHERE i.tenant_id = :t ORDER BY iw.workspace_id",
+            "WHERE i.tenant_id = :t AND iw.workspace_id IN (%s) "
+            "ORDER BY iw.workspace_id" % _LIVE,
             [_p("t", tenant_id)]).get("records", []):
         out.setdefault(int(_col(r, 0)), []).append(int(_col(r, 1)))
     return out
@@ -502,7 +516,7 @@ def set_role(tenant_id, seat_id, role):
         _sql("INSERT IGNORE INTO seat_workspace "
              "(tenant_id, seat_id, workspace_id, assigned_by) "
              "SELECT :t, :s, workspace_id, 'made a member' FROM workspace "
-             "WHERE tenant_id = :t",
+             "WHERE tenant_id = :t AND deleted_at IS NULL",
              [_p("t", tenant_id), _p("s", int(seat_id))])
     return {"seat_id": int(seat_id), "role": role}
 
