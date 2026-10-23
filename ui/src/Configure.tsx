@@ -61,11 +61,13 @@ function toggled(open: Set<string>, key: string): Set<string> {
  *  schema is the one word the configuration screen never uses, so it is not
  *  reported either - it is machinery, and every fact it carries is listed. */
 function added(report: StartReport): [string, string[]][] {
+  const named = (one: string, many: string, names: string[]):
+      [string, string[]] => [names.length === 1 ? one : many, names];
   return ([
-    ["facts", report.added.facts],
-    ["document types", report.added.document_types],
-    ["categories", report.added.categories],
-  ] as [string, string[]][]).filter(([, names]) => names.length > 0);
+    named("fact", "facts", report.added.facts),
+    named("document type", "document types", report.added.document_types),
+    named("category", "categories", report.added.categories),
+  ]).filter(([, names]) => names.length > 0);
 }
 
 /**
@@ -1145,8 +1147,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             which facts come depends on which is chosen (PACK-02). */}
         {base && packs.length === 1 && (
           <p className="muted small">
-            {base.document_types} document types &middot; {base.fields} facts
-            with any of our memoranda.
+            {base.document_types}{" "}
+            {base.document_types === 1 ? "document type" : "document types"}
+            {" "}&middot; {base.fields} {base.fields === 1 ? "fact" : "facts"}
+            {" "}with any of our memoranda.
           </p>
         )}
 
