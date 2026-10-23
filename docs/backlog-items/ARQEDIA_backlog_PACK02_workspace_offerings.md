@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Status | Shape agreed in chat 23 October 2026; nothing built. Two items open (below). |
+| Status | Shape agreed in chat 23 October 2026; nothing built. A, B and D answered; restore period for D not set. |
 | Depends on | PACK-01 (migrations 040, 042, 043; #352, #353, #354), all merged and applied on dev |
 | Type | Architecture — schema migration + Config Registry + API + Get started + Catalogue + curator screens |
 | Raised | 23 October 2026, from chat |
@@ -56,10 +56,18 @@ an offering.
    workspace does not hold.
 5. **Today's client workspaces are linked to Trade Finance**
    (`forked_from_workspace_id`), so their Catalogue keeps offering what it
-   offers now.
+   offers now. **Except** tenant 2's workspace 9 "AR FINANCING" and tenant
+   5's workspace 10 "REAL ESTATE", which are **left unlinked** (open item A,
+   answered 23 October 2026): their Catalogue offers no memoranda of ours
+   until they are linked or re-forked from their own offering.
 6. **A new offering starts empty**, with no facts, document types or
    memoranda. It is built by hand, or from a report uploaded and read by the
    proposer and structured from there — the same two routes a client has.
+7. **A client's own report starts from whatever the workspace holds when
+   they start it** (open item B, answered 23 October 2026). No offering's
+   base is forked for it. In an existing workspace that is its own facts and
+   document types; a workspace made for an own report holds nothing, and is
+   built by hand or from the report — as a new offering is in item 6.
 
 ### Proposed — not yet confirmed
 
@@ -74,8 +82,9 @@ rows out of workspace 0 breaks every reader that still looks for them there.
 3. `pack_offer` gains `workspace_id BIGINT NOT NULL`, backfilled to that
    workspace; primary key becomes `(workspace_id, pack_key)`, so each
    offering has its own `base`.
-4. `forked_from_workspace_id` set to Trade Finance on client workspaces per
-   item 5 — which ones is open item A.
+4. `forked_from_workspace_id` set to Trade Finance on every client
+   workspace except tenant 2's 9 and tenant 5's 10 (item 5), named by id in
+   the migration rather than matched by name.
 
 **Registry.**
 
@@ -91,6 +100,10 @@ rows out of workspace 0 breaks every reader that still looks for them there.
   draft. No published revision until the curator publishes one, so it is
   not offerable until then (`set_offer` already refuses a revision with no
   facts).
+
+- `new_workspace(tenant, email, name)` — a client's empty workspace, for
+  an own report (item 7). The same act as `new_offering`, for any tenant
+  but 0; one function may serve both.
 
 **API.** A list of offerings for Get started: name, its base's counts,
 its offered memoranda. The fork route takes the offering. A curator route
@@ -108,17 +121,44 @@ to make an offering.
 **Unverified.** Accepting a proposal into a workspace with **no facts at
 all**. Today's proposer matches a report against facts the tenant already
 holds and proposes new ones beside them; every route into it so far
-starts from a forked base. An empty offering is the first case with
-nothing to match. To be exercised before item 6 is called built.
+starts from a forked base. An empty workspace — a new offering, or a
+client's own-report workspace — is the first case with nothing to match.
+To be exercised before items 6 and 7 are called built.
 
-### Open
+### Also raised, 23 October 2026 — seats and deleting a workspace
 
-- **A.** Tenant 2's "AR FINANCING" and tenant 5's "REAL ESTATE" hold the
-  Trade Finance vocabulary. Linked to Trade Finance like the rest (what
-  they hold), or left unlinked until re-forked from their own offering?
-- **B.** A client's own-report routes ("from scratch", "from a report you
-  already write") also fork a base. Proposed: the base of the offering
-  chosen on the same screen. To confirm.
+**C. An administrator assigns workspaces to member seats.** Already
+settled under PACK-01 (its item 4: a workspace is assigned to a member, an
+administrator sees all) and **not built**: today every seat sees every
+workspace. Needs a seat-to-workspace table (proposed:
+`seat_workspace(tenant_id, seat_id, workspace_id)`), a filter on the
+workspace list and on every `?workspace=` the API resolves, and the
+control on the seats screen.
+
+**D. An administrator deletes a workspace from the tenant**, with
+sufficient warnings and steps. This is the first delete in the product and
+sits against "additive and non-destructive" and "read once, never again",
+so its shape was asked rather than proposed:
+
+- What it removes: its configuration and revisions, engagements,
+  documents and their S3 objects, extracted values, claims, memos and
+  rewrites, and its shares (grants, access log, `shares/` PDFs — the
+  per-workspace counterpart of `share.purge_tenant`, which nothing calls).
+- What it never touches: `wallet_ledger` and its buckets. Charges stay
+  charged; nothing is refunded by deleting.
+- **Settled 23 October 2026:**
+  - **Hidden, then removed.** Hidden at once and restorable for a period,
+    then removed for good. The period is not set; 30 days proposed.
+  - **The last workspace cannot be deleted.** Removing everything is
+    account deletion, a separate act.
+  - **Steps:** the counts it holds shown (engagements, documents, memos,
+    active shares), its name typed, and a code emailed to the
+    administrator entered before it goes. The administrator is recorded.
+  - **Members are reassigned on delete.** Deleting asks which workspace
+    the members assigned only to this one move to. Depends on C.
+- The written manual procedure for account deletion (What is open, 20
+  October 2026) is the same list for a whole tenant; one should be built
+  from the other.
 
 ### Sequence
 
@@ -127,5 +167,7 @@ nothing to match. To be exercised before item 6 is called built.
 3. Curator screens: offerings, Add an offering, offer per offering.
 4. Client screens: choose an offering, Catalogue scoped. `web/` with it.
 5. Apply; 044 out of held and applied; walk both tenants signed in.
+6. C: seat-to-workspace assignment.
+7. D: deleting a workspace.
 
 One branch per step, stopping at the end of each for review.
