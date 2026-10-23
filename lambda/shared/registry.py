@@ -73,8 +73,16 @@ DATABASE = os.environ["DATABASE"]
 
 DRAFT = 0
 PACK_TENANT = 0
-# The pack tenant holds no workspace row; its configuration is workspace 0.
+# No workspace. The pack tenant's configuration was here until migration 044
+# moved it into a workspace of its own, its first OFFERING (PACK-02).
 NO_WORKSPACE = 0
+
+# Taking one of our memoranda into a workspace that was not started from one
+# of our offerings (PACK-02, settled items 4 and 5): its facts are not ours,
+# so no memorandum of ours is laid over them.
+NOT_FROM_AN_OFFERING = (
+    "This workspace was not started from one of our offerings, so none of "
+    "our memoranda are offered to it.")
 
 # A workspace's name. workspace.name is varchar(128).
 _MAX_WORKSPACE_NAME = 128
@@ -749,9 +757,9 @@ def select_revision(tenant_id, workspace_id, revision):
     return {"active_revision": revision}
 
 
-def _offer(pack_key, kind):
-    """What is on offer under one key: the tenant, the revision, and for a
-    memorandum the template_key inside it.
+def _offer(pack_key, kind, offering):
+    """What one offering has on offer under one key: the tenant, the
+    revision, and for a memorandum the template_key inside it.
 
     THE MARK, NOT THE NEWEST (revision selection decision record, items 6 and
     7). This read MAX(revision) for a pack_key, so publishing a revision
@@ -759,6 +767,11 @@ def _offer(pack_key, kind):
     back. Now a row in pack_offer says it, and the revision it names must
     still be published - a mark on a revision somebody withdrew offers
     nothing.
+
+    ONE OFFERING'S (PACK-02). Every offering has its own base, so 'base' is a
+    key in each. The offering is the workspace of the revision the mark
+    names - found through config_revision rather than pack_offer.workspace_id,
+    so this reads the same before migration 044 adds that column as after.
 
     None where no mark exists, which is how a pack taken off offer stops
     being forkable."""
@@ -768,9 +781,9 @@ def _offer(pack_key, kind):
         FROM pack_offer o
         JOIN config_revision r ON r.tenant_id = o.tenant_id
          AND r.revision = o.revision AND r.status = 'published'
-        WHERE o.pack_key = :key AND o.kind = :k
+        WHERE o.pack_key = :key AND o.kind = :k AND r.workspace_id = :o
         """,
-        [_p("key", pack_key), _p("k", kind)],
+        [_p("key", pack_key), _p("k", kind), _p("o", int(offering))],
     ).get("records", [])
     if not records:
         return None
@@ -778,17 +791,64 @@ def _offer(pack_key, kind):
             "template_key": _col(records[0], 2)}
 
 
-def offer():
-    """What is on offer: one revision, and the memoranda offered from it.
+def _offering_of(tenant_id, workspace_id):
+    """The offering a workspace was started from, or None.
 
-    Every mark names the same revision, so this reads as one thing rather than
-    a row per pack. Empty where nothing is marked - which is a broken
-    catalogue, not a quiet default, and the screen says so."""
+    workspace.forked_from_workspace_id, which fork_base records and migration
+    044 set on the workspaces that existed before. None for a workspace made
+    empty, for one left unlinked (PACK-02, open item A), and for every
+    workspace until 044 runs."""
+    records = _sql(
+        "SELECT forked_from_workspace_id FROM workspace "
+        "WHERE tenant_id = :t AND workspace_id = :w",
+        [_p("t", tenant_id), _p("w", workspace_id)]).get("records", [])
+    if not records or _col(records[0], 0) is None:
+        return None
+    return int(_col(records[0], 0))
+
+
+def _choose_offering(asked):
+    """The offering a fork takes. Named, it must be one on offer.
+
+    NOT NAMED, the only one, and a refusal where there are several - the
+    rule config.workspace follows for a request that names no workspace.
+    It is what a screen built before offerings sends, and with one offering
+    there is nothing for it to have chosen."""
+    offered = [p["workspace_id"] for p in packs()]
+    if asked not in (None, ""):
+        try:
+            asked = int(asked)
+        except (TypeError, ValueError):
+            raise ValueError("an offering is named by its number")
+        if asked not in offered:
+            raise ValueError("there is no offering %d" % asked)
+        return asked
+    if not offered:
+        raise ValueError("nothing is on offer")
+    if len(offered) > 1:
+        raise ValueError("choose which of our offerings to start from")
+    return offered[0]
+
+
+def offer(offering):
+    """What one offering has on offer: one revision, and the memoranda
+    offered from it.
+
+    Every mark of an offering names the same revision, so this reads as one
+    thing rather than a row per pack. Empty where nothing is marked - which
+    is a broken catalogue, not a quiet default, and the screen says so.
+
+    The offering is the curator's workspace, and its marks are found by the
+    workspace of the revision they name, as _offer finds them."""
     records = _sql(
         """
-        SELECT revision, kind, template_key, marked_at, marked_by
-        FROM pack_offer ORDER BY kind, pack_key
-        """).get("records", [])
+        SELECT o.revision, o.kind, o.template_key, o.marked_at, o.marked_by
+        FROM pack_offer o
+        JOIN config_revision r ON r.tenant_id = o.tenant_id
+         AND r.revision = o.revision
+        WHERE r.workspace_id = :o
+        ORDER BY o.kind, o.pack_key
+        """, [_p("o", int(offering))]).get("records", [])
     if not records:
         return {"revision": None, "templates": [], "marked_at": None,
                 "marked_by": None}
@@ -801,9 +861,16 @@ def offer():
     }
 
 
-def set_offer(revision, template_keys, email, pack_tenant=PACK_TENANT):
-    """Set the whole catalogue at once: one revision, and what is offered
-    from it.
+def set_offer(offering, revision, template_keys, email,
+              pack_tenant=PACK_TENANT):
+    """Set one offering's whole catalogue at once: one revision, and what is
+    offered from it.
+
+    ONE OFFERING, NOT THE CATALOGUE (PACK-02). The offering is the curator's
+    workspace, and the revision must be one of its own. Only its marks are
+    replaced: setting Real Estate's offer leaves Trade Finance's standing.
+    Written with pack_offer.workspace_id, which migration 044 adds - before
+    it runs, the write fails inside the transaction and nothing changes.
 
     THE WHOLE OFFER, NOT ONE MARK. Ticking is a name in the list, unticking a
     name left out, and moving the offer to a newer revision is the same call
@@ -849,6 +916,8 @@ def set_offer(revision, template_keys, email, pack_tenant=PACK_TENANT):
     if _col(rows[0], 0) != "published":
         raise ValueError("revision %d is not published" % revision)
     pack_ws = _workspace_of_revision(pack_tenant, revision) or NO_WORKSPACE
+    if pack_ws != int(offering):
+        raise ValueError("revision %d belongs to another offering" % revision)
 
     # The base comes with it, so the revision has to carry one. A
     # memorandum-only revision would leave every new tenant with sections over
@@ -881,18 +950,21 @@ def set_offer(revision, template_keys, email, pack_tenant=PACK_TENANT):
                 "'%s' binds facts revision %d does not define: %s"
                 % (key, revision, ", ".join(orphans)))
 
-    was = offer()
+    was = offer(pack_ws)
 
     tx = _begin()
     try:
-        _sql("DELETE FROM pack_offer", tx=tx)
+        _sql("DELETE FROM pack_offer WHERE workspace_id = :w",
+             [_p("w", pack_ws)], tx=tx)
         _sql(
             """
             INSERT INTO pack_offer
-              (pack_key, kind, tenant_id, revision, template_key, marked_by)
-            VALUES ('base', 'base', :t, :r, NULL, :who)
+              (pack_key, kind, tenant_id, workspace_id, revision,
+               template_key, marked_by)
+            VALUES ('base', 'base', :t, :w, :r, NULL, :who)
             """,
-            [_p("t", pack_tenant), _p("r", revision), _p("who", email)],
+            [_p("t", pack_tenant), _p("w", pack_ws), _p("r", revision),
+             _p("who", email)],
             tx=tx)
         for key in wanted:
             # pack_key IS the template key. Nothing downstream remembers a
@@ -903,12 +975,12 @@ def set_offer(revision, template_keys, email, pack_tenant=PACK_TENANT):
             _sql(
                 """
                 INSERT INTO pack_offer
-                  (pack_key, kind, tenant_id, revision, template_key,
-                   marked_by)
-                VALUES (:k, 'template', :t, :r, :k, :who)
+                  (pack_key, kind, tenant_id, workspace_id, revision,
+                   template_key, marked_by)
+                VALUES (:k, 'template', :t, :w, :r, :k, :who)
                 """,
-                [_p("k", key), _p("t", pack_tenant), _p("r", revision),
-                 _p("who", email)],
+                [_p("k", key), _p("t", pack_tenant), _p("w", pack_ws),
+                 _p("r", revision), _p("who", email)],
                 tx=tx)
         _commit(tx)
     except Exception:
@@ -920,6 +992,7 @@ def set_offer(revision, template_keys, email, pack_tenant=PACK_TENANT):
 
     before = set(was["templates"])
     return {
+        "offering": pack_ws,
         "revision": revision,
         "templates": wanted,
         "added": sorted(set(wanted) - before),
@@ -972,8 +1045,14 @@ def _in(keys, prefix="k"):
 
 
 def fork_base(tenant_id, email, name, pack_revision=None, pack_key="base",
-              pack_tenant=PACK_TENANT):
-    """Take a starter base as a NEW WORKSPACE of this tenant.
+              pack_tenant=PACK_TENANT, offering=None):
+    """Take an offering's base as a NEW WORKSPACE of this tenant.
+
+    WHICH OFFERING (PACK-02). Each of ours is a workspace of the pack tenant
+    with a base of its own, and the one taken is recorded on the new
+    workspace (forked_from_workspace_id) - that is what decides which of our
+    memoranda its Catalogue offers. Named by the caller; unnamed, the only
+    one on offer (_choose_offering).
 
     The base is the facts, the document types, and which facts are sought in
     which type. A memorandum is not part of it - see fork_template.
@@ -1011,7 +1090,7 @@ def fork_base(tenant_id, email, name, pack_revision=None, pack_key="base",
     if pack_revision is not None:
         source_tenant, revision = pack_tenant, int(pack_revision)
     else:
-        offer = _offer(pack_key, "base")
+        offer = _offer(pack_key, "base", _choose_offering(offering))
         if offer is None:
             raise ValueError("no base is on offer under '%s'" % pack_key)
         source_tenant, revision = offer["tenant_id"], offer["revision"]
@@ -1039,8 +1118,9 @@ def fork_base(tenant_id, email, name, pack_revision=None, pack_key="base",
                forked_from_revision_id)
             VALUES (:t, :name, :from_ws, :from_rev)
             """,
-            # The pack tenant's configuration is in no workspace, so a fork
-            # from it names none - as migration 040's backfill recorded.
+            # The offering it was taken from. Until migration 044 the pack
+            # tenant's configuration is in no workspace, and a fork from it
+            # names none - as migration 040's backfill recorded.
             [_p("t", tenant_id), _p("name", name),
              _p("from_ws", source_ws or None), _p("from_rev", revision)],
             tx=tx)
@@ -1078,6 +1158,7 @@ def fork_base(tenant_id, email, name, pack_revision=None, pack_key="base",
 
     return {"forked": True, "revision": mine, "workspace_id": workspace_id,
             "name": name, "pack_key": pack_key,
+            "offering": source_ws or None,
             "from": "pack:%d:%d" % (source_tenant, revision)}
 
 
@@ -1087,6 +1168,55 @@ def fork(tenant_id, email, name, pack_revision=None,
     means forking a base, and this is that call under its old name."""
     return fork_base(tenant_id, email, name, pack_revision=pack_revision,
                      pack_tenant=pack_tenant)
+
+
+def new_workspace(tenant_id, email, name):
+    """An EMPTY workspace, and its draft (PACK-02, settled items 6 and 7).
+
+    No facts, no document types, no memoranda: what it holds is built in it,
+    by hand or from a report read by the proposer. For the pack tenant this
+    is a new offering; for any other tenant, a workspace begun from a report
+    of its own. Nothing is forked and no offering is recorded, so none of
+    our memoranda are offered to it.
+
+    NOTHING IS PUBLISHED. The draft is opened, empty, and the workspace has
+    no revision in use until its first publish.
+
+    ONE TRANSACTION, as fork_base: the workspace and its draft land together
+    or not at all."""
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError("name the workspace")
+    if len(name) > _MAX_WORKSPACE_NAME:
+        raise ValueError("a workspace name can be at most %d characters"
+                         % _MAX_WORKSPACE_NAME)
+
+    tx = _begin()
+    try:
+        created = _sql(
+            "INSERT INTO workspace (tenant_id, name) VALUES (:t, :name)",
+            [_p("t", tenant_id), _p("name", name)], tx=tx)
+        workspace_id = int(created["generatedFields"][0]["longValue"])
+        _sql(
+            """
+            INSERT INTO config_revision
+              (tenant_id, workspace_id, revision, status, note, created_by,
+               forked_from)
+            VALUES (:t, :w, :d, 'draft', NULL, :who, NULL)
+            """,
+            [_p("t", tenant_id), _p("w", workspace_id), _p("d", DRAFT),
+             _p("who", email)],
+            tx=tx)
+        _commit(tx)
+    except Exception:
+        try:
+            _rollback(tx)
+        except Exception:  # noqa: BLE001 - the original error is what matters
+            pass
+        raise
+
+    return {"workspace_id": workspace_id, "name": name, "revision": DRAFT,
+            "empty": True}
 
 
 def fork_template(tenant_id, workspace_id, email, pack_key,
@@ -1119,14 +1249,23 @@ def fork_template(tenant_id, workspace_id, email, pack_key,
     arrives beside theirs, keyed <key>-2 and labelled "... (2)", so their own
     work is never reached (decision record, the take rule).
 
-    INTO ONE WORKSPACE, whose draft and live revision it reads. The pack
-    tenant's revisions are found in their own workspace, 0."""
+    INTO ONE WORKSPACE, whose draft and live revision it reads.
+
+    FROM THAT WORKSPACE'S OFFERING ONLY (PACK-02, settled item 4). The
+    memorandum and the facts it brings back come from the offering the
+    workspace was started from, never another's: a memorandum from another
+    offering binds facts this workspace does not hold. A workspace started
+    from no offering is offered none."""
     if not _latest_published(tenant_id, workspace_id):
         raise ValueError(
             "fork a base before a template: a memorandum binds facts, and "
             "sections with no facts behind them cannot be published")
 
-    offer = _offer(pack_key, "template")
+    offering = _offering_of(tenant_id, workspace_id)
+    if offering is None:
+        raise ValueError(NOT_FROM_AN_OFFERING)
+
+    offer = _offer(pack_key, "template", offering)
     if offer is None:
         raise ValueError("no memorandum is on offer under '%s'" % pack_key)
     pack_tenant = offer["tenant_id"]
@@ -1137,7 +1276,7 @@ def fork_template(tenant_id, workspace_id, email, pack_key,
         raise ValueError(
             "the mark for '%s' names no memorandum" % pack_key)
 
-    base_offer = _offer("base", "base")
+    base_offer = _offer("base", "base", offering)
     if base_offer is None:
         raise ValueError("no base is on offer; a memorandum's facts come "
                          "from it")
@@ -1367,13 +1506,19 @@ def _counts(tenant_id, workspace_id, revision):
 
 
 def packs(pack_tenant=PACK_TENANT):
-    """The bases on offer.
+    """The bases on offer - one per OFFERING (PACK-02), with the offering's
+    workspace and name.
 
     THE MARKS, not a revision's kind and not the newest of them (decision
     record item 7). pack_tenant is kept for callers that pass it and is no
     longer read: each mark says which tenant's revision it names.
 
-    Ordered by key so the list does not move when a pack is added."""
+    The offering is the workspace of the revision the base mark names. Its
+    name comes from the workspace row, which the pack tenant has from
+    migration 044; before that the one offering is workspace 0, unnamed.
+
+    Ordered by the offering's name, then key, so the list does not move when
+    one is added."""
     result = _sql(
         """
         SELECT o.revision, o.pack_key, r.note,
@@ -1384,27 +1529,46 @@ def packs(pack_tenant=PACK_TENANT):
                (SELECT COUNT(*) FROM config_field f
                  WHERE f.tenant_id = o.tenant_id
                    AND f.workspace_id = r.workspace_id
-                   AND f.revision = o.revision)
+                   AND f.revision = o.revision),
+               r.workspace_id, w.name
         FROM pack_offer o
         JOIN config_revision r ON r.tenant_id = o.tenant_id
          AND r.revision = o.revision AND r.status = 'published'
+        LEFT JOIN workspace w ON w.tenant_id = r.tenant_id
+         AND w.workspace_id = r.workspace_id
         WHERE o.kind = 'base'
-        ORDER BY o.pack_key
+        ORDER BY w.name, o.pack_key
         """,
     )
     return [
         {"revision": _col(r, 0), "pack_key": _col(r, 1), "note": _col(r, 2),
-         "document_types": _col(r, 3), "fields": _col(r, 4)}
+         "document_types": _col(r, 3), "fields": _col(r, 4),
+         "workspace_id": int(_col(r, 5) or 0), "name": _col(r, 6)}
         for r in result.get("records", [])
     ]
 
 
-def template_packs(tenant_id, workspace_id, pack_tenant=PACK_TENANT):
-    """The memoranda on offer, and whether this workspace already holds each.
+def template_packs(tenant_id, workspace_id, pack_tenant=PACK_TENANT,
+                   offering=None):
+    """One offering's memoranda, and whether this workspace already holds
+    each.
 
     A base is a base and a template is a template. They are different lists
     because they are different acts: one is taken once, the other whenever
-    somebody wants another memorandum."""
+    somebody wants another memorandum.
+
+    WHICH OFFERING (PACK-02). The workspace's own - the one it was started
+    from - and none where it was started from none. Named by the caller for
+    a workspace not yet made: Get started shows the memoranda of the
+    offering a person has just chosen, and nothing is held there yet."""
+    preview = offering is not None
+    if preview:
+        offering = int(offering)
+    else:
+        offering = _offering_of(tenant_id, workspace_id)
+        if offering is None:
+            return []
+
     result = _sql(
         """
         SELECT o.revision, o.pack_key, r.note, o.tenant_id, o.template_key,
@@ -1422,9 +1586,10 @@ def template_packs(tenant_id, workspace_id, pack_tenant=PACK_TENANT):
         FROM pack_offer o
         JOIN config_revision r ON r.tenant_id = o.tenant_id
          AND r.revision = o.revision AND r.status = 'published'
-        WHERE o.kind = 'template'
+        WHERE o.kind = 'template' AND r.workspace_id = :o
         ORDER BY o.pack_key
         """,
+        [_p("o", offering)],
     )
     packs_ = [
         {"revision": _col(r, 0), "pack_key": _col(r, 1), "note": _col(r, 2),
@@ -1436,13 +1601,16 @@ def template_packs(tenant_id, workspace_id, pack_tenant=PACK_TENANT):
     ]
 
     # What the tenant holds, live and in the draft, so a template already
-    # taken is marked rather than offered again as though it were new.
-    live = (_active_revision(tenant_id, workspace_id)
-            or _latest_published(tenant_id, workspace_id))
-    held = _keys(tenant_id, workspace_id, live, "config_template",
-                 "template_key") \
-        | _keys(tenant_id, workspace_id, DRAFT, "config_template",
-                "template_key")
+    # taken is marked rather than offered again as though it were new. A
+    # workspace not yet made holds nothing.
+    held = set()
+    if not preview:
+        live = (_active_revision(tenant_id, workspace_id)
+                or _latest_published(tenant_id, workspace_id))
+        held = _keys(tenant_id, workspace_id, live, "config_template",
+                     "template_key") \
+            | _keys(tenant_id, workspace_id, DRAFT, "config_template",
+                    "template_key")
 
     for pack in packs_:
         # The memorandum's own name and the headings it carries. pack_key is

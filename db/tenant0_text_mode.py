@@ -26,6 +26,10 @@ which still says FORMS; the API override is what changes their reads.
 
 Without --apply it reads and prints what it would do, and writes nothing.
 
+WRITTEN BEFORE OFFERINGS (PACK-02). It works in workspace 0, where tenant
+0's configuration was until migration 044 moved it into the Trade Finance
+offering. Run again after 044, it would find nothing there.
+
     AWS_PROFILE=arqedia AWS_DEFAULT_REGION=us-east-2 \\
     CLUSTER_ARN=... SECRET_ARN=... DATABASE=arqedia \\
     python db/tenant0_text_mode.py [--apply] --by you@firm.com
@@ -68,7 +72,7 @@ def main():
     opts = args.parse_args()
 
     active = registry._active_revision(TENANT, registry.NO_WORKSPACE)
-    offered = registry.offer()
+    offered = registry.offer(registry.NO_WORKSPACE)
     draft_open = bool(registry._sql(
         "SELECT revision FROM config_revision "
         "WHERE tenant_id = :t AND revision = :d",
@@ -116,7 +120,8 @@ def main():
     revision = published["revision"]
     print("published revision", revision)
 
-    moved = registry.set_offer(revision, offered["templates"], opts.by)
+    moved = registry.set_offer(registry.NO_WORKSPACE, revision,
+                               offered["templates"], opts.by)
     print("offer moved:", moved)
 
     registry.discard_draft(TENANT, registry.NO_WORKSPACE)

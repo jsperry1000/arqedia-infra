@@ -8,6 +8,9 @@ code decides, which statements it sends, and - the point of most of it - what
 it refuses to send at all. A half-written catalogue would take every
 memorandum off offer and leave Get started with nothing, so the tests that
 matter most are the ones proving nothing was written.
+
+PACK-02: one OFFERING's catalogue at a time. The revision must be the
+offering's own, and only its marks are replaced.
 """
 
 import importlib.util
@@ -46,6 +49,8 @@ def plain(value):
     return None if "isNull" in value else next(iter(value.values()))
 
 
+OFFERING = 11          # the pack tenant's Trade Finance workspace (044)
+
 CREDIT = "credit-memorandum"
 KYC = "kyc-customer-due-diligence-memorandum"
 
@@ -58,7 +63,7 @@ STANDING = [(9, "base", None, "2026-09-17 10:00", "migration 024"),
 class FakeDb:
     def __init__(self, status="published", facts=5, held=(CREDIT, KYC),
                  defined=("f_borrower",), bound=None, standing=None,
-                 fail_on=None):
+                 fail_on=None, revision_workspace=OFFERING):
         self.status = status
         self.facts = facts
         self.held = set(held)
@@ -67,6 +72,8 @@ class FakeDb:
         self.bound = dict(bound or {})
         self.standing = STANDING if standing is None else standing
         self.fail_on = fail_on
+        # Which workspace the revision being offered belongs to.
+        self.revision_workspace = revision_workspace
         self.statements = []
         self.committed = False
         self.rolled_back = False
@@ -79,8 +86,10 @@ class FakeDb:
         if self.fail_on and s.startswith(self.fail_on):
             raise RuntimeError("the database said no")
 
-        if s.startswith("SELECT revision, kind, template_key"):
+        if s.startswith("SELECT o.revision, o.kind, o.template_key"):
             return rows(*self.standing)
+        if s.startswith("SELECT workspace_id FROM config_revision"):
+            return rows((self.revision_workspace,))
         if s.startswith("SELECT status FROM config_revision"):
             return rows((self.status,)) if self.status else rows()
         if "COUNT(*) FROM config_field WHERE tenant_id" in s:
@@ -106,14 +115,16 @@ class SetOfferTest(unittest.TestCase):
     def setUp(self):
         self.registry = load_registry()
 
-    def run_it(self, db, revision=9, templates=(CREDIT, KYC)):
+    def run_it(self, db, revision=9, templates=(CREDIT, KYC),
+               offering=OFFERING):
         with mock.patch.object(self.registry, "_sql", db.sql), \
              mock.patch.object(self.registry, "_begin", lambda: "tx-1"), \
              mock.patch.object(self.registry, "_commit",
                                lambda tx: setattr(db, "committed", True)), \
              mock.patch.object(self.registry, "_rollback",
                                lambda tx: setattr(db, "rolled_back", True)):
-            return self.registry.set_offer(revision, list(templates),
+            return self.registry.set_offer(offering, revision,
+                                           list(templates),
                                            "admin@arqedia.com")
 
     # --- what it writes ---------------------------------------------------
@@ -121,9 +132,10 @@ class SetOfferTest(unittest.TestCase):
     def test_writes_the_base_and_one_row_per_memorandum(self):
         db = FakeDb()
         self.run_it(db)
-        [(_, base, _)] = db.sent("INSERT INTO pack_offer (pack_key, kind, tenant_id, revision, template_key, marked_by) VALUES ('base'")
+        [(_, base, _)] = db.sent("INSERT INTO pack_offer (pack_key, kind, tenant_id, workspace_id, revision, template_key, marked_by) VALUES ('base'")
         self.assertEqual(base["r"], 9)
         self.assertEqual(base["t"], 0)
+        self.assertEqual(base["w"], OFFERING)
         written = [v for s, v, _ in db.statements
                    if s.startswith("INSERT INTO pack_offer") and "k" in v]
         self.assertEqual(sorted(v["k"] for v in written), sorted([CREDIT, KYC]))
@@ -136,8 +148,9 @@ class SetOfferTest(unittest.TestCase):
         [(sent, values, _)] = [(s, v, t) for s, v, t in db.statements
                                if s.startswith("INSERT INTO pack_offer")
                                and v.get("k") == CREDIT]
-        self.assertIn("VALUES (:k, 'template', :t, :r, :k, :who)", sent)
+        self.assertIn("VALUES (:k, 'template', :t, :w, :r, :k, :who)", sent)
         self.assertEqual(values["who"], "admin@arqedia.com")
+        self.assertEqual(values["w"], OFFERING)
 
     def test_every_write_is_in_one_transaction_and_commits(self):
         db = FakeDb()
@@ -160,6 +173,14 @@ class SetOfferTest(unittest.TestCase):
                  if s.startswith(("DELETE FROM pack_offer",
                                   "INSERT INTO pack_offer"))]
         self.assertEqual(kinds[0], "DELETE FROM")
+
+    def test_only_this_offerings_marks_are_cleared(self):
+        # Setting Real Estate's offer leaves Trade Finance's standing.
+        db = FakeDb()
+        self.run_it(db)
+        [(sent, values, _)] = db.sent("DELETE FROM pack_offer")
+        self.assertEqual(sent, "DELETE FROM pack_offer WHERE workspace_id = :w")
+        self.assertEqual(values["w"], OFFERING)
 
     def test_a_failed_write_rolls_back(self):
         db = FakeDb(fail_on="INSERT INTO pack_offer")
@@ -241,6 +262,10 @@ class SetOfferTest(unittest.TestCase):
         self.assertIn(KYC, said)
         self.assertIn("lender", said)
 
+    def test_refuses_another_offerings_revision(self):
+        said = self.refuse(FakeDb(revision_workspace=14))
+        self.assertIn("another offering", said)
+
     def test_a_repeated_name_is_offered_once(self):
         db = FakeDb()
         result = self.run_it(db, templates=(CREDIT, CREDIT, KYC))
@@ -254,15 +279,18 @@ class OfferReadTest(unittest.TestCase):
     def test_reads_one_revision_and_its_memoranda(self):
         db = FakeDb()
         with mock.patch.object(self.registry, "_sql", db.sql):
-            found = self.registry.offer()
+            found = self.registry.offer(OFFERING)
         self.assertEqual(found["revision"], 9)
         self.assertEqual(found["templates"], sorted([CREDIT, KYC]))
         self.assertEqual(found["marked_by"], "migration 024")
+        [(sent, values, _)] = db.sent("SELECT o.revision, o.kind")
+        self.assertIn("r.workspace_id = :o", sent)
+        self.assertEqual(values["o"], OFFERING)
 
     def test_nothing_marked_is_a_broken_catalogue_not_a_default(self):
         db = FakeDb(standing=[])
         with mock.patch.object(self.registry, "_sql", db.sql):
-            found = self.registry.offer()
+            found = self.registry.offer(OFFERING)
         self.assertIsNone(found["revision"])
         self.assertEqual(found["templates"], [])
 
