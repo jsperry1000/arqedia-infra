@@ -358,6 +358,18 @@ export function EngagementView({ id, onBack, onMemo }: {
 
   useEffect(() => { api.documentTypes().then((r) => setTypes(r.types)); }, []);
 
+  // Whether the workspace has published anything (PACK-01 G8). With nothing
+  // in use there is nothing to read a document against, and the server
+  // refuses the upload and the filing; the upload box says so first. Null
+  // until read, and on a failed read - the box is shown, and the server is
+  // what refuses.
+  const [published, setPublished] = useState<boolean | null>(null);
+  useEffect(() => {
+    api.configState()
+      .then((s) => setPublished(s.active_revision !== null))
+      .catch(() => setPublished(null));
+  }, []);
+
   // Priced by the server, for exactly the ticked rows, and re-priced after
   // anything is charged. Asked only where something is ticked; the figure is
   // used only while it is for the count on screen (see pickedQuote below), so
@@ -1113,6 +1125,14 @@ export function EngagementView({ id, onBack, onMemo }: {
           and nothing is shared between workspaces - a document needed in two
           is uploaded to each. The choice itself is the selector at the top
           of the page; this says what it is at the moment of uploading. */}
+      {published === false ? (
+        <p className="why warn">
+          {workspaceName ? <strong>{workspaceName}</strong> : "This workspace"}{" "}
+          has nothing published yet, so there is nothing to read a document
+          against. Publish its configuration first, under{" "}
+          <a onClick={() => navigate("/catalogue")}>Report Catalogue</a>.
+        </p>
+      ) : (<>
       {workspaceName && (
         <p className="muted small">
           Uploading into <strong>{workspaceName}</strong>. Documents are read
@@ -1145,6 +1165,7 @@ export function EngagementView({ id, onBack, onMemo }: {
         it beside the file. It is provenance only: it is never read when
         proposing what a document is.
       </p>
+      </>)}
       {working && <Working what={working} />}
       {gaveUp && !busy && (
         <p className="muted small">
