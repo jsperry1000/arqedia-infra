@@ -30,9 +30,15 @@ import { activeName, useWorkspace } from "./workspace";
  *  Get started does, and is the one door. Memoranda were never forked here:
  *  that is the ARQEDIA chooser, where there is room to say what each one
  *  contains. */
-async function ensureDraft(): Promise<boolean> {
+async function ensureDraft(here: boolean): Promise<boolean> {
   const state = await api.configState();
-  if (!state.draft && state.revisions.length === 0) return false;
+  // NOTHING CONFIGURED is two cases. A tenant with no workspace at all goes
+  // to Get started, which names one. A workspace that IS here but holds no
+  // draft and has never published - a new one whose draft was discarded -
+  // opens its own draft again, empty. Sending that one to Get started landed
+  // on "Add a memorandum" with nothing to add, and the report route lost
+  // (found walking PACK-02, 23 October 2026; Configure's twin is #384).
+  if (!state.draft && state.revisions.length === 0 && !here) return false;
   if (!state.draft) await api.openDraft();
   return true;
 }
@@ -146,7 +152,7 @@ export function CatalogueView({ curator, onOpened }: {
   }
 
   const open = (key: string) => run("Opening", async () => {
-    if (!(await ensureDraft())) { onOpened("/welcome"); return; }
+    if (!(await ensureDraft(workspace.active !== null))) { onOpened("/welcome"); return; }
     onOpened(`/configure?report=${encodeURIComponent(key)}`);
   });
 
@@ -164,7 +170,7 @@ export function CatalogueView({ curator, onOpened }: {
   // forked here - it makes a workspace, and this page has nowhere to name
   // one.
   const scratch = () => run("Creating", async () => {
-    if (!(await ensureDraft())) {
+    if (!(await ensureDraft(workspace.active !== null))) {
       onOpened("/welcome", { start: "scratch" as OwnStart });
       return;
     }
@@ -175,7 +181,7 @@ export function CatalogueView({ curator, onOpened }: {
   // A report of the person's own: the proposer page, which carries its own
   // upload (UX-21). No file dialog fires from here.
   const fromReport = () => run("Opening", async () => {
-    if (!(await ensureDraft())) {
+    if (!(await ensureDraft(workspace.active !== null))) {
       onOpened("/welcome", { start: "report" as OwnStart });
       return;
     }
