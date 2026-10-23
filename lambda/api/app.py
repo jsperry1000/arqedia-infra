@@ -3789,8 +3789,11 @@ def _dispatch(event, context):
         # What every other tenant is offered. The ARQEDIA workspace only -
         # _curation_only refuses both of these to anybody else before the
         # dispatcher reaches here.
+        #
+        # ONE OFFERING AT A TIME (PACK-02): the curator's active workspace is
+        # the offering whose catalogue is read and set.
         if route == "GET /config/offer":
-            return _reply(200, registry.offer())
+            return _reply(200, registry.offer(ws()))
 
         # The whole catalogue in one call: a revision, and the memoranda
         # offered from it. Ticking, unticking and moving the offer to a newer
@@ -3800,7 +3803,7 @@ def _dispatch(event, context):
             _require_admin(role)
             body = json.loads(event.get("body") or "{}")
             return _reply(200, registry.set_offer(
-                body.get("revision"), body.get("templates"), email))
+                ws(), body.get("revision"), body.get("templates"), email))
 
         if route == "DELETE /config/draft":
             _require_admin(role)
@@ -3819,22 +3822,42 @@ def _dispatch(event, context):
             # fix and the draft is untouched.
             return _reply(200 if result["published"] else 409, result)
 
+        # Our offerings: one base each, with the offering's workspace and
+        # name (PACK-02). What Add a workspace chooses from.
         if route == "GET /config/packs":
             return _reply(200, {"packs": registry.packs()})
 
         # A base forked becomes a NEW workspace of this tenant (PACK-01),
         # named by the caller. No workspace is resolved: this makes one.
+        #
+        # FROM AN OFFERING, OR EMPTY (PACK-02). "offering" names which of
+        # ours; unnamed, the only one. "empty" makes a workspace with
+        # nothing in it and a draft open - a new offering in the ARQEDIA
+        # workspace, a report of the tenant's own anywhere else. On this
+        # route rather than one of its own because both acts make a
+        # workspace, and a new route is Terraform.
         if route == "POST /config/fork":
             _require_admin(role)
             body = json.loads(event.get("body") or "{}")
+            if body.get("empty") is True:
+                return _reply(201, registry.new_workspace(
+                    tenant_id, email, body.get("name")))
             revision = body.get("revision")
             return _reply(201, registry.fork_base(
                 tenant_id, email, body.get("name"),
-                pack_revision=int(revision) if revision is not None else None))
+                pack_revision=int(revision) if revision is not None else None,
+                offering=body.get("offering")))
 
-        # The memoranda we ship, and whether this tenant already holds each.
+        # The memoranda we ship, and whether this tenant already holds each:
+        # the active workspace's offering's (PACK-02). ?offering= asks for
+        # one by name instead, for a workspace not yet made - Get started
+        # lists the memoranda of the offering a person has just chosen.
         if route == "GET /config/templates/available":
             _require_admin(role)
+            asked = query.get("offering")
+            if asked not in (None, ""):
+                return _reply(200, {"templates": registry.template_packs(
+                    tenant_id, None, offering=int(asked))})
             return _reply(200, {
                 "templates": registry.template_packs(tenant_id, ws())})
 
