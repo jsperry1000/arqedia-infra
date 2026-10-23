@@ -1061,6 +1061,30 @@ def accept(event, body):
                                      "Nothing was kept, and the invitation is "
                                      "still open."})
 
+    # THE WORKSPACES THE INVITATION NAMED become the seat's (PACK-02 C,
+    # migration 045): a member sees those and no others; an administrator's
+    # invitation names none and sees every one. Kept in step with
+    # lambda/api/seats.py claim(), which this function cannot import.
+    #
+    # After the account exists, so a failure above leaves the invitation and
+    # its workspaces as they were. A failure here is logged and not fatal:
+    # the seat is real and the person can sign in; an administrator assigns
+    # their workspaces on the seats screen, where a member with none says so.
+    try:
+        _sql(
+            "INSERT IGNORE INTO seat_workspace "
+            "(tenant_id, seat_id, workspace_id, assigned_by) "
+            "SELECT :t, s.seat_id, iw.workspace_id, :by "
+            "FROM seat s JOIN seat_invitation_workspace iw "
+            "  ON iw.invitation_id = :i "
+            "WHERE s.tenant_id = :t AND s.email = :e",
+            [_p("t", tenant_id), _p("e", email), _p("i", invitation_id),
+             _p("by", _col(r, 5))])
+        _sql("DELETE FROM seat_invitation_workspace WHERE invitation_id = :i",
+             [_p("i", invitation_id)])
+    except Exception as exc:  # noqa: BLE001 - the seat stands; see above
+        print("[invite-workspaces-not-copied] tenant=%s %r" % (tenant_id, exc))
+
     _sql("DELETE FROM seat_invitation WHERE invitation_id = :i",
          [_p("i", invitation_id)])
     _record(domain, email, ip, "seat_taken", f"tenant {tenant_id}")

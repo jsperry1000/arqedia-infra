@@ -17,6 +17,14 @@ tenant with no administrator cannot change its own plan, its card, its brand
 or its seats, and the only route back is a support request that takes days.
 The check is here rather than in the front end, because the front end can be
 bypassed by anyone calling the API.
+
+A MEMBER SEES THE WORKSPACES ASSIGNED TO THEIR SEAT; AN ADMINISTRATOR SEES
+EVERY ONE (PACK-02 C, migration 045, decided 23 October 2026). Assignment is
+seat_workspace. An invitation names its workspaces - at least one for a
+member - in seat_invitation_workspace, and the signup function copies them to
+the seat on acceptance. A new workspace is assigned to no member. An
+administrator made a member keeps every workspace there is, so nothing they
+could see disappears.
 """
 
 import hashlib
@@ -181,6 +189,112 @@ def _admins(tenant_id):
         [_p("t", tenant_id)])["records"][0], 0)
 
 
+# --- which workspaces (PACK-02 C) ------------------------------------------
+
+def _tenant_workspaces(tenant_id):
+    return [int(_col(r, 0)) for r in _sql(
+        "SELECT workspace_id FROM workspace WHERE tenant_id = :t "
+        "ORDER BY workspace_id", [_p("t", tenant_id)]).get("records", [])]
+
+
+def _checked_workspaces(tenant_id, workspace_ids):
+    """The workspaces asked for, as this tenant's ids, refusing any other.
+    The tenant is the token's; a number from the request is checked here."""
+    if not isinstance(workspace_ids, (list, tuple)):
+        raise ValueError("Name the workspaces as a list.")
+    held = set(_tenant_workspaces(tenant_id))
+    wanted = []
+    for w in workspace_ids:
+        if isinstance(w, bool):
+            raise ValueError("A workspace is named by its number.")
+        try:
+            w = int(w)
+        except (TypeError, ValueError):
+            raise ValueError("A workspace is named by its number.")
+        if w not in held:
+            raise ValueError("This account has no workspace %d." % w)
+        if w not in wanted:
+            wanted.append(w)
+    return wanted
+
+
+def allowed_workspaces(tenant_id, email, role):
+    """The workspaces this caller may work in: None for an administrator,
+    who may work in every one; otherwise the set assigned to their seat,
+    which may be empty.
+
+    Read from the seat by address, as listing() marks "you": one address is
+    one seat (seat.uq_email). A role from the token is what decides, as it
+    does everywhere else in the API - a changed role takes effect when the
+    token refreshes, and removing the seat is what takes effect at once."""
+    if role == "admin":
+        return None
+    rows = _sql(
+        """
+        SELECT sw.workspace_id FROM seat s
+        JOIN seat_workspace sw ON sw.seat_id = s.seat_id
+         AND sw.tenant_id = s.tenant_id
+        WHERE s.tenant_id = :t AND s.email = :e
+        """,
+        [_p("t", tenant_id), _p("e", (email or "").strip().lower())],
+    ).get("records", [])
+    return {int(_col(r, 0)) for r in rows}
+
+
+def set_workspaces(tenant_id, email, seat_id, workspace_ids):
+    """Replace which workspaces a member's seat may see. At least one: a
+    member is never left seeing nothing (decision of 23 October 2026). An
+    administrator sees every workspace and has nothing to set."""
+    rows = _sql("SELECT role FROM seat WHERE seat_id = :s AND tenant_id = :t",
+                [_p("s", int(seat_id)), _p("t", tenant_id)]).get("records", [])
+    if not rows:
+        raise ValueError("No such seat.")
+    if _col(rows[0], 0) == "admin":
+        raise ValueError("An administrator sees every workspace; there is "
+                         "nothing to choose.")
+    wanted = _checked_workspaces(tenant_id, workspace_ids)
+    if not wanted:
+        raise ValueError("Choose at least one workspace. A member with none "
+                         "would see nothing at all.")
+
+    names, params = [], []
+    for i, w in enumerate(wanted):
+        names.append(":w%d" % i)
+        params.append(_p("w%d" % i, w))
+    _sql("DELETE FROM seat_workspace WHERE tenant_id = :t AND seat_id = :s "
+         "AND workspace_id NOT IN (%s)" % ", ".join(names),
+         [_p("t", tenant_id), _p("s", int(seat_id))] + params)
+    for w in wanted:
+        _sql("INSERT IGNORE INTO seat_workspace "
+             "(tenant_id, seat_id, workspace_id, assigned_by) "
+             "VALUES (:t, :s, :w, :by)",
+             [_p("t", tenant_id), _p("s", int(seat_id)), _p("w", w),
+              _p("by", email)])
+    return {"seat_id": int(seat_id), "workspaces": wanted}
+
+
+def _seat_workspaces(tenant_id):
+    """Every member seat's workspaces, by seat."""
+    out = {}
+    for r in _sql("SELECT seat_id, workspace_id FROM seat_workspace "
+                  "WHERE tenant_id = :t ORDER BY workspace_id",
+                  [_p("t", tenant_id)]).get("records", []):
+        out.setdefault(int(_col(r, 0)), []).append(int(_col(r, 1)))
+    return out
+
+
+def _invitation_workspaces(tenant_id):
+    out = {}
+    for r in _sql(
+            "SELECT iw.invitation_id, iw.workspace_id "
+            "FROM seat_invitation_workspace iw "
+            "JOIN seat_invitation i ON i.invitation_id = iw.invitation_id "
+            "WHERE i.tenant_id = :t ORDER BY iw.workspace_id",
+            [_p("t", tenant_id)]).get("records", []):
+        out.setdefault(int(_col(r, 0)), []).append(int(_col(r, 1)))
+    return out
+
+
 def listing(tenant_id, email):
     """Seats, open invitations, and what is left.
 
@@ -223,11 +337,18 @@ def listing(tenant_id, email):
             return False
         return address.split("@", 1)[1].lower() != home.lower()
 
+    # Which workspaces each member sees, and each invitation will (PACK-02
+    # C). An administrator's is None: every one.
+    by_seat = _seat_workspaces(tenant_id)
+    by_invitation = _invitation_workspaces(tenant_id)
+
     seats = [{
         "seat_id": _col(r, 0), "email": _col(r, 1), "role": _col(r, 2),
         "invited_by": _col(r, 3), "accepted_at": _col(r, 4),
         "you": _col(r, 1) == email,
         "external": external(_col(r, 1)),
+        "workspaces": None if _col(r, 2) == "admin"
+                      else by_seat.get(int(_col(r, 0)), []),
     } for r in taken]
 
     invitations = [{
@@ -235,6 +356,8 @@ def listing(tenant_id, email):
         "invited_by": _col(r, 3), "created_at": _col(r, 4),
         "expires_at": _col(r, 5),
         "external": external(_col(r, 1)),
+        "workspaces": None if _col(r, 2) == "admin"
+                      else by_invitation.get(int(_col(r, 0)), []),
     } for r in pending]
 
     return {
@@ -253,12 +376,16 @@ def listing(tenant_id, email):
 
 # --- inviting --------------------------------------------------------------
 
-def invite(tenant_id, email, invitee, role):
+def invite(tenant_id, email, invitee, role, workspace_ids=None):
     """Reserve a seat and mint a token. Sending the email is the caller's job.
 
     Returns the token in clear, once. It is stored hashed and cannot be read
     back - if the email is lost the invitation is sent again, which is the
     same guarantee a password reset makes.
+
+    A MEMBER'S INVITATION NAMES ITS WORKSPACES, at least one (PACK-02 C), so
+    nobody arrives seeing none. An administrator's names none: they see every
+    workspace. Inviting the same address again replaces the list.
     """
     invitee = (invitee or "").strip().lower()
     role = role if role in ROLES else "member"
@@ -273,6 +400,14 @@ def invite(tenant_id, email, invitee, role):
 
     if not invitee or "@" not in invitee:
         raise ValueError("That does not look like an email address.")
+
+    # After the two refusals above, which say more about what is wrong.
+    workspaces = []
+    if role == "member":
+        workspaces = _checked_workspaces(tenant_id, workspace_ids or [])
+        if not workspaces:
+            raise ValueError("Choose at least one workspace for a member to "
+                             "see.")
 
     held = _sql("SELECT tenant_id FROM seat WHERE email = :e",
                 [_p("e", invitee)]).get("records", [])
@@ -310,8 +445,22 @@ def invite(tenant_id, email, invitee, role):
         [_p("t", tenant_id), _p("e", invitee), _p("r", role),
          _p("h", _sha(token)), _p("by", email), _p("exp", expires)],
     )
+
+    # The invitation's workspaces, replacing any an earlier invitation of
+    # the same address named. Found by address: an upsert keeps the id, and
+    # the address is the invitation's unique key (uq_open).
+    found = _sql("SELECT invitation_id FROM seat_invitation WHERE email = :e",
+                 [_p("e", invitee)]).get("records", [])
+    invitation_id = int(_col(found[0], 0))
+    _sql("DELETE FROM seat_invitation_workspace WHERE invitation_id = :i",
+         [_p("i", invitation_id)])
+    for w in workspaces:
+        _sql("INSERT INTO seat_invitation_workspace "
+             "(invitation_id, workspace_id) VALUES (:i, :w)",
+             [_p("i", invitation_id), _p("w", w)])
+
     return {"token": token, "email": invitee, "role": role,
-            "expires_at": expires}
+            "expires_at": expires, "workspaces": workspaces or None}
 
 
 def revoke_invitation(tenant_id, invitation_id):
@@ -344,6 +493,17 @@ def set_role(tenant_id, seat_id, role):
 
     _sql("UPDATE seat SET role = :r WHERE seat_id = :s AND tenant_id = :t",
          [_p("r", role), _p("s", int(seat_id)), _p("t", tenant_id)])
+
+    # An administrator made a member keeps every workspace there is
+    # (decision of 23 October 2026): nothing they could see disappears, and
+    # an administrator narrows it afterwards. INSERT IGNORE keeps what a
+    # member already had.
+    if _col(rows[0], 1) == "admin" and role == "member":
+        _sql("INSERT IGNORE INTO seat_workspace "
+             "(tenant_id, seat_id, workspace_id, assigned_by) "
+             "SELECT :t, :s, workspace_id, 'made a member' FROM workspace "
+             "WHERE tenant_id = :t",
+             [_p("t", tenant_id), _p("s", int(seat_id))])
     return {"seat_id": int(seat_id), "role": role}
 
 
@@ -416,6 +576,18 @@ def claim(email, token):
         [_p("t", tenant_id), _p("e", email), _p("r", role),
          _p("i", invitation_id)],
     )
+    # The invitation's workspaces become the seat's (PACK-02 C), as the
+    # signup function's accept does.
+    _sql(
+        "INSERT IGNORE INTO seat_workspace "
+        "(tenant_id, seat_id, workspace_id, assigned_by) "
+        "SELECT :t, s.seat_id, iw.workspace_id, i.invited_by "
+        "FROM seat s JOIN seat_invitation i ON i.invitation_id = :i "
+        "JOIN seat_invitation_workspace iw ON iw.invitation_id = :i "
+        "WHERE s.tenant_id = :t AND s.email = :e",
+        [_p("t", tenant_id), _p("e", email), _p("i", invitation_id)])
+    _sql("DELETE FROM seat_invitation_workspace WHERE invitation_id = :i",
+         [_p("i", invitation_id)])
     _sql("DELETE FROM seat_invitation WHERE invitation_id = :i",
          [_p("i", invitation_id)])
 

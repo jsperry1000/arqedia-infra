@@ -207,6 +207,12 @@ class GenerateRoute(unittest.TestCase):
 
     def setUp(self):
         self.app = load_api()
+        # A token with no role is a member's. Which workspaces a member may
+        # reach is test_seat_workspace's subject (PACK-02 C); here every one.
+        p = mock.patch.object(self.app.seats, "allowed_workspaces",
+                              return_value=None)
+        p.start()
+        self.addCleanup(p.stop)
         self.invocations, self.puts, self.refunds = [], [], []
         self.paid = {"entry_id": ENTRY, "repeated": False}
         registry = mock.MagicMock()

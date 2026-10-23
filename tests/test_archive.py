@@ -298,6 +298,13 @@ class RoutesTest(unittest.TestCase):
 
     def setUp(self):
         self.app = load_api()
+        # Any seat may archive, so these run as a member. Which workspaces a
+        # member may reach is test_seat_workspace's subject (PACK-02 C); here
+        # the member may reach every one.
+        p = mock.patch.object(self.app.seats, "allowed_workspaces",
+                              return_value=None)
+        p.start()
+        self.addCleanup(p.stop)
 
     def call(self, ev, db=None):
         db = db or Db()
