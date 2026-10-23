@@ -849,6 +849,20 @@ export default function App() {
     return onWorkspacesChanged(() => { void read(); });
   }, [signedIn, tenantId]);
 
+  // A SLOW FIRST READ IS SAID, NOT LEFT BLANK. The database sleeps when
+  // nobody has used it for a while and takes up to half a minute to wake;
+  // the API waits it out. Until then this screen showed an ellipsis and no
+  // workspace picker, which read as a broken page - and, signed in as an
+  // administrator, as the picker having gone (found walking PACK-02, 23
+  // October 2026). Said after three seconds, so an ordinary load never sees
+  // it.
+  const [slowStart, setSlowStart] = useState(false);
+  useEffect(() => {
+    if (!signedIn || workspacesRead) return;
+    const timer = setTimeout(() => setSlowStart(true), 3000);
+    return () => clearTimeout(timer);
+  }, [signedIn, workspacesRead]);
+
   const workspaceState: WorkspaceState = {
     workspaces,
     active: activeWs,
@@ -1188,7 +1202,14 @@ export default function App() {
             {/* Above every working screen, so the trial ending is not news
                 kept on one tab of Account (19.2). */}
             <TrialBanner tenant={tenantId} />
-            {!workspacesRead ? <p className="muted">&hellip;</p> : (
+            {!workspacesRead ? (
+              <p className="muted">
+                {slowStart
+                  ? "Starting up. After a quiet spell this can take up to "
+                    + "half a minute; your workspaces appear when it is done."
+                  : "…"}
+              </p>
+            ) : (
             <Routes key={workspaceEpoch}>
               <Route path="/" element={<EngagementsRoute />} />
               <Route path="/engagements/:id" element={<EngagementRoute />} />
