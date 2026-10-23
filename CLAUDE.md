@@ -149,6 +149,13 @@ copy. The current pair are placeholders and say so in their own source.
 **Gold is the act that costs money.** `--gold` appears on the generate control
 and nowhere else. It is the only signal of its kind the product has.
 
+**Amended 23 October 2026.** The heading wins over the sentence: gold marks
+every act that charges — filing, Generate, Update, a top-up, a plan bought or
+changed, a share past the allowance — and nothing else. Marked with
+`.spend` (`main button.spend` in `index.css`); every other button is navy.
+Until then `main button` was gold everywhere and `.plain` opted out, so gold
+said nothing.
+
 ### Reading and citation
 
 **Read once, at filing, and never again.** This is what makes a memorandum from

@@ -236,6 +236,7 @@ export function ShareSendPanel({ memoId, label, onClose }: {
 
           <div className="form-actions">
             <button onClick={send} disabled={!ready}
+                    className={cost !== null ? "spend" : undefined}
                     title={!affirmed ? "Confirm you are entitled to share it first."
                                      : undefined}>
               {sending ? "Sending…"
