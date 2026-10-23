@@ -224,18 +224,33 @@ class DispatchTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(self.listed, [TRADE])
 
-    def memo_route(self, memo_workspace, assigned):
+    def memo_route(self, memo_workspace, assigned, deleted=False,
+                   role="member"):
+        # The memo's workspace, and whether that workspace is deleted
+        # (PACK-02 D).
         def answer(statement, params=None, tx=None):
-            if re.search(r"SELECT workspace_id FROM memo", statement):
-                return rows((memo_workspace,))
+            if re.search(r"SELECT x.workspace_id, w.deleted_at IS NOT NULL "
+                         r"FROM memo x", statement):
+                return rows((memo_workspace, deleted))
             return rows()
         with mock.patch.object(self.app, "_sql", answer), \
                 mock.patch.object(self.app, "get_memo",
                                   return_value={"memo_id": 11}) as read:
             status, _ = self.dispatch(
-                event("GET /memos/{memo_id}", path={"memo_id": "11"}),
+                event("GET /memos/{memo_id}", path={"memo_id": "11"},
+                      role=role),
                 assigned)
         return status, read
+
+    def test_a_memo_in_a_deleted_workspace_is_not_found_even_by_an_admin(self):
+        status, read = self.memo_route(AR, None, deleted=True, role="admin")
+        self.assertEqual(status, 404)
+        read.assert_not_called()
+
+    def test_an_admin_reads_a_memo_in_a_live_workspace(self):
+        status, read = self.memo_route(AR, None, role="admin")
+        self.assertEqual(status, 200)
+        read.assert_called_once()
 
     def test_a_memo_by_number_in_another_workspace_is_not_found(self):
         status, read = self.memo_route(TRADE, {AR})

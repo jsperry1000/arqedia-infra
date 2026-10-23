@@ -193,7 +193,10 @@ def subscription_view(tenant_id):
 # --- how many workspaces ---------------------------------------------------
 
 def workspaces_held(tenant_id):
-    rows = _sql("SELECT COUNT(*) FROM workspace WHERE tenant_id = :t",
+    # A deleted workspace is not counted (PACK-02 D, settled 23 October
+    # 2026): deleting one makes room at once. Restoring it asks for room.
+    rows = _sql("SELECT COUNT(*) FROM workspace "
+                "WHERE tenant_id = :t AND deleted_at IS NULL",
                 [_p("t", tenant_id)]).get("records", [])
     return int(_col(rows[0], 0)) if rows else 0
 
@@ -316,9 +319,10 @@ def change_plan(tenant_id, email, role, body):
     allowed = plan.get("workspace_count")
     if allowed is not None and count > allowed:
         raise Refused(
-            "This tenant holds %d workspaces, and %s holds %d. A workspace "
-            "cannot be removed yet, so this plan cannot be chosen."
-            % (count, plan["name"], allowed))
+            "This tenant holds %d workspaces, and %s holds %d. Delete %s "
+            "under Account management, Workspaces, first."
+            % (count, plan["name"], allowed,
+               "one" if count - allowed == 1 else "%d" % (count - allowed)))
 
     paddle_api.change_plan(sub["paddle_subscription_id"], target)
     return {"requested": True, "plan": target}

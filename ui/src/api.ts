@@ -122,6 +122,39 @@ export type SeatInvitation = {
   workspaces: number[] | null;
 };
 
+/** A live workspace on the Workspaces tab (PACK-02 D): what deleting it
+ *  would hide, and who sees nothing else. */
+export type HeldWorkspace = {
+  workspace_id: number;
+  name: string;
+  engagements: number;
+  documents: number;
+  memos: number;
+  /** Shares a recipient can open today: sent, not revoked, not expired. */
+  shares: number;
+  /** Members, and open invitations, who see this workspace and no other.
+   *  Deleting it moves them; the administrator says where. */
+  members_only_here: string[];
+  invitations_only_here: string[];
+};
+
+/** A deleted workspace: hidden, and removed for good after remove_after. */
+export type DeletedWorkspace = {
+  workspace_id: number;
+  name: string;
+  deleted_at: string;
+  deleted_by: string;
+  remove_after: string;
+  restorable: boolean;
+};
+
+export type WorkspaceList = {
+  workspaces: HeldWorkspace[];
+  deleted: DeletedWorkspace[];
+  workspace_limit: number | null;
+  keep_months: number;
+};
+
 export type Seats = {
   seats: Seat[];
   /** Listed beside the seats, because an administrator counting who has
@@ -1594,6 +1627,30 @@ export const api = {
 
   removeSeat: (seatId: number) =>
     call(`/seats/${seatId}`, { method: "DELETE" }),
+
+  // --- deleting a workspace (PACK-02 D) -----------------------------------
+
+  /** Every workspace with what it holds, and the deleted ones. Administrator
+   *  only. */
+  workspacesList: (): Promise<WorkspaceList> => call("/workspaces"),
+
+  /** Email the administrator the code deleting needs. One a minute. */
+  workspaceDeletionCode: (id: number):
+      Promise<{ sent: boolean; minutes: number }> =>
+    call(`/workspaces/${id}/delete/code`, { method: "POST" }),
+
+  /** Hide it: its name typed, the code, and where members who see only it
+   *  go. Refuses with 409 naming them where none is given. */
+  deleteWorkspace: (id: number, name: string, code: string,
+                    moveMembersTo: number | null) =>
+    call(`/workspaces/${id}/delete`, {
+      method: "POST",
+      body: JSON.stringify({ name, code, move_members_to: moveMembersTo }),
+    }),
+
+  /** Bring it back, before its date and where the plan has room. */
+  restoreWorkspace: (id: number) =>
+    call(`/workspaces/${id}/restore`, { method: "POST" }),
 
   // --- the wallet ---------------------------------------------------------
 

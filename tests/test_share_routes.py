@@ -1417,6 +1417,54 @@ class RulesTest(unittest.TestCase):
             {"authorization": "eyJ.jwt.token"}))
 
 
+class WorkspaceSuspendTest(SendTest):
+    """A deleted workspace's shares are suspended, and a restore lifts them
+    (PACK-02 D). Memo 11 is in the workspace; memo 12 is not."""
+
+    def setUp(self):
+        super().setUp()
+        self.share._workspace_memos = lambda t, w: {11}
+
+    def grant(self, memo):
+        rules = self.share.rules
+        gid = rules.grant_id(memo, rules.viewer_account_id(
+            "j.ferrers@northbank.com"))
+        return self.share._table("grant").get_item(
+            Key={"grant_id": gid}, ConsistentRead=True)["Item"]
+
+    def test_only_that_workspaces_grants_are_suspended_and_lifted(self):
+        self.send(memo=11, key="k1")
+        self.send(memo=12, key="k2")
+        self.assertEqual(self.share.live_count(1, 3), 1)
+
+        self.assertEqual(self.share.suspend_workspace(1, 3, "a@b.c"), 1)
+        self.assertTrue(self.grant(11)["suspended"])
+        self.assertNotIn("suspended", self.grant(12))
+        self.assertEqual(self.share.live_count(1, 3), 0)
+        rules = self.share.rules
+        self.assertEqual(rules.refusal(self.grant(11), rules.now(),
+                                       token=self.grant(11)["link_token"]),
+                         "suspended")
+
+        self.assertEqual(self.share.lift_workspace(1, 3), 1)
+        self.assertNotIn("suspended", self.grant(11))
+        self.assertIsNone(rules.refusal(self.grant(11), rules.now(),
+                                        token=self.grant(11)["link_token"]))
+
+    def test_a_revoked_grant_stays_revoked_through_a_restore(self):
+        self.send(memo=11, key="k1")
+        self.share.revoke(1, "a@b.c", self.grant(11)["grant_id"])
+        self.share.suspend_workspace(1, 3, "a@b.c")
+        self.share.lift_workspace(1, 3)
+        self.assertTrue(self.grant(11)["revoked"])
+
+    def test_the_list_says_which_are_suspended(self):
+        self.send(memo=11, key="k1")
+        self.share.suspend_workspace(1, 3, "a@b.c")
+        [listed] = self.share.listing(1)["grants"]
+        self.assertTrue(listed["suspended"])
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -1424,3 +1472,5 @@ if __name__ == "__main__":
 for _name in [n for n in dir(SendTest) if n.startswith("test_")]:
     if _name not in BatchTest.__dict__:
         setattr(BatchTest, _name, None)
+    if _name not in WorkspaceSuspendTest.__dict__:
+        setattr(WorkspaceSuspendTest, _name, None)

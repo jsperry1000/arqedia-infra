@@ -752,8 +752,9 @@ def _view(grant, registered=None):
         "sent_by", "created_at", "sent_at", "expires_at",
         "expiry_set_by_tenant", "first_opened_at", "opens", "downloads",
         "revoked", "revoked_at", "revoked_by", "reinstated_at",
-        "charged_cents", "notified_at")}
+        "charged_cents", "notified_at", "suspended")}
     out["revoked"] = bool(out["revoked"])
+    out["suspended"] = bool(out["suspended"])
     out["expired"] = expired
     if registered is not None:
         out["registered"] = registered
@@ -837,6 +838,75 @@ def revoke(tenant_id, email, grant_id):
     print("[share-revoked] tenant=%s grant=%s" % (tenant_id,
                                                    str(grant_id)[:12]))
     return _view(result["Attributes"])
+
+
+# --- a deleted workspace (PACK-02 D) ----------------------------------------
+#
+# A workspace deleted is hidden for six months, and the shares of its
+# memoranda are SUSPENDED, not revoked (settled 23 October 2026): the viewer
+# refuses a suspended grant as it refuses a revoked one, and a restore lifts
+# it. One write per grant, as a revoke is. A revoked grant stays revoked
+# either way; suspending says nothing about it.
+
+def _workspace_grants(tenant_id, workspace_id):
+    """Every grant ever made from one workspace's memoranda, any status."""
+    held = _workspace_memos(tenant_id, workspace_id)
+    found, start = [], None
+    while True:
+        kwargs = {"IndexName": "tenant-index",
+                  "KeyConditionExpression": "tenant_id = :t",
+                  "ExpressionAttributeValues": {":t": int(tenant_id)}}
+        if start:
+            kwargs["ExclusiveStartKey"] = start
+        page = _table("grant").query(**kwargs)
+        found.extend(g for g in page.get("Items", [])
+                     if int(g.get("memo_id", -1)) in held)
+        start = page.get("LastEvaluatedKey")
+        if not start:
+            break
+    return found
+
+
+def live_count(tenant_id, workspace_id):
+    """How many of one workspace's shares a recipient can open today: sent,
+    not revoked, not suspended, not expired. What deleting it would stop."""
+    at = rules.now()
+    return sum(1 for g in _workspace_grants(tenant_id, workspace_id)
+               if g.get("status") == rules.ACTIVE and not g.get("revoked")
+               and not g.get("suspended") and g.get("expires_at")
+               and rules.parse(g["expires_at"]) > at)
+
+
+def suspend_workspace(tenant_id, workspace_id, email):
+    """Suspend every grant of one workspace. Safe to run twice."""
+    at = rules.iso(rules.now())
+    grants = _workspace_grants(tenant_id, workspace_id)
+    for g in grants:
+        _table("grant").update_item(
+            Key={"grant_id": g["grant_id"]},
+            UpdateExpression="SET suspended = :y, suspended_at = :at, "
+                             "suspended_by = :by",
+            ConditionExpression="tenant_id = :t",
+            ExpressionAttributeValues={":y": True, ":at": at, ":by": email,
+                                       ":t": int(tenant_id)})
+    print("[share-suspended] tenant=%s workspace=%s grants=%d" % (
+        tenant_id, workspace_id, len(grants)))
+    return len(grants)
+
+
+def lift_workspace(tenant_id, workspace_id):
+    """Lift the suspension a deletion put on one workspace's grants. Safe to
+    run twice. What a grant was otherwise - revoked, expired - it still is."""
+    grants = _workspace_grants(tenant_id, workspace_id)
+    for g in grants:
+        _table("grant").update_item(
+            Key={"grant_id": g["grant_id"]},
+            UpdateExpression="REMOVE suspended, suspended_at, suspended_by",
+            ConditionExpression="tenant_id = :t",
+            ExpressionAttributeValues={":t": int(tenant_id)})
+    print("[share-unsuspended] tenant=%s workspace=%s grants=%d" % (
+        tenant_id, workspace_id, len(grants)))
+    return len(grants)
 
 
 # --- account deletion ------------------------------------------------------

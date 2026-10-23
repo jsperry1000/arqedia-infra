@@ -198,6 +198,10 @@ def refusal(grant, at, token=None, viewer_id=None):
         return "not-active"
     if grant.get("revoked"):
         return "revoked"
+    # Its memorandum's workspace was deleted (PACK-02 D). Held, not ended: a
+    # restore lifts it, and the grant's own expiry runs on meanwhile.
+    if grant.get("suspended"):
+        return "suspended"
     if not grant.get("expires_at") or parse(grant["expires_at"]) <= at:
         return "expired"
     return None

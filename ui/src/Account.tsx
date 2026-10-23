@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { updatePassword } from "aws-amplify/auth";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { TableScroll, useBackAction, Working } from "./shell";
-import { ENTERPRISE_COLUMN, EnterpriseLink, UpgradePrompt } from "./upgrade";
+import { ENTERPRISE_COLUMN, EnterpriseLink, UpgradePrompt,
+         useRole } from "./upgrade";
 import { api, chargeKey, type Wallet, type LedgerEntry,
          type Seats as SeatState, type Invited,
-         type SubscriptionView, type Plan } from "./api";
+         type SubscriptionView, type Plan,
+         type WorkspaceList, type HeldWorkspace } from "./api";
 import { openCheckout } from "./paddle";
-import { useWorkspace } from "./workspace";
+import { useWorkspace, workspacesChanged } from "./workspace";
 import { INVOICES, Inert, NotConnected } from "./mock";
 
 /** Cents, as money. One place, so a balance and a ledger row never disagree
@@ -151,9 +153,10 @@ const ROWS: PlanRow[] = [
  * checkout is ASK AGAIN, and say plainly that the answer may take a moment.
  */
 
-type Tab = "subscription" | "balance" | "seats" | "password";
+type Tab = "subscription" | "balance" | "seats" | "workspaces" | "password";
 
-const TABS: Tab[] = ["subscription", "balance", "seats", "password"];
+const TABS: Tab[] = ["subscription", "balance", "seats", "workspaces",
+                     "password"];
 
 /**
  * THE TAB IS IN THE ADDRESS (11.1). It was local state, so every arrival
@@ -169,7 +172,12 @@ export function AccountView({ onBack }: { onBack: () => void }) {
   useBackAction(onBack);
   const [params, setParams] = useSearchParams();
   const asked = params.get("tab") as Tab | null;
-  const tab: Tab = asked && TABS.includes(asked) ? asked : "subscription";
+  // Workspaces is an administrator's (PACK-02 D): every route behind it
+  // refuses a member, so a member is not shown it.
+  const role = useRole();
+  const admin = role === "admin";
+  const tab: Tab = asked && TABS.includes(asked)
+    && (asked !== "workspaces" || admin) ? asked : "subscription";
   const setTab = (to: Tab) => setParams({ tab: to }, { replace: true });
 
   return (
@@ -183,6 +191,10 @@ export function AccountView({ onBack }: { onBack: () => void }) {
                 onClick={() => setTab("balance")}>Balance</button>
         <button className={tab === "seats" ? "on" : undefined}
                 onClick={() => setTab("seats")}>Seats and permissions</button>
+        {admin && (
+          <button className={tab === "workspaces" ? "on" : undefined}
+                  onClick={() => setTab("workspaces")}>Workspaces</button>
+        )}
         <button className={tab === "password" ? "on" : undefined}
                 onClick={() => setTab("password")}>Password</button>
       </nav>
@@ -190,6 +202,7 @@ export function AccountView({ onBack }: { onBack: () => void }) {
       {tab === "subscription" && <Subscription />}
       {tab === "balance" && <Balance />}
       {tab === "seats" && <Seats />}
+      {tab === "workspaces" && <Workspaces />}
       {tab === "password" && <Password />}
     </div>
   );
@@ -1301,6 +1314,285 @@ function Seats() {
         session next refreshes. Removing the seat takes effect at once, which
         is why removal rather than demotion is what to reach for in a hurry.
       </p>
+    </>
+  );
+}
+
+// --- workspaces ------------------------------------------------------------
+
+/**
+ * Deleting a workspace, and restoring one (PACK-02 D, settled 23 October
+ * 2026). Administrators only.
+ *
+ * HIDDEN, THEN REMOVED. Deleting hides a workspace at once - out of the
+ * picker, its shares suspended, not counted against the plan - and it is
+ * removed for good six months later. Until then it is listed below with
+ * Restore.
+ *
+ * THE STEPS, as settled: what it holds is shown first; a code is emailed to
+ * the administrator; the name is typed; and members who see only this
+ * workspace are moved to one the administrator names. The server checks
+ * every one of them again - this screen only asks.
+ *
+ * Composed from the panel, quote and form the top-up confirmation uses. No
+ * new CSS.
+ */
+function Workspaces() {
+  const [list, setList] = useState<WorkspaceList | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+  const [said, setSaid] = useState("");
+
+  // The one being deleted, and what has been entered for it.
+  const [deleting, setDeleting] = useState<HeldWorkspace | null>(null);
+  const [codeSent, setCodeSent] = useState(false);
+  const [code, setCode] = useState("");
+  const [typed, setTyped] = useState("");
+  const [moveTo, setMoveTo] = useState<number | null>(null);
+  const [panelError, setPanelError] = useState("");
+
+  const load = () =>
+    api.workspacesList().then(setList).catch((e) => setError(message(e)));
+
+  useEffect(() => { load(); }, []);
+
+  function open(w: HeldWorkspace) {
+    setDeleting(w);
+    setCodeSent(false);
+    setCode("");
+    setTyped("");
+    setMoveTo(null);
+    setPanelError("");
+  }
+
+  async function sendCode() {
+    if (!deleting) return;
+    setPanelError("");
+    setBusy("Sending the code");
+    try {
+      const out = await api.workspaceDeletionCode(deleting.workspace_id);
+      setCodeSent(true);
+      if (!out.sent) {
+        setPanelError("The code could not be emailed just now. Nothing was "
+                      + "deleted - ask again in a minute.");
+      }
+    } catch (err) {
+      setPanelError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleting) return;
+    setPanelError("");
+    setBusy("Deleting " + deleting.name);
+    try {
+      const out = await api.deleteWorkspace(deleting.workspace_id, typed,
+                                            code.trim(), moveTo);
+      setDeleting(null);
+      setSaid(`${deleting.name} is deleted. It can be restored until `
+              + `${on(out.remove_after)}.`);
+      // The picker reads the list again; a deleted active workspace gives
+      // way to the first that is left.
+      workspacesChanged();
+      await load();
+    } catch (err) {
+      setPanelError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function restore(id: number, name: string) {
+    setError("");
+    setSaid("");
+    setBusy("Restoring " + name);
+    try {
+      await api.restoreWorkspace(id);
+      setSaid(`${name} is back, with its shares.`);
+      workspacesChanged();
+      await load();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  if (error && !list) return <p className="error">{error}</p>;
+  if (!list) return <p className="muted">Loading&hellip;</p>;
+
+  const onlyOne = list.workspaces.length <= 1;
+  const stranded = deleting
+    ? [...deleting.members_only_here, ...deleting.invitations_only_here] : [];
+  const others = deleting
+    ? list.workspaces.filter((w) => w.workspace_id !== deleting.workspace_id)
+    : [];
+  const ready = !!deleting && codeSent && code.trim().length === 6
+    && typed.trim() === deleting.name.trim()
+    && (stranded.length === 0 || moveTo !== null);
+
+  return (
+    <>
+      {error && <p className="error">{error}</p>}
+      {busy && <Working what={busy} />}
+      {said && <p className="revision-note">{said}</p>}
+
+      <h3>Your workspaces</h3>
+      <p className="muted small">
+        Deleting a workspace hides it at once: it leaves the list at the top
+        of the page, links shared from its memoranda stop opening, and it no
+        longer counts toward your plan. It is removed for good{" "}
+        {list.keep_months} months later, and until then it can be restored
+        below. Nothing charged is refunded.
+      </p>
+      <TableScroll label="Workspaces">
+      <table className="docs">
+        <thead>
+          <tr><th>Workspace</th><th>Engagements</th><th>Documents</th>
+              <th>Memoranda</th><th>Live shares</th><th></th></tr>
+        </thead>
+        <tbody>
+          {list.workspaces.map((w) => (
+            <tr key={w.workspace_id}>
+              <td>{w.name}</td>
+              <td className="ref">{w.engagements}</td>
+              <td className="ref">{w.documents}</td>
+              <td className="ref">{w.memos}</td>
+              <td className="ref">{w.shares}</td>
+              <td>
+                {onlyOne
+                  ? <span className="muted small">your only one</span>
+                  : <a className="small" onClick={() => open(w)}>Delete</a>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      </TableScroll>
+      {onlyOne && (
+        <p className="muted small">
+          The last workspace cannot be deleted. Closing the account is a
+          separate step.
+        </p>
+      )}
+
+      {list.deleted.length > 0 && (
+        <>
+          <h3>Deleted</h3>
+          <TableScroll label="Deleted workspaces">
+          <table className="docs">
+            <thead>
+              <tr><th>Workspace</th><th>Deleted</th><th>Removed for good</th>
+                  <th></th></tr>
+            </thead>
+            <tbody>
+              {list.deleted.map((w) => (
+                <tr key={w.workspace_id} className="aside">
+                  <td>{w.name}</td>
+                  <td className="muted small">
+                    {on(w.deleted_at)} by {w.deleted_by}
+                  </td>
+                  <td className="ref">{on(w.remove_after)}</td>
+                  <td>
+                    {w.restorable
+                      ? <a className="small" onClick={() =>
+                          restore(w.workspace_id, w.name)}>Restore</a>
+                      : <span className="muted small">being removed</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          </TableScroll>
+        </>
+      )}
+
+      {/* THE STEPS, in a panel over the list, as Top up's confirmation is. */}
+      {deleting && (
+        <div className="panel-backdrop" onClick={() => setDeleting(null)}>
+          <div className="panel narrow" onClick={(e) => e.stopPropagation()}
+               onKeyDown={(e) => { if (e.key === "Escape") setDeleting(null); }}>
+            <a className="panel-close" onClick={() => setDeleting(null)}>Close</a>
+            <div className="form">
+              <h4>Delete {deleting.name}</h4>
+
+              <div className="quote">
+                <div><span>Engagements</span><b>{deleting.engagements}</b></div>
+                <div><span>Documents</span><b>{deleting.documents}</b></div>
+                <div><span>Memoranda</span><b>{deleting.memos}</b></div>
+                <div><span>Shares that stop opening</span>
+                     <b>{deleting.shares}</b></div>
+              </div>
+
+              <p className="muted small">
+                All of it is hidden now and removed for good in{" "}
+                {list.keep_months} months. Restoring it before then brings
+                it all back, its shares included. A copy a recipient already
+                downloaded is not recalled.
+              </p>
+
+              {stranded.length > 0 && (
+                <label className="row">
+                  <span>
+                    {stranded.join(", ")}{" "}
+                    {stranded.length === 1 ? "sees" : "see"} only this
+                    workspace. Move them to
+                  </span>
+                  <select value={moveTo ?? ""}
+                          onChange={(e) => setMoveTo(
+                            e.target.value ? Number(e.target.value) : null)}>
+                    <option value="">Choose a workspace</option>
+                    {others.map((w) => (
+                      <option key={w.workspace_id} value={w.workspace_id}>
+                        {w.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              <label className="row">
+                <span>Type <b>{deleting.name}</b> to confirm</span>
+                <input value={typed} autoComplete="off"
+                       onChange={(e) => setTyped(e.target.value)} />
+              </label>
+
+              <div className="form-actions">
+                <button disabled={!!busy} onClick={sendCode}>
+                  {codeSent ? "Send another code" : "Email me a code"}
+                </button>
+                <span className="muted small">
+                  {codeSent
+                    ? "Sent to your address. It works for 15 minutes."
+                    : "Deleting needs a code we email to you."}
+                </span>
+              </div>
+
+              {codeSent && (
+                <label className="row">
+                  <span>The code</span>
+                  <input value={code} inputMode="numeric" maxLength={6}
+                         autoComplete="one-time-code"
+                         onChange={(e) => setCode(e.target.value)} />
+                </label>
+              )}
+
+              {panelError && <p className="error">{panelError}</p>}
+
+              <div className="form-actions">
+                <button disabled={!!busy || !ready} onClick={confirmDelete}>
+                  Delete {deleting.name}
+                </button>
+                <a className="secondary" onClick={() => setDeleting(null)}>
+                  Cancel
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
