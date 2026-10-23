@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { activeName, useWorkspace } from "./workspace";
+import { PLANS } from "./upgrade";
 
 /**
  * The active workspace, in the header (PACK-01). Every screen follows it:
@@ -30,6 +32,7 @@ export function WorkspacePicker({ admin, curator = false, onAdd }: {
   onAdd: () => void;
 }) {
   const state = useWorkspace();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLSpanElement | null>(null);
 
@@ -78,12 +81,23 @@ export function WorkspacePicker({ admin, curator = false, onAdd }: {
               {w.workspace_id === state.active ? "✓ " : ""}{w.name}
             </a>
           ))}
+          {/* AT THE PLAN'S LIMIT (PACK-02) the same place says so and goes
+              to the plan table, as a full seat count does. The server
+              refuses a workspace past it whatever this shows. */}
           {admin && (
             <>
               <span className="sep" />
-              <a onClick={() => { setOpen(false); onAdd(); }}>
-                {curator ? "Add an offering" : "Add a workspace"}
-              </a>
+              {state.room ? (
+                <a onClick={() => { setOpen(false); onAdd(); }}>
+                  {curator ? "Add an offering" : "Add a workspace"}
+                </a>
+              ) : (
+                <a onClick={() => { setOpen(false); navigate(PLANS); }}>
+                  Your plan holds {state.limit}{" "}
+                  {state.limit === 1 ? "workspace" : "workspaces"} &middot; see
+                  plans
+                </a>
+              )}
             </>
           )}
         </div>

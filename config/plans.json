@@ -35,7 +35,8 @@
     "active": "plan table",
     "enterprise": "site/pricing/index.html throughout - it has never been a plan row",
     "topup_increment_cents": "billing.TOPUP_INCREMENT_CENTS and paddle_processor's copy of it, both 500, and the 'ARQEDIA Top-up' price in config/paddle/sandbox.json",
-    "trial_days": "signup.TRIAL_DAYS, which is what writes tenant.trial_ends_at. Bound to it by tests/test_plans_source.py"
+    "trial_days": "signup.TRIAL_DAYS, which is what writes tenant.trial_ends_at. Bound to it by tests/test_plans_source.py",
+    "workspace_count": "plan table, as migration 046 sets it (PACK-02, settled 23 October 2026). NOT ON THE PRICING PAGE: shown in the app only until the site is redone before launch. Enterprise is tenant.workspace_limit, negotiated; no limit until it is set"
   },
 
   "trial_days": 14,
@@ -122,6 +123,7 @@
       "monthly_credit_cents": 2500,
       "share_allowance": 10,
       "sections_per_template": 12,
+      "workspace_count": 1,
       "paddle_price_name": "ARQEDIA Base",
       "how_it_starts": "https://app.arqedia.com/signup",
       "active": true
@@ -134,6 +136,7 @@
       "monthly_credit_cents": 6500,
       "share_allowance": 25,
       "sections_per_template": 25,
+      "workspace_count": 5,
       "paddle_price_name": "ARQEDIA Small Business",
       "how_it_starts": "https://app.arqedia.com/signup",
       "active": true
@@ -146,6 +149,7 @@
       "monthly_credit_cents": "as contracted",
       "share_allowance": "as contracted",
       "sections_per_template": "50 by default",
+      "workspace_count": "as contracted",
       "paddle_price_name": null,
       "how_it_starts": "mailto:enterprise@arqedia.com?subject=ARQEDIA%20Enterprise%20enquiry",
       "active": true

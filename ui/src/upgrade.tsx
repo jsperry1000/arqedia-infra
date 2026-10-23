@@ -70,6 +70,9 @@ export const ENTERPRISE_COLUMN = {
   monthly_credit: "as contracted",
   shares: "as contracted",
   sections: "50 by default",
+  /** Not on the pricing page yet (PACK-02): the app's words, and
+   *  config/plans.json's. */
+  workspaces: "as contracted",
   topup: "$5",
 } as const;
 

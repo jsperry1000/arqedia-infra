@@ -228,7 +228,12 @@ class MayReviewTest(unittest.TestCase):
                         if subscribed else []}
             return {"records": []}
 
-        with mock.patch.object(app, "_sql", side_effect=sql):
+        # The workspace limit is billing's to read, and not what this tests.
+        with mock.patch.object(app, "_sql", side_effect=sql), \
+                mock.patch.object(app.billing, "workspace_limit",
+                                  return_value=None), \
+                mock.patch.object(app.billing, "workspaces_held",
+                                  return_value=1):
             return app.get_settings(TENANT, "admin")["may_review"]
 
     def test_business_and_enterprise_subscriptions_may(self):

@@ -2488,10 +2488,15 @@ def get_settings(tenant_id, role=None):
         # The tenant's workspaces, for the selector (PACK-01). Here because
         # this route is open to any seat and needs no workspace to answer -
         # a screen with several to choose from has to be told them before it
-        # can name one. EVERY WORKSPACE, FOR EVERY SEAT: assigning
-        # workspaces to members is Prompt 5 and not built.
+        # can name one. A member's list is cut to their own by the dispatcher
+        # (_visible, PACK-02 C).
         "workspaces": [{"workspace_id": w["workspace_id"], "name": w["name"]}
                        for w in config.workspaces(tenant_id)],
+        # How many the plan holds, null for no limit, and how many the
+        # tenant has - all of them, whoever is asking (PACK-02). Display only:
+        # billing.require_workspace_room is the control.
+        "workspace_limit": billing.workspace_limit(tenant_id),
+        "workspaces_held": billing.workspaces_held(tenant_id),
         "plan": plan,
         # What the token says this caller is, echoed rather than decided here.
         "role": role,
@@ -3971,6 +3976,8 @@ def _dispatch(event, context):
         # workspace, and a new route is Terraform.
         if route == "POST /config/fork":
             _require_admin(role)
+            # The plan's workspace limit, before anything is made (PACK-02).
+            billing.require_workspace_room(tenant_id)
             body = json.loads(event.get("body") or "{}")
             if body.get("empty") is True:
                 return _reply(201, registry.new_workspace(

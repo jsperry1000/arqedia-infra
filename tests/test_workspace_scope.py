@@ -199,11 +199,18 @@ class SettingsTest(unittest.TestCase):
             return rows()
         db = Recorder(answer)
         with mock.patch.object(self.app, "_sql", db.sql), \
-                mock.patch.object(self.app.config, "_sql", db.sql):
+                mock.patch.object(self.app.config, "_sql", db.sql), \
+                mock.patch.object(self.app.billing, "workspace_limit",
+                                  return_value=5), \
+                mock.patch.object(self.app.billing, "workspaces_held",
+                                  return_value=2):
             out = self.app.get_settings(TENANT, "member")
         self.assertEqual(out["workspaces"],
                          [{"workspace_id": 3, "name": "Trade Finance"},
                           {"workspace_id": 9, "name": "Real Estate"}])
+        # PACK-02: the limit and the count travel with them, for the screen.
+        self.assertEqual((out["workspace_limit"], out["workspaces_held"]),
+                         (5, 2))
 
 
 if __name__ == "__main__":

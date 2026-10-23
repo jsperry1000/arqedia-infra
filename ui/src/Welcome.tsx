@@ -4,7 +4,7 @@ import {
   api, type ConfigState, type Pack, type TemplatePack, type Validation,
 } from "./api";
 import { Working } from "./shell";
-import { SEATS } from "./upgrade";
+import { SEATS, UpgradePrompt } from "./upgrade";
 import { useWorkspace, workspacesChanged } from "./workspace";
 import { untitledReport, type OwnStart } from "./Catalogue";
 
@@ -392,6 +392,18 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
             is touched.
           </p>
         </>
+      )}
+
+      {/* AT THE PLAN'S LIMIT (PACK-02), said before the form rather than
+          after the press. The form stays: the server is what refuses, and
+          its sentence lands below if it is pressed anyway. */}
+      {creating && !firstRun && !workspace.room && (
+        <UpgradePrompt>
+          Your plan holds {workspace.limit}{" "}
+          {workspace.limit === 1 ? "workspace" : "workspaces"}, and{" "}
+          {workspace.limit === 1 ? "it is" : "all are"} in use. A bigger plan
+          is how a tenant gets more.
+        </UpgradePrompt>
       )}
 
       {/* THE NAME, BEFORE ANYTHING ELSE IS ASKED (PACK-01). Required and

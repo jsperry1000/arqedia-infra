@@ -227,6 +227,9 @@ export type Plan = {
   field_sets_per_type: number | null;
   sections_per_template: number | null;
   daily_classification_cents: number | null;
+  /** How many workspaces the plan holds (migration 046, PACK-02). Null is
+   *  no limit. */
+  workspace_count: number | null;
 };
 
 export type SubscriptionView = {
@@ -534,9 +537,14 @@ export type DocumentDetail = {
 
 export type Settings = {
   name: string;
-  /** The tenant's workspaces, for the selector (PACK-01). Every one, for
-   *  every seat: which workspaces a member may see is not built yet. */
+  /** The workspaces this caller may see, for the selector (PACK-01): every
+   *  one for an administrator, a member's own (PACK-02 C). */
   workspaces: { workspace_id: number; name: string }[];
+  /** How many workspaces the plan holds, null for no limit, and how many
+   *  the tenant has - all of them, whoever asks (PACK-02). Display only:
+   *  the server refuses a workspace past the limit itself. */
+  workspace_limit: number | null;
+  workspaces_held: number;
   plan: string;
   /** The caller's own role, from the token. Branding is an administrator act,
    *  and the server refuses a member - this is what lets the screen say so

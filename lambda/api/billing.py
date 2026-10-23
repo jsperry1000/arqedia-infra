@@ -83,6 +83,9 @@ def _require_admin(role):
 def _plans():
     """Every active plan, with everything the two surfaces show about one.
 
+    workspace_count arrived with migration 046 (PACK-02): how many workspaces
+    the plan holds, NULL for no limit, as the three limits below are.
+
     THE THREE LIMITS ARRIVED WITH MIGRATION 033 (18.5). Field sets per
     document type, sections per template and the daily classification
     allowance were sold on the pricing page and held nowhere - so the
@@ -106,7 +109,7 @@ def _plans():
         SELECT plan_key, name, seat_count, monthly_price_cents,
                monthly_credit_cents, share_allowance,
                field_sets_per_type, sections_per_template,
-               daily_classification_cents
+               daily_classification_cents, workspace_count
         FROM plan WHERE active = 1 ORDER BY monthly_price_cents
         """).get("records", [])
     return [{"plan_key": _col(r, 0), "name": _col(r, 1),
@@ -115,7 +118,8 @@ def _plans():
              "share_allowance": _col(r, 5),
              "field_sets_per_type": _col(r, 6),
              "sections_per_template": _col(r, 7),
-             "daily_classification_cents": _col(r, 8)} for r in rows]
+             "daily_classification_cents": _col(r, 8),
+             "workspace_count": _col(r, 9)} for r in rows]
 
 
 def _plan(plan_key):
@@ -186,6 +190,67 @@ def subscription_view(tenant_id):
     }
 
 
+# --- how many workspaces ---------------------------------------------------
+
+def workspaces_held(tenant_id):
+    rows = _sql("SELECT COUNT(*) FROM workspace WHERE tenant_id = :t",
+                [_p("t", tenant_id)]).get("records", [])
+    return int(_col(rows[0], 0)) if rows else 0
+
+
+def workspace_limit(tenant_id):
+    """How many workspaces this tenant may hold, or None for no limit
+    (PACK-02, settled 23 October 2026).
+
+    TENANT 0 HAS NO LIMIT: its workspaces are the offerings.
+
+    THE SUBSCRIPTION'S PLAN DECIDES, as it does seats (seats.seats_bought).
+    On a trial there is no subscription, and tenant.plan is read through the
+    plan table instead. ENTERPRISE has no plan row: tenant.workspace_limit is
+    its negotiated number, and NULL there is no limit until one is set. A
+    plan string nothing recognises gets the smallest active plan's, as an
+    unknown plan's seats do."""
+    if tenant_id == 0:
+        return None
+    rows = _sql(
+        "SELECT p.workspace_count FROM subscription s "
+        "JOIN plan p ON p.plan_id = s.plan_id WHERE s.tenant_id = :t",
+        [_p("t", tenant_id)]).get("records", [])
+    if rows:
+        return _col(rows[0], 0)
+
+    rows = _sql("SELECT plan, workspace_limit FROM tenant WHERE tenant_id = :t",
+                [_p("t", tenant_id)]).get("records", [])
+    plan = ((_col(rows[0], 0) if rows else None) or "base")
+    key = plan.strip().lower().replace(" ", "_")
+    if key == "enterprise":
+        return _col(rows[0], 1)
+
+    rows = _sql("SELECT workspace_count FROM plan "
+                "WHERE plan_key = :k AND active = 1",
+                [_p("k", key)]).get("records", [])
+    if rows:
+        return _col(rows[0], 0)
+    rows = _sql("SELECT workspace_count FROM plan WHERE active = 1 "
+                "ORDER BY monthly_price_cents LIMIT 1").get("records", [])
+    return _col(rows[0], 0) if rows else None
+
+
+def require_workspace_room(tenant_id):
+    """Refuses a new workspace at the limit. Asked before one is made, by
+    the one route that makes them (POST /config/fork)."""
+    allowed = workspace_limit(tenant_id)
+    if allowed is None:
+        return
+    count = workspaces_held(tenant_id)
+    if count >= allowed:
+        raise Refused(
+            "Your plan holds %d workspace%s, and %s in use. A bigger plan is "
+            "how a tenant gets more." % (
+                allowed, "" if allowed == 1 else "s",
+                "it is" if count == 1 else "all %d are" % count))
+
+
 # --- checkout --------------------------------------------------------------
 
 def checkout(tenant_id, role, body):
@@ -244,6 +309,16 @@ def change_plan(tenant_id, email, role, body):
             "%d seats are taken or reserved, and %s has %d. Remove seats or "
             "revoke invitations first." % (held, plan["name"],
                                            plan["seat_count"]))
+
+    # The same refusal for workspaces (PACK-02, settled 23 October 2026):
+    # nothing is deleted for the tenant to make a downgrade fit.
+    count = workspaces_held(tenant_id)
+    allowed = plan.get("workspace_count")
+    if allowed is not None and count > allowed:
+        raise Refused(
+            "This tenant holds %d workspaces, and %s holds %d. A workspace "
+            "cannot be removed yet, so this plan cannot be chosen."
+            % (count, plan["name"], allowed))
 
     paddle_api.change_plan(sub["paddle_subscription_id"], target)
     return {"requested": True, "plan": target}
