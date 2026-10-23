@@ -11,12 +11,14 @@ import { activeName, useWorkspace } from "./workspace";
  * before (CLAUDE.md), and this one is the same kind of thing as its
  * neighbour.
  *
- * SHOWN WHERE THERE IS SOMETHING TO DO WITH IT: more than one workspace to
- * choose between, or an administrator who may add one. A member of a tenant
- * with one workspace sees nothing new.
+ * A MENU WHERE THERE IS SOMETHING TO DO WITH IT: more than one workspace to
+ * choose between, or an administrator who may add one. A member with one
+ * workspace is told its name, without a menu: since PACK-02 C one workspace
+ * may be one of several the tenant holds, and the header was the only place
+ * a member could have read which.
  *
- * EVERY WORKSPACE, FOR EVERY SEAT. Which workspaces a member is assigned is
- * Prompt 5 and is not built; until it is, the list is all of the tenant's.
+ * A MEMBER'S LIST IS THEIR OWN (PACK-02 C): /settings names only the
+ * workspaces assigned to them. An administrator's is every one.
  *
  * IN THE ARQEDIA WORKSPACE EACH ONE IS AN OFFERING (PACK-02): what a client
  * starts a workspace from. The list is the same; adding one is called what
@@ -48,7 +50,16 @@ export function WorkspacePicker({ admin, curator = false, onAdd }: {
 
   const name = activeName(state);
   if (state.workspaces.length === 0) return null;
-  if (state.workspaces.length < 2 && !admin) return null;
+  if (state.workspaces.length < 2 && !admin) {
+    // The toggle's look, as text. Its hover underline is turned off: there
+    // is nothing here to press.
+    return (
+      <span className="account-toggle" style={{ textDecoration: "none" }}
+            title="The workspace everything on screen belongs to">
+        {name}
+      </span>
+    );
+  }
 
   return (
     <span ref={box}>
