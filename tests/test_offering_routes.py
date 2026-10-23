@@ -138,6 +138,26 @@ class OfferingRoutesTest(unittest.TestCase):
             WORKSPACE, 9, ["credit"], "someone@firm.com")
 
 
+class ShareHistoryRouteTest(unittest.TestCase):
+    """GET /shares lists the requested workspace's shares (PACK-01)."""
+
+    def setUp(self):
+        self.app = load_api()
+        p = mock.patch.object(self.app.config, "workspace",
+                              mock.MagicMock(return_value=WORKSPACE))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_the_resolved_workspace_reaches_the_listing(self):
+        share = mock.MagicMock()
+        share.listing.return_value = {"grants": [], "allowance": {}}
+        with mock.patch.dict("sys.modules", {"share": share}):
+            reply = self.app._dispatch(event(
+                "GET /shares", query={"workspace": str(WORKSPACE)}), None)
+        self.assertEqual(reply["statusCode"], 200)
+        share.listing.assert_called_once_with(5, WORKSPACE)
+
+
 class ConfigStateRevisionTest(unittest.TestCase):
     """An empty workspace has no revision in use, and GET /config says so
     rather than passing on config.active_revision's fallback of 1, which is

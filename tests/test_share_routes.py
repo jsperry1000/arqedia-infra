@@ -413,6 +413,27 @@ class SendTest(unittest.TestCase):
         self.assertEqual(listed["allowance"]["remaining"], 8)
         self.assertTrue(all("link_token" not in g for g in listed["grants"]))
 
+    def test_the_list_is_one_workspaces_shares_and_the_tenants_allowance(self):
+        # Memo 11 is in workspace 3, memo 12 in workspace 10 (PACK-01).
+        self.share._workspace_memos = \
+            lambda t, w: {3: {11}, 10: {12}}.get(int(w), set())
+        self.send(memo=11)
+        self.send(memo=12, key="k2")
+        in_3 = self.share.listing(1, 3)
+        self.assertEqual([g["memo_id"] for g in in_3["grants"]], [11])
+        in_10 = self.share.listing(1, 10)
+        self.assertEqual([g["memo_id"] for g in in_10["grants"]], [12])
+        # The allowance is the plan's, so it counts both workspaces.
+        self.assertEqual(in_3["allowance"]["used"], 2)
+        self.assertEqual(self.share.listing(1, 99)["grants"], [])
+
+    def test_the_list_without_a_workspace_is_every_share(self):
+        self.share._workspace_memos = lambda t, w: self.fail(
+            "no workspace was named, so none is read")
+        self.send(memo=11)
+        self.send(memo=12, key="k2")
+        self.assertEqual(len(self.share.listing(1)["grants"]), 2)
+
     def test_purge_takes_everything_the_tenant_had(self):
         self.send()
         self.share.purge_tenant(1)
