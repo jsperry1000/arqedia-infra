@@ -1002,6 +1002,11 @@ function Seats() {
   if (!state) return <p className="muted">Loading&hellip;</p>;
 
   const onlyAdmin = state.admins <= 1;
+  // A MEMBER READS THIS SCREEN AND CHANGES NOTHING ON IT. Every write here is
+  // refused to a member by the server; offering the controls only to have
+  // them fail was the walk's finding (PACK-02 C). The viewer's role is their
+  // own seat's, which the listing marks `you`.
+  const admin = state.seats.find((s) => s.you)?.role === "admin";
 
   return (
     <>
@@ -1032,13 +1037,17 @@ function Seats() {
                 )}
               </td>
               <td>
-                <select value={s.role} disabled={!!busy}
-                        onChange={(e) => act("Changing rights", () =>
-                          api.setSeatRole(s.seat_id,
-                            e.target.value as "admin" | "member"))}>
-                  <option value="admin">Administrator</option>
-                  <option value="member">Member</option>
-                </select>
+                {admin ? (
+                  <select value={s.role} disabled={!!busy}
+                          onChange={(e) => act("Changing rights", () =>
+                            api.setSeatRole(s.seat_id,
+                              e.target.value as "admin" | "member"))}>
+                    <option value="admin">Administrator</option>
+                    <option value="member">Member</option>
+                  </select>
+                ) : (
+                  s.role === "admin" ? "Administrator" : "Member"
+                )}
                 {s.role === "admin" && onlyAdmin && (
                   <div className="muted small">the only one</div>
                 )}
@@ -1046,6 +1055,10 @@ function Seats() {
               <td>
                 {s.workspaces === null ? (
                   <span className="muted small">Every workspace</span>
+                ) : !admin && !s.you ? (
+                  // A member's list of workspaces names only their own, so
+                  // another member's could read "Workspace 9". Not theirs to see.
+                  <span className="muted small">&mdash;</span>
                 ) : editing === s.seat_id ? (
                   <>
                     {ticks(editTo, setEditTo, `seat-${s.seat_id}`)}
@@ -1071,17 +1084,21 @@ function Seats() {
                       : <span className="small">
                           {s.workspaces.map(nameOf).join(", ")}
                         </span>}
-                    {" "}
-                    <a className="small" onClick={() => {
-                      setEditing(s.seat_id);
-                      setEditTo(s.workspaces ?? []);
-                    }}>Change</a>
+                    {admin && (
+                      <>
+                        {" "}
+                        <a className="small" onClick={() => {
+                          setEditing(s.seat_id);
+                          setEditTo(s.workspaces ?? []);
+                        }}>Change</a>
+                      </>
+                    )}
                   </>
                 )}
               </td>
               <td className="ref">{(s.accepted_at ?? "").slice(0, 10)}</td>
               <td>
-                {!s.you && (
+                {admin && !s.you && (
                   <a className="small" onClick={() =>
                     act("Removing", () => api.removeSeat(s.seat_id))}>
                     Remove
@@ -1110,11 +1127,13 @@ function Seats() {
               </td>
               <td className="ref">reserved</td>
               <td>
-                <a className="small" onClick={() =>
-                  act("Revoking", () =>
-                    api.revokeInvitation(i.invitation_id))}>
-                  Revoke
-                </a>
+                {admin && (
+                  <a className="small" onClick={() =>
+                    act("Revoking", () =>
+                      api.revokeInvitation(i.invitation_id))}>
+                    Revoke
+                  </a>
+                )}
               </td>
             </tr>
           ))}
@@ -1130,6 +1149,14 @@ function Seats() {
         </p>
       )}
 
+      {!admin && (
+        <p className="muted small">
+          Only an administrator invites, removes or re-ranks a seat, or
+          changes which workspaces a member sees.
+        </p>
+      )}
+
+      {admin && (<>
       <h3>Invite someone</h3>
       <p className="muted small">
         You name the address and the rights. The seat is not taken until they
@@ -1238,6 +1265,7 @@ function Seats() {
           </div>
         </div>
       )}
+      </>)}
 
       <h3>What the two rights mean</h3>
       <table className="docs">
