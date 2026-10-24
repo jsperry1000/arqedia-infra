@@ -1,5 +1,6 @@
 """
-billing.py - paying for a plan, changing it, and topping up.
+billing.py - paying for a plan, changing it, topping up, changing the
+payment method and resuming a paused subscription.
 
 Self-contained, as wallet.py and seats.py are: app.py imports this.
 
@@ -389,3 +390,42 @@ def top_up(tenant_id, email, role, body):
     paddle_api.charge_topup(sub["paddle_subscription_id"], increments)
     return {"requested": True, "increments": increments,
             "amount_cents": TOPUP_INCREMENT_CENTS * increments}
+
+
+# --- the payment method ----------------------------------------------------
+#
+# Paddle holds the card; nothing of it is kept here. What this hands the
+# browser is a transaction to open in Paddle's overlay, where the new method
+# is entered (amendment of 18 September 2026).
+
+def payment_method(tenant_id, role):
+    """A Paddle transaction for changing the payment method. The browser
+    opens it with Paddle.Checkout.open({transactionId}).
+
+    Active or past_due only, because that is all Paddle offers it for. A
+    paused subscription resumes instead (resume, below)."""
+    _require_admin(role)
+    sub = _subscription(tenant_id)
+    if not sub or sub["paddle_status"] not in ("active", "past_due"):
+        raise Refused("There is no subscription whose payment method can be "
+                      "changed.")
+    return {"transaction_id": paddle_api.payment_method_transaction(
+                sub["paddle_subscription_id"]),
+            "status": sub["paddle_status"]}
+
+
+def resume(tenant_id, role):
+    """Resume a paused subscription. Paddle charges the stored method now
+    for a new billing period; the webhooks move the status and grant the
+    credit, so this answers 202 and the screen polls.
+
+    NO IDEMPOTENCY KEY OF OURS. A second resume finds the subscription no
+    longer paused and Paddle refuses it, so a repeat cannot charge twice;
+    the row says paused until the webhook lands, so a repeat inside that
+    window reaches Paddle and comes back as its refusal."""
+    _require_admin(role)
+    sub = _subscription(tenant_id)
+    if not sub or sub["paddle_status"] != "paused":
+        raise Refused("There is no paused subscription to resume.")
+    paddle_api.resume_subscription(sub["paddle_subscription_id"])
+    return {"requested": True}

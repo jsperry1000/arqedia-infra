@@ -158,6 +158,37 @@ top-ups: a cancelled subscription cannot be charged (item 10). Cash still expire
   `charge_topup` and `change_plan` and nothing else. The button says "not
   connected yet" on click and the screen says why beside it.
 
+### Amendment — 24 October 2026
+
+- **"Update card" is built, and is called "Change Payment Method".** The
+  label was renamed because "card" reads as a rate card as easily as a
+  payment card. `POST /billing/payment-method` (administrator only) calls
+  `GET /subscriptions/{id}/update-payment-method-transaction` and answers
+  the transaction, which the screen opens with
+  `Paddle.Checkout.open({transactionId})`. It is refused unless the
+  subscription is `active` or `past_due`, which are the only two states
+  Paddle offers it in. In `active` the transaction is zero-value with origin
+  `subscription_payment_method_change`, so the processor records it and
+  grants nothing. The button is navy. In `past_due` the transaction is the
+  overdue renewal (`subscription_recurring`), paid on the new method, and it
+  grants the period's credit as any renewal does. The button is gold
+  because it charges, and the screen waits for `active`.
+
+- **Paused is decided: Resume.** This closes the open item below. Paddle
+  cannot change the payment method of a paused subscription, so the way back
+  is `POST /billing/resume` (administrator only), which calls
+  `POST /subscriptions/{id}/resume` with `effective_from: immediately` and
+  `on_resume: start_new_billing_period`. Paddle charges the stored method at
+  once for a new period, in a `subscription_recurring` transaction that
+  grants the month's credit. If the charge is refused the subscription goes
+  `past_due`, and Change Payment Method is offered there. The button is
+  gold. There is no idempotency key of ours: a second resume finds the
+  subscription no longer paused and Paddle refuses it. Unverified: the
+  Paddle dashboard shows no Payment Recovery setting for pause or cancel
+  when recovery is exhausted, and Paddle's default without Retain is to
+  cancel after 30 days. So how a subscription would come to be paused is
+  not established.
+
 ---
 
 ## 3. Open
@@ -172,4 +203,4 @@ top-ups: a cancelled subscription cannot be charged (item 10). Cash still expire
 - Front-end config holds a sandbox-only token; one bundle cannot serve both environments (ENV-01).
 - Live catalog and `config/paddle/live.json` do not exist.
 - Failure-queue alarm has no notification target; failed events are visible only in the CloudWatch console.
-- Paused: Paddle's update-payment-method transaction is not available for a `paused` subscription, so "Update card" cannot work there. What the button shows while paused is undecided.
+- Paused: Paddle's update-payment-method transaction is not available for a `paused` subscription, so "Update card" cannot work there. What the button shows while paused is undecided. **Closed 24 October 2026:** Resume (amendment above).

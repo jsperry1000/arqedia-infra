@@ -5,6 +5,8 @@ paddle_api.py - the calls made to Paddle.
   charge_topup                 POST  /subscriptions/{id}/charge
   change_plan                  PATCH /subscriptions/{id}
   cancel_subscription          POST  /subscriptions/{id}/cancel
+  payment_method_transaction   GET   /subscriptions/{id}/update-payment-method-transaction
+  resume_subscription          POST  /subscriptions/{id}/resume
 
 cancel_subscription is not reached from any route. Account deletion calls it
 (docs/runbooks/cancel_subscription.py, step 3 of the deletion runbook).
@@ -63,10 +65,12 @@ def _api_key():
     return _key
 
 
-def _request(method, path, body):
+def _request(method, path, body=None):
+    # A body only where one is given: the two reads send none. Every write
+    # passes one, so what they send is unchanged.
     request = urllib.request.Request(
         API_BASE + path, method=method,
-        data=json.dumps(body).encode("utf-8"),
+        data=None if body is None else json.dumps(body).encode("utf-8"),
         headers={"Authorization": "Bearer " + _api_key(),
                  "Content-Type": "application/json"})
     try:
@@ -131,3 +135,35 @@ def cancel_subscription(subscription_id):
                     % urllib.parse.quote(subscription_id, safe=""), {
                         "effective_from": "immediately",
                     })["data"]["status"]
+
+
+def payment_method_transaction(subscription_id):
+    """A transaction for the browser to open, where the customer enters a new
+    payment method. Paddle offers it for an active or past_due subscription
+    only, never a paused one.
+
+    Active: a new zero-value transaction, origin
+    subscription_payment_method_change, which the processor records and
+    grants nothing for. Past due: the overdue renewal itself (origin
+    subscription_recurring), paid on the new method, so its credit arrives as
+    any renewal's does.
+
+    A GET that creates a transaction in the active case - Paddle's own
+    choice of verb, and why the route of ours in front of it is a POST."""
+    return _request("GET", "/subscriptions/%s/update-payment-method-transaction"
+                    % urllib.parse.quote(subscription_id, safe=""))["data"]["id"]
+
+
+def resume_subscription(subscription_id):
+    """Resume a paused subscription now. Paddle starts a new billing period
+    and charges the stored method at once, in a subscription_recurring
+    transaction whose webhook grants the period's credit. If that charge
+    fails the subscription becomes past_due, where the payment method can be
+    changed.
+
+    The subscription row is moved by the webhooks that follow, never here."""
+    _request("POST", "/subscriptions/%s/resume"
+             % urllib.parse.quote(subscription_id, safe=""), {
+                 "effective_from": "immediately",
+                 "on_resume": "start_new_billing_period",
+             })

@@ -209,6 +209,62 @@ class BillingTest(unittest.TestCase):
         self.paddle.create_checkout_transaction.assert_not_called()
 
 
+class PaymentMethodTest(unittest.TestCase):
+    """Changing the payment method, and resuming a paused subscription.
+    Paddle offers its payment-method transaction for active and past_due
+    only; a paused subscription resumes instead."""
+
+    def setUp(self):
+        self.billing = load_billing()
+        self.paddle = mock.MagicMock()
+        self.billing.paddle_api = self.paddle
+        self.paddle.payment_method_transaction.return_value = "txn_pm"
+
+    def use(self, status):
+        db = FakeBillingDb(("sub_1", status, None, "base") if status else None)
+        return mock.patch.object(self.billing, "_sql", db.sql)
+
+    def test_active_and_past_due_get_a_transaction(self):
+        for status in ("active", "past_due"):
+            with self.subTest(status=status), self.use(status):
+                result = self.billing.payment_method(7, "admin")
+            self.assertEqual(result, {"transaction_id": "txn_pm",
+                                      "status": status})
+        self.paddle.payment_method_transaction.assert_called_with("sub_1")
+
+    def test_paused_cancelled_and_none_are_refused(self):
+        for status in ("paused", "canceled", None):
+            with self.subTest(status=status), self.use(status):
+                with self.assertRaises(self.billing.Refused):
+                    self.billing.payment_method(7, "admin")
+        self.paddle.payment_method_transaction.assert_not_called()
+
+    def test_member_cannot_change_the_payment_method(self):
+        with self.use("active"):
+            with self.assertRaises(PermissionError):
+                self.billing.payment_method(7, "member")
+        self.paddle.payment_method_transaction.assert_not_called()
+
+    def test_paused_resumes(self):
+        with self.use("paused"):
+            self.assertEqual(self.billing.resume(7, "admin"),
+                             {"requested": True})
+        self.paddle.resume_subscription.assert_called_once_with("sub_1")
+
+    def test_only_paused_resumes(self):
+        for status in ("active", "past_due", "canceled", None):
+            with self.subTest(status=status), self.use(status):
+                with self.assertRaises(self.billing.Refused):
+                    self.billing.resume(7, "admin")
+        self.paddle.resume_subscription.assert_not_called()
+
+    def test_member_cannot_resume(self):
+        with self.use("paused"):
+            with self.assertRaises(PermissionError):
+                self.billing.resume(7, "member")
+        self.paddle.resume_subscription.assert_not_called()
+
+
 class PlansTest(unittest.TestCase):
     """What the Account screen is given, and what it must never be given.
 
@@ -427,6 +483,27 @@ class PaddleApiTest(unittest.TestCase):
         self.assertEqual((method, path),
                          ("POST", "/subscriptions/sub_1/cancel"))
         self.assertEqual(body, {"effective_from": "immediately"})
+
+    def test_payment_method_transaction_is_a_get_with_no_body(self):
+        paddle_api = load_billing().paddle_api
+        with mock.patch.object(paddle_api, "_request",
+                               return_value={"data": {"id": "txn_pm"}}) as req:
+            self.assertEqual(
+                paddle_api.payment_method_transaction("sub_1"), "txn_pm")
+        self.assertEqual(
+            req.call_args.args,
+            ("GET", "/subscriptions/sub_1/update-payment-method-transaction"))
+
+    def test_resume_is_immediate_and_starts_a_new_period(self):
+        paddle_api = load_billing().paddle_api
+        with mock.patch.object(paddle_api, "_request",
+                               return_value={"data": {}}) as req:
+            paddle_api.resume_subscription("sub_1")
+        method, path, body = req.call_args.args
+        self.assertEqual((method, path),
+                         ("POST", "/subscriptions/sub_1/resume"))
+        self.assertEqual(body, {"effective_from": "immediately",
+                                "on_resume": "start_new_billing_period"})
 
 
 class SeatsBoughtTest(unittest.TestCase):
