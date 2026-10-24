@@ -359,6 +359,8 @@ locals {
     "GET /billing/subscription",
     "POST /billing/checkout",
     "POST /billing/plan",
+    "POST /billing/payment-method",
+    "POST /billing/resume",
 
     # Invoices, read from Paddle. Administrator only, refused in the handler.
     "GET /billing/invoices",

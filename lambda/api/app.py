@@ -84,6 +84,8 @@ Paying for a plan. Nothing here grants money; Paddle's webhooks do.
   GET  /billing/subscription             standing, plan, periods, plan rows
   POST /billing/checkout                 a Paddle transaction to open
   POST /billing/plan                     upgrade or downgrade
+  POST /billing/payment-method           a Paddle transaction to change it
+  POST /billing/resume                   resume a paused subscription
   GET  /billing/invoices                 from Paddle, a page at a time; or
                                          ?pdf=<transaction> for one's PDF
   POST /wallet/top-up                    buy $5 increments on the stored card
@@ -3848,6 +3850,12 @@ def _dispatch(event, context):
             body = json.loads(event.get("body") or "{}")
             return _reply(202, billing.change_plan(tenant_id, email, role,
                                                    body))
+
+        if route == "POST /billing/payment-method":
+            return _reply(201, billing.payment_method(tenant_id, role))
+
+        if route == "POST /billing/resume":
+            return _reply(202, billing.resume(tenant_id, role))
 
         # Administrator only, refused in billing. None is a PDF asked for
         # that is not this tenant's.

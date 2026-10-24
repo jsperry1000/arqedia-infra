@@ -143,11 +143,10 @@ const ROWS: PlanRow[] = [
  * it. Inviting somebody genuinely reserves a seat.
  *
  * SUBSCRIPTION IS LIVE. It reads /billing/subscription and writes through
- * /billing/checkout and /billing/plan; subscribing opens Paddle's overlay.
- * The invoices read /billing/invoices, from Paddle (item 8 superseded, 24
- * October 2026). One thing on it is still drawn and inert, and says so where
- * it sits: "Update card", which needs a route we have not built (amendment
- * of 18 September).
+ * /billing/checkout, /billing/plan, /billing/payment-method and
+ * /billing/resume; subscribing and changing the payment method open
+ * Paddle's overlay. The invoices read /billing/invoices, from Paddle (item 8
+ * superseded, 24 October 2026).
  *
  * NOTHING ON THIS SCREEN GRANTS MONEY. Every payment is granted by Paddle's
  * webhooks through our own processor (item 6). What the screen does after a
@@ -230,6 +229,7 @@ function Subscription() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [waiting, setWaiting] = useState("");
+  const [said, setSaid] = useState("");
   const [chosen, setChosen] = useState<string | null>(null);
 
   const load = () => api.subscription().then((fresh) => {
@@ -253,19 +253,25 @@ function Subscription() {
    * time. Fifteen tries, two seconds apart - half a minute, long enough for
    * the ordinary case and short enough that nobody is left watching a
    * spinner. Giving up is not a failure and does not say it is.
+   *
+   * The two sentences are a resume's own where it passes them: a resume asks
+   * Paddle to charge, and that charge may yet be refused.
    */
-  async function settle(done: (fresh: SubscriptionView) => boolean) {
-    setWaiting("Paddle has taken the payment. Recording it here…");
+  async function settle(done: (fresh: SubscriptionView) => boolean,
+                        meanwhile = "Paddle has taken the payment. Recording "
+                          + "it here…",
+                        late = "The payment went through. It has not reached "
+                          + "this screen yet, which can take a minute - "
+                          + "reload and it will be here. Nothing is lost, and "
+                          + "nothing will be charged twice.") {
+    setWaiting(meanwhile);
     for (let i = 0; i < 15; i++) {
       await new Promise((r) => setTimeout(r, 2000));
       try {
         if (done(await load())) { setWaiting(""); return; }
       } catch { /* keep asking: one refused read is not an answer */ }
     }
-    setWaiting(
-      "The payment went through. It has not reached this screen yet, which " +
-      "can take a minute - reload and it will be here. Nothing is lost, and " +
-      "nothing will be charged twice.");
+    setWaiting(late);
   }
 
   async function subscribe(planKey: string) {
@@ -303,6 +309,64 @@ function Subscription() {
     }
   }
 
+  /**
+   * Change the payment method, in Paddle's overlay. Paddle holds the card and
+   * nothing of it reaches us (amendment of 18 September).
+   *
+   * ACTIVE: a zero-value transaction. Nothing is charged, nothing is granted,
+   * and nothing on this screen changes, so there is nothing to wait for.
+   *
+   * PAST DUE: the overdue renewal itself, paid on the new method in the
+   * overlay. The subscription returns to active when Paddle's webhook lands,
+   * so the screen waits for that as it does after a checkout.
+   */
+  async function changeMethod() {
+    setError("");
+    setSaid("");
+    setBusy("Opening Paddle");
+    try {
+      const { transaction_id, status } = await api.paymentMethod();
+      setBusy("");
+      const outcome = await openCheckout(transaction_id);
+      if (outcome !== "completed") return;
+      if (status === "past_due") {
+        await settle((fresh) => fresh.paddle_status === "active");
+      } else {
+        setSaid("Payment method changed. Paddle uses it from the next "
+                + "renewal; nothing was charged.");
+      }
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  /**
+   * Resume a paused subscription. Paddle has no payment-method transaction
+   * for one that is paused, so this is the way back: Paddle charges the card
+   * it holds for a new month at once. If that is refused the subscription
+   * comes back past due, and Change Payment Method is offered there.
+   */
+  async function resumeSubscription() {
+    setError("");
+    setSaid("");
+    setBusy("Resuming");
+    try {
+      await api.resume();
+      setBusy("");
+      await settle((fresh) => fresh.paddle_status !== "paused",
+        "Paddle is charging the card it holds. Recording the answer here…",
+        "Paddle has the request. Its answer has not reached this screen yet, "
+          + "which can take a minute - reload and it will be here. Nothing "
+          + "will be charged twice.");
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
   if (error && !view) return <p className="error">{error}</p>;
   if (!view) return <p className="muted">Loading&hellip;</p>;
 
@@ -326,6 +390,7 @@ function Subscription() {
       {error && <p className="error">{error}</p>}
       {busy && <Working what={busy} />}
       {waiting && <p className="revision-note">{waiting}</p>}
+      {said && <p className="revision-note">{said}</p>}
 
       {onTrial && (
         <p className="revision-note">
@@ -368,7 +433,11 @@ function Subscription() {
           Filing and generating can still spend unexpired top-up credit until
           it runs out or expires; everything else that costs money waits.
           Reading, downloading and editing your configuration are unaffected.
-          Paddle retries on its own schedule, and a new card clears it at once.
+          {status === "paused"
+            ? " Resuming charges the card Paddle holds for a new month. If it "
+              + "is refused, the payment method can be changed then."
+            : " Paddle retries on its own schedule, and changing the payment "
+              + "method clears it at once."}
         </p>
       )}
 
@@ -500,22 +569,43 @@ function Subscription() {
               {target && chosen !== view.plan
                 ? `Change to ${target.name}` : "Change plan"}
             </button>
-            <Inert what="Updating the card">Update card</Inert>
+            {/* Navy: changing the method on an active subscription charges
+                nothing. */}
+            <button disabled={!!busy} onClick={changeMethod}>
+              Change Payment Method
+            </button>
             <span className="muted small">
               An upgrade is billed now, at the difference, and the extra monthly
               credit arrives with it. A downgrade grants nothing back and takes
               nothing away &mdash; the ledger is append-only.
             </span>
           </>
+        ) : status === "paused" ? (
+          <>
+            <button className="spend" disabled={!!busy}
+                    onClick={resumeSubscription}>
+              Resume subscription
+            </button>
+            <span className="muted small">
+              Charges the card Paddle holds for a new month, now, and the
+              month&rsquo;s credit arrives with it. Paddle cannot change the
+              payment method of a paused subscription; if the card is
+              refused, the subscription shows as payment failed and the
+              method can be changed there.
+            </span>
+          </>
         ) : pastDue ? (
           <>
-            <Inert what="Updating the card">Update card</Inert>
+            {/* Gold: the overlay pays the overdue renewal on the new method. */}
+            <button className="spend" disabled={!!busy} onClick={changeMethod}>
+              Change Payment Method
+            </button>
             <span className="muted small">
-              Not connected yet: it needs a route that asks Paddle for a
-              payment-method transaction, and there is not one. Until then,
-              Paddle&rsquo;s own emails carry a link that works. Subscribing
-              again is not offered here &mdash; there is already a subscription,
-              and the card is what needs fixing.
+              Paddle&rsquo;s window opens with the overdue amount. Paying it on
+              the new method makes the subscription active again and Paddle
+              keeps the method for every renewal after. Subscribing again is
+              not offered here &mdash; there is already a subscription, and the
+              payment method is what needs fixing.
             </span>
           </>
         ) : (
@@ -1415,7 +1505,7 @@ function Seats() {
           <tr><td>Upload, file and generate</td><td className="ref">yes</td><td className="ref">yes</td></tr>
           <tr><td>Edit and publish the configuration</td><td className="ref">yes</td><td className="ref">no</td></tr>
           <tr><td>Share a memorandum, and revoke</td><td className="ref">yes</td><td className="ref">yes</td></tr>
-          <tr><td>Change the plan or the card</td><td className="ref">yes</td><td className="ref">no</td></tr>
+          <tr><td>Change the plan or the payment method</td><td className="ref">yes</td><td className="ref">no</td></tr>
           <tr><td>Invite, remove or re-rank a seat</td><td className="ref">yes</td><td className="ref">no</td></tr>
           <tr><td>Set the brand</td><td className="ref">yes</td><td className="ref">no</td></tr>
           <tr><td>Close the account</td><td className="ref">yes</td><td className="ref">no</td></tr>

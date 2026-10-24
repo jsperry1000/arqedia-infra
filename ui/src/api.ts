@@ -1752,6 +1752,23 @@ export const api = {
       body: JSON.stringify({ plan }),
     }),
 
+  /** A Paddle transaction for changing the payment method, to hand to the
+   *  overlay. Paddle holds the card; nothing of it reaches us.
+   *
+   *  Active: a zero-value transaction, nothing charged. Past due: the
+   *  overdue renewal, paid on the new method in the overlay. Refused with
+   *  409 in any other state - Paddle offers neither for a paused
+   *  subscription, which resumes instead. */
+  paymentMethod: (): Promise<{ transaction_id: string; status: string }> =>
+    call("/billing/payment-method", { method: "POST" }),
+
+  /** Resume a paused subscription. Paddle charges the stored method now for
+   *  a new billing period; the webhooks move the status, so this answers 202
+   *  and the screen polls. If the charge fails it comes back past_due, where
+   *  the payment method can be changed. */
+  resume: (): Promise<{ requested: boolean }> =>
+    call("/billing/resume", { method: "POST" }),
+
   /** The invoices, from Paddle, thirty at a time and newest first. after
    *  is the previous page's cursor. Administrator only. */
   invoices: (after?: string | null): Promise<InvoicePage> =>
