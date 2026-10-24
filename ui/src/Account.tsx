@@ -224,6 +224,12 @@ export function AccountView({ onBack }: { onBack: () => void }) {
  * spend unexpired top-up cash and nothing else (items 12 and 13, as amended).
  */
 function Subscription() {
+  // EVERY ACTION HERE IS AN ADMINISTRATOR'S, and the server refuses a member
+  // each one. A member reads the tab and is told so once, in place of the
+  // buttons, as on Seats. Null until the token is read: nothing is offered
+  // before the role is known.
+  const role = useRole();
+  const admin = role === "admin";
   const [view, setView] = useState<SubscriptionView | null>(null);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [error, setError] = useState("");
@@ -496,7 +502,7 @@ function Subscription() {
         </div>
       </div>
 
-      <h3>{active ? "Change plan" : "Choose a plan"}</h3>
+      <h3>{!admin ? "Plans" : active ? "Change plan" : "Choose a plan"}</h3>
       <p className="muted small">
         Seats are a fixed attribute of the plan. Adding a seat is a plan change
         rather than a proration, and a downgrade is refused while more seats are
@@ -523,11 +529,17 @@ function Subscription() {
           <tr>
             <th></th>
             {view.plans.map((p: Plan) => (
-              <th key={p.plan_key} onClick={() => setChosen(p.plan_key)}
-                  className={p.plan_key === chosen ? "chosen" : undefined}>
-                <input type="radio" name="plan" aria-label={p.name}
-                       checked={p.plan_key === chosen}
-                       onChange={() => setChosen(p.plan_key)} />
+              <th key={p.plan_key}
+                  onClick={admin ? () => setChosen(p.plan_key) : undefined}
+                  className={admin && p.plan_key === chosen
+                    ? "chosen" : undefined}>
+                {/* The radio chooses for the button beneath, which a member
+                    is not offered. */}
+                {admin && (
+                  <input type="radio" name="plan" aria-label={p.name}
+                         checked={p.plan_key === chosen}
+                         onChange={() => setChosen(p.plan_key)} />
+                )}
                 <span className="plan-name">{p.name}</span>
                 <span className="plan-price">
                   {money(p.monthly_price_cents)} / month
@@ -560,6 +572,14 @@ function Subscription() {
       </table>
       </TableScroll>
 
+      {role === "member" && (
+        <p className="muted small">
+          Only an administrator changes the plan, the payment method or the
+          balance.
+        </p>
+      )}
+
+      {admin && (
       <div className="form-actions">
         {active ? (
           <>
@@ -621,6 +641,7 @@ function Subscription() {
           </>
         )}
       </div>
+      )}
 
       <Invoices subscribed={!!status} />
 
@@ -631,9 +652,11 @@ function Subscription() {
         outstanding share grant. A single document cannot be deleted &mdash; the
         ledger has to stay reconcilable against what was filed.
       </p>
-      <div className="form-actions">
-        <Inert what="Closing the account">Close this account</Inert>
-      </div>
+      {admin && (
+        <div className="form-actions">
+          <Inert what="Closing the account">Close this account</Inert>
+        </div>
+      )}
     </>
   );
 }
@@ -776,6 +799,11 @@ function Invoices({ subscribed }: { subscribed: boolean }) {
 // --- balance ---------------------------------------------------------------
 
 function Balance() {
+  // Topping up is an administrator's (billing.top_up refuses a member). A
+  // member reads the balance, the buckets and the ledger, and is not offered
+  // the box, the button or the confirmation.
+  const role = useRole();
+  const admin = role === "admin";
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [entries, setEntries] = useState<LedgerEntry[] | null>(null);
   // The ledger's own failure, kept apart from `error` (which replaces the
@@ -925,7 +953,8 @@ function Balance() {
             {money(needCents)}.
           </strong>{" "}
           Nothing has been charged.
-          {topup !== null && ` ${increments} × ${money(topup)} `
+          {role === "member" && " Only an administrator can top up."}
+          {admin && topup !== null && ` ${increments} × ${money(topup)} `
             + (increments * topup >= needCents
               ? "covers it."
               : `leaves ${money(needCents - increments * topup)} still short.`)}
@@ -946,6 +975,14 @@ function Balance() {
         </p>
       )}
 
+      {role === "member" && (
+        <p className="muted small">
+          Only an administrator changes the plan, the payment method or the
+          balance.
+        </p>
+      )}
+
+      {admin && (
       <div className="form-actions">
         <input type="number" min={1} max={50} value={increments}
                disabled={!!busy} style={{ width: 70 }}
@@ -968,11 +1005,12 @@ function Balance() {
             + "and purchased credit expires 30 days after purchase."}
         </span>
       </div>
+      )}
 
       {/* The second press, and the only one that charges (4.2). The figures
           are laid out as the filing and generating quotes are, so money on
           this screen reads the same way wherever it appears. */}
-      {confirming && topup !== null && (
+      {admin && confirming && topup !== null && (
         <div className="panel-backdrop" onClick={() => setConfirming(false)}>
           <div className="panel narrow" onClick={(e) => e.stopPropagation()}
                onKeyDown={(e) => { if (e.key === "Escape") setConfirming(false); }}>
