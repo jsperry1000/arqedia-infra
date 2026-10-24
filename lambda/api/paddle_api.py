@@ -5,6 +5,8 @@ paddle_api.py - the calls made to Paddle.
   charge_topup                 POST  /subscriptions/{id}/charge
   change_plan                  PATCH /subscriptions/{id}
   cancel_subscription          POST  /subscriptions/{id}/cancel
+  list_transactions            GET   /transactions
+  invoice_pdf_url              GET   /transactions/{id}/invoice
 
 cancel_subscription is not reached from any route. Account deletion calls it
 (docs/runbooks/cancel_subscription.py, step 3 of the deletion runbook).
@@ -63,10 +65,12 @@ def _api_key():
     return _key
 
 
-def _request(method, path, body):
+def _request(method, path, body=None):
+    # A body only where one is given: the two reads send none. Every write
+    # passes one, so what they send is unchanged.
     request = urllib.request.Request(
         API_BASE + path, method=method,
-        data=json.dumps(body).encode("utf-8"),
+        data=None if body is None else json.dumps(body).encode("utf-8"),
         headers={"Authorization": "Bearer " + _api_key(),
                  "Content-Type": "application/json"})
     try:
@@ -131,3 +135,39 @@ def cancel_subscription(subscription_id):
                     % urllib.parse.quote(subscription_id, safe=""), {
                         "effective_from": "immediately",
                     })["data"]["status"]
+
+
+# What the invoice list shows. draft and ready are checkouts nobody finished
+# and billed is a manually-collected invoice, which nothing here creates.
+INVOICE_STATUSES = ("completed", "paid", "past_due", "canceled")
+
+# Paddle's own maximum for listing transactions, and its default.
+PER_PAGE = 30
+
+
+def list_transactions(customer_id, subscription_id, after=None, ids=None):
+    """One page of a customer's transactions on one subscription, newest
+    billed first. Answers Paddle's response as it came: data, and
+    meta.pagination with has_more and next.
+
+    ids narrows it to named transactions, which is how one is checked to be
+    this customer's before its PDF is asked for."""
+    params = {
+        "customer_id": customer_id,
+        "subscription_id": subscription_id,
+        "status": ",".join(INVOICE_STATUSES),
+        "order_by": "billed_at[DESC]",
+        "per_page": PER_PAGE,
+    }
+    if after:
+        params["after"] = after
+    if ids:
+        params["id"] = ",".join(ids)
+    return _request("GET", "/transactions?" + urllib.parse.urlencode(params))
+
+
+def invoice_pdf_url(transaction_id):
+    """A link to the invoice PDF. Paddle's link expires after an hour, so it
+    is asked for on the click and never kept."""
+    return _request("GET", "/transactions/%s/invoice"
+                    % urllib.parse.quote(transaction_id, safe=""))["data"]["url"]

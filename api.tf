@@ -360,6 +360,9 @@ locals {
     "POST /billing/checkout",
     "POST /billing/plan",
 
+    # Invoices, read from Paddle. Administrator only, refused in the handler.
+    "GET /billing/invoices",
+
     # Seats. Reading is open to anybody with one; changing is not, and the
     # handler refuses a member rather than the gateway - the message matters.
     "GET /seats",

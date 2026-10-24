@@ -84,6 +84,8 @@ Paying for a plan. Nothing here grants money; Paddle's webhooks do.
   GET  /billing/subscription             standing, plan, periods, plan rows
   POST /billing/checkout                 a Paddle transaction to open
   POST /billing/plan                     upgrade or downgrade
+  GET  /billing/invoices                 from Paddle, a page at a time; or
+                                         ?pdf=<transaction> for one's PDF
   POST /wallet/top-up                    buy $5 increments on the stored card
 
 Deleting a workspace (PACK-02 D, workspaces.py): hidden for six months, then
@@ -3846,6 +3848,13 @@ def _dispatch(event, context):
             body = json.loads(event.get("body") or "{}")
             return _reply(202, billing.change_plan(tenant_id, email, role,
                                                    body))
+
+        # Administrator only, refused in billing. None is a PDF asked for
+        # that is not this tenant's.
+        if route == "GET /billing/invoices":
+            out = billing.invoices(tenant_id, role, query)
+            return _reply(200, out) if out is not None \
+                else _reply(404, {"error": "not found"})
 
         # --- seats ---------------------------------------------------------
         #
