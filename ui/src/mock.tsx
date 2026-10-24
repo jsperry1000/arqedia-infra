@@ -73,8 +73,8 @@ export function NotConnected({ what }: { what: string }) {
 // offered one that cannot be bought. It also marked Small Business as the
 // current plan of a tenant that had no subscription at all.
 //
-// INVOICES stays below. Invoices are out of scope on this branch (decision
-// record item 8) and those four rows are still invented.
+// INVOICES is gone too (24 October 2026): Account reads /billing/invoices,
+// which reads Paddle. Its four rows were invented.
 
 // SEATS is gone. The Seats tab is live: it reads /seats and writes through
 // the four routes beside it.
@@ -82,13 +82,6 @@ export function NotConnected({ what }: { what: string }) {
 // Removed rather than left unused, for the same reason the fake balance was -
 // an exported list of make-believe colleagues is a trap, and the next screen
 // that needs one finds it here and never learns it was not real.
-
-export const INVOICES = [
-  { date: "28 Aug 2026", what: "Small Business, monthly", amount: "$65.00", status: "Paid" },
-  { date: "2 Sep 2026", what: "Top-up", amount: "$25.00", status: "Paid" },
-  { date: "28 Jul 2026", what: "Small Business, monthly", amount: "$65.00", status: "Paid" },
-  { date: "28 Jun 2026", what: "Base, monthly", amount: "$25.00", status: "Paid" },
-];
 
 // --- signing up ------------------------------------------------------------
 

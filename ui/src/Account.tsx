@@ -6,11 +6,11 @@ import { ENTERPRISE_COLUMN, EnterpriseLink, UpgradePrompt,
          useRole } from "./upgrade";
 import { api, chargeKey, type Wallet, type LedgerEntry,
          type Seats as SeatState, type Invited,
-         type SubscriptionView, type Plan,
+         type SubscriptionView, type Plan, type Invoice, type InvoicePage,
          type WorkspaceList, type HeldWorkspace } from "./api";
 import { openCheckout } from "./paddle";
 import { useWorkspace, workspacesChanged } from "./workspace";
-import { INVOICES, Inert, NotConnected } from "./mock";
+import { Inert } from "./mock";
 
 /** Cents, as money. One place, so a balance and a ledger row never disagree
  *  about how many decimals a dollar has. */
@@ -142,11 +142,11 @@ const ROWS: PlanRow[] = [
  * SEATS IS LIVE. It reads /seats and writes through the four routes beside
  * it. Inviting somebody genuinely reserves a seat.
  *
- * SUBSCRIPTION IS LIVE, except invoices. It reads /billing/subscription and
- * writes through /billing/checkout, /billing/plan, /billing/payment-method
- * and /billing/resume; subscribing and changing the payment method open
- * Paddle's overlay. The invoice list is still drawn and inert, and says so
- * where it sits (decision record item 8).
+ * SUBSCRIPTION IS LIVE. It reads /billing/subscription and writes through
+ * /billing/checkout, /billing/plan, /billing/payment-method and
+ * /billing/resume; subscribing and changing the payment method open
+ * Paddle's overlay. The invoices read /billing/invoices, from Paddle (item 8
+ * superseded, 24 October 2026).
  *
  * NOTHING ON THIS SCREEN GRANTS MONEY. Every payment is granted by Paddle's
  * webhooks through our own processor (item 6). What the screen does after a
@@ -622,24 +622,7 @@ function Subscription() {
         )}
       </div>
 
-      <h3>Invoices</h3>
-      <NotConnected what="Invoices" />
-      <table className="docs">
-        <thead>
-          <tr><th>Date</th><th>What</th><th>Amount</th><th>Status</th><th></th></tr>
-        </thead>
-        <tbody>
-          {INVOICES.map((inv, i) => (
-            <tr key={i}>
-              <td className="ref">{inv.date}</td>
-              <td>{inv.what}</td>
-              <td className="ref">{inv.amount}</td>
-              <td className="ref">{inv.status}</td>
-              <td><a className="small">Download</a></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <Invoices subscribed={!!status} />
 
       <h3>Closing the account</h3>
       <p className="muted small">
@@ -651,6 +634,141 @@ function Subscription() {
       <div className="form-actions">
         <Inert what="Closing the account">Close this account</Inert>
       </div>
+    </>
+  );
+}
+
+// --- invoices --------------------------------------------------------------
+
+/** Paddle's word for an invoice, as this screen says the subscription's. */
+const INVOICE_STATUS: Record<string, string> = {
+  completed: "Paid",
+  paid: "Paid",
+  past_due: "Payment failed",
+  canceled: "Cancelled",
+};
+
+/**
+ * The invoices, read from Paddle on every visit; nothing of ours stores
+ * them.
+ *
+ * ADMINISTRATOR ONLY (decided 24 October 2026). The server refuses a member,
+ * in the sentence it uses for changing the plan, so a member is told here
+ * instead and nothing is asked.
+ *
+ * ITS OWN ERROR, apart from the tab's, as the ledger's is on Balance: Paddle
+ * not answering must not take the plan table with it.
+ *
+ * THE PDF IS ASKED FOR ON THE CLICK. Paddle's link expires in an hour, so
+ * one fetched with the list could be dead by the time it is pressed.
+ */
+function Invoices({ subscribed }: { subscribed: boolean }) {
+  const role = useRole();
+  const [rows, setRows] = useState<Invoice[] | null>(null);
+  const [after, setAfter] = useState<string | null>(null);
+  const [more, setMore] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+
+  function show(page: InvoicePage, older: boolean) {
+    setRows((had) => (older && had ? [...had, ...page.invoices]
+                                   : page.invoices));
+    setMore(page.has_more);
+    setAfter(page.after);
+  }
+
+  useEffect(() => {
+    if (role !== "admin") return;
+    api.invoices().then((page) => show(page, false))
+      .catch((e) => setError(message(e)));
+  }, [role]);
+
+  async function older() {
+    setError("");
+    setBusy("Reading older invoices");
+    try {
+      show(await api.invoices(after), true);
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function download(transactionId: string) {
+    setError("");
+    setBusy("Opening the invoice");
+    try {
+      const { url } = await api.invoicePdf(transactionId);
+      window.open(url, "_blank", "noopener");
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <>
+      <h3>Invoices</h3>
+      {role === "member" && (
+        <p className="muted small">Only an administrator sees the invoices.</p>
+      )}
+      {role === "admin" && (
+        <>
+          {error && <p className="error">{error}</p>}
+          {rows === null && !error && <Working what="Reading invoices" />}
+          {busy && <Working what={busy} />}
+          {rows !== null && rows.length === 0 && (
+            <p className="muted">
+              {subscribed ? "No invoices yet."
+                : "Invoices appear here once a subscription is paid."}
+            </p>
+          )}
+          {rows !== null && rows.length > 0 && (
+            <TableScroll label="Invoices">
+            <table className="docs">
+              <thead>
+                <tr><th>Date</th><th>What</th><th>Amount</th><th>Status</th>
+                    <th></th></tr>
+              </thead>
+              <tbody>
+                {rows.map((inv) => (
+                  <tr key={inv.transaction_id}>
+                    <td className="ref">{on(inv.billed_at)}</td>
+                    <td>
+                      {inv.what ?? "—"}
+                      {inv.invoice_number && (
+                        <div className="muted small">{inv.invoice_number}</div>
+                      )}
+                    </td>
+                    <td className="ref">{money(inv.amount_cents)}</td>
+                    <td className="ref">
+                      {INVOICE_STATUS[inv.status] ?? inv.status}
+                    </td>
+                    <td>
+                      {inv.has_pdf && (
+                        <a className="small"
+                           onClick={() => !busy && download(inv.transaction_id)}>
+                          Download
+                        </a>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </TableScroll>
+          )}
+          {more && (
+            <div className="form-actions">
+              <button disabled={!!busy} onClick={older}>
+                Show older
+              </button>
+            </div>
+          )}
+        </>
+      )}
     </>
   );
 }

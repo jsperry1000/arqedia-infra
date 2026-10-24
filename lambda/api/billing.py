@@ -1,6 +1,6 @@
 """
-billing.py - paying for a plan, changing it, topping up, changing the
-payment method and resuming a paused subscription.
+billing.py - paying for a plan, changing it, topping up, the invoices,
+changing the payment method and resuming a paused subscription.
 
 Self-contained, as wallet.py and seats.py are: app.py imports this.
 
@@ -10,7 +10,9 @@ asking Paddle to take one.
 """
 
 import os
+import re
 import time
+import urllib.parse
 
 import boto3
 from botocore.exceptions import ClientError
@@ -131,7 +133,7 @@ def _subscription(tenant_id):
     rows = _sql(
         """
         SELECT s.paddle_subscription_id, s.paddle_status,
-               s.current_period_ends_at, p.plan_key
+               s.current_period_ends_at, p.plan_key, s.paddle_customer_id
         FROM subscription s JOIN plan p ON p.plan_id = s.plan_id
         WHERE s.tenant_id = :t
         """,
@@ -140,7 +142,8 @@ def _subscription(tenant_id):
         return None
     r = rows[0]
     return {"paddle_subscription_id": _col(r, 0), "paddle_status": _col(r, 1),
-            "current_period_ends_at": _col(r, 2), "plan_key": _col(r, 3)}
+            "current_period_ends_at": _col(r, 2), "plan_key": _col(r, 3),
+            "paddle_customer_id": _col(r, 4)}
 
 
 def _known_plan(body):
@@ -429,3 +432,124 @@ def resume(tenant_id, role):
         raise Refused("There is no paused subscription to resume.")
     paddle_api.resume_subscription(sub["paddle_subscription_id"])
     return {"requested": True}
+
+
+# --- invoices --------------------------------------------------------------
+#
+# PADDLE IS THE RECORD. Nothing here stores an invoice: each read asks Paddle,
+# one page of 30 at a time, with no cache. A 429 from Paddle is a PaddleError
+# like any other, answered as the dispatcher's 502, and not retried.
+
+_TRANSACTION = re.compile(r"^txn_[a-z\d]{26}$")
+
+
+def _transaction_id(value, what):
+    """A Paddle transaction id from the query string, or ValueError. It goes
+    into Paddle's address, so nothing else is let through."""
+    value = str(value or "").strip()
+    if not _TRANSACTION.match(value):
+        raise ValueError("That is not %s." % what)
+    return value
+
+
+def _when(value):
+    """Paddle's RFC 3339 time as the API's other times are written -
+    "2026-10-16 14:24:44", UTC - which is what the screen reads."""
+    return value[:19].replace("T", " ") if value else None
+
+
+def _invoice(transaction, names):
+    """One row of the list, from one Paddle transaction."""
+    totals = (transaction.get("details") or {}).get("totals") or {}
+    amount = int(totals.get("grand_total") or 0)
+    # What it was for: the plan or plans it bills, or a top-up. A plan
+    # change carries the plan moved from at negative quantity, which is not
+    # what was bought.
+    what = []
+    for item in transaction.get("items") or []:
+        price = (item.get("price") or {}).get("id")
+        quantity = item.get("quantity")
+        if isinstance(quantity, int) and quantity < 0:
+            continue
+        name = names.get(price)
+        if name and name not in what:
+            what.append(name)
+    return {
+        "transaction_id": transaction.get("id"),
+        # A cancelled transaction was never billed; when it was made is the
+        # only date it has.
+        "billed_at": _when(transaction.get("billed_at")
+                           or transaction.get("created_at")),
+        "what": ", ".join(what) or None,
+        "amount_cents": amount,
+        "currency": transaction.get("currency_code"),
+        "status": transaction.get("status"),
+        "invoice_number": transaction.get("invoice_number"),
+        # Paddle makes a PDF for an automatically-collected transaction once
+        # it is completed, and never for one of zero value.
+        "has_pdf": transaction.get("status") == "completed" and amount > 0,
+    }
+
+
+def invoices(tenant_id, role, query):
+    """The tenant's invoices from Paddle, newest first, one page at a time;
+    or, with ?pdf=<transaction>, a link to that one's PDF. None where the PDF
+    asked for is not this tenant's, which the route answers as 404.
+
+    ADMINISTRATOR ONLY (decided 24 October 2026). An invoice carries the
+    billing address and tax details, which is more than the plan and periods
+    GET /billing/subscription shows to any seat."""
+    _require_admin(role)
+    query = query or {}
+    asked = query.get("pdf")
+
+    sub = _subscription(tenant_id)
+    # A trial, tenant 0, or a subscription whose customer the webhooks have
+    # not yet recorded: nothing to ask Paddle about.
+    if not sub or not sub["paddle_customer_id"]:
+        return None if asked else {"invoices": [], "has_more": False,
+                                   "after": None}
+
+    # BY CUSTOMER AND SUBSCRIPTION, BOTH (decided 24 October 2026). Paddle
+    # keeps one customer per email address, so somebody who checks out two
+    # tenants with one address is one customer, and the customer alone would
+    # show each tenant the other's invoices. The subscription is this
+    # tenant's own.
+    #
+    # THE GAP, ACCEPTED: subscription has one row per tenant, and a fresh
+    # checkout after a cancellation overwrites paddle_subscription_id on it.
+    # A tenant that cancels and subscribes again sees only the new
+    # subscription's invoices here. The earlier ones are not lost - Paddle
+    # holds them, and paddle_event.paddle_entity_id records the old
+    # subscription's id - they are just not listed.
+    customer = sub["paddle_customer_id"]
+    subscription = sub["paddle_subscription_id"]
+
+    if asked:
+        wanted = _transaction_id(asked, "an invoice")
+        found = paddle_api.list_transactions(customer, subscription,
+                                             ids=[wanted]).get("data") or []
+        if not found:
+            return None
+        if not _invoice(found[0], {})["has_pdf"]:
+            raise Refused("Paddle has no PDF for this one.")
+        return {"url": paddle_api.invoice_pdf_url(wanted)}
+
+    after = query.get("after")
+    page = paddle_api.list_transactions(
+        customer, subscription,
+        after=_transaction_id(after, "a page of invoices") if after else None)
+
+    plans = {p["plan_key"]: p["name"] for p in _plans()}
+    names = {price: plans[key] for key, price in
+             paddle_api.PLAN_PRICES.items() if key in plans}
+    names[paddle_api.TOPUP_PRICE] = "Top-up"
+
+    rows = [_invoice(t, names) for t in page.get("data") or []]
+    pagination = (page.get("meta") or {}).get("pagination") or {}
+    more = bool(pagination.get("has_more"))
+    # The cursor is in Paddle's own next link: the last transaction's id.
+    cursor = urllib.parse.parse_qs(urllib.parse.urlsplit(
+        pagination.get("next") or "").query).get("after", [None])[0]
+    return {"invoices": rows, "has_more": more,
+            "after": cursor if more else None}

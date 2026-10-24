@@ -7,6 +7,7 @@ paddle_api is replaced. Run from the repository root:
 
 import unittest
 from unittest import mock
+from urllib.parse import parse_qs, urlsplit
 
 from api_modules import load_billing, rows
 
@@ -26,7 +27,8 @@ PLANS = rows(("base", "Base", 2, 2500, 500, 5, 3, 12, 500, 1),
 
 class FakeBillingDb:
     def __init__(self, subscription=None, workspaces=1):
-        self.subscription = subscription   # (sub_id, status, ends, plan_key)
+        # (sub_id, status, ends, plan_key, customer_id)
+        self.subscription = subscription
         self.workspaces = workspaces       # how many the tenant holds
         self.inserted_requests = []
         self.checkout_offered_at = None
@@ -83,7 +85,7 @@ class BillingTest(unittest.TestCase):
         self.paddle.charge_topup.assert_not_called()
 
     def test_top_up_refused_when_past_due(self):
-        db = FakeBillingDb(("sub_1", "past_due", None, "base"))
+        db = FakeBillingDb(("sub_1", "past_due", None, "base", "ctm_1"))
         with self.use(db):
             with self.assertRaises(self.billing.Refused):
                 self.billing.top_up(7, "a@firm.com", "admin",
@@ -92,7 +94,7 @@ class BillingTest(unittest.TestCase):
         self.assertEqual(db.inserted_requests, [])
 
     def test_top_up_records_the_request_then_charges(self):
-        db = FakeBillingDb(("sub_1", "active", None, "base"))
+        db = FakeBillingDb(("sub_1", "active", None, "base", "ctm_1"))
         with self.use(db):
             result = self.billing.top_up(
                 7, "a@firm.com", "admin",
@@ -107,7 +109,7 @@ class BillingTest(unittest.TestCase):
         return error
 
     def test_top_up_duplicate_key_is_repeated_and_never_charges(self):
-        db = FakeBillingDb(("sub_1", "active", None, "base"))
+        db = FakeBillingDb(("sub_1", "active", None, "base", "ctm_1"))
         db.keys.add("k")
         db.duplicate_error = self.client_error(DUPLICATE_CODE,
                                                DUPLICATE_MESSAGE)
@@ -121,7 +123,7 @@ class BillingTest(unittest.TestCase):
         self.paddle.charge_topup.assert_not_called()
 
     def test_top_up_twice_with_one_key_charges_once(self):
-        db = FakeBillingDb(("sub_1", "active", None, "base"))
+        db = FakeBillingDb(("sub_1", "active", None, "base", "ctm_1"))
         db.duplicate_error = self.client_error(DUPLICATE_CODE,
                                                DUPLICATE_MESSAGE)
         body = {"increments": 2, "idempotency_key": "k"}
@@ -133,7 +135,7 @@ class BillingTest(unittest.TestCase):
         self.paddle.charge_topup.assert_called_once_with("sub_1", 2)
 
     def test_top_up_other_database_error_is_raised_not_repeated(self):
-        db = FakeBillingDb(("sub_1", "active", None, "base"))
+        db = FakeBillingDb(("sub_1", "active", None, "base", "ctm_1"))
         db.keys.add("k")
         db.duplicate_error = self.client_error(
             DUPLICATE_CODE, "Communications link failure; Error code: 0")
@@ -144,7 +146,7 @@ class BillingTest(unittest.TestCase):
         self.paddle.charge_topup.assert_not_called()
 
     def test_downgrade_refused_over_seats(self):
-        db = FakeBillingDb(("sub_1", "active", None, "business"))
+        db = FakeBillingDb(("sub_1", "active", None, "business", "ctm_1"))
         listing = {"taken": 3, "reserved": 1}
         with self.use(db), mock.patch.object(self.billing.seats, "listing",
                                              return_value=listing):
@@ -155,7 +157,8 @@ class BillingTest(unittest.TestCase):
 
     def test_downgrade_refused_over_workspaces(self):
         """PACK-02: Base holds 1. Nothing is deleted to make it fit."""
-        db = FakeBillingDb(("sub_1", "active", None, "business"), workspaces=2)
+        db = FakeBillingDb(("sub_1", "active", None, "business", "ctm_1"),
+                           workspaces=2)
         listing = {"taken": 1, "reserved": 0}
         with self.use(db), mock.patch.object(self.billing.seats, "listing",
                                              return_value=listing):
@@ -167,7 +170,8 @@ class BillingTest(unittest.TestCase):
         self.paddle.change_plan.assert_not_called()
 
     def test_downgrade_that_fits_goes_ahead(self):
-        db = FakeBillingDb(("sub_1", "active", None, "business"), workspaces=1)
+        db = FakeBillingDb(("sub_1", "active", None, "business", "ctm_1"),
+                           workspaces=1)
         listing = {"taken": 1, "reserved": 0}
         with self.use(db), mock.patch.object(self.billing.seats, "listing",
                                              return_value=listing):
@@ -221,7 +225,8 @@ class PaymentMethodTest(unittest.TestCase):
         self.paddle.payment_method_transaction.return_value = "txn_pm"
 
     def use(self, status):
-        db = FakeBillingDb(("sub_1", status, None, "base") if status else None)
+        db = FakeBillingDb(("sub_1", status, None, "base", "ctm_1")
+                           if status else None)
         return mock.patch.object(self.billing, "_sql", db.sql)
 
     def test_active_and_past_due_get_a_transaction(self):
@@ -340,7 +345,7 @@ class TopUpFigureTest(unittest.TestCase):
         self.billing = load_billing()
 
     def test_the_view_reports_the_constant_that_charges(self):
-        db = FakeBillingDb(("sub_1", "active", None, "base"))
+        db = FakeBillingDb(("sub_1", "active", None, "base", "ctm_1"))
         with mock.patch.object(self.billing, "_sql", db.sql),              mock.patch.object(self.billing.wallet, "standing",
                                return_value="active"):
             view = self.billing.subscription_view(7)
@@ -349,7 +354,7 @@ class TopUpFigureTest(unittest.TestCase):
 
     def test_it_is_the_figure_top_up_multiplies_by(self):
         """The test that would fail if the two ever parted."""
-        db = FakeBillingDb(("sub_1", "active", None, "base"))
+        db = FakeBillingDb(("sub_1", "active", None, "base", "ctm_1"))
         paddle = mock.MagicMock()
         self.billing.paddle_api = paddle
         with mock.patch.object(self.billing, "_sql", db.sql):
@@ -504,6 +509,172 @@ class PaddleApiTest(unittest.TestCase):
                          ("POST", "/subscriptions/sub_1/resume"))
         self.assertEqual(body, {"effective_from": "immediately",
                                 "on_resume": "start_new_billing_period"})
+
+    def test_a_read_sends_no_body(self):
+        """_request sends a body only where one is given; the writes above
+        still pass theirs."""
+        paddle_api = load_billing().paddle_api
+        sent = {}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b'{"data": {"url": "https://pdf"}}'
+
+        def urlopen(request, timeout=None):
+            sent["data"] = request.data
+            sent["url"] = request.full_url
+            return Response()
+
+        with mock.patch.object(paddle_api, "_api_key", return_value="k"), \
+             mock.patch.object(paddle_api.urllib.request, "urlopen", urlopen):
+            paddle_api.invoice_pdf_url(TXN_A)
+        self.assertIsNone(sent["data"])
+        self.assertTrue(sent["url"].endswith("/transactions/%s/invoice"
+                                             % TXN_A))
+
+    def test_the_list_is_one_customer_and_one_subscription(self):
+        paddle_api = load_billing().paddle_api
+        with mock.patch.object(paddle_api, "_request",
+                               return_value={"data": []}) as req:
+            paddle_api.list_transactions("ctm_1", "sub_1", after=TXN_B)
+        method, path = req.call_args.args
+        self.assertEqual(method, "GET")
+        query = parse_qs(urlsplit(path).query)
+        self.assertEqual(query["customer_id"], ["ctm_1"])
+        self.assertEqual(query["subscription_id"], ["sub_1"])
+        self.assertEqual(query["status"],
+                         ["completed,paid,past_due,canceled"])
+        self.assertEqual(query["order_by"], ["billed_at[DESC]"])
+        self.assertEqual(query["per_page"], ["30"])
+        self.assertEqual(query["after"], [TXN_B])
+
+
+TXN_A = "txn_" + "a" * 26
+TXN_B = "txn_" + "b" * 26
+
+
+def transaction(txn, status="completed", total="6500",
+                items=(("pri_business", 1),),
+                billed_at="2026-10-01T10:00:00.1Z"):
+    return {"id": txn, "status": status, "billed_at": billed_at,
+            "created_at": "2026-09-30T09:00:00Z", "currency_code": "USD",
+            "invoice_number": "325-1",
+            "details": {"totals": {"grand_total": total}},
+            "items": [{"price": {"id": p}, "quantity": q} for p, q in items]}
+
+
+class InvoicesTest(unittest.TestCase):
+    """GET /billing/invoices: Paddle is the record, read a page at a time,
+    by this tenant's customer AND subscription (decided 24 October 2026)."""
+
+    def setUp(self):
+        self.billing = load_billing()
+        self.paddle = mock.MagicMock()
+        self.paddle.PLAN_PRICES = {"base": "pri_base",
+                                   "business": "pri_business"}
+        self.paddle.TOPUP_PRICE = "pri_topup"
+        self.billing.paddle_api = self.paddle
+        self.db = FakeBillingDb(("sub_1", "active", None, "business",
+                                 "ctm_1"))
+
+    def invoices(self, query=None, role="admin"):
+        with mock.patch.object(self.billing, "_sql", self.db.sql):
+            return self.billing.invoices(7, role, query or {})
+
+    def test_a_member_is_refused_and_paddle_is_not_asked(self):
+        with self.assertRaises(PermissionError):
+            self.invoices(role="member")
+        self.paddle.list_transactions.assert_not_called()
+
+    def test_no_customer_is_an_empty_list_without_asking_paddle(self):
+        for sub in (None, ("sub_1", "active", None, "business", None)):
+            with self.subTest(sub=sub):
+                self.db.subscription = sub
+                self.assertEqual(self.invoices(),
+                                 {"invoices": [], "has_more": False,
+                                  "after": None})
+                self.assertIsNone(self.invoices({"pdf": TXN_A}))
+        self.paddle.list_transactions.assert_not_called()
+
+    def test_the_list_asks_by_customer_and_subscription(self):
+        self.paddle.list_transactions.return_value = {"data": []}
+        self.invoices()
+        self.paddle.list_transactions.assert_called_once_with(
+            "ctm_1", "sub_1", after=None)
+
+    def test_rows_are_shaped_for_the_screen(self):
+        self.paddle.list_transactions.return_value = {
+            "data": [
+                # A plan change: the plan moved from is at negative quantity
+                # and is not what was bought.
+                transaction(TXN_A, items=(("pri_business", 1),
+                                          ("pri_base", -1))),
+                transaction(TXN_B, status="canceled", total="500",
+                            items=(("pri_topup", 2),), billed_at=None),
+            ],
+            "meta": {"pagination": {
+                "has_more": True,
+                "next": "https://x/transactions?after=%s&per_page=30"
+                        % TXN_B}}}
+        out = self.invoices()
+        first, second = out["invoices"]
+        self.assertEqual(first["what"], "Small Business")
+        self.assertEqual(first["billed_at"], "2026-10-01 10:00:00")
+        self.assertEqual(first["amount_cents"], 6500)
+        self.assertTrue(first["has_pdf"])
+        self.assertEqual(second["what"], "Top-up")
+        # Never billed: when it was made is its only date.
+        self.assertEqual(second["billed_at"], "2026-09-30 09:00:00")
+        self.assertFalse(second["has_pdf"])
+        self.assertEqual((out["has_more"], out["after"]), (True, TXN_B))
+
+    def test_the_last_page_has_no_cursor(self):
+        self.paddle.list_transactions.return_value = {
+            "data": [], "meta": {"pagination": {
+                "has_more": False, "next": "https://x/t?after=" + TXN_B}}}
+        self.assertEqual(self.invoices()["after"], None)
+
+    def test_a_zero_invoice_has_no_pdf(self):
+        self.paddle.list_transactions.return_value = {
+            "data": [transaction(TXN_A, total="0")]}
+        self.assertFalse(self.invoices()["invoices"][0]["has_pdf"])
+
+    def test_the_cursor_must_be_a_transaction_id(self):
+        with self.assertRaises(ValueError):
+            self.invoices({"after": "txn_1&customer_id=ctm_other"})
+        self.paddle.list_transactions.assert_not_called()
+
+    def test_a_pdf_is_this_tenant_s_before_it_is_asked_for(self):
+        self.paddle.list_transactions.return_value = {
+            "data": [transaction(TXN_A)]}
+        self.paddle.invoice_pdf_url.return_value = "https://pdf"
+        self.assertEqual(self.invoices({"pdf": TXN_A}), {"url": "https://pdf"})
+        self.paddle.list_transactions.assert_called_once_with(
+            "ctm_1", "sub_1", ids=[TXN_A])
+        self.paddle.invoice_pdf_url.assert_called_once_with(TXN_A)
+
+    def test_another_customer_s_pdf_is_not_found(self):
+        self.paddle.list_transactions.return_value = {"data": []}
+        self.assertIsNone(self.invoices({"pdf": TXN_A}))
+        self.paddle.invoice_pdf_url.assert_not_called()
+
+    def test_a_pdf_paddle_does_not_make_is_refused(self):
+        self.paddle.list_transactions.return_value = {
+            "data": [transaction(TXN_A, status="past_due")]}
+        with self.assertRaises(self.billing.Refused):
+            self.invoices({"pdf": TXN_A})
+        self.paddle.invoice_pdf_url.assert_not_called()
+
+    def test_the_pdf_must_be_a_transaction_id(self):
+        with self.assertRaises(ValueError):
+            self.invoices({"pdf": "../subscriptions/sub_1"})
+        self.paddle.list_transactions.assert_not_called()
 
 
 class SeatsBoughtTest(unittest.TestCase):
