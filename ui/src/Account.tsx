@@ -237,6 +237,10 @@ function Subscription() {
   const [waiting, setWaiting] = useState("");
   const [said, setSaid] = useState("");
   const [chosen, setChosen] = useState<string | null>(null);
+  // Bumped when a wait ends, so the invoice list reads Paddle again: it read
+  // once on arrival and went on showing a renewal as failed after it was
+  // paid (walk of 24 October 2026).
+  const [settled, setSettled] = useState(0);
 
   const load = () => api.subscription().then((fresh) => {
     setView(fresh);
@@ -271,13 +275,17 @@ function Subscription() {
                           + "reload and it will be here. Nothing is lost, and "
                           + "nothing will be charged twice.") {
     setWaiting(meanwhile);
-    for (let i = 0; i < 15; i++) {
-      await new Promise((r) => setTimeout(r, 2000));
-      try {
-        if (done(await load())) { setWaiting(""); return; }
-      } catch { /* keep asking: one refused read is not an answer */ }
+    try {
+      for (let i = 0; i < 15; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        try {
+          if (done(await load())) { setWaiting(""); return; }
+        } catch { /* keep asking: one refused read is not an answer */ }
+      }
+      setWaiting(late);
+    } finally {
+      setSettled((n) => n + 1);
     }
-    setWaiting(late);
   }
 
   async function subscribe(planKey: string) {
@@ -353,15 +361,27 @@ function Subscription() {
    * for one that is paused, so this is the way back: Paddle charges the card
    * it holds for a new month at once. If that is refused the subscription
    * comes back past due, and Change Payment Method is offered there.
+   *
+   * ACTIVE IS NOT AN ANSWER AT ONCE. On resume Paddle reports the
+   * subscription active and only then tries the card; a refusal moves it to
+   * past_due about two seconds later. Waiting for "not paused" stopped at
+   * that first active and told a person whose card was refused that all was
+   * well (walk of 24 October 2026). Past due settles it on sight; active
+   * only once three reads in a row, six seconds, have said so.
    */
   async function resumeSubscription() {
     setError("");
     setSaid("");
     setBusy("Resuming");
+    let activeReads = 0;
     try {
       await api.resume();
       setBusy("");
-      await settle((fresh) => fresh.paddle_status !== "paused",
+      await settle((fresh) => {
+        if (fresh.paddle_status === "past_due") return true;
+        activeReads = fresh.paddle_status === "active" ? activeReads + 1 : 0;
+        return activeReads >= 3;
+      },
         "Paddle is charging the card it holds. Recording the answer here…",
         "Paddle has the request. Its answer has not reached this screen yet, "
           + "which can take a minute - reload and it will be here. Nothing "
@@ -386,6 +406,10 @@ function Subscription() {
   const active = status === "active";
   const pastDue = status === "past_due" || status === "paused";
   const canceled = status === "canceled";
+  // The radios choose for Change plan or Subscribe, so they show only where
+  // one of those is offered: to an administrator, and not while paused or
+  // past due, where the button beneath is Resume or Change Payment Method.
+  const choosing = admin && !pastDue;
   const plan = view.plans.find((p) => p.plan_key === view.plan) ?? null;
   const target = view.plans.find((p) => p.plan_key === chosen) ?? null;
   const trialLeft = daysUntil(view.trial_ends_at);
@@ -473,6 +497,9 @@ function Subscription() {
             {onTrial ? `Ends ${on(view.trial_ends_at)}`
               : trialOver ? `Ended ${on(view.trial_ends_at)}`
               : canceled ? `Paid to ${on(view.current_period_ends_at)}`
+              // Paused renews nothing: the row keeps the old period's end,
+              // and resuming starts a new one from that day.
+              : status === "paused" ? "Resuming starts a new month"
               : `Renews ${on(view.current_period_ends_at)}`}
           </span>
         </div>
@@ -502,7 +529,7 @@ function Subscription() {
         </div>
       </div>
 
-      <h3>{!admin ? "Plans" : active ? "Change plan" : "Choose a plan"}</h3>
+      <h3>{!choosing ? "Plans" : active ? "Change plan" : "Choose a plan"}</h3>
       <p className="muted small">
         Seats are a fixed attribute of the plan. Adding a seat is a plan change
         rather than a proration, and a downgrade is refused while more seats are
@@ -530,12 +557,12 @@ function Subscription() {
             <th></th>
             {view.plans.map((p: Plan) => (
               <th key={p.plan_key}
-                  onClick={admin ? () => setChosen(p.plan_key) : undefined}
-                  className={admin && p.plan_key === chosen
+                  onClick={choosing ? () => setChosen(p.plan_key) : undefined}
+                  className={choosing && p.plan_key === chosen
                     ? "chosen" : undefined}>
                 {/* The radio chooses for the button beneath, which a member
-                    is not offered. */}
-                {admin && (
+                    is not offered, nor anybody while paused or past due. */}
+                {choosing && (
                   <input type="radio" name="plan" aria-label={p.name}
                          checked={p.plan_key === chosen}
                          onChange={() => setChosen(p.plan_key)} />
@@ -616,16 +643,19 @@ function Subscription() {
           </>
         ) : pastDue ? (
           <>
-            {/* Gold: the overlay pays the overdue renewal on the new method. */}
+            {/* Gold: saving the new method charges the overdue renewal. */}
             <button className="spend" disabled={!!busy} onClick={changeMethod}>
               Change Payment Method
             </button>
+            {/* Paddle's window shows no amount: it takes the method and
+                charges what is outstanding once it is saved (walk of 24
+                October 2026). */}
             <span className="muted small">
-              Paddle&rsquo;s window opens with the overdue amount. Paying it on
-              the new method makes the subscription active again and Paddle
-              keeps the method for every renewal after. Subscribing again is
-              not offered here &mdash; there is already a subscription, and the
-              payment method is what needs fixing.
+              Once the new method is saved, Paddle charges the overdue renewal
+              to it and the subscription is active again; Paddle keeps the
+              method for every renewal after. Subscribing again is not offered
+              here &mdash; there is already a subscription, and the payment
+              method is what needs fixing.
             </span>
           </>
         ) : (
@@ -643,7 +673,7 @@ function Subscription() {
       </div>
       )}
 
-      <Invoices subscribed={!!status} />
+      <Invoices key={settled} subscribed={!!status} />
 
       <h3>Closing the account</h3>
       <p className="muted small">
