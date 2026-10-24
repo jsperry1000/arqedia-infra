@@ -1765,8 +1765,13 @@ export const api = {
   /** Resume a paused subscription. Paddle charges the stored method now for
    *  a new billing period; the webhooks move the status, so this answers 202
    *  and the screen polls. If the charge fails it comes back past_due, where
-   *  the payment method can be changed. */
-  resume: (): Promise<{ requested: boolean }> =>
+   *  the payment method can be changed.
+   *
+   *  outcome is the charge's, read from Paddle by the server before it
+   *  answers: paid, failed, or pending when Paddle had not said within a few
+   *  seconds. The webhooks reach the status later. */
+  resume: (): Promise<{ requested: boolean;
+                        outcome: "paid" | "failed" | "pending" }> =>
     call("/billing/resume", { method: "POST" }),
 
   /** The invoices, from Paddle, thirty at a time and newest first. after

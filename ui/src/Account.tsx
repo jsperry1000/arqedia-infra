@@ -362,30 +362,35 @@ function Subscription() {
    * it holds for a new month at once. If that is refused the subscription
    * comes back past due, and Change Payment Method is offered there.
    *
-   * ACTIVE IS NOT AN ANSWER AT ONCE. On resume Paddle reports the
-   * subscription active and only then tries the card; a refusal moves it to
-   * past_due about two seconds later. Waiting for "not paused" stopped at
-   * that first active and told a person whose card was refused that all was
-   * well (walk of 24 October 2026). Past due settles it on sight; active
-   * only once three reads in a row, six seconds, have said so.
+   * THE CHARGE'S OUTCOME COMES WITH THE ANSWER. On resume Paddle reports
+   * the subscription active and only then tries the card, and a refusal's
+   * past_due has reached us eighteen seconds behind it - so the status alone
+   * cannot say whether the card was charged (walks of 24 October 2026). The
+   * server reads the charge from Paddle before answering, and the screen
+   * says what it found, then waits for the status that matches it.
    */
   async function resumeSubscription() {
     setError("");
     setSaid("");
     setBusy("Resuming");
-    let activeReads = 0;
     try {
-      await api.resume();
+      const { outcome } = await api.resume();
       setBusy("");
-      await settle((fresh) => {
-        if (fresh.paddle_status === "past_due") return true;
-        activeReads = fresh.paddle_status === "active" ? activeReads + 1 : 0;
-        return activeReads >= 3;
-      },
-        "Paddle is charging the card it holds. Recording the answer here…",
-        "Paddle has the request. Its answer has not reached this screen yet, "
-          + "which can take a minute - reload and it will be here. Nothing "
-          + "will be charged twice.");
+      if (outcome === "paid") {
+        await settle((fresh) => fresh.paddle_status === "active");
+      } else if (outcome === "failed") {
+        await settle((fresh) => fresh.paddle_status === "past_due",
+          "The card Paddle holds was refused. Recording it here…",
+          "The card Paddle holds was refused. That has not reached this "
+            + "screen yet, which can take a minute - reload and change the "
+            + "payment method there. Nothing was charged.");
+      } else {
+        await load();
+        setWaiting("Resumed. Paddle has not yet said whether the card it "
+          + "holds was charged - reload in a minute to see. Nothing will be "
+          + "charged twice.");
+        setSettled((n) => n + 1);
+      }
     } catch (err) {
       setError(message(err));
     } finally {

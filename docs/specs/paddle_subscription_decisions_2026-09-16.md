@@ -189,6 +189,20 @@ top-ups: a cancelled subscription cannot be charged (item 10). Cash still expire
   cancel after 30 days. So how a subscription would come to be paused is
   not established.
 
+- **Resume answers with the charge's outcome (24 October 2026, after two
+  walks).** On resume Paddle reports the subscription `active` and only
+  then tries the card. A refusal's `past_due` followed 2 seconds later in
+  Paddle, but webhooks reached us up to 18 seconds late. So the status
+  could not tell the screen whether the card was charged, and the first
+  build showed a refused card as Active. `POST /billing/resume` now reads
+  the renewal charge from Paddle before answering, for up to 8 seconds, and
+  answers `paid`, `failed` or `pending`. The charge is matched by its
+  `billing_period.starts_at`, which equals the period start the resume
+  response reports, and never as the newest. Verified in sandbox: when the
+  resume call returned, after 0.4 seconds, the newest renewal was still the
+  previous one, and the new charge appeared 0.4 seconds after that. Nothing
+  is granted from this read; the webhook still grants.
+
 ---
 
 ## 3. Open

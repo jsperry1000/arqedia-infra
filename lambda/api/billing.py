@@ -417,10 +417,23 @@ def payment_method(tenant_id, role):
             "status": sub["paddle_status"]}
 
 
+# How long resume waits for Paddle's answer about the charge. It came in
+# under a second on every sandbox run; the Lambda allows 30.
+RESUME_ANSWER_SECONDS = 8
+
+
 def resume(tenant_id, role):
     """Resume a paused subscription. Paddle charges the stored method now
     for a new billing period; the webhooks move the status and grant the
     credit, so this answers 202 and the screen polls.
+
+    THE OUTCOME IS PADDLE'S, ASKED DIRECTLY. On resume Paddle reports the
+    subscription active and only then tries the card, so "active" from the
+    webhooks says nothing about the charge, and a refusal's past_due can
+    reach us eighteen seconds behind it (walks of 24 October 2026). The
+    renewal charge is read from Paddle until it is paid or has failed:
+    "paid", "failed", or "pending" if neither within RESUME_ANSWER_SECONDS.
+    Nothing is granted here; the webhook still does that.
 
     NO IDEMPOTENCY KEY OF OURS. A second resume finds the subscription no
     longer paused and Paddle refuses it, so a repeat cannot charge twice;
@@ -430,8 +443,20 @@ def resume(tenant_id, role):
     sub = _subscription(tenant_id)
     if not sub or sub["paddle_status"] != "paused":
         raise Refused("There is no paused subscription to resume.")
-    paddle_api.resume_subscription(sub["paddle_subscription_id"])
-    return {"requested": True}
+    subscription = sub["paddle_subscription_id"]
+    period_start = paddle_api.resume_subscription(subscription)
+
+    outcome = None
+    deadline = time.monotonic() + RESUME_ANSWER_SECONDS
+    while period_start and outcome is None and time.monotonic() < deadline:
+        time.sleep(0.5)
+        # The resume has happened. A read Paddle refuses now is not the
+        # resume failing, so it ends the wait as pending rather than a 502.
+        try:
+            outcome = paddle_api.renewal_outcome(subscription, period_start)
+        except paddle_api.PaddleError:
+            break
+    return {"requested": True, "outcome": outcome or "pending"}
 
 
 # --- invoices --------------------------------------------------------------
