@@ -291,6 +291,30 @@ export type SubscriptionView = {
   topup_increment_cents: number;
 };
 
+/** One invoice, from Paddle - nothing of ours stores them. Amounts are in
+ *  the currency's lowest unit; USD only is shown today. */
+export type Invoice = {
+  transaction_id: string;
+  /** "2026-10-16 14:24:44", UTC, as the API's other times are. */
+  billed_at: string | null;
+  /** The plan or plans it bills, or "Top-up"; null where neither is known. */
+  what: string | null;
+  amount_cents: number;
+  currency: string;
+  /** completed, paid, past_due or canceled - Paddle's own words. */
+  status: string;
+  invoice_number: string | null;
+  /** Paddle makes a PDF once a payment has completed, and never for zero. */
+  has_pdf: boolean;
+};
+
+export type InvoicePage = {
+  invoices: Invoice[];
+  has_more: boolean;
+  /** Pass back as `after` for the next, older page. */
+  after: string | null;
+};
+
 export type SignupBegun = {
   sent: boolean;
   /** Seconds the code lasts, so a screen can say so rather than guess. */
@@ -1727,6 +1751,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ plan }),
     }),
+
+  /** The invoices, from Paddle, thirty at a time and newest first. after
+   *  is the previous page's cursor. Administrator only. */
+  invoices: (after?: string | null): Promise<InvoicePage> =>
+    call("/billing/invoices"
+         + (after ? `?after=${encodeURIComponent(after)}` : "")),
+
+  /** A link to one invoice's PDF. Paddle's link expires in an hour, so it
+   *  is asked for on the click rather than with the list. */
+  invoicePdf: (transactionId: string): Promise<{ url: string }> =>
+    call(`/billing/invoices?pdf=${encodeURIComponent(transactionId)}`),
 
   // --- signing up ---------------------------------------------------------
   //
