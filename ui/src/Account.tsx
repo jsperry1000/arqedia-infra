@@ -1712,18 +1712,24 @@ function Workspaces() {
   const others = deleting
     ? list.workspaces.filter((w) => w.workspace_id !== deleting.workspace_id)
     : [];
-  // WHAT IS STILL MISSING, said beside the disabled Delete. It said nothing,
-  // so a person who entered the code and not the name pressed a dead button
-  // and saw nothing happen (tenant 5, 25 October 2026).
-  const missing = !deleting ? ""
+  // IN ORDER (25 October 2026): the members' workspace and the name first,
+  // and only then may a code be asked for. A code sent before the name was
+  // typed was entered, and Delete stayed dead because the name was missing.
+  const before = !deleting ? ""
     : stranded.length > 0 && moveTo === null
       ? "Choose the workspace its members move to."
     : typed.trim() !== deleting.name.trim()
-      ? `Type the name exactly as shown above: ${deleting.name}.`
+      ? `Type the name exactly as shown: ${deleting.name}.`
+    : "";
+  // WHAT IS STILL MISSING after that, said beside the disabled Delete. It
+  // said nothing, so a person who entered the code and not the name pressed
+  // a dead button and saw nothing happen (tenant 5, 25 October 2026). What
+  // comes before the code is said beside Email me a code instead.
+  const missing = !deleting || before ? ""
     : !codeSent ? "Ask for the code, then enter it."
     : code.trim().length !== 6 ? "Enter the six-digit code from the email."
     : "";
-  const ready = !!deleting && missing === "";
+  const ready = !!deleting && before === "" && missing === "";
   // Enter in the name or the code deletes once nothing is missing, as a
   // form would.
   const enter = (e: React.KeyboardEvent) => {
@@ -1866,11 +1872,13 @@ function Workspaces() {
               </label>
 
               <div className="form-actions">
-                <button disabled={!!busy} onClick={sendCode}>
+                <button disabled={!!busy || before !== ""} onClick={sendCode}>
                   {codeSent ? "Send another code" : "Email me a code"}
                 </button>
                 <span className="muted small">
-                  {codeSent
+                  {before
+                    ? before
+                    : codeSent
                     ? "Sent to your address. It works for 15 minutes."
                     : "Deleting needs a code we email to you."}
                 </span>
