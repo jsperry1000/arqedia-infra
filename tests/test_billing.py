@@ -250,11 +250,46 @@ class PaymentMethodTest(unittest.TestCase):
                 self.billing.payment_method(7, "member")
         self.paddle.payment_method_transaction.assert_not_called()
 
+    def resume_with(self, outcomes, period="2026-10-24T16:04:07.455Z"):
+        """Resume, with Paddle answering each read of the charge in turn."""
+        self.paddle.resume_subscription.return_value = period
+        self.paddle.renewal_outcome.side_effect = outcomes
+        if not isinstance(self.paddle.PaddleError, type):
+            self.paddle.PaddleError = type("PaddleError", (Exception,), {})
+        with self.use("paused"),              mock.patch.object(self.billing.time, "sleep"):
+            return self.billing.resume(7, "admin")
+
     def test_paused_resumes(self):
-        with self.use("paused"):
-            self.assertEqual(self.billing.resume(7, "admin"),
-                             {"requested": True})
+        self.assertEqual(self.resume_with(["paid"]),
+                         {"requested": True, "outcome": "paid"})
         self.paddle.resume_subscription.assert_called_once_with("sub_1")
+        self.paddle.renewal_outcome.assert_called_once_with(
+            "sub_1", "2026-10-24T16:04:07.455Z")
+
+    def test_resume_waits_until_the_charge_exists(self):
+        """Paddle makes the charge after the resume answers: the first reads
+        find nothing, and the wait goes on."""
+        self.assertEqual(self.resume_with([None, None, "failed"])["outcome"],
+                         "failed")
+        self.assertEqual(self.paddle.renewal_outcome.call_count, 3)
+
+    def test_resume_with_no_answer_is_pending(self):
+        clock = iter([0, 1, 2, 9])
+        with mock.patch.object(self.billing.time, "monotonic",
+                               lambda: next(clock)):
+            out = self.resume_with([None, None, None])
+        self.assertEqual(out["outcome"], "pending")
+
+    def test_a_refused_read_after_resume_is_pending_not_an_error(self):
+        self.paddle.PaddleError = type("PaddleError", (Exception,), {})
+        error = self.paddle.PaddleError()
+        out = self.resume_with([error])
+        self.assertEqual(out, {"requested": True, "outcome": "pending"})
+
+    def test_no_period_from_paddle_is_pending_without_reading(self):
+        self.assertEqual(self.resume_with([], period=None)["outcome"],
+                         "pending")
+        self.paddle.renewal_outcome.assert_not_called()
 
     def test_only_paused_resumes(self):
         for status in ("active", "past_due", "canceled", None):
@@ -501,14 +536,53 @@ class PaddleApiTest(unittest.TestCase):
 
     def test_resume_is_immediate_and_starts_a_new_period(self):
         paddle_api = load_billing().paddle_api
+        answer = {"data": {"current_billing_period": {"starts_at": "T0"}}}
         with mock.patch.object(paddle_api, "_request",
-                               return_value={"data": {}}) as req:
-            paddle_api.resume_subscription("sub_1")
+                               return_value=answer) as req:
+            self.assertEqual(paddle_api.resume_subscription("sub_1"), "T0")
         method, path, body = req.call_args.args
         self.assertEqual((method, path),
                          ("POST", "/subscriptions/sub_1/resume"))
         self.assertEqual(body, {"effective_from": "immediately",
                                 "on_resume": "start_new_billing_period"})
+
+    def renewal(self, *transactions):
+        paddle_api = load_billing().paddle_api
+        with mock.patch.object(paddle_api, "_request",
+                               return_value={"data": list(transactions)}) as req:
+            return paddle_api.renewal_outcome("sub_1", "T0"), req
+
+    @staticmethod
+    def charge(start, status="billed", payments=()):
+        return {"billing_period": {"starts_at": start}, "status": status,
+                "payments": [{"status": p} for p in payments]}
+
+    def test_renewal_is_matched_by_its_period_not_its_age(self):
+        """When the resume answers, the newest renewal is the previous one,
+        paid long ago. It must not be read as this one."""
+        out, req = self.renewal(self.charge("T-1", "completed", ["captured"]))
+        self.assertIsNone(out)
+        query = parse_qs(urlsplit(req.call_args.args[1]).query)
+        self.assertEqual(query["subscription_id"], ["sub_1"])
+        self.assertEqual(query["origin"], ["subscription_recurring"])
+
+    def test_renewal_paid(self):
+        self.assertEqual(self.renewal(
+            self.charge("T-1", "completed", ["captured"]),
+            self.charge("T0", "completed", ["captured"]))[0], "paid")
+        self.assertEqual(self.renewal(
+            self.charge("T0", "billed", ["captured"]))[0], "paid")
+
+    def test_renewal_failed(self):
+        """As the walk saw it: an attempt in error before Paddle marks the
+        transaction past due."""
+        self.assertEqual(self.renewal(
+            self.charge("T0", "billed", ["error"]))[0], "failed")
+        self.assertEqual(self.renewal(
+            self.charge("T0", "past_due", ["error"]))[0], "failed")
+
+    def test_renewal_with_no_attempt_yet_has_no_answer(self):
+        self.assertIsNone(self.renewal(self.charge("T0", "billed"))[0])
 
     def test_a_read_sends_no_body(self):
         """_request sends a body only where one is given; the writes above

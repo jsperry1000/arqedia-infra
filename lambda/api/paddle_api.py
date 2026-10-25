@@ -7,6 +7,7 @@ paddle_api.py - the calls made to Paddle.
   cancel_subscription          POST  /subscriptions/{id}/cancel
   payment_method_transaction   GET   /subscriptions/{id}/update-payment-method-transaction
   resume_subscription          POST  /subscriptions/{id}/resume
+  renewal_outcome              GET   /transactions
   list_transactions            GET   /transactions
   invoice_pdf_url              GET   /transactions/{id}/invoice
 
@@ -163,12 +164,54 @@ def resume_subscription(subscription_id):
     fails the subscription becomes past_due, where the payment method can be
     changed.
 
+    Answers when the new period starts, which is how renewal_outcome finds
+    the charge: Paddle has not made it yet when this returns (verified 24
+    October 2026 - the transaction appeared 0.4 seconds after the answer).
+
     The subscription row is moved by the webhooks that follow, never here."""
-    _request("POST", "/subscriptions/%s/resume"
-             % urllib.parse.quote(subscription_id, safe=""), {
-                 "effective_from": "immediately",
-                 "on_resume": "start_new_billing_period",
-             })
+    data = _request("POST", "/subscriptions/%s/resume"
+                    % urllib.parse.quote(subscription_id, safe=""), {
+                        "effective_from": "immediately",
+                        "on_resume": "start_new_billing_period",
+                    })["data"]
+    return (data.get("current_billing_period") or {}).get("starts_at")
+
+
+# A payment attempt that has ended without the money: Paddle's own words.
+FAILED_PAYMENTS = ("error", "dropped", "canceled")
+
+
+def renewal_outcome(subscription_id, period_start):
+    """Whether the renewal charge for the period starting at period_start
+    has been paid: "paid", "failed", or None while it does not exist or has
+    no answer yet.
+
+    MATCHED BY ITS PERIOD, never the newest. The renewal transaction's
+    billing_period.starts_at is the very instant the resume answered with,
+    and the newest renewal when the resume returns is the previous one.
+
+    Read from Paddle, not from our tables. Paddle has the answer within a
+    second; the webhooks that carry it here have taken eighteen."""
+    found = _request("GET", "/transactions?" + urllib.parse.urlencode({
+        "subscription_id": subscription_id,
+        "origin": "subscription_recurring",
+        "order_by": "created_at[DESC]",
+        "per_page": 5,
+    })).get("data") or []
+    for transaction in found:
+        if (transaction.get("billing_period") or {}).get(
+                "starts_at") != period_start:
+            continue
+        status = transaction.get("status")
+        payments = transaction.get("payments") or []
+        # Newest attempt first, as Paddle lists them.
+        latest = (payments[0].get("status") if payments else None)
+        if status in ("paid", "completed") or latest == "captured":
+            return "paid"
+        if status == "past_due" or latest in FAILED_PAYMENTS:
+            return "failed"
+        return None
+    return None
 
 
 # What the invoice list shows. draft and ready are checkouts nobody finished
