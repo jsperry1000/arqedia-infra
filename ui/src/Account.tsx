@@ -1712,9 +1712,23 @@ function Workspaces() {
   const others = deleting
     ? list.workspaces.filter((w) => w.workspace_id !== deleting.workspace_id)
     : [];
-  const ready = !!deleting && codeSent && code.trim().length === 6
-    && typed.trim() === deleting.name.trim()
-    && (stranded.length === 0 || moveTo !== null);
+  // WHAT IS STILL MISSING, said beside the disabled Delete. It said nothing,
+  // so a person who entered the code and not the name pressed a dead button
+  // and saw nothing happen (tenant 5, 25 October 2026).
+  const missing = !deleting ? ""
+    : stranded.length > 0 && moveTo === null
+      ? "Choose the workspace its members move to."
+    : typed.trim() !== deleting.name.trim()
+      ? `Type the name exactly as shown above: ${deleting.name}.`
+    : !codeSent ? "Ask for the code, then enter it."
+    : code.trim().length !== 6 ? "Enter the six-digit code from the email."
+    : "";
+  const ready = !!deleting && missing === "";
+  // Enter in the name or the code deletes once nothing is missing, as a
+  // form would.
+  const enter = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && ready && !busy) confirmDelete();
+  };
 
   return (
     <>
@@ -1847,7 +1861,7 @@ function Workspaces() {
 
               <label className="row">
                 <span>Type <b>{deleting.name}</b> to confirm</span>
-                <input value={typed} autoComplete="off"
+                <input value={typed} autoComplete="off" onKeyDown={enter}
                        onChange={(e) => setTyped(e.target.value)} />
               </label>
 
@@ -1866,7 +1880,7 @@ function Workspaces() {
                 <label className="row">
                   <span>The code</span>
                   <input value={code} inputMode="numeric" maxLength={6}
-                         autoComplete="one-time-code"
+                         autoComplete="one-time-code" onKeyDown={enter}
                          onChange={(e) => setCode(e.target.value)} />
                 </label>
               )}
@@ -1880,6 +1894,7 @@ function Workspaces() {
                 <a className="secondary" onClick={() => setDeleting(null)}>
                   Cancel
                 </a>
+                {missing && <span className="muted small">{missing}</span>}
               </div>
             </div>
           </div>
