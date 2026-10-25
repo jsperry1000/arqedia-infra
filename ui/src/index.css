@@ -148,6 +148,34 @@ main:has(.wide-page) { max-width: 1560px; }
   border-left-color: var(--deep);
 }
 
+/* The workspace, first on the rail (25 October 2026): a heading, every
+   workspace beneath it indented, the active one bold and ticked. A rule
+   beneath sets it apart from the destinations, which all follow it. The tick
+   has a column of its own so the names line up whichever one carries it. */
+.rail-workspaces {
+  display: flex; flex-direction: column;
+  padding-bottom: 14px; margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.rail-head {
+  padding: 4px 24px 6px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+}
+.rail-workspaces > a.ws {
+  display: flex; gap: 6px;
+  padding: 6px 24px 6px 30px; color: var(--ink-2); font-size: 13px;
+  border-left: 3px solid transparent;
+}
+.rail-workspaces > a.ws:hover {
+  background: var(--wash); color: var(--deep); text-decoration: none;
+}
+.rail-workspaces > a.ws.on {
+  color: var(--deep); font-weight: 600; cursor: default;
+}
+.rail-workspaces > a.ws.on:hover { background: none; }
+.rail-workspaces > a.ws.ws-add { color: var(--medium); }
+.rail-workspaces .tick { flex: 0 0 12px; }
+
 /* Settings opens a choice rather than a screen, attached to the rail's right
    edge level with its link. Configure a report used the same panel until it
    became the Catalogue page; Settings is the only one left. */
@@ -1866,6 +1894,13 @@ table.docs.plans-table thead th.quoted .plan-price { font-family: var(--sans); }
   .shell .rail > a.on, .shell .rail-item > a.on {
     border-bottom-color: var(--deep);
   }
+  /* The workspaces take a row of their own above the tabs. */
+  .shell .rail-workspaces {
+    flex: 0 0 100%; flex-direction: row; flex-wrap: wrap; align-items: center;
+    padding: 6px 8px; margin: 0;
+  }
+  .shell .rail-head { padding: 6px 8px; }
+  .shell .rail-workspaces > a.ws { padding: 6px 10px; border-left: 0; }
   /* The choice opens beneath its tab rather than to the right of a column
      that is no longer there. */
   .shell .chooser {
