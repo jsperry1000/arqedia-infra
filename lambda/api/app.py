@@ -99,6 +99,9 @@ workspace's offerings.
                                                 its only members move
   POST /workspaces/{workspace_id}/restore       bring it back
 
+A suggestion, from the rail's We want your suggestions. Any seat.
+  POST /suggestions                      email it to us, and thank the sender
+
 Sharing a memorandum with somebody outside the workspace (share.py). The
 recipient's half is the share-viewer function, not this one.
 
@@ -3552,6 +3555,58 @@ def _outside_assignment(tenant_id, params, allowed):
     return mine is not None and int(_col(found[0], 0) or 0) not in mine
 
 
+# --- suggestions (25 October 2026) ------------------------------------------
+#
+# From the rail's We want your suggestions, by any seat. Two emails and no
+# row: the suggestion to the mailbox that reads them, with the sender as its
+# Reply-To, and a note back to the sender saying it arrived.
+
+SUGGESTIONS_TO = "info@arqedia.com"
+_SUGGESTION_MAX = 5000
+# Everything but a tab and a line break. A suggestion is prose in a plain
+# text email, and a control character in it is nothing a person typed.
+_SUGGESTION_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+SUGGESTION_EMPTY = "Write your suggestion first."
+SUGGESTION_NOT_SENT = ("Your suggestion could not be sent just now. It is "
+                       "still in the box - try again in a minute.")
+
+
+def suggest(tenant_id, email, role, body):
+    """Send one suggestion. Returns whether the thank-you went too, or None
+    where the suggestion itself could not be sent.
+
+    THE THANK-YOU ONLY AFTER THE SUGGESTION HAS GONE. Thanking somebody for
+    something that never arrived is the one outcome worse than an error, so
+    a refused send answers None, the route says so, and nothing is sent to
+    them. A thank-you that fails is logged and reported; the suggestion it
+    follows has still arrived."""
+    text = _SUGGESTION_CONTROL.sub("", str(body.get("text") or "")).strip()
+    if not text:
+        raise ValueError(SUGGESTION_EMPTY)
+    if len(text) > _SUGGESTION_MAX:
+        raise ValueError("A suggestion can be at most %d characters. Send it "
+                         "in two." % _SUGGESTION_MAX)
+    page = _SUGGESTION_CONTROL.sub("", str(body.get("page") or ""))[:200]
+
+    found = _sql("SELECT name FROM tenant WHERE tenant_id = :t",
+                 [_p("t", tenant_id)]).get("records", [])
+    tenant_name = (_col(found[0], 0) if found else None) or "-"
+
+    subject, note = mail.suggestion(email, tenant_name, tenant_id, role, page,
+                                    text)
+    if not mail.send(SUGGESTIONS_TO, subject, note, reply_to=email):
+        print("[suggestion-not-sent] tenant=%s chars=%d" % (
+            tenant_id, len(text)))
+        return None
+
+    subject, note = mail.suggestion_thanks(text, SUGGESTIONS_TO)
+    thanked = mail.send(email, subject, note, reply_to=SUGGESTIONS_TO)
+    print("[suggestion] tenant=%s chars=%d thanked=%s" % (
+        tenant_id, len(text), thanked))
+    return {"sent": True, "thanked": thanked}
+
+
 # --- dispatch --------------------------------------------------------------
 
 # A request whose JSON could not be read (copy review, 17 October 2026). Every
@@ -3959,6 +4014,13 @@ def _dispatch(event, context):
                                      params.get("workspace_id"))
             return _reply(200, out) if out is not None \
                 else _reply(404, {"error": "not found"})
+
+        # --- a suggestion --------------------------------------------------
+        if route == "POST /suggestions":
+            out = suggest(tenant_id, email, role,
+                          json.loads(event.get("body") or "{}"))
+            return _reply(201, out) if out is not None \
+                else _reply(502, {"error": SUGGESTION_NOT_SENT})
 
         # --- sharing -------------------------------------------------------
         if route in SHARE_ROUTES:
