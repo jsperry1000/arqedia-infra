@@ -14,7 +14,7 @@ import { ViewerByLink, ViewerSignedIn, keepSession as keepViewerSession } from "
 import { SharedWithMeView } from "./SharedWithMe";
 import { SignUp } from "./SignUp";
 import { InvitationView } from "./Invitation";
-import { WorkspacePicker } from "./WorkspacePicker";
+import { WorkspaceRail } from "./WorkspacePicker";
 import {
   WorkspaceContext, activeName, chooseWorkspace, onWorkspacesChanged,
   setActiveWorkspace, useWorkspace, type WorkspaceRef, type WorkspaceState,
@@ -1099,12 +1099,6 @@ export default function App() {
           <strong>ARQEDIA</strong>
         </a>
         <span className="account" ref={account}>
-          {/* Which workspace everything below belongs to (PACK-01), beside
-              the account it belongs to. Adding one is an administrator's: it
-              forks a base, which the server refuses a member. */}
-          <WorkspacePicker admin={role === "admin"} curator={curator}
-                           onAdd={() => navigate("/welcome",
-                                                 { state: { newWorkspace: true } })} />
           {/* A BUTTON, because it opens and closes a panel rather than going
               anywhere (a11y, 17 October 2026). It was an <a> with no href
               carrying aria-expanded, which is not allowed on a link. Styled
@@ -1140,6 +1134,12 @@ export default function App() {
           a working screen is free for that screen's controls (UX-03). Home
           is first: every other screen is reached from it. */}
       <nav className="rail">
+        {/* Which workspace everything on screen belongs to (PACK-01), first
+            on the rail. Adding one is an administrator's: it forks a base,
+            which the server refuses a member. */}
+        <WorkspaceRail admin={role === "admin"} curator={curator}
+                       onAdd={() => navigate("/welcome",
+                                             { state: { newWorkspace: true } })} />
         <a className={railClass("/")} onClick={() => navigate("/")}>Engagements</a>
         {/* A screen rather than a choice. UX-04 made this a panel of options
             with the tenant's own memoranda behind one of them; they are the

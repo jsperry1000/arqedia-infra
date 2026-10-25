@@ -1,23 +1,20 @@
-import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { activeName, useWorkspace } from "./workspace";
+import { useWorkspace } from "./workspace";
 import { PLANS } from "./upgrade";
 
 /**
- * The active workspace, in the header (PACK-01). Every screen follows it:
- * Configure, uploading, the engagements, their documents and their memoranda.
+ * The active workspace, at the head of the rail (PACK-01). Every screen
+ * follows it: Configure, uploading, the engagements, their documents and
+ * their memoranda.
  *
- * BUILT FROM THE ACCOUNT CONTROL BESIDE IT - .account-toggle and
- * .account-menu, which are already styled for the navy bar and its panel. No
- * new CSS: a control written from reasoning in this header has gone wrong
- * before (CLAUDE.md), and this one is the same kind of thing as its
- * neighbour.
+ * ON THE RAIL, NOT IN THE HEADER (25 October 2026). It was a toggle beside
+ * the account name, in the navy bar's small white text, and read as part of
+ * the masthead: the one choice that decides what every screen shows was the
+ * easiest thing on screen to miss. Here it is the first thing on the rail,
+ * every workspace listed beneath its heading, the active one bold and ticked.
  *
- * A MENU WHERE THERE IS SOMETHING TO DO WITH IT: more than one workspace to
- * choose between, or an administrator who may add one. A member with one
- * workspace is told its name, without a menu: since PACK-02 C one workspace
- * may be one of several the tenant holds, and the header was the only place
- * a member could have read which.
+ * LISTED EVEN WHEN THERE IS ONE. Since PACK-02 C one workspace may be one of
+ * several the tenant holds, and this is where a member reads which.
  *
  * A MEMBER'S LIST IS THEIR OWN (PACK-02 C): /settings names only the
  * workspaces assigned to them. An administrator's is every one.
@@ -26,83 +23,48 @@ import { PLANS } from "./upgrade";
  * starts a workspace from. The list is the same; adding one is called what
  * it is.
  */
-export function WorkspacePicker({ admin, curator = false, onAdd }: {
+export function WorkspaceRail({ admin, curator = false, onAdd }: {
   admin: boolean;
   curator?: boolean;
   onAdd: () => void;
 }) {
   const state = useWorkspace();
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLSpanElement | null>(null);
-
-  // A click elsewhere or Escape puts it away, as the account's panel does.
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: MouseEvent) => {
-      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
-    };
-    const escape = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", away);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("mousedown", away);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [open]);
-
-  const name = activeName(state);
   if (state.workspaces.length === 0) return null;
-  if (state.workspaces.length < 2 && !admin) {
-    // The toggle's look, as text. Its hover underline is turned off: there
-    // is nothing here to press.
-    return (
-      <span className="account-toggle" style={{ textDecoration: "none" }}
-            title="The workspace everything on screen belongs to">
-        {name}
-      </span>
-    );
-  }
 
   return (
-    <span ref={box}>
-      <button type="button" className="account-toggle"
-              aria-expanded={open} aria-controls="workspace-menu"
-              title="The workspace everything on screen belongs to"
-              onClick={() => setOpen(!open)}>
-        {name ?? "Choose a workspace"} {open ? "▴" : "▾"}
-      </button>
-      {open && (
-        <div className="account-menu" id="workspace-menu">
-          {state.workspaces.map((w) => (
-            <a key={w.workspace_id}
-               aria-current={w.workspace_id === state.active ? "true" : undefined}
-               onClick={() => { setOpen(false); state.choose(w.workspace_id); }}>
-              {w.workspace_id === state.active ? "✓ " : ""}{w.name}
-            </a>
-          ))}
-          {/* AT THE PLAN'S LIMIT (PACK-02) the same place says so and goes
-              to the plan table, as a full seat count does. The server
-              refuses a workspace past it whatever this shows. */}
-          {admin && (
-            <>
-              <span className="sep" />
-              {state.room ? (
-                <a onClick={() => { setOpen(false); onAdd(); }}>
-                  {curator ? "Add an offering" : "Add a workspace"}
-                </a>
-              ) : (
-                <a onClick={() => { setOpen(false); navigate(PLANS); }}>
-                  Your plan holds {state.limit}{" "}
-                  {state.limit === 1 ? "workspace" : "workspaces"} &middot; see
-                  plans
-                </a>
-              )}
-            </>
-          )}
-        </div>
-      )}
-    </span>
+    <div className="rail-workspaces" role="group" aria-label="Workspace">
+      <span className="rail-head"
+            title="The workspace everything on screen belongs to">
+        Workspace
+      </span>
+      {state.workspaces.map((w) => {
+        const on = w.workspace_id === state.active;
+        return (
+          <a key={w.workspace_id} className={on ? "ws on" : "ws"}
+             aria-current={on ? "true" : undefined}
+             onClick={() => { if (!on) state.choose(w.workspace_id); }}>
+            <span className="tick" aria-hidden="true">{on ? "✓" : ""}</span>
+            {w.name}
+          </a>
+        );
+      })}
+      {/* AT THE PLAN'S LIMIT (PACK-02) the same place says so and goes to
+          the plan table, as a full seat count does. The server refuses a
+          workspace past it whatever this shows. */}
+      {admin && (state.room ? (
+        <a className="ws ws-add" onClick={onAdd}>
+          <span className="tick" aria-hidden="true">+</span>
+          {curator ? "Add an offering" : "Add a workspace"}
+        </a>
+      ) : (
+        <a className="ws ws-add" onClick={() => navigate(PLANS)}>
+          <span className="tick" aria-hidden="true" />
+          Your plan holds {state.limit}{" "}
+          {state.limit === 1 ? "workspace" : "workspaces"} &middot; see plans
+        </a>
+      ))}
+    </div>
   );
 }
 
