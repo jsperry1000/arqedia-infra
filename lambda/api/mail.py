@@ -284,3 +284,46 @@ def share_batch_invitation(shared_by, tenant_name, shares):
     ) % (shared_by, tenant_name, len(shares), "".join(lines), ends, keep,
          shared_by)
     return mail_subject, body
+
+
+# --- what a suggestion says (25 October 2026) --------------------------------
+
+def suggestion(sent_by, tenant_name, tenant_id, role, page, text):
+    """A suggestion from inside the product, to the people who read them.
+
+    WHO, WHERE AND WHAT, nothing else. The firm and the person so a reply can
+    be addressed; the screen they were on, because "this" in a suggestion
+    usually means the page in front of them. The sender is the Reply-To, so
+    answering it reaches them."""
+    subject = "Suggestion from %s (%s)" % (sent_by, tenant_name)
+    body = (
+        "%s\n"
+        "\n"
+        "From:   %s, %s\n"
+        "Firm:   %s (tenant %s)\n"
+        "Screen: %s\n"
+        "\n"
+        "Reply to this message and it reaches them.\n"
+    ) % (text, sent_by,
+         "an administrator" if role == "admin" else "a member",
+         tenant_name, tenant_id, page or "-")
+    return subject, body
+
+
+def suggestion_thanks(text, reply_to):
+    """The note back to whoever sent a suggestion: that it arrived, that it
+    is valued, and what they wrote, so the thread has it."""
+    subject = "Thank you for your suggestion"
+    body = (
+        "Thank you for taking the time to tell us what would make ARQEDIA "
+        "better. We value your input, and we will respond as soon as we "
+        "can.\n"
+        "\n"
+        "What you sent:\n"
+        "\n"
+        "%s\n"
+        "\n"
+        "ARQEDIA\n"
+        "Reply to this message to add to it; it reaches %s.\n"
+    ) % ("\n".join("    " + line for line in text.split("\n")), reply_to)
+    return subject, body

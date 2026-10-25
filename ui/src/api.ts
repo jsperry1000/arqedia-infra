@@ -1785,6 +1785,18 @@ export const api = {
   invoicePdf: (transactionId: string): Promise<{ url: string }> =>
     call(`/billing/invoices?pdf=${encodeURIComponent(transactionId)}`),
 
+  // --- a suggestion -------------------------------------------------------
+
+  /** Email a suggestion to info@arqedia.com, and a thank-you back to the
+   *  sender once it has gone. page is the screen it was written on. Refused
+   *  with 502, and nobody thanked, where it could not be sent. */
+  suggest: (text: string, page: string):
+      Promise<{ sent: boolean; thanked: boolean }> =>
+    call("/suggestions", {
+      method: "POST",
+      body: JSON.stringify({ text, page }),
+    }),
+
   // --- signing up ---------------------------------------------------------
   //
   // The only two calls in this file that carry no token.

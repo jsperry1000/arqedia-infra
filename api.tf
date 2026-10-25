@@ -393,6 +393,10 @@ locals {
     # still sent, counted and charged on its own by the route above.
     "GET /memos",
     "POST /shares/notify",
+
+    # A suggestion from the rail, to info@arqedia.com, and a thank-you back
+    # to its sender. Any seat.
+    "POST /suggestions",
   ]
 }
 

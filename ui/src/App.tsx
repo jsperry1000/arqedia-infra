@@ -15,6 +15,7 @@ import { SharedWithMeView } from "./SharedWithMe";
 import { SignUp } from "./SignUp";
 import { InvitationView } from "./Invitation";
 import { WorkspaceRail } from "./WorkspacePicker";
+import { SuggestionPanel } from "./Suggest";
 import {
   WorkspaceContext, activeName, chooseWorkspace, onWorkspacesChanged,
   setActiveWorkspace, useWorkspace, type WorkspaceRef, type WorkspaceState,
@@ -989,6 +990,9 @@ export default function App() {
     };
   }, [sharingOpen]);
 
+  // We want your suggestions: the drawer, open or not.
+  const [suggesting, setSuggesting] = useState(false);
+
   // The one Back. A screen hands up its own leave action; with none, Back
   // goes to the previous page.
   const leave = useRef<(() => void) | null>(null);
@@ -1192,6 +1196,12 @@ export default function App() {
             </div>
           )}
         </div>
+        {/* At the foot of the rail, drawn as a control rather than a
+            destination so it is seen (25 October 2026). Opens a drawer over
+            the page, which stays where it was. */}
+        <a className="rail-suggest" onClick={() => setSuggesting(true)}>
+          We want your suggestions
+        </a>
       </nav>
       {/* The working column. Back is drawn once, here, in the same place on
           every screen and held there while the page scrolls (UX-16). */}
@@ -1211,6 +1221,9 @@ export default function App() {
             {/* Above every working screen, so the trial ending is not news
                 kept on one tab of Account (19.2). */}
             <TrialBanner tenant={tenantId} />
+            {suggesting && (
+              <SuggestionPanel onClose={() => setSuggesting(false)} />
+            )}
             {!workspacesRead ? (
               <p className="muted">
                 {slowStart

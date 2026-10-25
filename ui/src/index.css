@@ -176,6 +176,18 @@ main:has(.wide-page) { max-width: 1560px; }
 .rail-workspaces > a.ws.ws-add { color: var(--medium); }
 .rail-workspaces .tick { flex: 0 0 12px; }
 
+/* We want your suggestions (25 October 2026): at the foot of the rail, and
+   the one entry on it drawn as a button rather than a destination, so it is
+   seen. Navy, not gold - it costs nothing. */
+.rail > a.rail-suggest {
+  margin: auto 16px 4px; padding: 10px 14px; border: 0; border-radius: 3px;
+  background: var(--deep); color: #fff; font-weight: 500;
+  text-align: center; line-height: 1.35;
+}
+.rail > a.rail-suggest:hover {
+  background: var(--medium); color: #fff; text-decoration: none;
+}
+
 /* Settings opens a choice rather than a screen, attached to the rail's right
    edge level with its link. Configure a report used the same panel until it
    became the Catalogue page; Settings is the only one left. */
@@ -1893,6 +1905,10 @@ table.docs.plans-table thead th.quoted .plan-price { font-family: var(--sans); }
   }
   .shell .rail > a.on, .shell .rail-item > a.on {
     border-bottom-color: var(--deep);
+  }
+  /* The tabs' padding and rule, not the column's foot. */
+  .shell .rail > a.rail-suggest {
+    margin: 6px 8px; padding: 6px 12px; border-bottom: 0;
   }
   /* The workspaces take a row of their own above the tabs. */
   .shell .rail-workspaces {
