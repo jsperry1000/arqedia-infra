@@ -179,8 +179,7 @@ its citations are that person's responsibility; a save refuses an image that
 cannot be found, or whose bytes are not the PNG or JPEG its name says; and
 the revision keeps its own copy, which the PDF and every share print. The
 exception is the image alone. The text around it, its alt text included, is
-held to the citation check on save exactly as before - a figure written
-beside a picture is a claim, and must cite.
+held to the citation check on save exactly as before.
 
 **A revision is an integer on an append-only series.** A memorandum names the
 revision that wrote it. Two generated a fortnight apart under different
