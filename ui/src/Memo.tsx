@@ -542,9 +542,17 @@ export function MemoView({ memoId, onBack, onOpen }: {
     try {
       const memo = memoId;
       const { image } = await api.uploadImage(memo, file);
-      // Its link asked for now, so it shows the moment it is in the memo.
+      // Its link asked for now, so it shows the moment it is in the memo -
+      // and the server reads its first bytes as it answers. A file that is
+      // not the picture its type says is not put in: storage was told it
+      // was an image, and only this can say it is not.
       imagesAsked(memo).asked.add(image);
-      const { images } = await api.imageUrls(memo, [image]);
+      const { images, refused } = await api.imageUrls(memo, [image]);
+      if (refused.includes(image)) {
+        setSaveError("That file is not a PNG or a JPEG image, whatever its "
+          + "name says.");
+        return null;
+      }
       linksArrived(memo, images);
       return image;
     } catch (err) {

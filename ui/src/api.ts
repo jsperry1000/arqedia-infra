@@ -1549,9 +1549,13 @@ export const api = {
   },
 
   /** Links to read a memo's images, by name, valid for an hour. A name the
-   *  memo does not hold comes back null. At most 50 a call. */
+   *  memo does not hold comes back null. So does a file whose bytes are not
+   *  the PNG or JPEG its name says, and it is listed in `refused`: the
+   *  server reads the first bytes, which nothing else does. At most 50 a
+   *  call. */
   imageUrls: (memoId: number, names: string[]):
-    Promise<{ memo_id: number; images: Record<string, string | null> }> =>
+    Promise<{ memo_id: number; images: Record<string, string | null>;
+              refused: string[] }> =>
     call(`/memos/${memoId}/images?ids=${names.map(encodeURIComponent).join(",")}`),
 
   // --- sharing -------------------------------------------------------
