@@ -2,6 +2,7 @@
 --
 -- The engagement records its subject: the company the memorandum is about.
 -- PROPOSED, and not applied.
+-- Applied on dev 21 September 2026 18:08:27 UTC (schema_migration).
 --
 -- WHY. Memo 120 (tenant 1, engagement 29 COCOA-EMPIRE-1, revision 42)
 -- described GoodFlow - a BUYER - as the specialist originator, under a

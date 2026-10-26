@@ -2,6 +2,7 @@
 --
 -- Where a document came from on the person's own machine.
 -- PROPOSED, and not applied.
+-- Applied on dev 22 September 2026 17:36:55 UTC (schema_migration).
 --
 -- WHY. CLAUDE.md has recorded this as a settled decision since the product
 -- was described:

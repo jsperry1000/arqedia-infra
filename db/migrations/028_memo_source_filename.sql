@@ -2,6 +2,7 @@
 --
 -- The name a memo's source was filed under, kept on the link rather than only
 -- on the document. PROPOSED, and not applied.
+-- Applied on dev 20 September 2026 16:32:18 UTC (schema_migration).
 --
 -- WHY IT EXISTS. A filed document can now be deleted, with the facts extracted
 -- from it (decision of 20 September). Memoranda already generated are left

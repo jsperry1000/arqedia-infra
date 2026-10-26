@@ -2,6 +2,7 @@
 --
 -- Metered credit equals the monthly fee (22.4, decided 25 September 2026).
 -- PROPOSED, and not applied.
+-- Applied on dev 6 October 2026 16:03:35 UTC (schema_migration).
 --
 -- WHAT CHANGES
 --

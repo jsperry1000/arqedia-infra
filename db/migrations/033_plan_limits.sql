@@ -3,6 +3,7 @@
 -- The three limits the pricing page sells and the database has never held,
 -- and the plan table filled from config/plans.json.
 -- PROPOSED, and not applied.
+-- Applied on dev 22 September 2026 18:06:04 UTC (schema_migration).
 --
 -- WHY. site/pricing/index.html advertises six things per plan. The plan table
 -- holds three of them:
