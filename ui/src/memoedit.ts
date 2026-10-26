@@ -5,10 +5,16 @@
  * looks exactly as it reads - same type, same table, same spacing - and what
  * comes back out is markdown of the narrow shape the renderer expects.
  *
- * Citations do not survive being typed around by accident. Each run is one
- * locked mark the editor cannot put a caret inside, carrying its references
- * on the element. Deleting the mark deletes the run, deliberately: that is
- * how a person removes a reference. What the mark must never do is come back
+ * Citations do not survive being typed around by accident. Each reference is
+ * one locked mark the editor cannot put a caret inside, carrying it on the
+ * element. Deleting the mark deletes that reference, deliberately: that is
+ * how a person removes one.
+ *
+ * ONE MARK A REFERENCE, NOT ONE A RUN (26 October 2026). A run was one mark,
+ * so taking out one reference took out every other one beside it - and a
+ * citation to a deleted document has to come out alone for a revision to
+ * save. Marks side by side are read back as one run, as they were written.
+ * What the mark must never do is come back
  * as text, half a filename, or a reference to a document that was never a
  * source of this memo, because the save refuses that and the person would be
  * left holding an edit they cannot save.
@@ -29,22 +35,42 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"]/g, (c) => ESCAPE[c]);
 }
 
-/** What a run of citations looks like while the block is being edited: the
- *  same small mark it wears when it is put away in the reader. */
-export function citeChipHtml(refs: string[]): string {
-  return '<span class="cite-chip" contenteditable="false" data-refs="'
-    + escapeHtml(JSON.stringify(refs)) + '" title="'
-    + escapeHtml(refs.join("; ")) + '">' + refs.length + "</span>";
+/** What one reference reads as on its mark: enough of the file to tell two
+ *  apart, and the page. The whole of it is the mark's title.
+ *
+ *  THE END OF THE NAME, NOT THE START. One deal's files share their start -
+ *  "Meridian-Place-Property-Inspection…", "Meridian-Place-Property-Appraisal…"
+ *  - so cutting the end off made two of them read the same, and the mark
+ *  being deleted could not be told from the one beside it. */
+export function chipLabel(ref: string): string {
+  const m = /^(.*?)\.(?:pdf|docx|xlsx|txt|json|xml)\b\s*(?:,\s*(?:page|section|sheet)\s*(\d+))?/i
+    .exec(ref.trim());
+  const name = m ? m[1] : ref.trim();
+  const short = name.length > 28 ? "…" + name.slice(-27) : name;
+  return m?.[2] ? short + ", p. " + m[2] : short;
 }
 
-/** Inline content as editable HTML. */
-export function inlinesToHtml(inlines: Inline[]): string {
+/** What one reference looks like while the block is being edited. `gone`
+ *  marks one whose document has been deleted, in the same black the reader
+ *  gives it. */
+export function citeChipHtml(ref: string, gone = false): string {
+  return '<span class="cite-chip' + (gone ? " gone" : "")
+    + '" contenteditable="false" data-refs="'
+    + escapeHtml(JSON.stringify([ref])) + '" title="'
+    + escapeHtml(ref + (gone ? " (deleted)" : "")) + '">'
+    + escapeHtml(chipLabel(ref)) + "</span>";
+}
+
+/** Inline content as editable HTML. `gone` says which references name a
+ *  deleted document. */
+export function inlinesToHtml(inlines: Inline[],
+                              gone: (ref: string) => boolean = () => false): string {
   if (inlines.length === 0) return "";
   return inlines.map((n) => {
     if (n.kind === "text") return escapeHtml(n.text);
     if (n.kind === "bold") return "<strong>" + escapeHtml(n.text) + "</strong>";
     if (n.kind === "em") return "<em>" + escapeHtml(n.text) + "</em>";
-    return citeChipHtml(n.refs);
+    return n.refs.map((r) => citeChipHtml(r, gone(r))).join("");
   }).join("");
 }
 
@@ -83,9 +109,18 @@ function tidy(nodes: Inline[]): Inline[] {
 
 function tidy2(nodes: Inline[]): Inline[] {
   const out: Inline[] = [];
-  for (const n of nodes) {
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
     if (n.kind !== "cites" && n.text === "") continue;
     const last = out[out.length - 1];
+    // Marks side by side are one run, as they were written; so are marks
+    // with nothing but a space between, which is how a run is written out.
+    if (n.kind === "cites" && last?.kind === "cites") {
+      last.refs = [...last.refs, ...n.refs];
+      continue;
+    }
+    if (n.kind === "text" && !n.text.trim() && last?.kind === "cites"
+        && nodes[i + 1]?.kind === "cites") continue;
     if (last && last.kind === n.kind && n.kind === "text" && last.kind === "text") {
       last.text += n.text;
       continue;

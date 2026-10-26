@@ -461,6 +461,8 @@ class ReviseFromUpdate(unittest.TestCase):
         self.app = load_api()
         self.statements = []
         self.update_revisions = ()
+        # The root's sources: name, and whether its document has gone.
+        self.sources = (("a.pdf", False),)
 
         def sql(statement, params=None):
             values = {p["name"]: value(p) for p in (params or [])}
@@ -469,7 +471,7 @@ class ReviseFromUpdate(unittest.TestCase):
                 return rows(("memos/100.md", "credit", 3, None, 1, 42,
                              "live", WORKSPACE))
             if "FROM memo_source ms" in statement:
-                return rows(("a.pdf",))
+                return rows(*self.sources)
             if "state = 'filed' AND active = 1" in statement:
                 return rows((8, "b.pdf"), (9, "b.pdf"), (5, "a.pdf"))
             if "SELECT rewrite_id FROM memo_rewrite" in statement:
@@ -536,6 +538,34 @@ class ReviseFromUpdate(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.app.revise_memo(TENANT, EMAIL, MEMO, "X. *made-up.pdf*",
                                  [501], config_revision=9, add_sources=True)
+
+    def test_a_citation_to_a_deleted_source_is_refused_as_one(self):
+        # Memo 209's case: generated from c.pdf, which was deleted after.
+        self.sources = (("a.pdf", False), ("c.pdf", True))
+        with self.assertRaises(ValueError) as caught:
+            self.app.revise_memo(TENANT, EMAIL, MEMO,
+                                 "Text. *a.pdf, page 1* *c.pdf, page 2*")
+        self.assertIn("deleted: c.pdf", str(caught.exception))
+        self.assertNotIn("not sources", str(caught.exception))
+        self.assertFalse(any("INSERT INTO memo " in s
+                             for s, _ in self.statements))
+
+    def test_once_they_are_taken_out_it_saves(self):
+        self.sources = (("a.pdf", False), ("c.pdf", True))
+        self.app.revise_memo(TENANT, EMAIL, MEMO, "Text. *a.pdf, page 1*")
+        self.assertEqual(self.inserted_memo()["config_revision"], 3)
+
+    def test_a_file_deleted_and_filed_again_is_a_source(self):
+        # The same name on a live document and a deleted one: it is cited.
+        self.sources = (("c.pdf", True), ("c.pdf", False))
+        self.app.revise_memo(TENANT, EMAIL, MEMO, "Text. *c.pdf, page 1*")
+        self.assertEqual(self.inserted_memo()["config_revision"], 3)
+
+    def test_the_sources_carry_their_kept_names(self):
+        self.app.revise_memo(TENANT, EMAIL, MEMO, "Text. *a.pdf, page 1*")
+        [carry] = [s for s, _ in self.statements
+                   if "SELECT :new_id, document_id" in s]
+        self.assertIn("tenant_id, filename", carry)
 
     def test_the_revision_comes_from_the_rows(self):
         self.update_revisions = ((9,),)

@@ -181,6 +181,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
   // Sharing opens from here, the memorandum's own head, rather than from a
   // list somewhere else asking which one (share-recipient).
   const [sharing, setSharing] = useState(false);
+  // Save stopped because the text still cites deleted documents.
+  const [pausedSave, setPausedSave] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -834,7 +836,30 @@ export function MemoView({ memoId, onBack, onOpen }: {
     </a>
   );
 
+  /** The deleted documents the text still cites, with how many citations
+   *  each. A revision never cites one (decision of 26 October 2026): each
+   *  is taken out before it saves. */
+  const deletedCited = Array.from(gone).map((filename) => ({
+    filename,
+    count: (draft.match(CITATION) ?? []).filter((c) => c.includes(filename)).length,
+  })).filter((d) => d.count > 0);
+
+  /** Close the pause and bring the first black footnote into view. */
+  function showDeleted() {
+    setPausedSave(false);
+    requestAnimationFrame(() => document.querySelector(
+      "article.memo .cite-mark.gone, article.memo .cite.gone, "
+      + "article.memo .cite-chip.gone")
+      ?.scrollIntoView({ block: "center" }));
+  }
+
   async function save() {
+    // Paused, not sent: the server would refuse it, and the person needs to
+    // know which footnotes to take out rather than one sentence.
+    if (deletedCited.length > 0) {
+      setPausedSave(true);
+      return;
+    }
     setSaving(true);
     setSaveError("");
     try {
@@ -1242,6 +1267,40 @@ export function MemoView({ memoId, onBack, onOpen }: {
       )}
 
       {/* After the passage drawer: drawers stack in document order. */}
+      {pausedSave && (
+        <div className="panel-backdrop" onClick={() => setPausedSave(false)}>
+          <div className="panel narrow" onClick={(e) => e.stopPropagation()}>
+            <a className="panel-close" onClick={() => setPausedSave(false)}>Close</a>
+            <div className="form">
+              <h4>Not saved yet</h4>
+              <p className="muted small">
+                This memo still cites {deletedCited.length === 1
+                  ? "a document that has" : "documents that have"} been
+                deleted since it was written. A revision can only cite
+                documents that are still on file, so take out every
+                footnote shown in black, then save.
+              </p>
+              <ul>
+                {deletedCited.map((d) => (
+                  <li key={d.filename}>
+                    {d.filename}: {d.count} {d.count === 1 ? "citation" : "citations"}
+                  </li>
+                ))}
+              </ul>
+              <p className="muted small">
+                Open a paragraph with Edit and delete the black mark; each
+                reference is its own mark. To keep what they said, generate
+                the memo again from the documents now on file.
+              </p>
+              <div className="form-actions">
+                <button onClick={showDeleted}>Show the first one</button>
+                <a className="secondary" onClick={() => setPausedSave(false)}>Close</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {sharing && (
         <ShareSendPanel memoId={memo.memo_id} label={memo.label}
                         onClose={() => setSharing(false)} />

@@ -1837,16 +1837,32 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
     # A citation naming a file that is not one of this memo's sources cannot
     # be checked against anything. Refuse the save rather than accept an
     # assertion nobody can verify.
+    #
+    # A SOURCE DELETED SINCE IS NAMED AS ONE (26 October 2026). The inner
+    # join this was dropped a deleted source out of the list altogether, so
+    # a citation to it was refused as "not a source of this memo" - which it
+    # is, and was not what happened. Read as get_memo reads it, with the name
+    # memo_source kept (migration 028), it is refused as what it is. Refused
+    # all the same, by decision: a revision never cites a document that is no
+    # longer there. The person takes each one out, or generates again.
     sources = _sql(
         """
-        SELECT DISTINCT d.filename
+        SELECT DISTINCT COALESCE(d.filename, ms.filename) AS filename,
+               d.document_id IS NULL AS removed
         FROM memo_source ms
-        JOIN document d ON d.document_id = ms.document_id
+        LEFT JOIN document d
+               ON d.document_id = ms.document_id
+              AND d.tenant_id = ms.tenant_id
         WHERE ms.tenant_id = :t AND ms.memo_id = :m
         """,
         [_p("t", tenant_id), _p("m", root_id)],
     )
-    known = {_col(r, 0) for r in sources.get("records", [])}
+    known, deleted = set(), set()
+    for r in sources.get("records", []):
+        if _col(r, 0):
+            (deleted if _col(r, 1) else known).add(_col(r, 0))
+    # A file deleted and filed again under the same name is a source again.
+    deleted -= known
 
     # Documents filed in the engagement since, by filename, for Update only.
     # Filed and active: the set composition writes from. One file can hold
@@ -1880,6 +1896,13 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
         r"[A-Za-z0-9._()\-]+\.(?:pdf|docx|xlsx|txt|json|xml)", markdown
     ):
         cited.add(m.group(0))
+
+    gone = sorted(c for c in cited if c in deleted and c not in filed_since)
+    if gone:
+        raise ValueError(
+            "this memo still cites documents that have been deleted: "
+            + ", ".join(gone[:6]) + ". Take out every citation to them, "
+            "then save.")
 
     unknown = sorted(c for c in cited
                      if c not in known and c not in filed_since)
@@ -1967,11 +1990,14 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
     )
     new_id = created.get("generatedFields", [{}])[0].get("longValue")
 
-    # Sources carry forward: the revision rests on the same documents.
+    # Sources carry forward: the revision rests on the same documents. With
+    # the name memo_source kept for a deleted one, so the revision lists it
+    # by its name rather than as "a deleted document".
     _sql(
         """
-        INSERT IGNORE INTO memo_source (memo_id, document_id, tenant_id)
-        SELECT :new_id, document_id, tenant_id
+        INSERT IGNORE INTO memo_source (memo_id, document_id, tenant_id,
+                                        filename)
+        SELECT :new_id, document_id, tenant_id, filename
         FROM memo_source WHERE tenant_id = :t AND memo_id = :root
         """,
         [_p("new_id", new_id), _p("t", tenant_id), _p("root", root_id)],
