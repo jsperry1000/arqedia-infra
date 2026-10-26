@@ -38,7 +38,7 @@ from reportlab.lib.units import inch
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas as pdfcanvas
-from reportlab.platypus import (BaseDocTemplate, Frame, KeepTogether,
+from reportlab.platypus import (BaseDocTemplate, Frame, Image, KeepTogether,
                                 PageTemplate, Paragraph, Spacer, Table,
                                 TableStyle)
 
@@ -695,6 +695,57 @@ def _callout(text, styles, palette):
     return table
 
 
+# --- a person's own image (graphics-insert) ---------------------------------
+#
+# The line a memo carries for one: the API's _IMAGE_LINE and memodoc.ts's
+# IMAGE, character for character, so the browser, the save and the PDF agree
+# on what is an image. The file is the revision's own, copied into
+# tenants/{t}/images/memos/{memo}/ when it was saved; a generated memo has
+# none, and a preview none either.
+_IMAGE_LINE = re.compile(
+    r"^!\[([^\]\n]*)\]\(image:([0-9a-f]{32}\.(?:png|jpg))\)[ \t]*$")
+_IMAGE_SIGNATURES = {".png": b"\x89PNG\r\n\x1a\n", ".jpg": b"\xff\xd8\xff"}
+# How tall an image may stand: most of a later page's frame, so one never
+# needs a page to itself and more.
+_IMAGE_MAX_HEIGHT = 7.0 * inch
+
+
+def _image_key(tenant_id, memo_id, image):
+    return "tenants/%d/images/memos/%d/%s" % (tenant_id, memo_id, image)
+
+
+def _image(data, image, styles):
+    """An image at its own size up to the width of the page, never taller
+    than _IMAGE_MAX_HEIGHT, and its proportions kept.
+
+    A pixel is taken as three quarters of a point - a screen's 96 to the
+    inch against the page's 72 - so a diagram drawn for a screen prints at
+    the size it was drawn at, and a photograph wider than the page is
+    brought down to it.
+
+    AN IMAGE THAT CANNOT BE DRAWN DOES NOT STOP THE MEMORANDUM, as the logo
+    does not. Its place says so instead, which is visible to whoever reads
+    it rather than silent. The save already refused a file whose bytes are
+    not the type its name says; this checks again, because it is what would
+    break."""
+    suffix = image[image.rindex("."):]
+    try:
+        if data is None or not data.startswith(_IMAGE_SIGNATURES[suffix]):
+            raise ValueError("not a %s" % suffix)
+        iw, ih = ImageReader(io.BytesIO(data)).getSize()
+        width = min(style.CONTENT_WIDTH, iw * 0.75)
+        height = width * ih / float(iw)
+        if height > _IMAGE_MAX_HEIGHT:
+            width, height = width * _IMAGE_MAX_HEIGHT / height, _IMAGE_MAX_HEIGHT
+        flowable = Image(io.BytesIO(data), width=width, height=height)
+        flowable.hAlign = "LEFT"
+        return flowable
+    except Exception as exc:  # noqa: BLE001
+        print("[image-unrenderable] %s :: %s" % (image, str(exc)[:200]))
+        return Paragraph("[An image in this memorandum could not be shown.]",
+                         styles["citation"])
+
+
 _DIVIDER = re.compile(r"\|(?:\s*:?-{2,}:?\s*\|)+")
 
 
@@ -768,9 +819,11 @@ def _take_trailing_heading(flow):
     return None
 
 
-def to_flowables(markdown, styles, palette):
+def to_flowables(markdown, styles, palette, image_bytes=None):
     """Markdown to flowables. Handles the shapes the consolidation produces:
-    headings, paragraphs, tables, blockquote gaps, bullets."""
+    headings, paragraphs, tables, blockquote gaps, bullets - and a person's
+    own image, read through image_bytes(name), which returns the file or
+    None. Without it, as for a preview, there are no images to draw."""
     flow = []
     lines = _unwrap_tables(markdown).split("\n")
     i = 0
@@ -780,6 +833,18 @@ def to_flowables(markdown, styles, palette):
         stripped = lines[i].strip()
 
         if not stripped:
+            i += 1
+            continue
+
+        # Matched on the line as written, not stripped: an indented one is
+        # not an image to the browser or the save either.
+        picture = _IMAGE_LINE.match(lines[i])
+        if picture:
+            name = picture.group(2)
+            data = image_bytes(name) if image_bytes else None
+            flow.append(Spacer(1, 6))
+            flow.append(_image(data, name, styles))
+            flow.append(Spacer(1, 9))
             i += 1
             continue
 
@@ -884,7 +949,8 @@ def to_flowables(markdown, styles, palette):
             nxt = lines[i].strip()
             if not nxt:
                 break
-            if (nxt.startswith(("#", ">", "- ", "* ", "|", "---"))):
+            if (nxt.startswith(("#", ">", "- ", "* ", "|", "---"))
+                    or _IMAGE_LINE.match(lines[i])):
                 break
             block.append(nxt)
             i += 1
@@ -1165,7 +1231,7 @@ def _branding(tenant):
 
 # --- building --------------------------------------------------------------
 
-def _build(tenant, markdown, memo=None):
+def _build(tenant, markdown, memo=None, image_bytes=None):
     """The memorandum as PDF bytes, branded for its tenant. Written nowhere:
     the caller decides where a render goes, which is what lets a share render
     the same memorandum without touching the tenant's own copy.
@@ -1173,7 +1239,8 @@ def _build(tenant, markdown, memo=None):
     THE HEADING NAMES THE DOCUMENT (23 October 2026): its title, number and
     version above the subject, and its workspace beside the engagement; the
     running band on later pages repeats the number and version. memo is the
-    row _memo reads; a preview has none and is headed as it always was."""
+    row _memo reads; a preview has none and is headed as it always was.
+    image_bytes reads the memo's own images; see to_flowables."""
     palette, logo, show_footer = _branding(tenant)
     styles = style.build_styles(palette)
     _set_cite_colour(palette)
@@ -1207,7 +1274,7 @@ def _build(tenant, markdown, memo=None):
         return NumberedCanvas(*args, **kwargs)
 
     _reset_citations()
-    flow = to_flowables(markdown, styles, palette)
+    flow = to_flowables(markdown, styles, palette, image_bytes)
     flow.extend(_reference_section(styles, palette))
 
     doc.build(flow, canvasmaker=make_canvas)
@@ -1300,7 +1367,17 @@ def lambda_handler(event, context):
             Bucket=memo["bucket"],
             Key=memo["key"])["Body"].read().decode("utf-8")
 
-    pdf = _build(tenant, markdown, None if preview else memo)
+    def image_bytes(name):
+        """One of this memo's own images, or None where it is not there."""
+        try:
+            return _s3.get_object(
+                Bucket=CURATED_BUCKET,
+                Key=_image_key(tenant_id, memo_id, name))["Body"].read()
+        except ClientError:
+            return None
+
+    pdf = _build(tenant, markdown, None if preview else memo,
+                 None if preview else image_bytes)
 
     if not preview and event.get("share"):
         return _share(tenant_id, memo_id, tenant, pdf, event["share"])
