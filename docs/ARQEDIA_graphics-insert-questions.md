@@ -176,3 +176,11 @@ What SVG and PDF would need (from documentation, not tested):
 2. **Size limits:** a signed POST upload with a `content-length-range` condition, so S3 refuses an oversized file at upload. Mechanics to be confirmed against AWS's documentation before building.
 3. **Sweep:** daily, 24-hour grace period for an uploaded file not yet referenced.
 4. **UNDO-01 hold lifted;** graphics follows once `feature/undo-01` is merged. Plan: `docs/specs/undo_graphics_build_plan_2026-10-26.md`.
+
+## Decision 5 written down, 26 Oct 2026
+
+The provenance exception (decision 5, 8 Oct) is recorded beside the citation
+rule, in CLAUDE.md under Settled decisions, Reading and citation: an image
+cites nothing and is not checked against sources; the text around it, alt
+text included, is checked as before. Built across #404 (storage), #405
+(block), #407 (PDF) and `feature/graphics-sweep`.

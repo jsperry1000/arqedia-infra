@@ -169,6 +169,18 @@ memoranda built from documents filed months ago.
 closed. The marketing site states page-level citation because the product does
 it.
 
+**Amended 26 October 2026 (graphics-insert, decision 5 of 8 October): a
+person's own image is the one exception.** An image in a memo -
+`![alt](image:<name>)` on a line of its own - cites nothing and is not
+checked against the memo's sources. It is not a fact read from a document;
+no extracted value stands behind it, and no source could. What holds it
+instead: it exists only in a revision, which is a person's document and says
+its citations are that person's responsibility; a save refuses an image that
+cannot be found, or whose bytes are not the PNG or JPEG its name says; and
+the revision keeps its own copy, which the PDF and every share print. The
+exception is the image alone. The text around it, its alt text included, is
+held to the citation check on save exactly as before.
+
 **A revision is an integer on an append-only series.** A memorandum names the
 revision that wrote it. Two generated a fortnight apart under different
 revisions are not the same document and say so.
