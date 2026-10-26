@@ -8,7 +8,8 @@ Status snapshot. Nothing here is new work — a consolidation of what's confirme
 - What looks like undo today is the browser's native contentEditable Ctrl+Z — block-scoped only, doesn't survive closing a block or reload, doesn't cover memo-level actions. Expected; the design explicitly deferred binding Ctrl+Z for this reason.
 - 5 settled decisions (unbuilt): one edit = everything typed into a block between open/close; no redo this pass; Discard keeps its confirm; undo is button-only, no Ctrl+Z binding; saving ends the undo history.
 - 3 open design questions, still blocking: how far back undo goes; whether Discard is undoable; whether undo survives reload.
-- **Decision still pending from you:** start UNDO-01 now, or keep the UX02 hold. The hold's original reason was avoiding collision with graphics-insert's structural changes to the same mutation code — nothing shipped since (19.2, 20.1, 20.2, pycache hygiene, 22.8) touches that code.
+- **Corrected 26 Oct 2026:** the line above is wrong. The three questions were decided before this handoff was written — stored history surviving a reload, and Discard undoable, on 9 Oct; the last 10 edits, each step the changed blocks only, on 14 Oct. Recorded in `docs/specs/undo_01_design_2026-10-14.md` (Decided) and `docs/ARQEDIA_graphics-insert-questions.md` (9 and 14 Oct). Nothing about UNDO-01's design was open on 19 Oct; only the hold was.
+- **Decision still pending from you:** start UNDO-01 now, or keep the UX02 hold. **Decided 26 Oct 2026: start now.** The hold's original reason was avoiding collision with graphics-insert's structural changes to the same mutation code — nothing shipped since (19.2, 20.1, 20.2, pycache hygiene, 22.8) touches that code.
 
 ## Graphics-insert (freeform image insertion into memos)
 - Fully designed, nothing built. Source of truth: `docs/ARQEDIA_graphics-insert-questions.md` (merged main via PR #305, docs only).
