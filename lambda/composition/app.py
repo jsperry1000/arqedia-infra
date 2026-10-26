@@ -513,6 +513,14 @@ def _restore_citations(text, tokens):
     return text, dropped
 
 
+def _section_heading(num, title):
+    """A section's heading without its hashes: "I. Introduction", or the
+    title alone where the section has no numeral. Written "{}. {}" until 26
+    October 2026, which gave an unnumbered section ". Executive Summary"."""
+    num = (num or "").strip()
+    return "{}. {}".format(num, title) if num else title
+
+
 def _consolidate(section, markdown, subject_name=None):
     """Turn one assembled section into the version a reader receives.
 
@@ -562,7 +570,7 @@ def _consolidate(section, markdown, subject_name=None):
     body = (
         cleanup.CITATION_TOKENS
         + "\n\n--- SECTION START ---\n"
-        + "## {}. {}\n\n".format(section["num"], section["title"])
+        + "## " + _section_heading(section["num"], section["title"]) + "\n\n"
         + masked
         + "\n--- SECTION END ---"
     )
@@ -868,16 +876,17 @@ def _section_lines(block):
     """One section as the memo writes it. A section with nothing in it says
     so as a gap rather than vanishing from the page."""
     body = block["markdown"].strip()
+    heading = "## " + _section_heading(block["num"], block["title"])
 
     if not body:
-        return ["## {}. {}".format(block["num"], block["title"]), "",
+        return [heading, "",
                 "> **Gap.** No material addressing this section was "
                 "provided.", ""]
 
     lines = []
     # The consolidation keeps the heading, so do not add a second one.
     if not body.lstrip().startswith("#"):
-        lines += ["## {}. {}".format(block["num"], block["title"]), ""]
+        lines += [heading, ""]
     return lines + [body, ""]
 
 
@@ -960,8 +969,13 @@ def _split_saved(markdown):
 def _heading_norm(text):
     """A heading reduced to what identifies it: no hashes, no case, single
     spaces. Composition writes "## II. Business"; the model consolidating it
-    occasionally doubles a space."""
-    return " ".join((text or "").lstrip("#").split()).lower()
+    occasionally doubles a space.
+
+    No stray full stop either. An unnumbered section was written
+    "## . Business" before 26 October 2026 and "## Business" since, and a
+    memo saved from before must still match its section."""
+    text = " ".join((text or "").lstrip("#").split())
+    return re.sub(r"^\.\s+", "", text).lower()
 
 
 def _keys_by_heading(registry, template_key):
@@ -971,7 +985,7 @@ def _keys_by_heading(registry, template_key):
     keys = {}
     for s in registry.sections_for(template_key):
         keys.setdefault(
-            _heading_norm("{}. {}".format(s["num"], s["title"])), s["key"])
+            _heading_norm(_section_heading(s["num"], s["title"])), s["key"])
     return keys
 
 

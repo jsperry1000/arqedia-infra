@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { blockToMarkdown, imageMarkdown, imagesIn, parseBlocks,
-         serializeBlocks, type Block } from "./memodoc";
+import { blockToMarkdown, headingText, imageMarkdown, imagesIn, parseBlocks,
+         sectionLabel, serializeBlocks, type Block } from "./memodoc";
 import { diffStep, undoStep } from "./undo";
 
 // A person's own image in a memo (graphics-insert): the eighth block kind.
@@ -76,5 +76,35 @@ describe("an image", () => {
     expect(step.before).toHaveLength(0);
     expect(step.after).toEqual([`![Chart](image:${JPG})\n`]);
     expect(undoStep(after, step)).toBe(memo);
+  });
+});
+
+// A section with no numeral was written "## . Executive Summary" until 26
+// October 2026. Shown as the title alone; stored as it was.
+describe("a section heading with no numeral", () => {
+  const old = "## . Executive Summary\n\nText.\n\n## II. Risks\n\n### . Kept";
+
+  it("shows the title alone, and a numbered one as it was", () => {
+    const heads = parseBlocks(old).filter((b) => b.kind === "heading");
+    expect(heads.map((b) => b.kind === "heading" && b.inlines)).toEqual([
+      [{ kind: "text", text: "Executive Summary" }],
+      [{ kind: "text", text: "II. Risks" }],
+      // Not a section heading: composition never wrote one there.
+      [{ kind: "text", text: ". Kept" }],
+    ]);
+  });
+
+  it("is written back as stored until somebody edits it", () => {
+    expect(serializeBlocks(parseBlocks(old))).toBe(old);
+    const head = parseBlocks(old)[0];
+    expect(blockToMarkdown(head, "\n\n")).toBe("## Executive Summary\n\n");
+  });
+
+  it("is named without the stop wherever a heading is quoted", () => {
+    expect(headingText("## . Executive Summary")).toBe("Executive Summary");
+    expect(headingText("## II. Risks")).toBe("II. Risks");
+    expect(sectionLabel("", "Executive Summary")).toBe("Executive Summary");
+    expect(sectionLabel("  ", "Executive Summary")).toBe("Executive Summary");
+    expect(sectionLabel("IV", "Returns")).toBe("IV. Returns");
   });
 });

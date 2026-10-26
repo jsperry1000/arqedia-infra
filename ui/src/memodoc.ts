@@ -61,6 +61,22 @@ export type Block =
   | { id: string; source: string; kind: "raw" };
 
 const HEADING = /^(#{1,6})\s+(.*)$/;
+// What composition wrote before a section heading with no numeral until 26
+// October 2026: "## . Executive Summary". Those memos are stored as written,
+// so the stray stop is dropped where a section heading is shown and kept in
+// its source. render/app.py's _BARE_NUMERAL, character for character.
+const BARE_NUMERAL = /^\.\s+/;
+
+/** A section heading as a reader sees it: no hashes, no stray stop. */
+export function headingText(line: string): string {
+  return line.replace(/^#+\s*/, "").replace(BARE_NUMERAL, "");
+}
+
+/** A configured section as a memo heads it: "I. Introduction", or the title
+ *  alone where it has no numeral. Composition's _section_heading. */
+export function sectionLabel(numeral: string, title: string): string {
+  return numeral.trim() ? `${numeral.trim()}. ${title}` : title;
+}
 const RULE = /^(?:-{3,}|\*{3,}|_{3,})\s*$/;
 const QUOTE = /^>\s?(.*)$/;
 const BULLET = /^(\s*[-*+]\s+)(.*)$/;
@@ -224,8 +240,11 @@ export function parseBlocks(markdown: string): Block[] {
     const heading = HEADING.exec(line);
     if (heading) {
       const { source, next } = take(i, i + 1);
+      // A section heading only: level two is the level composition writes.
+      const text = heading[2].trim();
       add({ source, kind: "heading", level: heading[1].length,
-            inlines: parseInlines(heading[2].trim()) });
+            inlines: parseInlines(heading[1].length === 2
+              ? text.replace(BARE_NUMERAL, "") : text) });
       i = next;
       continue;
     }

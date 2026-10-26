@@ -819,6 +819,13 @@ def _take_trailing_heading(flow):
     return None
 
 
+# What composition wrote before a section heading with no numeral until 26
+# October 2026: "## . Executive Summary". Those memos are stored as written,
+# so the stray stop is dropped where the heading is drawn. memodoc.ts's
+# BARE_NUMERAL, character for character.
+_BARE_NUMERAL = re.compile(r"^\.\s+")
+
+
 def to_flowables(markdown, styles, palette, image_bytes=None):
     """Markdown to flowables. Handles the shapes the consolidation produces:
     headings, paragraphs, tables, blockquote gaps, bullets - and a person's
@@ -924,8 +931,8 @@ def to_flowables(markdown, styles, palette, image_bytes=None):
             continue
         if stripped.startswith("## "):
             flow.append(Spacer(1, 18))
-            flow.append(_heading_band(stripped[3:], styles, palette,
-                                      "section"))
+            flow.append(_heading_band(_BARE_NUMERAL.sub("", stripped[3:]),
+                                      styles, palette, "section"))
             flow.append(Spacer(1, 8))
             i += 1
             continue
