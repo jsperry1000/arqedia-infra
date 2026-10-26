@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { parseBlocks, serializeBlocks, blockToMarkdown, trailingOf, citationsIn,
          type Block, type Inline } from "./memodoc";
 import { inlinesToHtml, nodesToInlines } from "./memoedit";
+import type { Act } from "./undo";
 
 /**
  * The memo as it reads.
@@ -317,15 +318,21 @@ function Editable({ html, onEdit, onSplit, deferred, className }: {
   );
 }
 
-export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
+export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
+                              onOpenChange }: {
   markdown: string;
   byFilename: Record<string, number>;
   /** Filenames whose document has been deleted (8.2). */
   gone?: Set<string>;
   onOpen: (ref: Ref) => void;
   // Absent, the memo is read-only. Present, every block carries an edit
-  // control and this is called with the whole memo after each change.
-  onChange?: (markdown: string) => void;
+  // control and this is called with the whole memo after each change, and
+  // the act that made it, which is what undo records (UNDO-01).
+  onChange?: (markdown: string, act: Act) => void;
+  // Which block is open, or null when none is: everything typed into one
+  // block between opening and closing it is one edit to undo, and undo
+  // waits while a block is open.
+  onOpenChange?: (open: string | null) => void;
 }) {
   // Which runs are out, by block and position. Put away by default: a memo is
   // read far more often than it is checked.
@@ -401,6 +408,14 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
   // Where a new paragraph is being typed, before it is part of the memo.
   const [adding, setAdding] = useState<number | null>(null);
 
+  // Told to the screen as it changes, and as none when this document goes -
+  // a section swapped for its rewrite takes its open block with it.
+  const open = editing ?? (adding === null ? null : "new:" + adding);
+  const reportOpen = useRef(onOpenChange);
+  useEffect(() => { reportOpen.current = onOpenChange; });
+  useEffect(() => { reportOpen.current?.(open); }, [open]);
+  useEffect(() => () => reportOpen.current?.(null), []);
+
   // A memorandum is a hundred thousand characters. Parsed on every keystroke
   // it would be, and the whole document laid out again with it.
   const blocks = useMemo(() => parseBlocks(markdown), [markdown]);
@@ -408,7 +423,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
 
   /** Write one block back into the memo, leaving every other character of it
    *  alone. */
-  function replace(id: string, change: (b: Block) => Block) {
+  function replace(id: string, change: (b: Block) => Block, act: Act = "edit") {
     if (!onChange) return;
     const next = blocks.map((b) => {
       if (b.id !== id) return b;
@@ -416,7 +431,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
       return { ...edited, source: blockToMarkdown(edited, trailingOf(b.source)) };
     });
     const after = serializeBlocks(next);
-    if (after !== markdown) onChange(after);
+    if (after !== markdown) onChange(after, act);
   }
 
   /** A blank row put in at a given place, or a row taken out.
@@ -428,7 +443,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
   function insertRow(id: string, at: number) {
     replace(id, (b) => b.kind !== "table" ? b : {
       ...b, rows: [...b.rows.slice(0, at), b.head.map(() => []),
-                   ...b.rows.slice(at)] });
+                   ...b.rows.slice(at)] }, "row");
   }
 
   function removeRow(id: string, at: number) {
@@ -440,7 +455,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
       if (written && !window.confirm("Delete this row?")) return;
     }
     replace(id, (b) => b.kind !== "table" ? b
-      : { ...b, rows: b.rows.filter((_, i) => i !== at) });
+      : { ...b, rows: b.rows.filter((_, i) => i !== at) }, "row");
   }
 
   /** A new paragraph, typed in place before it exists.
@@ -462,7 +477,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
       ...blocks.slice(0, index),
       { ...block, source: blockToMarkdown(block, trailing) },
       ...blocks.slice(index),
-    ]));
+    ]), "add");
   }
 
   useEffect(() => {
@@ -490,7 +505,8 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
       const next = { ...block, items } as Block;
       opening.current = index;
       onChange(serializeBlocks(blocks.map((b) => b.id !== block.id ? b
-        : { ...next, source: blockToMarkdown(next, trailingOf(b.source)) })));
+        : { ...next, source: blockToMarkdown(next, trailingOf(b.source)) })),
+        "split");
       return;
     }
 
@@ -503,7 +519,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
       { ...first, source: blockToMarkdown(first, "\n") },
       { ...second, source: blockToMarkdown(second, trailingOf(block.source)) },
       ...blocks.slice(index + 1),
-    ]));
+    ]), "split");
   }
 
   /** Take a block out of the memo altogether, with the blank lines that
@@ -523,7 +539,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
           + (what === 1 ? " reference" : " references") + " in it?"
         : "Delete this?")) return;
     setEditing(null);
-    onChange(serializeBlocks(blocks.filter((b) => b.id !== id)));
+    onChange(serializeBlocks(blocks.filter((b) => b.id !== id)), "delete");
   }
 
   /** True when a block has been typed down to nothing. */
@@ -554,7 +570,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange }: {
     const block = blocks.find((b) => b.id === closed);
     setClosed(null);
     if (!onChange || !block || !isEmpty(block)) return;
-    onChange(serializeBlocks(blocks.filter((b) => b.id !== closed)));
+    onChange(serializeBlocks(blocks.filter((b) => b.id !== closed)), "drop-empty");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [closed, markdown]);
 

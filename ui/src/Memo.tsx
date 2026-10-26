@@ -6,6 +6,8 @@ import { MemoDocument, type Ref } from "./MemoReader";
 import { useBackAction, usePinTop, Working } from "./shell";
 import { money, ShareSendPanel } from "./Share";
 import { balanceFor } from "./upgrade";
+import { ACT_SAID, diffStep, fitHistory, pushStep, restoreKeys, undoStep,
+         type Act, type Step } from "./undo";
 
 /**
  * Reading and revising a memo.
@@ -46,6 +48,10 @@ import { balanceFor } from "./upgrade";
  * in the template is offered whole, to go at the end. It costs what a
  * generation costs, so it is confirmed with the price first. It works on the
  * memo as saved, so it waits until unsaved changes are saved or discarded.
+ *
+ * Undo (UNDO-01, docs/specs/undo_01_design_2026-10-14.md) takes back the last
+ * ten acts on the working copy, one at a time, and is kept with it, so it
+ * survives a reload and a Discard. Saving ends it with the copy.
  */
 
 // A section heading as composition writes it: "## II. Business". Level two
@@ -152,6 +158,11 @@ type Mode = "read" | "rewrite";
 // reload loses a sentence at most; long enough not to write on every key.
 const KEEP_AFTER_MS = 1500;
 
+// The server refuses a kept copy over 4 MiB (_WORKING_MAX_BYTES), counting
+// the address and time it wraps the copy in; this leaves room for those.
+const WORKING_MAX_BYTES = 4 * 1024 * 1024;
+const WORKING_WRAP_BYTES = 4096;
+
 export function MemoView({ memoId, onBack, onOpen }: {
   memoId: number;
   onBack: () => void;
@@ -176,6 +187,25 @@ export function MemoView({ memoId, onBack, onOpen }: {
   const [acceptedBy, setAcceptedBy] = useState<Record<string, number[]>>({});
   const [runs, setRuns] = useState<Record<string, Run>>({});
   const [starting, setStarting] = useState(false);
+
+  // Undo. The history is state for the screen and a ref for the acts, which
+  // can come several to a render; so can the text they change.
+  const [history, setHistory] = useState<Step[]>([]);
+  const historyRef = useRef<Step[]>([]);
+  const draftRef = useRef("");
+  // Everything typed into one block between opening and closing it is one
+  // edit. A session starts when a block opens and ends at any other act; an
+  // edit in the session it began is folded into its step.
+  const session = useRef(0);
+  const lastEdit = useRef<{ session: number; base: string; step: Step } | null>(null);
+  // The block open in each document on the screen: undo waits while any is.
+  const openBlocks = useRef<Record<string, string | null>>({});
+  const [blockOpen, setBlockOpen] = useState(false);
+
+  function record(next: Step[]) {
+    historyRef.current = next;
+    setHistory(next);
+  }
 
   // Update: the run still out, the confirmation before it is charged, and
   // what the last one to finish found.
@@ -259,6 +289,10 @@ export function MemoView({ memoId, onBack, onOpen }: {
       const copy = w?.working ?? null;
       setMemo(m);
       setDraft(copy?.text ?? m.markdown);
+      draftRef.current = copy?.text ?? m.markdown;
+      // A copy kept before undo (version 1) has no history.
+      record(Array.isArray(copy?.history) ? copy.history : []);
+      lastEdit.current = null;
       setPrompts(copy?.prompts ?? {});
       setAcceptedBy(copy?.accepted_by ?? {});
       setRuns(Object.fromEntries(Object.entries(copy?.pending ?? {})
@@ -290,15 +324,22 @@ export function MemoView({ memoId, onBack, onOpen }: {
     || Object.keys(typedPrompts).length > 0 || acceptedIds.length > 0
     || Object.keys(runs).length > 0 || !!updateRun);
 
-  const payload = !memo || !hasChanges ? "null" : JSON.stringify({
-    version: 1,
-    mode,
-    text: draft,
-    prompts: typedPrompts,
-    accepted_by: acceptedBy,
-    pending: Object.fromEntries(Object.entries(runs).map(([k, r]) => [k, r.id])),
-    ...(updateRun ? { update_run: updateRun } : {}),
-  });
+  // A copy with history and nothing else changed is still kept: after
+  // Discard it holds the original text and the step that undoes it.
+  const payload = !memo || (!hasChanges && history.length === 0) ? "null"
+    : JSON.stringify(fitHistory({
+      version: 2,
+      // What "Share a memo" reads (_has_unsaved): a copy kept after Discard
+      // only for its undo is not unsaved work.
+      unsaved: hasChanges,
+      mode,
+      text: draft,
+      prompts: typedPrompts,
+      accepted_by: acceptedBy,
+      pending: Object.fromEntries(Object.entries(runs).map(([k, r]) => [k, r.id])),
+      ...(updateRun ? { update_run: updateRun } : {}),
+      history,
+    }, WORKING_MAX_BYTES, WORKING_WRAP_BYTES));
 
   // Keep the working copy after a pause in the changes.
   useEffect(() => {
@@ -474,7 +515,13 @@ export function MemoView({ memoId, onBack, onOpen }: {
         + "and typed prompts are thrown away. The rewrites stay on record, but "
         + "nothing is saved into the memo.")) return;
     if (!memo) return;
-    setDraft(memo.markdown);
+    // Undoable: the step keeps everything Discard clears, as it was.
+    change("discard", memo.markdown, {
+      accepted_by: { ...acceptedBy },
+      pending: Object.fromEntries(Object.entries(runs).map(([k, r]) => [k, r.id])),
+      prompts: { ...prompts },
+      update_run: updateRun,
+    });
     setPrompts({});
     setAcceptedBy({});
     setRuns({});
@@ -482,7 +529,84 @@ export function MemoView({ memoId, onBack, onOpen }: {
     setUpdated(null);
     setMode("read");
     setSaveError("");
-    keepNow(memoId, "null");
+  }
+
+  /** Every change to the working copy's text comes through here, and is
+   *  recorded as a step to undo. `was` is what an act changes beyond the
+   *  text, as it was before. */
+  function change(act: Act, next: string,
+                  was?: Pick<Step, "accepted_by" | "pending" | "prompts"
+                                  | "update_run">) {
+    const prev = draftRef.current;
+    draftRef.current = next;
+    setDraft(next);
+
+    const edit = lastEdit.current;
+    const h = historyRef.current;
+    if (act === "edit" && edit && edit.session === session.current
+        && h[h.length - 1] === edit.step) {
+      const step = diffStep("edit", edit.base, next);
+      lastEdit.current = step ? { ...edit, step } : null;
+      record(step ? [...h.slice(0, -1), step] : h.slice(0, -1));
+      return;
+    }
+    if (act !== "edit") session.current++;
+
+    const diff = diffStep(act, prev, next)
+      ?? (was ? { act, at: 0, before: [], after: [] } : null);
+    // The very object recorded, so the next edit can know it is still on top.
+    const step = diff && { ...diff, ...was };
+    lastEdit.current = act === "edit" && step
+      ? { session: session.current, base: prev, step } : null;
+    if (step) record(pushStep(h, step));
+  }
+
+  /** A document on the screen saying which of its blocks is open. A block
+   *  newly open starts a new edit. */
+  function opened(doc: string, id: string | null) {
+    if (id !== null && id !== (openBlocks.current[doc] ?? null)) session.current++;
+    openBlocks.current = { ...openBlocks.current, [doc]: id };
+    setBlockOpen(Object.values(openBlocks.current).some((v) => v !== null));
+  }
+
+  /** Take back the last step. Refused while a block is open or a rewrite is
+   *  out (undoControl); refused, and the history ended, when the text is no
+   *  longer what the step left - restoring over it would lose work. */
+  function undo() {
+    const h = historyRef.current;
+    const step = h[h.length - 1];
+    if (!step || undoBlocked) return;
+    const text = undoStep(draftRef.current, step);
+    if (text === null) {
+      record([]);
+      setSaveError("That could not be undone: the memo no longer matches what "
+        + "was recorded, so nothing was changed and the undo history has been "
+        + "cleared.");
+      return;
+    }
+    session.current++;
+    lastEdit.current = null;
+    draftRef.current = text;
+    setDraft(text);
+    if (step.accepted_by) {
+      const was = step.accepted_by;
+      setAcceptedBy((prev) => restoreKeys(prev, was));
+    }
+    if (step.prompts) {
+      const was = step.prompts;
+      setPrompts((prev) => restoreKeys(prev, was));
+    }
+    // A rewrite put back is out again, unanswered; the poll finds it done and
+    // offers it to accept or discard as before.
+    if (step.pending) {
+      const was = step.pending;
+      setRuns((prev) => restoreKeys(prev, Object.fromEntries(
+        Object.entries(was).map(([k, id]) =>
+          [k, id === null ? null : { id, result: null }]))));
+    }
+    if (step.update_run) setUpdateRun(step.update_run);
+    record(h.slice(0, -1));
+    setSaveError("");
   }
 
   /** The confirmation, priced by the server before anything is charged. */
@@ -568,10 +692,15 @@ export function MemoView({ memoId, onBack, onOpen }: {
     const run = runs[key];
     if (!run?.result?.output_text) return;
     const text = run.result.output_text.replace(/\s+$/, "") + "\n";
+    const d = draftRef.current;
     // A section new in the template replaces nothing: it goes at the end.
-    setDraft((d) => key.startsWith(ADDS)
+    change("accept", key.startsWith(ADDS)
       ? d.replace(/\s+$/, "") + "\n\n" + text
-      : replaceSection(d, key, text));
+      : replaceSection(d, key, text), {
+      accepted_by: { [key]: acceptedBy[key] ?? null },
+      pending: { [key]: run.id },
+      prompts: { [key]: prompts[key] ?? null },
+    });
     setAcceptedBy((prev) => ({ ...prev,
                                [key]: [...(prev[key] ?? []), run.id] }));
     setPrompts((prev) => ({ ...prev, [key]: "" }));
@@ -580,7 +709,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
   function putBack(key: string) {
     if (originals[key] === undefined) return;
-    setDraft((d) => replaceSection(d, key, originals[key]));
+    change("put-back", replaceSection(draftRef.current, key, originals[key]),
+           { accepted_by: { [key]: acceptedBy[key] ?? null } });
     setAcceptedBy((prev) => {
       const next = { ...prev };
       delete next[key];
@@ -593,6 +723,21 @@ export function MemoView({ memoId, onBack, onOpen }: {
   const blocked = inFlight > 0 || undecided > 0 || !!updateRun;
   const canSave = !!memo && !saving && !blocked && !!draft.trim()
     && draft !== memo.markdown;
+
+  // Undo restores text an open block would overwrite with its next commit,
+  // and a rewrite out could land on text undo has just put back.
+  const undoBlocked = blockOpen || inFlight > 0 || !!updateRun;
+  const lastStep = history[history.length - 1];
+  const undoControl = lastStep && (
+    <a className="secondary"
+       onClick={undoBlocked ? undefined : undo}
+       aria-disabled={undoBlocked}
+       title={blockOpen ? "Finish editing first."
+         : inFlight > 0 || updateRun ? "Wait for the rewrite to finish."
+         : "Undo: " + ACT_SAID[lastStep.act]}>
+      Undo
+    </a>
+  );
 
   async function save() {
     setSaving(true);
@@ -687,6 +832,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
                 {saving ? "Saving\u2026" : "Save as a new revision"}
               </button>
             )}
+            {undoControl}
             <a className="secondary" onClick={openRewrite}>
               Have Model Redraft a Section
             </a>
@@ -738,6 +884,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
             <button onClick={save} disabled={!canSave} title={blockedTitle}>
               {saving ? "Saving\u2026" : "Save as a new revision"}
             </button>
+            {undoControl}
             {updateControl}
             <a className="secondary" onClick={close}>Close</a>
           </>
@@ -839,8 +986,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
               <div className="rewrite-body">
                 <MemoDocument markdown={split.head} byFilename={byFilename}
                               gone={gone} onOpen={openRef}
-                              onChange={updateRun ? undefined : (text) => setDraft(
-                                joinSections(text, split.hasHead, split.sections))} />
+                              onOpenChange={(id) => opened("head", id)}
+                              onChange={updateRun ? undefined : (text, act) => change(
+                                act, joinSections(text, split.hasHead, split.sections))} />
               </div>
               <p className="muted small rewrite-note">
                 The title and header are not rewritten.
@@ -880,8 +1028,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
                   <div className="rewrite-body">
                     <MemoDocument markdown={s.text} byFilename={byFilename}
                                   gone={gone} onOpen={openRef}
-                                  onChange={updateRun ? undefined : (text) => setDraft(
-                                    replaceSection(draft, s.key, text))} />
+                                  onOpenChange={(id) => opened(s.key, id)}
+                                  onChange={updateRun ? undefined : (text, act) => change(
+                                    act, replaceSection(draftRef.current, s.key, text))} />
                   </div>
                 )}
 
@@ -985,7 +1134,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
       ) : (
         <MemoDocument markdown={draft} byFilename={byFilename} gone={gone}
                       onOpen={openRef}
-                      onChange={updateRun ? undefined : setDraft} />
+                      onOpenChange={(id) => opened("doc", id)}
+                      onChange={updateRun ? undefined
+                                          : (text, act) => change(act, text)} />
       )}
 
       {passage && (

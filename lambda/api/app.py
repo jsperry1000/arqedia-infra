@@ -2464,7 +2464,13 @@ def _has_unsaved(tenant_id, email, memo_id):
     memo page's own Share button follows, so "Share a memo" greys out the
     same memoranda. Per person: a colleague's unsaved work greys nothing out
     for anybody else. An unreadable copy counts as unsaved, so a memo is
-    never offered on a guess."""
+    never offered on a guess.
+
+    A KEPT COPY IS NOT ALWAYS UNSAVED WORK (UNDO-01). After Discard the copy
+    holds the memo's own text and the step that undoes the Discard, and the
+    memo page offers Share. The screen writes unsaved: false on such a copy,
+    and that is what is read; a copy that does not say - kept before undo -
+    is unsaved, as every copy was."""
     try:
         body = _s3.get_object(
             Bucket=CURATED_BUCKET,
@@ -2476,9 +2482,12 @@ def _has_unsaved(tenant_id, email, memo_id):
         print("[working-unreadable] memo=%s %r" % (memo_id, exc))
         return True
     try:
-        return json.loads(body.decode("utf-8")).get("working") is not None
+        working = json.loads(body.decode("utf-8")).get("working")
     except ValueError:
         return True
+    if working is None:
+        return False
+    return not (isinstance(working, dict) and working.get("unsaved") is False)
 
 
 # The longest list "Share a memo" offers. Newest first; a memorandum older
