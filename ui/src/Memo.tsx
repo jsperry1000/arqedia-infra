@@ -329,6 +329,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
   const payload = !memo || (!hasChanges && history.length === 0) ? "null"
     : JSON.stringify(fitHistory({
       version: 2,
+      // What "Share a memo" reads (_has_unsaved): a copy kept after Discard
+      // only for its undo is not unsaved work.
+      unsaved: hasChanges,
       mode,
       text: draft,
       prompts: typedPrompts,

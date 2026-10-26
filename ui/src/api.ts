@@ -520,6 +520,9 @@ export type MemoWorking = {
   update_run?: string;
   // The last ten acts, to undo. Survives a reload; ends with a save.
   history?: Step[];
+  // False on a copy kept only for its history, after Discard: "Share a
+  // memo" offers it. Absent on a version 1 copy, which is unsaved.
+  unsaved?: boolean;
 };
 
 // How an Update is going. Finished, it carries the rows it wrote - one per

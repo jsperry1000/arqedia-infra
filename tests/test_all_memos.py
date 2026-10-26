@@ -82,6 +82,17 @@ class AllMemosTest(unittest.TestCase):
         self.assertEqual({m["memo_id"]: m["unsaved"] for m in memos},
                          {11: True, 12: False, 13: False})
 
+    def test_a_copy_kept_only_for_undo_does_not_grey_a_memo_out(self):
+        # After Discard the copy holds the memo's own text and the step that
+        # undoes it, and says unsaved: false (UNDO-01). A copy that says
+        # nothing - kept before undo - is unsaved, as before.
+        self.kept = {11: {"version": 2, "unsaved": False, "history": [{}]},
+                     12: {"version": 2, "unsaved": True},
+                     13: {"version": 1, "text": "edited"}}
+        memos = self.listing(memo_row(11), memo_row(12), memo_row(13))
+        self.assertEqual({m["memo_id"]: m["unsaved"] for m in memos},
+                         {11: False, 12: True, 13: True})
+
     def test_unsaved_is_this_persons_own(self):
         self.kept = {11: {"text": "edited"}}
         self.listing(memo_row(11), email="sp@ebl.test")
