@@ -62,6 +62,23 @@ data "aws_iam_policy_document" "api" {
     resources = [aws_s3_bucket.data["review"].arn]
   }
 
+  # A memo's images (graphics-insert): counted against the memo's 50 MB
+  # before an upload is signed. Listing is an action on the bucket, so it is
+  # held to the two image prefixes rather than to all of curated.
+  statement {
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.data["curated"].arn]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values = [
+        "tenants/*/images/memos/*",
+        "tenants/*/working/images/memos/*",
+      ]
+    }
+  }
+
   # Settings reads a logo to show it back, and writes one on upload.
   statement {
     effect    = "Allow"
@@ -268,6 +285,11 @@ locals {
     # A person's unsaved work on a memo, kept so leaving does not lose it.
     "GET /memos/{memo_id}/working",
     "PUT /memos/{memo_id}/working",
+
+    # A person's own image in a memo (graphics-insert): a signed POST to
+    # upload one, and signed links to read them back.
+    "POST /memos/{memo_id}/images",
+    "GET /memos/{memo_id}/images",
     "POST /uploads",
     "GET /settings",
     "POST /settings",
