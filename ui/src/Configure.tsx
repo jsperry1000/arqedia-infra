@@ -20,6 +20,7 @@ import type { Report as StartReport } from "./Welcome";
 import {
   slugKey, KeyLine, ColumnEditor, columnsReady, ReadModeControls, useGrows,
 } from "./config-parts";
+import { sectionLabel } from "./memodoc";
 import { useRole } from "./upgrade";
 import { useWorkspace, workspacesChanged } from "./workspace";
 import { WorkspaceInline } from "./WorkspacePicker";
@@ -490,7 +491,7 @@ function SectionForm({ initial, others, onSave, onCancel, onDelete,
                     // being sent back and refused.
                     onChange={() => setReads(others.map((x) => x.key)
                       .filter((k) => k === o.key ? !on : reads.includes(k)))} />
-                  {" "}{o.numeral}. {o.title}
+                  {" "}{sectionLabel(o.numeral, o.title)}
                   {late && (
                     <span className="warn small">
                       {" "}comes after this one &mdash; cannot be read
@@ -1702,7 +1703,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             const doomed = sections.find((x) => x.key === editSection);
             setDeleting({
               title: "Delete the section "
-                + (doomed ? `${doomed.numeral}. ${doomed.title}` : editSection),
+                + (doomed ? sectionLabel(doomed.numeral, doomed.title)
+                          : editSection),
               reaches: `It comes out of ${current?.label || current?.key},`
                 + " and which facts it renders goes with it. The facts"
                 + " themselves stay.",
@@ -1741,7 +1743,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 if (!isNaN(typed) && typed !== i + 1) placeAt(s.key, typed);
               }} />
             <label>
-              <strong>{s.numeral}. {s.title}</strong>
+              <strong>{sectionLabel(s.numeral, s.title)}</strong>
             </label>
             <span className="muted small">
               {s.kind === "composed" ? "written by the model" : "assembled"}
@@ -1976,10 +1978,12 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 {bound.has(f.key)
                   ? ((draft?.sections ?? [])
                       .filter((s) => s.fields.includes(f.key))
-                      .map((s) => s.template_key === current?.key
-                        ? `${s.numeral} ${s.title}`
-                        : `${labelOf(s.template_key)} \u00b7 `
-                          + `${s.numeral} ${s.title}`)
+                      // Numeral and title with a space, no stop: the
+                      // numeral only where there is one.
+                      .map((s) => (s.template_key === current?.key ? ""
+                          : `${labelOf(s.template_key)} \u00b7 `)
+                        + (s.numeral.trim() ? `${s.numeral.trim()} ` : "")
+                        + s.title)
                       .join("; "))
                   : <span className="warn">nothing</span>}
               </td>

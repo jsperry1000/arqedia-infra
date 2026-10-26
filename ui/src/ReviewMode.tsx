@@ -6,6 +6,7 @@ import {
   type Draft, type ProposedNewField, type Review, type ReviewSuggestion,
   type ReviewTarget,
 } from "./api";
+import { sectionLabel } from "./memodoc";
 
 /**
  * AI Review of the draft (REV-01).
@@ -98,7 +99,7 @@ function nameOf(draft: Draft | null, t: ReviewTarget): string {
       && (!t.template_key || x.template_key === t.template_key));
     const memo = draft.templates.find((x) => x.key === t.template_key);
     return (memo ? (memo.label || memo.key) + " · " : "")
-      + (s ? `${s.numeral}. ${s.title}` : t.section_key);
+      + (s ? sectionLabel(s.numeral, s.title) : t.section_key);
   }
   return "";
 }

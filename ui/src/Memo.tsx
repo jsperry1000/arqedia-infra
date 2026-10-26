@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, chargeKey, imageTooBig, statusOf, type Memo, type Passage,
          type Quote, type Rewrite, type UpdateRun } from "./api";
-import { imagesIn } from "./memodoc";
+import { headingText, imagesIn } from "./memodoc";
 import { MemoDocument, type Ref } from "./MemoReader";
 import { useBackAction, usePinTop, Working } from "./shell";
 import { money, ShareSendPanel } from "./Share";
@@ -900,7 +900,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
   const byWho = (update: boolean) => (memo.rewrites ?? [])
     .filter((w) => (w.source === "update") === update)
     .reduce<Record<string, string[]>>((acc, w) => {
-      (acc[w.prompted_by] ||= []).push(w.section_heading.replace(/^#+\s*/, ""));
+      (acc[w.prompted_by] ||= []).push(headingText(w.section_heading));
       return acc;
     }, {});
   const rewrittenBy = byWho(false);
@@ -1085,7 +1085,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
           {(updated.kept ?? []).length > 0 && (
             <> Kept as you wrote {(updated.kept ?? []).length === 1
                 ? "it" : "them"}, with no counterpart in the template:{" "}
-              {(updated.kept ?? []).map((h) => h.replace(/^#+\s*/, ""))
+              {(updated.kept ?? []).map(headingText)
                 .join(", ")}.</>
           )}
           {(updated.failed_sections ?? 0) > 0 && (
@@ -1205,7 +1205,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
                 {!run && !updateRun && (
                   <textarea className="rewrite-prompt" rows={2}
-                    placeholder={"How " + s.heading.replace(/^#+\s*/, "")
+                    placeholder={"How " + headingText(s.heading)
                                  + " should be rewritten"}
                     value={prompts[s.key] ?? ""}
                     onChange={(e) => {
