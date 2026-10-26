@@ -79,6 +79,13 @@ export function refKey(ref: Ref): string {
   return ref.filename.toLowerCase() + "#" + (ref.unit ?? "");
 }
 
+/** Whether one reference names a document that has been deleted (8.2). */
+function refIsGone(raw: string, byFilename: Record<string, number>,
+                          gone?: Set<string>): boolean {
+  return !!gone?.size && parseRefs(raw, byFilename).some(
+    (p) => typeof p !== "string" && gone.has(p.filename));
+}
+
 /** The mark a run of citations leaves in the text when they are put away, and
  *  the references themselves when they are out. */
 function Citations({ refs, shown, onToggle, byFilename, gone, onOpen,
@@ -105,12 +112,20 @@ function Citations({ refs, shown, onToggle, byFilename, gone, onOpen,
     const here = lit !== null && refs.some((raw) =>
       parseRefs(raw, byFilename).some(
         (p) => typeof p !== "string" && refKey(p) === lit));
+    /* A RUN CITING A DELETED DOCUMENT IS BLACK WHILE PUT AWAY TOO (26
+       October 2026). It was black only once shown or followed, so a memo
+       resting on a deleted source read as sound until somebody happened to
+       open the right footnote - and each of these has to be found and taken
+       out before a revision will save. */
+    const dead = refs.some((raw) => refIsGone(raw, byFilename, gone));
     return (
-      <button type="button" className={here ? "cite-mark lit" : "cite-mark"}
+      <button type="button"
+              className={"cite-mark" + (here ? " lit" : "") + (dead ? " gone" : "")}
               onClick={onToggle}
               title={here ? "The same source is cited here. Show it"
-                          : refs.length === 1 ? "Show the source"
-                                              : `Show ${refs.length} sources`}>
+                     : dead ? "Cites a deleted document. Show the sources"
+                     : refs.length === 1 ? "Show the source"
+                                         : `Show ${refs.length} sources`}>
         {refs.length}
       </button>
     );
@@ -441,6 +456,8 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   // it would be, and the whole document laid out again with it.
   const blocks = useMemo(() => parseBlocks(markdown), [markdown]);
   const editable = !!onChange;
+  // A reference to a deleted document, for its mark in an open block.
+  const goneRef = (ref: string) => refIsGone(ref, byFilename, gone);
 
   const article = useRef<HTMLElement | null>(null);
   // The gap an image dragged over the memo would go into.
@@ -830,7 +847,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
             return (
               <H key={block.id} className={"doc-h" + block.level}>
                 {editing === block.id ? (
-                  <Editable html={inlinesToHtml(block.inlines)}
+                  <Editable html={inlinesToHtml(block.inlines, goneRef)}
                             onEdit={commitInlines(block.id, (b, nodes) =>
                               ({ ...b, inlines: nodes } as Block))} />
                 ) : inlinesOf(block, block.inlines)}
@@ -844,7 +861,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
               <div key={block.id} className={"callout " + calloutKind(block.inlines)}>
                 <p>
                   {editing === block.id ? (
-                    <Editable html={inlinesToHtml(block.inlines)}
+                    <Editable html={inlinesToHtml(block.inlines, goneRef)}
                               onEdit={commitInlines(block.id, (b, nodes) =>
                                 ({ ...b, inlines: nodes } as Block))} />
                   ) : inlinesOf(block, block.inlines)}
@@ -859,7 +876,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
             const items = block.items.map((it, k) => (
               <li key={k + "/" + block.items.length}>
                 {editing === block.id ? (
-                  <Editable html={inlinesToHtml(it.inlines)}
+                  <Editable html={inlinesToHtml(it.inlines, goneRef)}
                             onEdit={(root) => replace(block.id, (b) => {
                               if (b.kind !== "list") return b;
                               const next = b.items.slice();
@@ -890,7 +907,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                       {block.head.map((c, k) => (
                         <th key={k} className={"al-" + (block.align[k] ?? "left")}>
                           {editing === block.id ? (
-                            <Editable html={inlinesToHtml(c)}
+                            <Editable html={inlinesToHtml(c, goneRef)}
                                       onEdit={(root) => replace(block.id, (b) => {
                                         if (b.kind !== "table") return b;
                                         const head = b.head.slice();
@@ -924,7 +941,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                         {row.map((c, k) => (
                           <td key={k} className={"al-" + (block.align[k] ?? "left")}>
                             {editing === block.id ? (
-                              <Editable html={inlinesToHtml(c)}
+                              <Editable html={inlinesToHtml(c, goneRef)}
                                         onEdit={(root) => replace(block.id, (b) => {
                                           if (b.kind !== "table") return b;
                                           const rows = b.rows.map((x) => x.slice());
@@ -953,7 +970,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
             return (
               <p key={block.id}>
                 {editing === block.id ? (
-                  <Editable html={inlinesToHtml(block.inlines)}
+                  <Editable html={inlinesToHtml(block.inlines, goneRef)}
                             onEdit={commitInlines(block.id, (b, nodes) =>
                               ({ ...b, inlines: nodes } as Block))}
                             onSplit={(before, after) =>

@@ -810,6 +810,13 @@ p.warn { color: #b45309; }
 .cite-mark.lit { background: var(--deep); color: var(--paper); }
 .cite-mark.lit:hover { background: var(--medium); color: var(--paper); }
 
+/* A RUN CITING A DELETED DOCUMENT, always (26 October 2026): in the body
+   ink of .cite.gone, so a memo resting on a deleted source says so before
+   any footnote is opened. Followed, it still reverses out like any other. */
+.cite-mark.gone, .cite-chip.gone { background: var(--ink-2); color: var(--paper); }
+.cite-mark.gone:hover { background: var(--ink); color: var(--paper); }
+.cite-mark.gone.lit { background: var(--deep); }
+
 /* The per-block control: Sources, and Edit.
    READABLE BEFORE THE POINTER REACHES IT (7.1). They sat at 45% of eleven
    grey pixels on a hairline, which on a white page beside black prose is a
