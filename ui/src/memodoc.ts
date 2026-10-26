@@ -52,6 +52,10 @@ export type Block =
       items: { prefix: string; inlines: Inline[] }[] }
   | { id: string; source: string; kind: "table"; head: Inline[][]; rows: Inline[][][];
       align: ("left" | "right" | "centre")[] }
+  // A person's own image (graphics-insert): "![alt](image:<name>)" on a line
+  // of its own. The name is the server's, minted at upload; the file is in
+  // storage, never in the text.
+  | { id: string; source: string; kind: "image"; alt: string; image: string }
   // Anything unrecognised. Kept whole and shown as written rather than
   // guessed at, so a memo is never silently altered by being displayed.
   | { id: string; source: string; kind: "raw" };
@@ -64,6 +68,21 @@ const NUMBERED = /^(\s*\d+[.)]\s+)(.*)$/;
 const DIVIDER = /^\s*\|?[\s:|-]*-[\s:|-]*\|[\s:|-]*$/;
 // The divider where it sits mid-line, a table emitted without its breaks.
 const ONE_LINE_TABLE = /\|(?:\s*:?-{2,}:?\s*\|)+/;
+// The API's _IMAGE_LINE, character for character: what this shows as an
+// image is exactly what a save carries into the revision.
+const IMAGE = /^!\[([^\]\n]*)\]\(image:([0-9a-f]{32}\.(?:png|jpg))\)[ \t]*$/;
+
+/** The line for an image. A "]" or a line break in the alt would end it. */
+export function imageMarkdown(alt: string, image: string): string {
+  return "![" + alt.replace(/[\]\r\n]+/g, " ").trim() + "](image:" + image + ")";
+}
+
+/** Every image a text names, once each, in order. */
+export function imagesIn(markdown: string): string[] {
+  const names = markdown.split("\n").map((l) => IMAGE.exec(l)?.[2])
+    .filter((n): n is string => !!n);
+  return Array.from(new Set(names));
+}
 
 function isTableRow(line: string): boolean {
   return line.trim().startsWith("|");
@@ -194,6 +213,14 @@ export function parseBlocks(markdown: string): Block[] {
       continue;
     }
 
+    const image = IMAGE.exec(line);
+    if (image) {
+      const { source, next } = take(i, i + 1);
+      add({ source, kind: "image", alt: image[1], image: image[2] });
+      i = next;
+      continue;
+    }
+
     const heading = HEADING.exec(line);
     if (heading) {
       const { source, next } = take(i, i + 1);
@@ -291,7 +318,8 @@ export function parseBlocks(markdown: string): Block[] {
       const l = lines[end];
       if (l.trim() === "") break;
       if (end > i && (HEADING.test(l) || RULE.test(l.trim()) || QUOTE.test(l)
-                      || BULLET.test(l) || NUMBERED.test(l) || isTableRow(l))) break;
+                      || BULLET.test(l) || NUMBERED.test(l) || isTableRow(l)
+                      || IMAGE.test(l))) break;
       end++;
     }
     const { source, next } = take(i, end);
@@ -330,6 +358,9 @@ export function blockToMarkdown(block: Block, trailing: string): string {
       break;
     case "quote":
       body = "> " + inlinesToMarkdown(block.inlines);
+      break;
+    case "image":
+      body = imageMarkdown(block.alt, block.image);
       break;
     case "list":
       body = block.items.map((it) =>

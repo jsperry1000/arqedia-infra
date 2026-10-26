@@ -310,6 +310,9 @@ function Editable({ html, onEdit, onSplit, deferred, className }: {
         // A paste of formatted text arrives as text; see nodesToInlines.
       }}
       onPaste={(e) => {
+        // A file - an image - is the document's to place, not this block's
+        // to hold: left to bubble to MemoDocument (graphics-insert).
+        if (e.clipboardData.files.length > 0) return;
         e.preventDefault();
         const text = e.clipboardData.getData("text/plain");
         document.execCommand("insertText", false, text);
@@ -318,8 +321,18 @@ function Editable({ html, onEdit, onSplit, deferred, className }: {
   );
 }
 
+/** The file a drop or a paste carries, an image first: the image wins a
+ *  mixed paste (graphics-insert N5). Any other file is still handed on, so
+ *  the person is told what an image has to be rather than nothing
+ *  happening. */
+function fileOf(data: DataTransfer | null): File | null {
+  const files = Array.from(data?.files ?? []);
+  return files.find((f) => f.type.startsWith("image/")) ?? files[0] ?? null;
+}
+
 export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
-                              onOpenChange }: {
+                              onOpenChange, imageSrc, onImageError,
+                              onImageFile }: {
   markdown: string;
   byFilename: Record<string, number>;
   /** Filenames whose document has been deleted (8.2). */
@@ -333,6 +346,14 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   // block between opening and closing it is one edit to undo, and undo
   // waits while a block is open.
   onOpenChange?: (open: string | null) => void;
+  // An image's link by its name: undefined while it is being asked for,
+  // null where the memo does not hold it.
+  imageSrc?: (image: string) => string | null | undefined;
+  // A link that would not load - expired, most likely - to be asked again.
+  onImageError?: (image: string) => void;
+  // A file dropped or pasted, put into storage: its name, or null where it
+  // was refused - the screen says why.
+  onImageFile?: (file: File) => Promise<string | null>;
 }) {
   // Which runs are out, by block and position. Put away by default: a memo is
   // read far more often than it is checked.
@@ -420,6 +441,62 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   // it would be, and the whole document laid out again with it.
   const blocks = useMemo(() => parseBlocks(markdown), [markdown]);
   const editable = !!onChange;
+
+  const article = useRef<HTMLElement | null>(null);
+  // The gap an image dragged over the memo would go into.
+  const [dropAt, setDropAt] = useState<number | null>(null);
+  // Gaps with an image on its way into storage.
+  const [placing, setPlacing] = useState<number[]>([]);
+  // An image in storage, waiting to go into the memo.
+  const [arrived, setArrived] = useState<{ at: number; block: Block } | null>(null);
+
+  /** An image dropped or pasted: into storage first, then into the memo
+   *  between blocks, on a line of its own. One act to undo. */
+  async function insertImage(file: File, index: number) {
+    if (!onImageFile) return;
+    setPlacing((p) => [...p, index]);
+    try {
+      const image = await onImageFile(file);
+      if (image) {
+        setArrived({ at: index, block: { id: "new", source: "", kind: "image",
+          alt: file.name.replace(/\.[^.]*$/, ""), image } });
+      }
+    } finally {
+      setPlacing((p) => { const i = p.indexOf(index); return p.filter((_, k) => k !== i); });
+    }
+  }
+
+  // Put in from here rather than where the upload finished: the memo may
+  // have changed while it was on its way, and this render has it as it is.
+  const put = useRef<typeof arrived>(null);
+  useEffect(() => {
+    if (!arrived || put.current === arrived || !onChange) return;
+    put.current = arrived;
+    const at = Math.min(arrived.at, blocks.length);
+    // One blank line after it: a source ending "\n" is its line and one
+    // blank one, once joined.
+    onChange(serializeBlocks([
+      ...blocks.slice(0, at),
+      { ...arrived.block, source: blockToMarkdown(arrived.block, "\n") },
+      ...blocks.slice(at),
+    ]), "image");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arrived]);
+
+  /** The gap nearest the pointer. Every gap has an insert point. */
+  function gapAt(y: number): number {
+    let best = blocks.length;
+    let distance = Infinity;
+    article.current?.querySelectorAll<HTMLElement>("[data-gap]").forEach((el) => {
+      const r = el.getBoundingClientRect();
+      const d = Math.abs(r.top + r.height / 2 - y);
+      if (d < distance) { distance = d; best = Number(el.dataset.gap); }
+    });
+    return best;
+  }
+
+  const takesFiles = (data: DataTransfer) =>
+    editable && !!onImageFile && Array.from(data.types).includes("Files");
 
   /** Write one block back into the memo, leaving every other character of it
    *  alone. */
@@ -640,9 +717,14 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
    *  end, quiet until the pointer is near it. */
   function Insert({ index }: { index: number }) {
     if (!editable) return null;
+    const uploading = placing.includes(index) && (
+      <p className="muted small">Putting the image in&hellip;</p>
+    );
     if (adding === index) {
       return (
-        <p className="new-para">
+        <>
+        {uploading}
+        <p className="new-para" data-gap={index}>
           <Editable html="" deferred
                     onEdit={(root) => addParagraph(index, root)}
                     onSplit={(before) => {
@@ -655,23 +737,90 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                     onClick={() => setAdding(null)}>Done</button>
           </span>
         </p>
+        </>
       );
     }
     return (
-      <div className="insert-point">
-        <button type="button" onClick={() => { setEditing(null); setAdding(index); }}
-                title="Start a paragraph here">+</button>
-      </div>
+      <>
+        {uploading}
+        <div className={dropAt === index ? "insert-point drop-here" : "insert-point"}
+             data-gap={index}>
+          <button type="button" onClick={() => { setEditing(null); setAdding(index); }}
+                  title="Start a paragraph here, or paste an image into it">+</button>
+        </div>
+      </>
     );
   }
 
   return (
-    <article className="memo doc">
+    <article className="memo doc" ref={article}
+      // Dropped anywhere on the memo, an image goes into the gap nearest the
+      // pointer, marked while it is held over it.
+      onDragOver={(e) => {
+        if (!takesFiles(e.dataTransfer)) return;
+        e.preventDefault();
+        const at = gapAt(e.clientY);
+        if (at !== dropAt) setDropAt(at);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropAt(null);
+      }}
+      onDrop={(e) => {
+        if (!takesFiles(e.dataTransfer)) return;
+        // Not the browser's: an open block would take the file as a picture
+        // of its own, and anywhere else the page would leave for the file.
+        e.preventDefault();
+        const at = dropAt ?? gapAt(e.clientY);
+        setDropAt(null);
+        const file = fileOf(e.dataTransfer);
+        if (file) insertImage(file, at);
+      }}
+      // Pasted, it goes after the block open, or where a paragraph is being
+      // started. Text is the block's own and never reaches here.
+      onPaste={(e) => {
+        const file = fileOf(e.clipboardData);
+        if (!file || !editable) return;
+        e.preventDefault();
+        const open = editing === null ? -1
+          : blocks.findIndex((b) => b.id === editing);
+        const at = adding ?? (open >= 0 ? open + 1 : null);
+        if (at === null) return;
+        // A paragraph started for the image is not wanted once it is in.
+        setAdding(null);
+        insertImage(file, at);
+      }}>
       {blocks.map((block, index) => {
         const content = (() => {
         switch (block.kind) {
           case "raw":
             return null;
+
+          case "image": {
+            const src = imageSrc?.(block.image);
+            return (
+              <figure key={block.id} className="doc-image">
+                {src ? (
+                  <img src={src} alt={block.alt}
+                       onError={() => onImageError?.(block.image)} />
+                ) : (
+                  <span className="muted small">
+                    {src === null ? "This image could not be found."
+                                  : "Loading the image…"}
+                  </span>
+                )}
+                {/* Nothing to type into: an image is put in or taken out. */}
+                {editable && (
+                  <span className="block-tools">
+                    <button type="button" className="tool danger"
+                            onClick={() => removeBlock(block.id)}
+                            title="Take this image out of the memo">
+                      Delete
+                    </button>
+                  </span>
+                )}
+              </figure>
+            );
+          }
 
           case "rule":
             return <hr key={block.id} />;
