@@ -549,11 +549,13 @@ export function MemoView({ memoId, onBack, onOpen }: {
     }
     if (act !== "edit") session.current++;
 
-    const step = diffStep(act, prev, next)
+    const diff = diffStep(act, prev, next)
       ?? (was ? { act, at: 0, before: [], after: [] } : null);
+    // The very object recorded, so the next edit can know it is still on top.
+    const step = diff && { ...diff, ...was };
     lastEdit.current = act === "edit" && step
       ? { session: session.current, base: prev, step } : null;
-    if (step) record(pushStep(h, { ...step, ...was }));
+    if (step) record(pushStep(h, step));
   }
 
   /** A document on the screen saying which of its blocks is open. A block
