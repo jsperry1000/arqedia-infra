@@ -169,3 +169,10 @@ What SVG and PDF would need (from documentation, not tested):
 ## Product owner decision, 14 Oct 2026 — UNDO-01 stored shape
 
 **Each undo step holds the changed blocks only**, not the whole document. Recorded also in `ARQEDIA_backlog_UNDO01_undo_in_the_memo.md`. UNDO-01 has no open decisions left; the Instruction above ("nothing here starts until that's designed") now waits on UNDO-01's design, not its questions.
+
+## Product owner decisions, 26 Oct 2026
+
+1. **Image syntax:** `![alt](image:<key>)` on its own line.
+2. **Size limits:** a signed POST upload with a `content-length-range` condition, so S3 refuses an oversized file at upload. Mechanics to be confirmed against AWS's documentation before building.
+3. **Sweep:** daily, 24-hour grace period for an uploaded file not yet referenced.
+4. **UNDO-01 hold lifted;** graphics follows once `feature/undo-01` is merged. Plan: `docs/specs/undo_graphics_build_plan_2026-10-26.md`.
