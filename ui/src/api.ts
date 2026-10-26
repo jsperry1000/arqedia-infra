@@ -1,6 +1,7 @@
 import { fetchAuthSession } from "aws-amplify/auth";
 import { config } from "./config";
 import type { BatchMemo } from "./shareBatch";
+import type { Step } from "./undo";
 import { activeWorkspace } from "./workspace";
 
 // Every request carries the token. The tenant travels inside it, signed:
@@ -506,7 +507,8 @@ export type Rewrite = {
 // Work in progress on a memo, kept on the server per person so leaving does
 // not lose it. The server stores it as given and does not interpret it.
 export type MemoWorking = {
-  version: 1;
+  // 2 adds history (UNDO-01); a 1 is read with none.
+  version: 1 | 2;
   // "edit" appears in copies kept before editing moved into the document;
   // it is read as "read".
   mode: "read" | "rewrite" | "edit";
@@ -516,6 +518,8 @@ export type MemoWorking = {
   pending: Record<string, number>;         // rewrites out, by section
   // An Update still running, so leaving and coming back picks it up again.
   update_run?: string;
+  // The last ten acts, to undo. Survives a reload; ends with a save.
+  history?: Step[];
 };
 
 // How an Update is going. Finished, it carries the rows it wrote - one per
