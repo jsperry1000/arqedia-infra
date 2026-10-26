@@ -122,12 +122,23 @@ resource "aws_s3_bucket_public_access_block" "data" {
 # CORS grants nothing. It says which pages a browser will permit to call the
 # bucket; the signed link is the control, and it is one key, PUT only, fifteen
 # minutes, inside the calling tenant's own prefix.
+#
+# A THIRD, ADDED 26 OCTOBER 2026 (graphics-insert):
+#
+#   curated a person's image for a memo, under working/images/. Nothing
+#           watches this bucket either. POST, not PUT: the upload is a signed
+#           POST whose policy carries content-length-range, so S3 itself
+#           refuses an image over its size. A PUT link cannot say that.
 locals {
-  upload_buckets = ["docs", "review"]
+  upload_methods = {
+    docs    = ["PUT"]
+    review  = ["PUT"]
+    curated = ["POST"]
+  }
 }
 
 resource "aws_s3_bucket_cors_configuration" "uploads" {
-  for_each = toset(local.upload_buckets)
+  for_each = local.upload_methods
   bucket   = aws_s3_bucket.data[each.key].id
 
   cors_rule {
@@ -135,7 +146,7 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
     # only the CloudFront domain while api.tf named six, so a browser on
     # app.arqedia.com could call the API and not the bucket.
     allowed_origins = local.browser_origins
-    allowed_methods = ["PUT"]
+    allowed_methods = each.value
     allowed_headers = ["*"]
     expose_headers  = ["ETag"]
     max_age_seconds = 3600

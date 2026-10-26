@@ -54,6 +54,11 @@ the saved text, as a rewrite is. Charged as a generation.
 A person's unsaved work on a memo is kept here, so leaving does not lose it.
   GET  /memos/{memo_id}/working          what they had not yet saved
   PUT  /memos/{memo_id}/working          keep it, or clear it
+
+A person's own image in a memo (graphics-insert): PNG or JPEG, uploaded
+straight to storage on a signed POST, and read back on signed links.
+  POST /memos/{memo_id}/images           a signed POST for one image
+  GET  /memos/{memo_id}/images           signed links to read them (?ids=)
   POST /uploads                          a signed link to upload one file
   GET  /document-types                   the type list, for the dropdown
 
@@ -1908,6 +1913,10 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
                 "these rewrites cannot be saved into this revision: "
                 + ", ".join(str(r) for r in missing[:6]))
 
+    # The images the text shows, found before anything is written. Copied
+    # into the new revision's own prefix once it has a number (decision N2).
+    images = _images_to_carry(tenant_id, memo_id, markdown)
+
     # The next revision of this memo's line, not of this row.
     highest = _sql(
         """
@@ -1995,6 +2004,14 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
              _p("m", int(memo_id))]
             + [_p("r%d" % i, r) for i, r in enumerate(accepted)],
         )
+
+    # Copied, not moved: the working copy's history may still name them, and
+    # the sweep decides when a working image goes. Before the render, which
+    # draws them.
+    for image, source in images.items():
+        _s3.copy_object(
+            Bucket=CURATED_BUCKET, Key=_image_key(tenant_id, new_id, image),
+            CopySource={"Bucket": CURATED_BUCKET, "Key": source})
 
     _lambda.invoke(
         FunctionName=RENDER_FUNCTION,
@@ -2554,6 +2571,166 @@ def keep_memo_working(tenant_id, email, memo_id, working):
         raise ValueError("working must be an object or null")
     saved_at = _put_working(tenant_id, email, memo_id, working)
     return {"memo_id": int(memo_id), "saved": True, "saved_at": saved_at}
+
+
+# --- images in a memo (graphics-insert) -------------------------------------
+#
+# A person's own picture - a logo, a diagram, a photograph - put into a memo.
+# Decided 8, 9, 14 and 26 October 2026 (docs/ARQEDIA_graphics-insert-
+# questions.md): PNG or JPEG, 10 MB an image, 50 MB a memo, kept in the
+# curated bucket beside the memos, which nothing watches.
+#
+# THE MEMO CARRIES A NAME, NOT A FILE. A line of its own reading
+# ![alt](image:<image>), where <image> is the name minted here. The working
+# copy holds text only, and stays under its 4 MiB.
+#
+# TWO PLACES, ONE NAME. Uploaded while editing memo M, an image is under
+# M's working prefix. Saving M as revision N copies every image N's text
+# names into N's own prefix (decision N2, 9 October): a saved revision is
+# never overwritten, and neither are the images it shows. Read for memo M,
+# an image is looked for in M's own prefix first, then in its working one.
+#
+# SIZE IS REFUSED BY S3 ITSELF (decision of 26 October 2026). The upload is
+# a signed POST whose policy carries content-length-range, and S3 answers an
+# oversized file with EntityTooLarge rather than storing it - checked against
+# the dev bucket on 26 October before this was written.
+
+_IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg"}
+_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+_MEMO_IMAGES_MAX_BYTES = 50 * 1024 * 1024
+_IMAGE_UPLOAD_SECONDS = 900
+_IMAGE_NAME = re.compile(r"^[0-9a-f]{32}\.(?:png|jpg)$")
+# The line a memo carries for an image, and the name in it.
+_IMAGE_LINE = re.compile(
+    r"^!\[[^\]\n]*\]\(image:([0-9a-f]{32}\.(?:png|jpg))\)[ \t]*$", re.M)
+
+IMAGE_TYPE_REFUSED = "An image must be a PNG or a JPEG."
+IMAGES_FULL = ("This memo already holds 50 MB of images, which is as much "
+               "as a memo can hold.")
+
+
+def _image_working_key(tenant_id, memo_id, image):
+    return "tenants/%d/working/images/memos/%d/%s" % (
+        tenant_id, int(memo_id), image)
+
+
+def _image_key(tenant_id, memo_id, image):
+    return "tenants/%d/images/memos/%d/%s" % (tenant_id, int(memo_id), image)
+
+
+def _image_sizes(prefix):
+    """name -> bytes, for every object under a prefix."""
+    sizes, token = {}, None
+    while True:
+        args = {"Bucket": CURATED_BUCKET, "Prefix": prefix}
+        if token:
+            args["ContinuationToken"] = token
+        page = _s3.list_objects_v2(**args)
+        for obj in page.get("Contents", []):
+            sizes[obj["Key"].rsplit("/", 1)[-1]] = obj["Size"]
+        if not page.get("IsTruncated"):
+            return sizes
+        token = page.get("NextContinuationToken")
+
+
+def _find_image(tenant_id, memo_id, image):
+    """Where memo M's image is, and its size: M's own prefix, else its
+    working one. None where it is in neither."""
+    for key in (_image_key(tenant_id, memo_id, image),
+                _image_working_key(tenant_id, memo_id, image)):
+        try:
+            head = _s3.head_object(Bucket=CURATED_BUCKET, Key=key)
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            if code in ("NoSuchKey", "404", "NotFound", "AccessDenied", "403"):
+                continue
+            raise
+        return key, head["ContentLength"]
+    return None
+
+
+def image_upload(tenant_id, email, memo_id, content_type):
+    """A signed POST for one image into this memo's working prefix.
+
+    THE ROOM IS THE MEMO'S AS WELL AS THE IMAGE'S. The policy's ceiling is
+    10 MB or what is left of the memo's 50 MB, whichever is less, counted
+    over every image stored for it - its own and those uploaded while
+    editing it, until the sweep takes the ones nothing names."""
+    if not _own_memo(tenant_id, memo_id):
+        return None
+    content_type = (content_type or "").strip().lower()
+    suffix = _IMAGE_TYPES.get(content_type)
+    if not suffix:
+        raise ValueError(IMAGE_TYPE_REFUSED)
+
+    used = (sum(_image_sizes("tenants/%d/images/memos/%d/"
+                             % (tenant_id, int(memo_id))).values())
+            + sum(_image_sizes("tenants/%d/working/images/memos/%d/"
+                               % (tenant_id, int(memo_id))).values()))
+    room = min(_IMAGE_MAX_BYTES, _MEMO_IMAGES_MAX_BYTES - used)
+    if room <= 0:
+        raise ValueError(IMAGES_FULL)
+
+    image = hashlib.sha256(os.urandom(32)).hexdigest()[:32] + suffix
+    post = _s3.generate_presigned_post(
+        CURATED_BUCKET, _image_working_key(tenant_id, memo_id, image),
+        # Every field sent must be in the policy, and every condition must
+        # have its field (boto3's own note): the two lists say the same.
+        Fields={"Content-Type": content_type,
+                "x-amz-meta-uploaded-by": email},
+        Conditions=[["content-length-range", 1, room],
+                    {"Content-Type": content_type},
+                    {"x-amz-meta-uploaded-by": email}],
+        ExpiresIn=_IMAGE_UPLOAD_SECONDS)
+
+    print("[image-upload] tenant=%s memo=%s image=%s room=%d" % (
+        tenant_id, memo_id, image, room))
+    return {"image": image, "url": post["url"], "fields": post["fields"],
+            "max_bytes": room}
+
+
+def image_urls(tenant_id, memo_id, names):
+    """Signed links to read a memo's images, by name. A name the memo does
+    not hold comes back as null rather than as a link that 404s."""
+    if not _own_memo(tenant_id, memo_id):
+        return None
+    wanted = [n for n in str(names or "").split(",") if n.strip()]
+    if not wanted:
+        raise ValueError("no images were named")
+    if len(wanted) > 50:
+        raise ValueError("at most 50 images can be read at once")
+    urls = {}
+    for image in wanted:
+        image = image.strip()
+        if not _IMAGE_NAME.match(image):
+            raise ValueError("%s is not an image of a memo" % image)
+        found = _find_image(tenant_id, memo_id, image)
+        urls[image] = None if found is None else _s3.generate_presigned_url(
+            "get_object", Params={"Bucket": CURATED_BUCKET, "Key": found[0]},
+            ExpiresIn=3600)
+    return {"memo_id": int(memo_id), "images": urls}
+
+
+def _images_to_carry(tenant_id, memo_id, markdown):
+    """The images a revision's text names, each with where it is now.
+
+    Checked BEFORE anything is written, as the citations are: an image that
+    cannot be found, or more than 50 MB of them, refuses the save rather
+    than producing a revision that shows a hole."""
+    names = sorted(set(_IMAGE_LINE.findall(markdown or "")))
+    found, total = {}, 0
+    for image in names:
+        where = _find_image(tenant_id, memo_id, image)
+        if where is None:
+            raise ValueError("an image in this memo could not be found, so "
+                             "it cannot be saved. Take the image out and put "
+                             "it in again.")
+        found[image] = where[0]
+        total += where[1]
+    if total > _MEMO_IMAGES_MAX_BYTES:
+        raise ValueError("this memo shows more than 50 MB of images. Take "
+                         "some out before saving.")
+    return found
 
 
 # --- settings --------------------------------------------------------------
@@ -4091,6 +4268,22 @@ def _dispatch(event, context):
             if kept is None:
                 return _reply(404, {"error": "not found"})
             return _reply(200, kept)
+
+        # Any seat that may edit the memo, as the working copy is.
+        if route == "POST /memos/{memo_id}/images":
+            body = json.loads(event.get("body") or "{}")
+            signed = image_upload(tenant_id, email, params.get("memo_id"),
+                                  body.get("content_type"))
+            if signed is None:
+                return _reply(404, {"error": "not found"})
+            return _reply(200, signed)
+
+        if route == "GET /memos/{memo_id}/images":
+            found = image_urls(tenant_id, params.get("memo_id"),
+                               query.get("ids"))
+            if found is None:
+                return _reply(404, {"error": "not found"})
+            return _reply(200, found)
 
         if route == "GET /memos/{memo_id}":
             memo = get_memo(tenant_id, params.get("memo_id"))
