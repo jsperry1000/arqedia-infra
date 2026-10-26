@@ -11,6 +11,7 @@ save copies. That S3 refuses a file outside the policy was checked against
 the dev bucket on 26 October 2026 (EntityTooLarge), not here.
 """
 
+import io
 import unittest
 from unittest import mock
 
@@ -23,14 +24,30 @@ JPG = "b" * 32 + ".jpg"
 MB = 1024 * 1024
 
 
+SIGNATURE = {".png": b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR",
+             ".jpg": b"\xff\xd8\xff\xe0\0\x10JFIF\0"}
+
+
 class FakeS3:
-    """Keys and sizes, and what was copied where."""
+    """Keys and sizes, and what was copied where. An object given as a size
+    is a real image of the type its key says; given as bytes, it is those
+    bytes."""
 
     def __init__(self, app, objects=None):
         self.app = app
-        self.objects = dict(objects or {})
+        self.objects = {k: len(v) if isinstance(v, bytes) else v
+                        for k, v in (objects or {}).items()}
+        self.content = {k: v for k, v in (objects or {}).items()
+                        if isinstance(v, bytes)}
         self.copied = []
         self.signed = []
+        self.ranges = []
+
+    def get_object(self, Bucket, Key, Range=None):         # noqa: N803
+        self.ranges.append((Key, Range))
+        body = self.content.get(Key, SIGNATURE[Key[Key.rindex("."):]])
+        end = int(Range.split("-")[1]) + 1 if Range else len(body)
+        return {"Body": io.BytesIO(body[:end])}
 
     def list_objects_v2(self, Bucket, Prefix, **_):        # noqa: N803
         return {"Contents": [{"Key": k, "Size": s}
@@ -147,6 +164,21 @@ class ImagesTest(unittest.TestCase):
         self.s3()
         self.assertEqual(self.urls(PNG), {PNG: None})
 
+    def test_a_file_that_is_not_the_image_its_name_says_is_refused(self):
+        # Posted as image/png, so stored as one: the bytes say otherwise.
+        s3 = self.s3({self.working(PNG): b"<html><script>x</script></html>",
+                      self.working(JPG): SIGNATURE[".png"],
+                      self.working("c" * 32 + ".jpg"): SIGNATURE[".jpg"]})
+        with mock.patch.object(self.app, "_sql", own):
+            out = self.app.image_urls(TENANT, MEMO, ",".join(
+                [PNG, JPG, "c" * 32 + ".jpg"]))
+        self.assertEqual(out["refused"], [PNG, JPG])
+        self.assertIsNone(out["images"][PNG])
+        self.assertIsNone(out["images"][JPG])
+        self.assertIsNotNone(out["images"]["c" * 32 + ".jpg"])
+        # Eight bytes read, never the file.
+        self.assertTrue(all(r == "bytes=0-7" for _, r in s3.ranges))
+
     def test_a_name_that_is_not_an_image_is_refused(self):
         self.s3()
         for bad in ("../x.png", "a.gif", "tenants/7/x.png"):
@@ -170,6 +202,12 @@ class ImagesTest(unittest.TestCase):
         self.s3()
         with self.assertRaises(ValueError):
             self.app._images_to_carry(TENANT, MEMO, self.text(PNG))
+
+    def test_a_file_that_is_not_an_image_refuses_the_save(self):
+        self.s3({self.working(PNG): b"%PDF-1.7 not a picture"})
+        with self.assertRaises(ValueError) as refused:
+            self.app._images_to_carry(TENANT, MEMO, self.text(PNG))
+        self.assertIn("not a PNG or a JPEG", str(refused.exception))
 
     def test_more_than_fifty_mb_shown_refuses_the_save(self):
         self.s3({self.saved(PNG): 30 * MB, self.working(JPG): 25 * MB})

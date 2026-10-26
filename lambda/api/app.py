@@ -2594,8 +2594,20 @@ def keep_memo_working(tenant_id, email, memo_id, working):
 # a signed POST whose policy carries content-length-range, and S3 answers an
 # oversized file with EntityTooLarge rather than storing it - checked against
 # the dev bucket on 26 October before this was written.
+#
+# THE BYTES ARE CHECKED, NOT ONLY THE TYPE (26 October 2026). The signed
+# Content-Type is what S3 stores, whatever the file is: a text file posted
+# as image/png is kept as image/png. The API never sees an upload, so the
+# first bytes are read wherever it next touches one - the read the screen
+# makes the moment an upload finishes, and the save that copies it into a
+# revision - and a file that does not open as the PNG or JPEG its name
+# says is refused at both. The PDF is rendered from revisions only, so the
+# save is what keeps it from ever being handed one.
 
 _IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg"}
+# The signature each type's file starts with: PNG's eight bytes, and the
+# JPEG start-of-image marker followed by the first marker's own 0xFF.
+_IMAGE_SIGNATURES = {".png": b"\x89PNG\r\n\x1a\n", ".jpg": b"\xff\xd8\xff"}
 _IMAGE_MAX_BYTES = 10 * 1024 * 1024
 _MEMO_IMAGES_MAX_BYTES = 50 * 1024 * 1024
 _IMAGE_UPLOAD_SECONDS = 900
@@ -2607,7 +2619,6 @@ _IMAGE_LINE = re.compile(
 IMAGE_TYPE_REFUSED = "An image must be a PNG or a JPEG."
 IMAGES_FULL = ("This memo already holds 50 MB of images, which is as much "
                "as a memo can hold.")
-
 
 def _image_working_key(tenant_id, memo_id, image):
     return "tenants/%d/working/images/memos/%d/%s" % (
@@ -2647,6 +2658,15 @@ def _find_image(tenant_id, memo_id, image):
             raise
         return key, head["ContentLength"]
     return None
+
+
+def _image_opens(key):
+    """Whether the stored file starts as its name says: a .png with PNG's
+    signature, a .jpg with JPEG's. Eight bytes, by a ranged read."""
+    signature = _IMAGE_SIGNATURES[key[key.rindex("."):]]
+    first = _s3.get_object(Bucket=CURATED_BUCKET, Key=key,
+                           Range="bytes=0-7")["Body"].read()
+    return first.startswith(signature)
 
 
 def image_upload(tenant_id, email, memo_id, content_type):
@@ -2691,7 +2711,9 @@ def image_upload(tenant_id, email, memo_id, content_type):
 
 def image_urls(tenant_id, memo_id, names):
     """Signed links to read a memo's images, by name. A name the memo does
-    not hold comes back as null rather than as a link that 404s."""
+    not hold comes back as null rather than as a link that 404s; so does a
+    file that is not the image its name says, and it is named in `refused`,
+    which is how the screen learns an upload it has just made is not one."""
     if not _own_memo(tenant_id, memo_id):
         return None
     wanted = [n for n in str(names or "").split(",") if n.strip()]
@@ -2699,16 +2721,19 @@ def image_urls(tenant_id, memo_id, names):
         raise ValueError("no images were named")
     if len(wanted) > 50:
         raise ValueError("at most 50 images can be read at once")
-    urls = {}
+    urls, refused = {}, []
     for image in wanted:
         image = image.strip()
         if not _IMAGE_NAME.match(image):
             raise ValueError("%s is not an image of a memo" % image)
         found = _find_image(tenant_id, memo_id, image)
+        if found is not None and not _image_opens(found[0]):
+            refused.append(image)
+            found = None
         urls[image] = None if found is None else _s3.generate_presigned_url(
             "get_object", Params={"Bucket": CURATED_BUCKET, "Key": found[0]},
             ExpiresIn=3600)
-    return {"memo_id": int(memo_id), "images": urls}
+    return {"memo_id": int(memo_id), "images": urls, "refused": refused}
 
 
 def _images_to_carry(tenant_id, memo_id, markdown):
@@ -2725,6 +2750,10 @@ def _images_to_carry(tenant_id, memo_id, markdown):
             raise ValueError("an image in this memo could not be found, so "
                              "it cannot be saved. Take the image out and put "
                              "it in again.")
+        if not _image_opens(where[0]):
+            raise ValueError("an image in this memo is not a PNG or a JPEG, "
+                             "so it cannot be saved. Take it out and put in "
+                             "the picture again.")
         found[image] = where[0]
         total += where[1]
     if total > _MEMO_IMAGES_MAX_BYTES:
