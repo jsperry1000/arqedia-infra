@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, chargeKey, statusOf, type Memo, type Passage, type Quote,
-         type Rewrite, type UpdateRun } from "./api";
+import { api, chargeKey, imageTooBig, statusOf, type Memo, type Passage,
+         type Quote, type Rewrite, type UpdateRun } from "./api";
+import { imagesIn } from "./memodoc";
 import { MemoDocument, type Ref } from "./MemoReader";
 import { useBackAction, usePinTop, Working } from "./shell";
 import { money, ShareSendPanel } from "./Share";
@@ -162,6 +163,12 @@ const KEEP_AFTER_MS = 1500;
 // the address and time it wraps the copy in; this leaves room for those.
 const WORKING_MAX_BYTES = 4 * 1024 * 1024;
 const WORKING_WRAP_BYTES = 4096;
+
+// What the server signs an image upload for (graphics-insert): checked here
+// first so a wrong file is refused before anything is asked for. The server
+// and S3 refuse it again regardless.
+const IMAGE_TYPES = ["image/png", "image/jpeg"];
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
 export function MemoView({ memoId, onBack, onOpen }: {
   memoId: number;
@@ -469,6 +476,86 @@ export function MemoView({ memoId, onBack, onOpen }: {
                                        .map((s) => s.filename)),
     [memo]);
 
+  // Links to the memo's images, by name (graphics-insert): undefined until
+  // asked for, null where the memo does not hold one. Each name is asked for
+  // once, and once more if its link stops loading - they last an hour.
+  // Held with the memo they belong to, so another memo's never show here.
+  const [imageLinks, setImageLinks] = useState<{
+    memo: number; urls: Record<string, string | null>;
+  }>({ memo: memoId, urls: {} });
+  const imageUrls = imageLinks.memo === memoId ? imageLinks.urls : {};
+  const linksArrived = (memo: number, urls: Record<string, string | null>) =>
+    setImageLinks((prev) => ({ memo, urls: {
+      ...(prev.memo === memo ? prev.urls : {}), ...urls } }));
+  const askedImages = useRef({ memo: memoId, asked: new Set<string>(),
+                               retried: new Set<string>() });
+  const imagesAsked = (memo: number) => {
+    if (askedImages.current.memo !== memo) {
+      askedImages.current = { memo, asked: new Set(), retried: new Set() };
+    }
+    return askedImages.current;
+  };
+
+  // Every image on the screen: the text, and rewrites beside it.
+  const shownImages = imagesIn([draft, ...Object.values(runs).map(
+    (r) => r.result?.output_text ?? "")].join("\n")).join(",");
+
+  useEffect(() => {
+    const { asked } = imagesAsked(memoId);
+    const wanted = shownImages.split(",").filter((n) => n && !asked.has(n));
+    for (let i = 0; i < wanted.length; i += 50) {
+      const some = wanted.slice(i, i + 50);
+      some.forEach((n) => asked.add(n));
+      api.imageUrls(memoId, some)
+        .then(({ images }) => linksArrived(memoId, images))
+        .catch((err) => {
+          some.forEach((n) => asked.delete(n));
+          setSaveError("The memo's images could not be loaded: "
+            + errorText(err));
+        });
+    }
+  }, [shownImages, memoId]);
+
+  function imageFailed(image: string) {
+    const memo = memoId;
+    const missing = () => linksArrived(memo, { [image]: null });
+    const { retried } = imagesAsked(memo);
+    if (retried.has(image)) { missing(); return; }
+    retried.add(image);
+    api.imageUrls(memo, [image])
+      .then(({ images }) => linksArrived(memo, images))
+      .catch(missing);
+  }
+
+  /** A dropped or pasted file into storage, and its name for the text; null,
+   *  with the reason shown, where it is refused. */
+  async function putImage(file: File): Promise<string | null> {
+    setSaveError("");
+    if (!IMAGE_TYPES.includes(file.type)) {
+      setSaveError("An image must be a PNG or a JPEG.");
+      return null;
+    }
+    if (file.size > IMAGE_MAX_BYTES) {
+      setSaveError(imageTooBig(IMAGE_MAX_BYTES));
+      return null;
+    }
+    try {
+      const memo = memoId;
+      const { image } = await api.uploadImage(memo, file);
+      // Its link asked for now, so it shows the moment it is in the memo.
+      imagesAsked(memo).asked.add(image);
+      const { images } = await api.imageUrls(memo, [image]);
+      linksArrived(memo, images);
+      return image;
+    } catch (err) {
+      setSaveError(errorText(err));
+      return null;
+    }
+  }
+
+  const imageProps = { imageSrc: (image: string) => imageUrls[image],
+                       onImageError: imageFailed };
+
   async function openRef(ref: Ref) {
     setLoadingRef(true);
     try {
@@ -772,7 +859,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
   // tables and citations behave the same way everywhere.
   const markdownOf = (text: string) => (
     <MemoDocument markdown={text} byFilename={byFilename} gone={gone}
-                  onOpen={openRef} />
+                  onOpen={openRef} {...imageProps} />
   );
 
   // Which sections of this memo the model wrote, grouped by who prompted -
@@ -986,6 +1073,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
               <div className="rewrite-body">
                 <MemoDocument markdown={split.head} byFilename={byFilename}
                               gone={gone} onOpen={openRef}
+                              {...imageProps} onImageFile={putImage}
                               onOpenChange={(id) => opened("head", id)}
                               onChange={updateRun ? undefined : (text, act) => change(
                                 act, joinSections(text, split.hasHead, split.sections))} />
@@ -1028,6 +1116,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
                   <div className="rewrite-body">
                     <MemoDocument markdown={s.text} byFilename={byFilename}
                                   gone={gone} onOpen={openRef}
+                                  {...imageProps} onImageFile={putImage}
                                   onOpenChange={(id) => opened(s.key, id)}
                                   onChange={updateRun ? undefined : (text, act) => change(
                                     act, replaceSection(draftRef.current, s.key, text))} />
@@ -1134,6 +1223,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
       ) : (
         <MemoDocument markdown={draft} byFilename={byFilename} gone={gone}
                       onOpen={openRef}
+                      {...imageProps} onImageFile={putImage}
                       onOpenChange={(id) => opened("doc", id)}
                       onChange={updateRun ? undefined
                                           : (text, act) => change(act, text)} />

@@ -908,6 +908,13 @@ p.warn { color: #b45309; }
   border-top: 1px dashed var(--light); opacity: 0;
 }
 .insert-point:hover::before { opacity: 1; }
+/* Where an image held over the memo would go (graphics-insert). */
+.insert-point.drop-here::before {
+  opacity: 1; border-top: 2px solid var(--medium);
+}
+.memo.doc .doc-image { margin: 12px 0; }
+.memo.doc .doc-image img { display: block; max-width: 100%; height: auto; }
+.memo.doc .doc-image .block-tools { display: inline-block; margin: 4px 0 0; }
 .block-tools .tool.danger { color: #b42318; border-color: #f3c9c4; opacity: 1; }
 .block-tools .tool.danger:hover { color: var(--paper); background: #b42318;
                                   border-color: #b42318; }

@@ -96,6 +96,15 @@ export function chargeKey(): string {
     Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 64);
 }
 
+/** An image over the room the upload was signed for: 10 MB, or less where
+ *  the memo's 50 MB is nearly used. */
+export function imageTooBig(maxBytes: number): string {
+  const mb = maxBytes / (1024 * 1024);
+  return "That image is too large. This memo can take one of up to "
+    + (mb >= 1 ? Math.floor(mb * 10) / 10 + " MB" : Math.ceil(maxBytes / 1024) + " KB")
+    + ".";
+}
+
 export type Seat = {
   seat_id: number;
   email: string;
@@ -1511,6 +1520,39 @@ export const api = {
   // therefore reaches every memo rather than only the next one written.
   memoPdf: (memoId: number): Promise<{ url: string; bytes: number }> =>
     call(`/memos/${memoId}/pdf`),
+
+  /** Put one image into storage for this memo, and return its name for the
+   *  text (graphics-insert). Two steps, as documents use: a signed POST from
+   *  the API, then the file straight to S3. The POST's policy carries the
+   *  size, so S3 itself refuses a file over it; the type and the uploader
+   *  are signed fields, sent back as they came. The file goes last - S3
+   *  ignores anything after it. */
+  uploadImage: async (memoId: number, file: File): Promise<{ image: string }> => {
+    const { image, url, fields, max_bytes } = await call(
+      `/memos/${memoId}/images`, {
+        method: "POST",
+        body: JSON.stringify({ content_type: file.type }),
+      }) as { image: string; url: string; fields: Record<string, string>;
+              max_bytes: number };
+    if (file.size > max_bytes) throw new Error(imageTooBig(max_bytes));
+
+    const form = new FormData();
+    for (const [name, value] of Object.entries(fields)) form.append(name, value);
+    form.append("file", file);
+    const post = await fetch(url, { method: "POST", body: form });
+    if (!post.ok) {
+      const code = /<Code>([^<]+)<\/Code>/.exec(await post.text())?.[1];
+      throw new Error(code === "EntityTooLarge" ? imageTooBig(max_bytes)
+        : `${file.name || "The image"} was refused by storage (${post.status}).`);
+    }
+    return { image };
+  },
+
+  /** Links to read a memo's images, by name, valid for an hour. A name the
+   *  memo does not hold comes back null. At most 50 a call. */
+  imageUrls: (memoId: number, names: string[]):
+    Promise<{ memo_id: number; images: Record<string, string | null> }> =>
+    call(`/memos/${memoId}/images?ids=${names.map(encodeURIComponent).join(",")}`),
 
   // --- sharing -------------------------------------------------------
 

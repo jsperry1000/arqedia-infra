@@ -11,7 +11,7 @@ import { parseBlocks } from "./memodoc";
  */
 
 export type Act = "edit" | "add" | "split" | "delete" | "drop-empty" | "row"
-  | "accept" | "put-back" | "discard";
+  | "accept" | "put-back" | "discard" | "image";
 
 export type Step = {
   act: Act;
@@ -41,6 +41,7 @@ export const ACT_SAID: Record<Act, string> = {
   "accept": "accept a rewrite",
   "put-back": "put back the original",
   "discard": "discard changes",
+  "image": "put in an image",
 };
 
 /** The block sources of a text. Joined with "\n" they are the text again
