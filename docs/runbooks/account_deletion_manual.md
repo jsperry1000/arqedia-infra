@@ -31,6 +31,15 @@ Every command that deletes is irreversible except by restoring a backup
   marker and every byte stays. Tenant data lives under `tenants/<id>/` in
   `docs`, `review`, `curated` and `brand`, and `shares/<id>/` in `curated`.
   `admin`, `frontend`, `site` hold no tenant data.
+- **Image files** (added 26 October 2026, graphics-insert decision N3). A
+  person's own images in memos are in `curated`, in two places, both under
+  `tenants/<id>/`: `tenants/<id>/images/memos/<memo>/` (a saved revision's
+  own copies, kept as long as the revision) and
+  `tenants/<id>/working/images/memos/<memo>/` (uploads while editing, which
+  the daily image sweep removes 24 hours after nothing names them). Step 5's
+  `tenants/<id>/` prefix in `curated` takes both, every version; step 9's
+  inventory counts them in that prefix. Nothing about them is in Aurora: a
+  memo's text names an image, and the file is only in S3.
 - **DynamoDB.** `share-grant` (tenant on `tenant-index`), `share-access-log`
   (by grant), `share-usage` (by tenant). `viewer-account` is the
   recipient's, not the tenant's, and is not touched: other tenants may
@@ -136,7 +145,8 @@ tenant was active today.
 ### 5. Delete sharing and S3
 
 Revokes every share (a deleted grant is a refused link) and removes every
-version of every object.
+version of every object - the memos' image files among them, under
+`curated/tenants/<id>/images/` and `curated/tenants/<id>/working/images/`.
 
 ```bash
 python - "$T" <<'EOF'
@@ -189,7 +199,16 @@ print("grants", len(grants))
 EOF
 ```
 
-**Verify:** in step 9.
+**Verify:** in step 9. For the images on their own:
+
+```bash
+for p in images working/images; do
+  aws s3api list-object-versions --bucket arqedia-dev-curated-667523685221 \
+    --prefix "tenants/$T/$p/" --query 'length(Versions || `[]`)'
+done
+```
+
+reads `0` and `0`.
 
 ### 6. Delete the Aurora rows
 
