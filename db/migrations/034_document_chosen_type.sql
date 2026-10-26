@@ -2,6 +2,7 @@
 --
 -- The type a person has chosen for a document waiting to be filed (21.1).
 -- PROPOSED, and not applied.
+-- Applied on dev 24 September 2026 23:15:18 UTC (schema_migration).
 --
 -- WHY. Categorising a large upload was lost work. The choices lived in the
 -- browser's memory until File was pressed, so leaving the screen to top up

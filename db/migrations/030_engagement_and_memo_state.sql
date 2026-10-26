@@ -2,6 +2,7 @@
 --
 -- An engagement becomes a row, and a memorandum gains a state. PROPOSED,
 -- and not applied.
+-- Applied on dev 21 September 2026 16:06:06 UTC (schema_migration).
 --
 -- WRITTEN AS 029 AND RENUMBERED. 029_document_extraction_error.sql was
 -- written the same day and is not yet pushed; two files claiming one number

@@ -3,6 +3,7 @@
 -- Sharing a memorandum: the allowance each plan includes, and what a share
 -- past it costs. Decided 30 September - 1 October 2026 (share-recipient).
 -- PROPOSED, and not applied.
+-- Applied on dev 1 October 2026 13:27:27 UTC (schema_migration).
 --
 -- WHAT CHANGES
 --
