@@ -20,10 +20,9 @@
 -- NO IP ADDRESS. The Privacy Policy lists what is collected; an acceptance's
 -- address is not on that list, and adding it is a policy change first.
 --
--- tenant_id IS RECORDED, so docs/runbooks/tenant_inventory.py will list this
--- table as unlisted until it is added there. Whether an account deletion
--- removes these rows or keeps them, as the wallet ledger is kept, is not
--- decided.
+-- tenant_id IS RECORDED, and docs/runbooks/tenant_inventory.py counts it.
+-- An account deletion keeps these rows, as the wallet ledger is kept:
+-- decided 27 October 2026 (docs/ARQEDIA_decisions_2026-10-27.md, section 5).
 
 CREATE TABLE terms_acceptance (
   acceptance_id     BIGINT       NOT NULL AUTO_INCREMENT,

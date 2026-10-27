@@ -266,9 +266,9 @@ are, and the addresses are not blanked.
 **Not touched, and personal data:** `signup_attempt`, `pending_signup` and
 `signup_allow`, which hold no `tenant_id`.
 
-**Not deleted, until it is decided: `terms_acceptance`** (migration 049).
-Whether a deletion removes a tenant's acceptance records or keeps them as
-the ledger is kept is open (27 October 2026). Remove the tenant's rows by
+**Kept, deliberately: `terms_acceptance`** (migration 049). Decided 27
+October 2026: kept as the ledger is kept, as the evidence that the
+customer agreed (`docs/ARQEDIA_decisions_2026-10-27.md` §5). Remove the tenant's rows by
 address and domain if the request covers them:
 
 ```bash
@@ -305,8 +305,7 @@ python docs/runbooks/tenant_inventory.py $T > deletion-$T-after.json
 
 **Verify:** every `aurora` count is 0 except `wallet_ledger` and
 `paddle_event`, which equal the before file; every `s3_versions` entry is
-`0` and `0`; `terms_acceptance` equals the before file until its decision
-is made; every `dynamodb` count is 0; `seat_emails`, `domains` and
+`0` and `0`; `terms_acceptance` equals the before file; every `dynamodb` count is 0; `seat_emails`, `domains` and
 `subscription` are empty.
 
 ---
