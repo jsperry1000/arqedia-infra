@@ -62,3 +62,23 @@ sign-up IP addresses after cancellation or share records after 3 years.
   records the Agreement's version number.
 - **Still open:** where the homepage shows info@arqedia.com, which Paddle's
   go-live checklist asks for.
+
+## 5. Later the same day
+
+Amends §2 and §4 above; they are left as they were decided.
+
+- **Sign-up IP addresses are kept indefinitely.** `tenant.signup_ip`,
+  `signup_attempt.ip` and `pending_signup.ip` are never deleted. The
+  Privacy Policy is silent on how long: its one-year sentence is removed.
+- **Share, view and download records are kept indefinitely.** The
+  Privacy Policy says they are kept for the sharing Organisation's audit,
+  with no period. Counsel does not object to either.
+- **Acceptance records are listed.** The Account data row of Privacy §2
+  names acceptance of the Agreement, with its version and date. Changed
+  in version 1 before publication.
+- **Account deletion keeps acceptance records**, as the wallet ledger is
+  kept: they are the evidence that the customer agreed.
+- **Homepage contact:** info@arqedia.com in the footer of every site page.
+- **Still to build for §4:** earlier S3 versions expire 7 days after
+  they are replaced, and DynamoDB point-in-time recovery drops from 35
+  days to 7. Aurora's automated backups are already 7 days.

@@ -12,7 +12,7 @@ It applies to Trial Users, Paid Users and Recipients.
 
 | Category | What |
 | --- | --- |
-| Account data | Name, email address, Organisation name and jurisdiction, role. Passwords are held by Amazon Cognito and never by ARQEDIA; an authenticator app may be added. |
+| Account data | Name, email address, Organisation name and jurisdiction, role; acceptance of this Agreement, with its version and date. Passwords are held by Amazon Cognito and never by ARQEDIA; an authenticator app may be added. |
 | Sign-up data | The IP address a sign-up came from; for each sign-up attempt, the email domain, a one-way hash of the email address, the IP address and the outcome. |
 | Billing data | Paddle's customer and subscription identifiers, and the wallet ledger of credit added and spent. Card and payment details are held by Paddle, not by ARQEDIA. |
 | Content data | Documents you upload, the facts read from them, and the memoranda composed from those facts. |
@@ -40,7 +40,7 @@ ARQEDIA uses the information above to provide and maintain the Service — stori
 
 ARQEDIA maintains administrative, technical, and physical safeguards designed to protect Account and Content data against unauthorized access, alteration, or loss: Content is encrypted at rest and in transit, and public access to storage is blocked. No method of transmission or storage is 100% secure, and ARQEDIA cannot guarantee absolute security.
 
-Account and Content data are retained for as long as the Organisation's account is active. A document you delete is removed from the Service; copies held in backups and earlier stored versions, including the facts read from it and the memoranda built from them, are deleted within 7 days. The wallet ledger is never altered or deleted, as an accounting record. Sign-up IP addresses are retained while the Organisation's account is active and deleted one year after it is cancelled. Records of shares, views and downloads are kept for 3 years for the sharing Organisation's audit.
+Account and Content data are retained for as long as the Organisation's account is active. A document you delete is removed from the Service; copies held in backups and earlier stored versions, including the facts read from it and the memoranda built from them, are deleted within 7 days. The wallet ledger is never altered or deleted, as an accounting record. Records of shares, views and downloads are kept for the sharing Organisation's audit.
 
 ## 5. User Rights
 
