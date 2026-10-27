@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState,
+         type DragEvent } from "react";
 import { parseBlocks, serializeBlocks, blockToMarkdown, trailingOf, citationsIn,
          type Block, type Inline } from "./memodoc";
 import { inlinesToHtml, nodesToInlines } from "./memoedit";
@@ -443,6 +444,12 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   const opening = useRef<number | null>(null);
   // Where a new paragraph is being typed, before it is part of the memo.
   const [adding, setAdding] = useState<number | null>(null);
+  // A row being dragged by its grip, and the row it is held over with which
+  // half of it - above or below is where it would go.
+  const dragging = useRef<{ id: string; from: number } | null>(null);
+  const [dropRow, setDropRow] = useState<{ r: number; below: boolean } | null>(null);
+  // Counts the rows moved, for the rows' key: see the table below.
+  const [moved, setMoved] = useState(0);
 
   // Told to the screen as it changes, and as none when this document goes -
   // a section swapped for its rewrite takes its open block with it.
@@ -532,8 +539,9 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
    *
    *  A table is where a memorandum's facts sit, and a fact arrives in the
    *  middle of a list as often as at the end of one - a supplier between two
-   *  others, a term between two terms. Appending and then moving it is not
-   *  something this screen can do, so the row goes in where it belongs. */
+   *  others, a term between two terms. Appending and then dragging it into
+   *  place is two steps where one will do, so the row goes in where it
+   *  belongs. */
   function insertRow(id: string, at: number) {
     replace(id, (b) => b.kind !== "table" ? b : {
       ...b, rows: [...b.rows.slice(0, at), b.head.map(() => []),
@@ -550,6 +558,29 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
     }
     replace(id, (b) => b.kind !== "table" ? b
       : { ...b, rows: b.rows.filter((_, i) => i !== at) }, "row");
+  }
+
+  /** A row dragged by its grip to another place in its table. `to` is the
+   *  gap it is dropped into, counted as the table stood before the move, so
+   *  the gaps either side of the row itself are no move at all. */
+  function moveRow(id: string, from: number, to: number) {
+    if (to === from || to === from + 1) return;
+    replace(id, (b) => {
+      if (b.kind !== "table") return b;
+      const rows = b.rows.slice();
+      const [row] = rows.splice(from, 1);
+      rows.splice(to > from ? to - 1 : to, 0, row);
+      return { ...b, rows };
+    }, "row");
+    setMoved((n) => n + 1);
+  }
+
+  /** The gap a row held over row `r` would drop into, by which half of the
+   *  row the pointer is in. */
+  function rowGap(e: DragEvent<HTMLTableRowElement>, r: number) {
+    const box = e.currentTarget.getBoundingClientRect();
+    const below = e.clientY > box.top + box.height / 2;
+    return { below, to: r + (below ? 1 : 0) };
   }
 
   /** A new paragraph, typed in place before it exists.
@@ -926,11 +957,60 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                         position alone kept their old text when a row was put
                         in above them - the table shifted and the words did
                         not. Changing the count remounts the rows, and each
-                        cell reads its content again. */}
+                        cell reads its content again. A move leaves the count
+                        as it was, so the moves are counted into the key as
+                        well. */}
                     {block.rows.map((row, r) => (
-                      <tr key={r + "/" + block.rows.length}>
+                      <tr key={r + "/" + block.rows.length + "/" + moved}
+                          className={editing !== block.id || dropRow?.r !== r ? undefined
+                                     : dropRow.below ? "drop-below" : "drop-above"}
+                          // Only a row of this table, dragged by its grip.
+                          // An image held over the memo is the article's.
+                          onDragOver={(e) => {
+                            const from = dragging.current;
+                            if (!from || from.id !== block.id) return;
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = "move";
+                            const { below, to } = rowGap(e, r);
+                            // No line where the drop would leave it as it is.
+                            const still = to === from.from || to === from.from + 1;
+                            if (still) { if (dropRow) setDropRow(null); return; }
+                            if (dropRow?.r !== r || dropRow.below !== below) {
+                              setDropRow({ r, below });
+                            }
+                          }}
+                          onDrop={(e) => {
+                            const from = dragging.current;
+                            if (!from || from.id !== block.id) return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            dragging.current = null;
+                            setDropRow(null);
+                            moveRow(block.id, from.from, rowGap(e, r).to);
+                          }}>
                         {editing === block.id && (
                           <td className="row-handle">
+                            <span className="grip" draggable
+                                  title="Drag to move this row"
+                                  // A cell still being typed in is written
+                                  // back first, so the move carries it.
+                                  onMouseDown={() =>
+                                    (document.activeElement as HTMLElement | null)?.blur()}
+                                  onDragStart={(e) => {
+                                    dragging.current = { id: block.id, from: r };
+                                    e.dataTransfer.effectAllowed = "move";
+                                    // Firefox starts no drag carrying nothing.
+                                    // A type of our own, so no other page or
+                                    // program takes it as text.
+                                    e.dataTransfer.setData("application/x-arqedia-row",
+                                                           String(r));
+                                    const tr = e.currentTarget.closest("tr");
+                                    if (tr) e.dataTransfer.setDragImage(tr, 12, tr.offsetHeight / 2);
+                                  }}
+                                  onDragEnd={() => {
+                                    dragging.current = null;
+                                    setDropRow(null);
+                                  }}>&#x283F;</span>
                             <button type="button" onClick={() => insertRow(block.id, r)}
                                     title="Put a row in above this one">+</button>
                             <button type="button" className="drop"
