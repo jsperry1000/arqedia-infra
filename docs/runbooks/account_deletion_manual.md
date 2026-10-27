@@ -217,8 +217,15 @@ One transaction: all of it or none.
 ```bash
 X=$(aws rds-data begin-transaction --resource-arn $C --secret-arn "$S" \
       --database arqedia --query transactionId --output text)
+# No tenant_id of its own: through the invitation, before seat_invitation goes.
+aws rds-data execute-statement --resource-arn $C --secret-arn "$S" \
+  --database arqedia --transaction-id "$X" \
+  --sql "DELETE FROM seat_invitation_workspace WHERE invitation_id IN
+         (SELECT invitation_id FROM seat_invitation WHERE tenant_id = $T)" \
+  --query numberOfRecordsUpdated --output text | sed "s/^/seat_invitation_workspace /"
 for table in claim_evidence claim memo_source memo_rewrite memo \
     extracted_value document engagement \
+    seat_workspace workspace_deletion workspace \
     config_section_field config_section config_template config_type_schema \
     config_field config_schema config_document_type config_category \
     config_revision pack_offer meter_price \
@@ -257,7 +264,11 @@ holds Paddle's payloads. **Decided 20 October 2026:** both are kept as they
 are, and the addresses are not blanked.
 
 **Not touched, and personal data:** `signup_attempt`, `pending_signup` and
-`signup_allow`, which hold no `tenant_id`. Remove the tenant's rows by
+`signup_allow`, which hold no `tenant_id`.
+
+**Not deleted, until it is decided: `terms_acceptance`** (migration 049).
+Whether a deletion removes a tenant's acceptance records or keeps them as
+the ledger is kept is open (27 October 2026). Remove the tenant's rows by
 address and domain if the request covers them:
 
 ```bash
@@ -294,7 +305,8 @@ python docs/runbooks/tenant_inventory.py $T > deletion-$T-after.json
 
 **Verify:** every `aurora` count is 0 except `wallet_ledger` and
 `paddle_event`, which equal the before file; every `s3_versions` entry is
-`0` and `0`; every `dynamodb` count is 0; `seat_emails`, `domains` and
+`0` and `0`; `terms_acceptance` equals the before file until its decision
+is made; every `dynamodb` count is 0; `seat_emails`, `domains` and
 `subscription` are empty.
 
 ---
