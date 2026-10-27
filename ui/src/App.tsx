@@ -27,6 +27,7 @@ import { signIn, signOut, confirmSignIn, getCurrentUser, fetchAuthSession,
 import { config } from "./config";
 import { useRole } from "./upgrade";
 import { TRIAL_DAYS } from "./trial";
+import { LEGAL } from "./legal";
 import {
   api, lookupSignIn, sharedWithMe, viewerApi, type Engagement, type SignInPool,
 } from "./api";
@@ -1201,6 +1202,14 @@ export default function App() {
             the page, which stays where it was. */}
         <a className="rail-suggest" onClick={() => setSuggesting(true)}>
           We want your suggestions
+        </a>
+        {/* The Agreement, for somebody already signed up (decided 27 October
+            2026). The marketing site links to it nowhere; this, sign-up and
+            the invitation page do. A new tab, so the work stays where it
+            was. */}
+        <a className="rail-legal" href={LEGAL.terms} target="_blank"
+           rel="noopener">
+          Terms and Conditions
         </a>
       </nav>
       {/* The working column. Back is drawn once, here, in the same place on

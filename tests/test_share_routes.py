@@ -668,7 +668,7 @@ class RegisterCodeTest(ViewerTest):
     def register(self, code, password="Correct-horse-9"):
         return self.call("POST /view/{grant_id}/register", body={
             "email_code": code, "password": password,
-            "accept_terms": True, "marketing_opt_in": False})
+            "accept_terms": True, "agreement_version": 1, "marketing_opt_in": False})
 
     def test_the_code_goes_to_the_recipient_and_nobody_else(self):
         status, body = self.call("POST /view/{grant_id}/register/code",
@@ -822,7 +822,7 @@ class MfaSetupTest(RegisterCodeTest):
 
     def confirm(self, code="123456"):
         return self.call("POST /view/{grant_id}/register/confirm", body={
-            "session": "s2", "code": code, "accept_terms": True,
+            "session": "s2", "code": code, "accept_terms": True, "agreement_version": 1,
             "marketing_opt_in": False})
 
     def refusal(self, code):
@@ -869,6 +869,33 @@ class MfaSetupTest(RegisterCodeTest):
         _, body = self.confirm()
         self.assertEqual(body["error"], self.app.MFA_SESSION_EXPIRED)
         self.assertTrue(body["restart"])
+
+    def test_another_agreement_version_reaches_nothing(self):
+        # 27 October 2026: the version shown must be the version accepted.
+        self.call("POST /view/{grant_id}/register/code")
+        _, code = self.sent_code()
+        status, body = self.call("POST /view/{grant_id}/register", body={
+            "email_code": code, "password": "Correct-horse-9",
+            "accept_terms": True, "agreement_version": 2,
+            "marketing_opt_in": False})
+        self.assertEqual(status, 400)
+        self.assertIn("terms have changed", body["error"])
+        self.app._cognito.admin_create_user.assert_not_called()
+
+    def test_registering_keeps_the_version_accepted(self):
+        self.app._cognito.verify_software_token.side_effect = None
+        self.app._cognito.verify_software_token.return_value = {
+            "Status": "SUCCESS", "Session": "s3"}
+        self.app._cognito.admin_respond_to_auth_challenge.return_value = {
+            "AuthenticationResult": {"IdToken": "id", "ExpiresIn": 3600}}
+        self.app._cognito.admin_get_user.return_value = {
+            "UserAttributes": [{"Name": "sub", "Value": "sub-1"}]}
+        status, _ = self.confirm()
+        self.assertEqual(status, 200)
+        held = self.accounts.get_item(
+            Key={"viewer_account_id": self.viewer})["Item"]
+        self.assertEqual(held["terms_version"], 1)
+        self.assertIn("terms_accepted_at", held)
 
     def test_a_status_other_than_success_is_a_mismatch(self):
         self.app._cognito.verify_software_token.side_effect = None
@@ -1086,7 +1113,7 @@ class DeviceTest(RegisterCodeTest):
         self.app._ses.reset_mock()
         status, _ = self.call("POST /view/{grant_id}/register",
                               device=body["device_token"], body={
-                                  "email_code": "", "accept_terms": True,
+                                  "email_code": "", "accept_terms": True, "agreement_version": 1,
                                   "password": "Correct-horse-9",
                                   "marketing_opt_in": False})
         self.assertEqual(status, 200)
@@ -1095,7 +1122,7 @@ class DeviceTest(RegisterCodeTest):
 
     def test_an_older_device_still_needs_the_code(self):
         status, body = self.call("POST /view/{grant_id}/register", body={
-            "email_code": "", "accept_terms": True,
+            "email_code": "", "accept_terms": True, "agreement_version": 1,
             "password": "Correct-horse-9", "marketing_opt_in": False})
         self.assertEqual(status, 400)
         self.assertTrue(body["code_required"])
@@ -1105,7 +1132,7 @@ class DeviceTest(RegisterCodeTest):
         _, body = self.verify_here()
         status, reply = self.call("POST /view/{grant_id}/register",
                                   device=body["device_token"], body={
-                                      "email_code": "", "accept_terms": True,
+                                      "email_code": "", "accept_terms": True, "agreement_version": 1,
                                       "password": "short",
                                       "marketing_opt_in": False})
         self.assertEqual(status, 400)

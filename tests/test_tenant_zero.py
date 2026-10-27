@@ -74,7 +74,9 @@ class AcceptTest(unittest.TestCase):
         with mock.patch.object(self.signup, "_sql", db.sql):
             reply = self.signup.accept(EVENT, {"email": "somebody@example.com",
                                                "token": "token-1",
-                                               "password": "pw"})
+                                               "password": "pw",
+                                               "accept_terms": True,
+                                               "agreement_version": 1})
         return reply, db
 
     def test_refuses_an_invitation_naming_tenant_zero(self):

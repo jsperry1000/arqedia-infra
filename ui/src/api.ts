@@ -1883,6 +1883,11 @@ export const api = {
     code: string;
     password: string;
     person_name?: string;
+    /** The Terms and Privacy Policy, ticked on this last step, and the
+     *  version that was shown (27 October 2026). The server refuses any
+     *  other version. */
+    accept_terms: boolean;
+    agreement_version: number;
   }): Promise<SignupDone> => open_("/signup/verify", body),
 
   /** Take a seat somebody reserved: the third route that carries no token,
@@ -1904,6 +1909,9 @@ export const api = {
     token: string;
     password: string;
     person_name?: string;
+    /** As at sign-up: an invited member accepts the Agreement too. */
+    accept_terms: boolean;
+    agreement_version: number;
   }): Promise<{ tenant_id: number; role: "admin" | "member"; email: string }> =>
     open_("/invitations/accept", body),
 };
@@ -2068,7 +2076,7 @@ export const viewerApi = {
   register: (grantId: string, token: string, body: {
     /** Empty when this browser was verified in the last fifteen minutes. */
     email_code: string; password: string; accept_terms: boolean;
-    marketing_opt_in: boolean;
+    agreement_version: number; marketing_opt_in: boolean;
   }): Promise<{ session: string; secret_code: string; otpauth: string;
                 /** The setup link as a QR code, SVG; null if it could not
                  *  be drawn, and the typed key still works. */
@@ -2081,7 +2089,7 @@ export const viewerApi = {
 
   confirm: (grantId: string, token: string, body: {
     session: string; code: string; accept_terms: boolean;
-    marketing_opt_in: boolean;
+    agreement_version: number; marketing_opt_in: boolean;
   }): Promise<{ id_token: string; expires_in: number; extended: number;
                 expires_at: string }> =>
     viewerCall(`/view/${encodeURIComponent(grantId)}/register/confirm`,

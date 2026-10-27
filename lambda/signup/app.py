@@ -142,6 +142,47 @@ FREE_MAIL = {
 
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+# THE AGREEMENT'S VERSION (27 October 2026): the Terms of Service, Privacy
+# Policy and Refund Policy in docs/legal, published at arqedia.com/terms,
+# /privacy and /refunds. config/legal.json states it for the site and the
+# screen; this function bundles lambda/signup only and cannot read that file,
+# so tests/test_legal_source.py fails if the two ever differ - the same
+# arrangement TRIAL_DAYS has with config/plans.json.
+#
+# A REQUEST NAMING ANY OTHER VERSION IS REFUSED. A page left open across a
+# change of terms would otherwise record acceptance of words the person was
+# never shown.
+AGREEMENT_VERSION = 1
+
+TERMS_REQUIRED = ("Accept the Terms of Service and Privacy Policy to "
+                  "continue.")
+TERMS_CHANGED = ("The terms have changed since this page was opened. Reload "
+                 "it, read them, and accept them again.")
+
+
+def _terms_problem(body):
+    """What is wrong with the acceptance in a request, or None. Checked
+    before anything is read or written, so a refusal costs nothing."""
+    if body.get("accept_terms") is not True:
+        return TERMS_REQUIRED
+    version = body.get("agreement_version")
+    if isinstance(version, bool) or version != AGREEMENT_VERSION:
+        return TERMS_CHANGED
+    return None
+
+
+def _record_acceptance(email, tenant_id, context, tx=None):
+    """One row, never updated (migration 049). Answers the row's id."""
+    written = _sql(
+        "INSERT INTO terms_acceptance "
+        "(email, tenant_id, context, agreement_version) "
+        "VALUES (:e, :t, :c, :v)",
+        [_p("e", email), _p("t", tenant_id), _p("c", context),
+         _p("v", AGREEMENT_VERSION)],
+        tx=tx,
+    )
+    return (written.get("generatedFields") or [{}])[0].get("longValue")
+
 
 # --- plumbing, matching lambda/api/app.py ----------------------------------
 
@@ -707,6 +748,12 @@ def verify(event, body):
     password = body.get("password") or ""
     ip = _client_ip(event)
 
+    # The Agreement first: refused before the code is read, so an unticked
+    # box neither spends an attempt nor reaches anything that writes.
+    terms = _terms_problem(body)
+    if terms:
+        return _reply(400, {"error": terms})
+
     rows = _sql(
         """
         SELECT pending_id, email_domain, code_hash, attempts, org_name,
@@ -857,6 +904,10 @@ def verify(event, body):
             tx=tx,
         )
 
+        # The founder's acceptance, in the same transaction as the tenant it
+        # was given for: both stand or neither does.
+        _record_acceptance(email, tenant_id, "signup", tx=tx)
+
         # The trial credit, expiring with the trial. Kept in step with
         # wallet.grant in lambda/shared/wallet.py, which this function cannot
         # import: it has no layer. No ledger row, as grant writes none - the
@@ -948,6 +999,10 @@ def accept(event, body):
 
     if not email or not token:
         return _reply(400, {"error": "That invitation link is incomplete."})
+    # As at sign-up (decided 27 October 2026), and before anything is read.
+    terms = _terms_problem(body)
+    if terms:
+        return _reply(400, {"error": terms})
     domain = email.split("@", 1)[1] if "@" in email else ""
 
     rows = _sql(
@@ -1016,7 +1071,12 @@ def accept(event, body):
          _p("by", _col(r, 5))],
     )
 
+    acceptance_id = None
     try:
+        # Beside the seat, and given back with it below if the account
+        # cannot be made: an acceptance for an account that never existed
+        # would be a record of nothing.
+        acceptance_id = _record_acceptance(email, tenant_id, "invitation")
         made = _idp.admin_create_user(
             UserPoolId=USER_POOL_ID,
             Username=email,
@@ -1036,6 +1096,13 @@ def accept(event, body):
     except Exception as exc:
         _sql("DELETE FROM seat WHERE tenant_id = :t AND email = :e",
              [_p("t", tenant_id), _p("e", email)])
+        # The acceptance this call wrote, by its own id, and nothing else.
+        if isinstance(acceptance_id, int):
+            try:
+                _sql("DELETE FROM terms_acceptance WHERE acceptance_id = :a",
+                     [_p("a", acceptance_id)])
+            except Exception:
+                pass
         try:
             _idp.admin_delete_user(UserPoolId=USER_POOL_ID, Username=email)
         except Exception:

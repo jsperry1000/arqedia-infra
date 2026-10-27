@@ -9,6 +9,7 @@ import { api, chargeKey, type Wallet, type LedgerEntry,
          type SubscriptionView, type Plan, type Invoice, type InvoicePage,
          type WorkspaceList, type HeldWorkspace } from "./api";
 import { openCheckout } from "./paddle";
+import { LEGAL } from "./legal";
 import { useWorkspace, workspacesChanged } from "./workspace";
 import { Inert } from "./mock";
 
@@ -672,6 +673,9 @@ function Subscription() {
             <span className="muted small">
               A card is taken at this point and the first month is charged now.
               Metered use is never charged to the card without a further click.
+              {/* Linked from checkout because ours differs from Paddle's
+                  standard policy (decided 27 October 2026). */}
+              {" "}<a href={LEGAL.refunds} target="_blank" rel="noopener">Refund Policy</a>.
             </span>
           </>
         )}
@@ -1038,6 +1042,7 @@ function Balance() {
           {said || "In $5 increments, charged to the card Paddle holds. There "
             + "is no standing mandate: nothing is charged without this click, "
             + "and purchased credit expires 30 days after purchase."}
+          {" "}<a href={LEGAL.refunds} target="_blank" rel="noopener">Refund Policy</a>.
         </span>
       </div>
       )}
