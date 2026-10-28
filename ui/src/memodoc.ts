@@ -28,23 +28,6 @@
 // and must not become one here.
 const CITATION_FILE = /\.(?:pdf|docx|xlsx|txt|json|xml)\b/i;
 
-// A filename the save will read whole, as revise_memo reads a citation: its
-// pattern, character for character, end to end. A name with a space in it
-// would be read from the space on and refused as no source of the memo.
-const CITABLE_NAME = /^[A-Za-z0-9._()\-]+\.(?:pdf|docx|xlsx|txt|json|xml)$/i;
-
-/** Whether a source can be cited by hand: read back as a citation, and
- *  accepted by the save. */
-export function isCitable(filename: string): boolean {
-  return CITABLE_NAME.test(filename);
-}
-
-/** One reference as a citation writes it: "a.pdf, page 4", or the file alone
- *  where no page is given. */
-export function footnoteRef(filename: string, page?: number | null): string {
-  return page ? filename + ", page " + page : filename;
-}
-
 export type Inline =
   | { kind: "text"; text: string }
   | { kind: "bold"; text: string }
