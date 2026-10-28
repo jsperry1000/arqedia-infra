@@ -1628,8 +1628,15 @@ export const api = {
    *  watches for the row the upload produces and has to match on the name
    *  that row will carry - and it used to work that out with a copy of the
    *  server's _clean in TypeScript (17.4). The rule lives in one place now
-   *  and this asks for the answer. */
-  upload: async (engagement: string, file: File): Promise<{
+   *  and this asks for the answer.
+   *
+   *  `sent` is the names already stored in this upload. A second file under
+   *  one of them is refused before it is sent, as a 409 like the server's:
+   *  the server refuses a name the engagement holds, but cannot see one sent
+   *  seconds ago whose row is not written yet (28 October 2026). The name
+   *  compared is the server's, so no rule is worked out here. */
+  upload: async (engagement: string, file: File,
+                 sent: Set<string> = new Set()): Promise<{
     engagement: string; filename: string;
   }> => {
     // THE FOLDER, WHERE THERE IS ONE (18.7). webkitRelativePath is
@@ -1658,6 +1665,11 @@ export const api = {
     // the server's own cleaned value and sends the header exactly when the
     // server put one in the signature. It does not re-derive it: a second
     // copy of the cleaning rule in TypeScript is 17.4 all over again.
+    if (sent.has(storedAs)) {
+      throw new ApiError(409, JSON.stringify({
+        error: `${storedAs} is in this upload twice. Only the first was sent.`,
+      }));
+    }
     const put = await fetch(url, {
       method: "PUT",
       body: file,

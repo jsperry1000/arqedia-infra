@@ -49,7 +49,8 @@ class UploadNameTest(unittest.TestCase):
 
     def upload(self, engagement, filename="Articles.pdf"):
         with mock.patch.object(self.app, "_sql",
-                               lambda s, p=None, tx=None: rows((7,))), \
+                               lambda s, p=None, tx=None: rows() if "FROM document" in s
+                               else rows((7,))), \
                 mock.patch.object(self.app, "_s3") as s3:
             s3.generate_presigned_url.return_value = "https://signed"
             return self.app.upload_url(TENANT, 3, EMAIL, engagement, filename)
@@ -99,7 +100,8 @@ class UploadFilenameTest(unittest.TestCase):
 
     def upload(self, filename, engagement="Meridian"):
         with mock.patch.object(self.app, "_sql",
-                               lambda s, p=None, tx=None: rows((7,))), \
+                               lambda s, p=None, tx=None: rows() if "FROM document" in s
+                               else rows((7,))), \
                 mock.patch.object(self.app, "_s3") as s3:
             s3.generate_presigned_url.return_value = "https://signed"
             return self.app.upload_url(TENANT, 3, EMAIL, engagement, filename)

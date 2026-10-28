@@ -3100,6 +3100,23 @@ def _folder(name):
     return text[:_FOLDER_MAX] or None
 
 
+# A file uploaded under a name the engagement already holds (28 October
+# 2026). The key is the engagement and the file name, and the envelope that
+# starts extraction is named after the key - so the second upload replaced the
+# first one's file and envelope, and the first document never left
+# "extracting". Three of MANTY-TEST-2's did exactly that, paid for.
+#
+# REFUSED, BY DECISION, rather than kept under a key of its own. A new version
+# replaces the old one by removing it first; nothing is read or charged twice.
+ALREADY_HELD = ("%s already holds %s. To upload a new version, remove the one "
+                "there first.")
+
+
+class AlreadyHeld(ValueError):
+    """A 409, not a 400: nothing is wrong with the request, the name is
+    taken. The screen tells the two apart by the status."""
+
+
 def upload_url(tenant_id, workspace_id, email, engagement, filename,
                source_folder=None):
     """A short-lived signed link. The browser uploads straight to S3; the file
@@ -3160,6 +3177,19 @@ def upload_url(tenant_id, workspace_id, email, engagement, filename,
                                               engagement, filename)
     else:
         key = "tenants/%d/docs/%s/%s" % (tenant_id, engagement, filename)
+
+    # ASKED OF THE ROWS, NOT OF STORAGE. This role may not read the docs
+    # bucket, so a HEAD would answer 403 whether the file is there or not.
+    # A rejected row is left out: it is in no list, so nobody could remove
+    # it, and it is never read again. What this cannot see is a file sent
+    # seconds ago whose row the normalizer has not yet written - the screen
+    # refuses a name twice in one upload for that reason.
+    if _sql("SELECT document_id FROM document "
+            "WHERE tenant_id = :t AND s3_key = :k AND state <> 'rejected' "
+            "LIMIT 1",
+            [_p("t", tenant_id), _p("k", key)]).get("records"):
+        raise AlreadyHeld(ALREADY_HELD % (engagement, filename))
+
     url = _s3.generate_presigned_url(
         "put_object",
         Params={"Bucket": DOCS_BUCKET, "Key": key,
@@ -4797,6 +4827,8 @@ def _dispatch(event, context):
         # 409: nothing is wrong with the request - there is simply no room.
         return _reply(409, {"error": str(exc)})
     except workspaces.Refused as exc:
+        return _reply(409, {"error": str(exc)})
+    except AlreadyHeld as exc:
         return _reply(409, {"error": str(exc)})
     except seats.LastAdmin as exc:
         return _reply(409, {"error": str(exc)})
