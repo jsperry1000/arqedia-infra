@@ -187,6 +187,13 @@ main:has(.wide-page) { max-width: 1560px; }
 .rail > a.rail-suggest:hover {
   background: var(--medium); color: #fff; text-decoration: none;
 }
+/* Terms and Conditions, under the suggestions button (27 October 2026):
+   quiet, because it is looked up rather than used. */
+.rail > a.rail-legal {
+  margin: 2px 16px 10px; padding: 4px; border-left: 0;
+  font-size: 12px; color: var(--muted); text-align: center;
+}
+.rail > a.rail-legal:hover { color: var(--deep); background: none; }
 
 /* Settings opens a choice rather than a screen, attached to the rail's right
    edge level with its link. Configure a report used the same panel until it
@@ -1937,6 +1944,9 @@ table.docs.plans-table thead th.quoted .plan-price { font-family: var(--sans); }
   /* The tabs' padding and rule, not the column's foot. */
   .shell .rail > a.rail-suggest {
     margin: 6px 8px; padding: 6px 12px; border-bottom: 0;
+  }
+  .shell .rail > a.rail-legal {
+    margin: 6px 8px; padding: 6px 4px; border-bottom: 0;
   }
   /* The workspaces take a row of their own above the tabs. */
   .shell .rail-workspaces {

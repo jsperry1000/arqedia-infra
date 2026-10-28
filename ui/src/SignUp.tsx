@@ -5,6 +5,7 @@ import { Working } from "./shell";
 import { config } from "./config";
 import { REGIONS, JURISDICTIONS } from "./mock";
 import { TRIAL_DAYS } from "./trial";
+import { AGREEMENT_VERSION, LEGAL } from "./legal";
 
 /**
  * Signing up. Unattended: no queue, no manual approval, no card.
@@ -90,6 +91,10 @@ export function SignUp({ onSignIn, onSignedUp }: {
   const [org, setOrg] = useState("");
   const [jurisdiction, setJurisdiction] = useState(JURISDICTIONS[0]);
   const [region, setRegion] = useState(REGIONS[0].code);
+  // The Agreement, accepted on the last step and nowhere earlier (decided 20
+  // and 27 October 2026): it is what the person agrees to at the moment the
+  // workspace is made, and the server records the version with the tenant.
+  const [terms, setTerms] = useState(false);
 
   // What leaving would leave behind, so the Leave question can say it truly
   // (22.1). `contacted`: begin() has been called, so signup_attempt holds a
@@ -105,7 +110,7 @@ export function SignUp({ onSignIn, onSignedUp }: {
   const ready =
     step === 0 ? /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) && password.length >= 12 :
     step === 1 ? org.trim().length > 0 :
-    step === VERIFY ? code.trim().length === 6 :
+    step === VERIFY ? code.trim().length === 6 && terms :
     true;
 
   function message(err: unknown) {
@@ -136,7 +141,9 @@ export function SignUp({ onSignIn, onSignedUp }: {
     setBusy("Creating your workspace");
     setError("");
     try {
-      await api.signupVerify({ email, code, password, person_name: personName });
+      await api.signupVerify({ email, code, password, person_name: personName,
+                               accept_terms: terms,
+                               agreement_version: AGREEMENT_VERSION });
       setCreated(true);
       // Straight in. Asking somebody to type the password they set ninety
       // seconds ago, on the screen where they set it, is a checkpoint with
@@ -347,6 +354,20 @@ export function SignUp({ onSignIn, onSignedUp }: {
             <p className="muted small">
               It lasts fifteen minutes. Asking for another voids the first.
             </p>
+            {/* The pages open in a new tab, so the code typed above is not
+                lost reading them. */}
+            <label className="affirm">
+              <input type="checkbox" checked={terms}
+                     onChange={(e) => setTerms(e.target.checked)} />
+              <span>
+                I accept the{" "}
+                <a href={LEGAL.terms} target="_blank" rel="noopener">Terms of Service</a>
+                {" "}and{" "}
+                <a href={LEGAL.privacy} target="_blank" rel="noopener">Privacy Policy</a>,
+                {" "}including the{" "}
+                <a href={LEGAL.refunds} target="_blank" rel="noopener">Refund Policy</a>.
+              </span>
+            </label>
           </>
         )}
 

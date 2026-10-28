@@ -3,6 +3,7 @@ import { signIn } from "aws-amplify/auth";
 import { useSearchParams } from "react-router-dom";
 import { api } from "./api";
 import logoDeep from "../../brand/logo-deep.svg";
+import { AGREEMENT_VERSION, LEGAL } from "./legal";
 
 /**
  * Accepting a seat somebody reserved (10.7).
@@ -45,11 +46,14 @@ export function InvitationView({ signedIn, who, onSignOut, onDone }: {
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [again, setAgain] = useState("");
+  // An invited member accepts the Agreement as a founder does at sign-up
+  // (decided 27 October 2026): the account is made here, so this is where.
+  const [terms, setTerms] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const mismatch = again.length > 0 && password !== again;
-  const ready = !!email && !!token && password.length > 0 && !mismatch;
+  const ready = !!email && !!token && password.length > 0 && !mismatch && terms;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -57,7 +61,8 @@ export function InvitationView({ signedIn, who, onSignOut, onDone }: {
     setBusy(true);
     try {
       await api.acceptInvitation({
-        email, token, password, person_name: name.trim() || undefined });
+        email, token, password, person_name: name.trim() || undefined,
+        accept_terms: terms, agreement_version: AGREEMENT_VERSION });
       // Straight in, as signing up is: asking somebody to type the password
       // they set ninety seconds ago, on the screen where they set it, is a
       // checkpoint with nothing behind it.
@@ -126,6 +131,18 @@ export function InvitationView({ signedIn, who, onSignOut, onDone }: {
             <p className="muted small" style={{ margin: 0 }}>
               {mismatch ? "The two passwords are not the same." : POLICY}
             </p>
+            <label className="affirm">
+              <input type="checkbox" checked={terms}
+                     onChange={(e) => setTerms(e.target.checked)} />
+              <span className="small">
+                I accept the{" "}
+                <a href={LEGAL.terms} target="_blank" rel="noopener">Terms of Service</a>
+                {" "}and{" "}
+                <a href={LEGAL.privacy} target="_blank" rel="noopener">Privacy Policy</a>,
+                {" "}including the{" "}
+                <a href={LEGAL.refunds} target="_blank" rel="noopener">Refund Policy</a>.
+              </span>
+            </label>
           </>
         )}
 

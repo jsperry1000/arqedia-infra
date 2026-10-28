@@ -1,0 +1,15 @@
+{
+  "_comment": [
+    "The Agreement's version, and where each of its three documents lives.",
+    "Read at build by site/legal-pages.ts (the pages at /terms, /privacy and /refunds) and by ui/src/legal.ts (the version a person accepts).",
+    "The two Lambdas that record an acceptance cannot read this file, so each holds AGREEMENT_VERSION as a constant; tests/test_legal_source.py fails if either differs from agreement_version here.",
+    "A new version is a new set of files in docs/legal and a new number here. A version already in effect is never edited: acceptances name it."
+  ],
+  "agreement_version": 1,
+  "effective": "2026-10-27",
+  "documents": {
+    "terms": { "path": "docs/legal/terms_v1.md", "title": "Terms of Service" },
+    "privacy": { "path": "docs/legal/privacy_v1.md", "title": "Privacy Policy" },
+    "refunds": { "path": "docs/legal/refunds_v1.md", "title": "Refund Policy" }
+  }
+}

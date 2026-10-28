@@ -24,19 +24,28 @@ CLUSTER_ARN = "arn:aws:rds:us-east-2:%s:cluster:arqedia-dev-aurora" % ACCOUNT
 DATABASE = "arqedia"
 
 # Every table carrying tenant_id, read from information_schema on 20 October
-# 2026. A table added since is missed here: step 2 re-reads the list and stops
-# if it differs.
+# 2026, and again on 27 October 2026 for the workspace tables (migrations 040,
+# 045, 047) and terms_acceptance (049). A table added since is missed here:
+# step 2 re-reads the list and stops if it differs.
 TENANT_TABLES = [
     "claim_evidence", "claim", "memo_source", "memo_rewrite", "memo",
     "extracted_value", "document", "engagement",
+    "seat_workspace", "workspace_deletion", "workspace",
     "config_section_field", "config_section", "config_template",
     "config_type_schema", "config_field", "config_schema",
     "config_document_type", "config_category", "config_revision",
     "pack_offer", "meter_price",
     "seat_invitation", "seat", "topup_request",
     "wallet_allocation", "wallet_bucket", "wallet_ledger",
-    "paddle_event", "subscription", "tenant_domain", "tenant",
+    "paddle_event", "terms_acceptance", "subscription", "tenant_domain",
+    "tenant",
 ]
+
+# Carries no tenant_id: an invitation's workspaces, found through the
+# invitation, which does.
+INVITATION_WORKSPACES = (
+    "SELECT COUNT(*) FROM seat_invitation_workspace WHERE invitation_id IN "
+    "(SELECT invitation_id FROM seat_invitation WHERE tenant_id = :t)")
 
 BUCKETS = {
     "docs": ["tenants/{t}/"],
@@ -66,9 +75,14 @@ def main(tenant_id):
     out["tables_unlisted"] = sorted(set(live) - set(TENANT_TABLES))
 
     for table in TENANT_TABLES:
+        if table not in live:   # terms_acceptance, until 049 is applied
+            out["aurora"][table] = None
+            continue
         out["aurora"][table] = sql(
             "SELECT COUNT(*) FROM `%s` WHERE tenant_id = :t" % table,
             t)[0][0]["longValue"]
+    out["aurora"]["seat_invitation_workspace"] = sql(
+        INVITATION_WORKSPACES, t)[0][0]["longValue"]
 
     tenant = sql("SELECT name, plan FROM tenant WHERE tenant_id = :t", t)
     out["tenant_name"] = tenant[0][0].get("stringValue") if tenant else None

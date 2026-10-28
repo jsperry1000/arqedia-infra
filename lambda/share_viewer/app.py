@@ -119,6 +119,24 @@ class EmailNotSent(Exception):
 DEVICE_HEADER = "x-arqedia-device"
 DEVICE_MONTHS = 6
 DEVICE_CAP = 10
+
+# THE AGREEMENT'S VERSION (27 October 2026), as lambda/signup holds it: the
+# Terms of Service and Privacy Policy a recipient accepts on registering.
+# config/legal.json states it for the site and the screen; this function
+# cannot read that file, so tests/test_legal_source.py fails if they differ.
+# A request naming any other version is refused, and the version accepted is
+# kept on the viewer account beside terms_accepted_at.
+AGREEMENT_VERSION = 1
+
+
+def _check_terms(body):
+    if body.get("accept_terms") is not True:
+        raise ValueError("Registering means accepting the terms and privacy "
+                         "policy.")
+    version = body.get("agreement_version")
+    if isinstance(version, bool) or version != AGREEMENT_VERSION:
+        raise ValueError("The terms have changed since this page was opened. "
+                         "Reload it, read them, and accept them again.")
 DEVICE_FRESH_MINUTES = 15
 DEVICE_NEEDED = ("To open this on this device, confirm it's you. We'll email "
                  "a code to the address it was shared with.")
@@ -691,9 +709,7 @@ def _register(grant, body, device=None):
     OR A FRESH DEVICE. A browser whose device code was entered in the last
     fifteen minutes has just proved the same inbox, and is not made to prove
     it twice (decision of 7 October 2026). Any other needs the code."""
-    if body.get("accept_terms") is not True:
-        raise ValueError("Registering means accepting the terms and privacy "
-                         "policy.")
+    _check_terms(body)
     password = str(body.get("password") or "")
     if not password:
         raise ValueError("Choose a password.")
@@ -839,9 +855,7 @@ def _confirm(grant, body):
     registered: every grant they hold is recomputed to six months from its
     own send, unless the tenant set its date (section 6, settled 1 October
     2026)."""
-    if body.get("accept_terms") is not True:
-        raise ValueError("Registering means accepting the terms and privacy "
-                         "policy.")
+    _check_terms(body)
     email = grant["recipient_email"]
     try:
         verified = _cognito.verify_software_token(
@@ -877,8 +891,9 @@ def _confirm(grant, body):
     opted = body.get("marketing_opt_in") is True
     names = {"#r": "registered"}
     values = {":y": True, ":at": at, ":sub": sub, ":opt": opted,
-              ":email": email}
+              ":email": email, ":tv": AGREEMENT_VERSION}
     update = ("SET #r = :y, registered_at = :at, terms_accepted_at = :at, "
+              "terms_version = :tv, "
               "cognito_sub = :sub, marketing_opt_in = :opt, email = :email, "
               "verified_at = if_not_exists(verified_at, :at), "
               "created_at = if_not_exists(created_at, :at)")
