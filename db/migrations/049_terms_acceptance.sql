@@ -2,6 +2,7 @@
 --
 -- Who accepted the Agreement, which version, and when (27 October 2026).
 -- PROPOSED, and not applied.
+-- Applied on dev 28 October 2026 16:45:33 UTC (schema_migration).
 --
 -- WHY. The Terms of Service, Privacy Policy and Refund Policy are published
 -- at version 1 (docs/legal), and it was decided on 27 October 2026 that each
