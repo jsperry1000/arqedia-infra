@@ -485,6 +485,10 @@ export type Memo = {
     source: "update" | null;
     config_revision: number | null;
   }[];
+  /** The revision it was written under. */
+  config_revision: number | null;
+  /** What its sources hold under fields that revision does not have. */
+  not_drawn_on: NotDrawnOn[];
 };
 
 // One section rewritten by the model at a person's prompt. output_text is
@@ -614,6 +618,22 @@ export type DocumentDetail = {
    *  ledger line paid for filing it. Both are read live by the server. */
   memos: number;
   charged: boolean;
+  /** The revision it was read under, and the one in use now. */
+  read_under: number | null;
+  revision_in_use: number;
+  /** Fields of its values that the revision in use does not have. Held, and
+   *  drawn on by no memorandum: a value keeps the key it was read under, and
+   *  composition binds by key. */
+  not_in_use: string[];
+};
+
+/** Values a memo's sources hold under fields its revision does not have,
+ *  and so did not draw on. One entry per field, labelled as it was read. */
+export type NotDrawnOn = {
+  field_id: string;
+  label: string;
+  documents: number;
+  values: number;
 };
 
 export type Settings = {

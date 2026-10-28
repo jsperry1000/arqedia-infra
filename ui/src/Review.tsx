@@ -2122,11 +2122,35 @@ export function EngagementView({ id, onBack, onMemo }: {
   );
 }
 
-/** What one document yielded, and what its type called for but did not. */
+/** What one document yielded, and what its type called for but did not.
+ *
+ *  A VALUE WHOSE FIELD IS GONE FROM THE CONFIGURATION IN USE is listed apart,
+ *  under its own heading. It was read under the revision then in use and keeps
+ *  that field's key for ever; a later revision that dropped the field, or
+ *  replaced it under another key, leaves it held and drawn on by no
+ *  memorandum. Shown, never hidden - nothing recorded is discarded - and said
+ *  plainly, because a value in the list reads as a value in use.
+ *
+ *  The count in the heading is unchanged: it is what was found of what was
+ *  looked for, and both of those belong to the revision it was read under. */
 function ValuePanel({ detail, onClose }: {
   detail: DocumentDetail;
   onClose: () => void;
 }) {
+  const gone = new Set(detail.not_in_use ?? []);
+  const inUse = detail.values.filter((v) => !gone.has(v.field_id));
+  const left = detail.values.filter((v) => gone.has(v.field_id));
+  const row = (v: DocumentDetail["values"][number], i: number) => (
+    <tr key={i}>
+      <td className="muted">{v.label}</td>
+      <td>{v.value}</td>
+      <td className="ref">
+        {v.locator_kind && v.locator_kind !== "none"
+          ? `${v.locator_kind} ${v.locator_index}`
+          : "—"}
+      </td>
+    </tr>
+  );
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <aside className="panel" onClick={(e) => e.stopPropagation()}>
@@ -2142,20 +2166,23 @@ function ValuePanel({ detail, onClose }: {
           <p className="muted">Nothing was extracted from this document.</p>
         )}
         <table>
-          <tbody>
-            {detail.values.map((v, i) => (
-              <tr key={i}>
-                <td className="muted">{v.label}</td>
-                <td>{v.value}</td>
-                <td className="ref">
-                  {v.locator_kind && v.locator_kind !== "none"
-                    ? `${v.locator_kind} ${v.locator_index}`
-                    : "\u2014"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
+          <tbody>{inUse.map(row)}</tbody>
         </table>
+
+        {left.length > 0 && (
+          <>
+            <h4>Not in the configuration in use</h4>
+            <p className="why warn">
+              Read under revision {detail.read_under ?? "?"}. Revision{" "}
+              {detail.revision_in_use}, in use now, has no such{" "}
+              {gone.size === 1 ? "field" : "fields"}, so no memorandum draws
+              on {left.length === 1 ? "this value" : "these values"}.
+            </p>
+            <table>
+              <tbody>{left.map(row)}</tbody>
+            </table>
+          </>
+        )}
 
         {detail.missing.length > 0 && (
           <>

@@ -1052,6 +1052,28 @@ export function MemoView({ memoId, onBack, onOpen }: {
         </p>
       )}
 
+      {/* What its sources hold and it did not draw on: values read under a
+          field its configuration revision no longer has. Composition binds
+          by key, so they were left out without a word - this is the word.
+          Worked out by the server from the memo's own revision and sources,
+          so it says the same thing every time it is read. */}
+      {mode === "read" && (memo.not_drawn_on ?? []).length > 0 && (() => {
+        const held = memo.not_drawn_on;
+        const values = held.reduce((n, f) => n + f.values, 0);
+        return (
+          <p className="why warn">
+            {values} {values === 1 ? "value" : "values"} in this memo&rsquo;s
+            sources {values === 1 ? "was" : "were"} not drawn on: configuration
+            revision {memo.config_revision ?? "?"}, which it was written under,
+            has no field for{" "}
+            {held.map((f) => `${f.label} (${f.documents} ${
+              f.documents === 1 ? "document" : "documents"})`).join(", ")}.
+            They are still held, and each document&rsquo;s values list
+            shows them.
+          </p>
+        );
+      })()}
+
       {mode === "rewrite" && (
         <p className="muted small edit-note">
           Write a prompt under any section and press Go. Each rewrite appears
