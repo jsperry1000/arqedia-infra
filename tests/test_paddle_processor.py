@@ -31,7 +31,8 @@ def load_processor():
     exceptions.ClientError = type("ClientError", (Exception,), {})
     botocore.exceptions = exceptions
     env = {"CLUSTER_ARN": "arn:cluster", "SECRET_ARN": "arn:secret",
-           "DATABASE": "arqedia", "PADDLE_PRICE_BASE": BASE,
+           "DATABASE": "arqedia", "PADDLE_PRICE_SOLO": "pri_solo",
+           "PADDLE_PRICE_BASE": BASE,
            "PADDLE_PRICE_BUSINESS": BUSINESS, "PADDLE_PRICE_TOPUP": TOPUP}
     modules = {"boto3": boto3, "botocore": botocore,
                "botocore.exceptions": exceptions}

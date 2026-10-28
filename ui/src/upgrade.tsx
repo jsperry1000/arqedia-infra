@@ -67,6 +67,9 @@ export const ENTERPRISE_COLUMN = {
    *  release (CLAUDE.md, Money), so there is no number to render. */
   price: "negotiated",
   seats: "as contracted",
+  /** Admin / Member Management: Yes, as on every plan of more than one
+   *  seat (config/plans.json, member_management_note). */
+  member_management: "Yes",
   monthly_credit: "as contracted",
   shares: "as contracted",
   sections: "50 by default",

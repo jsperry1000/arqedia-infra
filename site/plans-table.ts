@@ -224,6 +224,11 @@ export function renderPlansTable(file = PLANS_FILE): string {
       header(p) + (i === plans.length - 1 ? '</tr></thead>' : '')),
     '    <tbody>',
     row('Seats', across((p) => cell(p.seat_count, plain, ''))),
+    // Not a field (28 October 2026): No on a plan of one seat, Yes on every
+    // other, Enterprise's "as contracted" included. See
+    // member_management_note in the file.
+    row('Admin / Member Management',
+        across((p) => (p.seat_count === 1 ? 'No' : 'Yes'))),
     row('Monthly credit toward metered use',
         across((p) => cell(p.monthly_credit_cents, money2, ''))),
     // Null is unlimited here, as migration 018 says - not zero, and not

@@ -43,6 +43,7 @@ DATABASE = os.environ["DATABASE"]
 # Price id to plan.plan_key. The price ids come from config/paddle/sandbox.json
 # through Terraform.
 PLAN_PRICES = {
+    os.environ["PADDLE_PRICE_SOLO"]: "solo",
     os.environ["PADDLE_PRICE_BASE"]: "base",
     os.environ["PADDLE_PRICE_BUSINESS"]: "business",
 }
