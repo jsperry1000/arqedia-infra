@@ -440,6 +440,9 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
 - **`signup_attempt.ip` retention**, and the privacy-policy wording for it.
   **Before real customer data (20 October 2026):** a concrete retention
   limit, and wording for it in the Terms/Privacy draft of #318.
+  **Decided 27 October 2026:** kept indefinitely, with share, view and
+  download records. The Privacy Policy states no period for either
+  (`docs/ARQEDIA_decisions_2026-10-27.md` §5).
 - **Does CI build the app.** `web/` is committed output; the marketing site
   builds in CI. Either bring them into line or record why not.
 - **Recipient registration to download** a shared memorandum: gate it as a lead
