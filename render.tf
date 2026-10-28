@@ -22,6 +22,30 @@ resource "aws_s3_bucket_versioning" "brand" {
   }
 }
 
+# As the data buckets (storage.tf): earlier versions go after 7 days.
+resource "aws_s3_bucket_lifecycle_configuration" "brand" {
+  bucket     = aws_s3_bucket.brand.id
+  depends_on = [aws_s3_bucket_versioning.brand]
+
+  rule {
+    id     = "earlier-versions-7-days"
+    status = "Enabled"
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 7
+    }
+
+    expiration {
+      expired_object_delete_marker = true
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "brand" {
   bucket = aws_s3_bucket.brand.id
   rule {
