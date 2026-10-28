@@ -198,67 +198,12 @@ resource "aws_cognito_user_pool_client" "web" {
 }
 
 # --- Users -----------------------------------------------------------------
-# Two tenants: one firm on its own, one firm with two people sharing a
-# workspace. Tests isolation between firms and collaboration within one.
+# None. Every account comes from POST /signup or an accepted invitation.
 #
-# All three are admins. Until Component 9 there is no way to create a member,
-# so nothing is refused - but the boundary is real rather than added later.
-
-resource "aws_cognito_user" "testco_a" {
-  user_pool_id = aws_cognito_user_pool.main.id
-  username     = "sperry@vmac.com"
-
-  attributes = {
-    email              = "sperry@vmac.com"
-    email_verified     = true
-    name               = "S Perry"
-    "custom:tenant_id" = "1"
-    "custom:role"      = "admin"
-  }
-
-  # Attributes are set at creation and ignored thereafter. tenant_id is
-  # immutable, and the provider reads it back without the custom: prefix - so
-  # every plan would show a phantom change and every apply would fail against
-  # Cognito refusing to update it. Moving a user between tenants means
-  # deleting and recreating, which is the correct amount of friction.
-  lifecycle {
-    ignore_changes = [attributes]
-  }
-}
-
-resource "aws_cognito_user" "testco_b_1" {
-  user_pool_id = aws_cognito_user_pool.main.id
-  username     = "joeschmoe1000@gmail.com"
-
-  attributes = {
-    email              = "joeschmoe1000@gmail.com"
-    email_verified     = true
-    name               = "Joe Schmoe"
-    "custom:tenant_id" = "2"
-    "custom:role"      = "admin"
-  }
-
-  lifecycle {
-    ignore_changes = [attributes]
-  }
-}
-
-resource "aws_cognito_user" "testco_b_2" {
-  user_pool_id = aws_cognito_user_pool.main.id
-  username     = "jonathanscottperry@gmail.com"
-
-  attributes = {
-    email              = "jonathanscottperry@gmail.com"
-    email_verified     = true
-    name               = "Jonathan Perry"
-    "custom:tenant_id" = "2"
-    "custom:role"      = "admin"
-  }
-
-  lifecycle {
-    ignore_changes = [attributes]
-  }
-}
+# Three test users were declared here until 28 October 2026. Deleted by hand
+# from the pool, they were recreated by the next apply, and Cognito mailed
+# each a temporary password, because a user made here is not suppressed the
+# way signup's are. A user in this file is one that cannot be deleted.
 
 output "user_pool_id" {
   value = aws_cognito_user_pool.main.id
