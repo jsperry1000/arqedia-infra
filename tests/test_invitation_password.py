@@ -92,7 +92,8 @@ class InvitationPasswordTest(unittest.TestCase):
                 mock.patch.object(self.app, "_idp", idp), \
                 mock.patch.object(self.app, "_record", lambda *a, **k: None):
             reply = self.app.accept(EVENT, {
-                "email": INVITEE, "token": TOKEN, "password": password})
+                "email": INVITEE, "token": TOKEN, "password": password,
+                "accept_terms": True, "agreement_version": 1})
         return reply, json.loads(reply["body"]), db, idp
 
     def test_a_short_password_is_400_and_no_seat_is_written(self):

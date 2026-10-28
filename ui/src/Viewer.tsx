@@ -5,6 +5,7 @@ import {
   type ViewerCredential, type ViewerPage, type ViewerShare,
 } from "./api";
 import { config } from "./config";
+import { AGREEMENT_VERSION, LEGAL } from "./legal";
 import logoWhite from "../../brand/logo-white.svg";
 
 /**
@@ -487,7 +488,8 @@ function Register({ grantId, token, page, onDone, onCancel }: {
     try {
       setSetup(await viewerApi.register(grantId, token, {
         email_code: needsCode ? emailCode.trim() : "", password,
-        accept_terms: terms, marketing_opt_in: marketing }));
+        accept_terms: terms, agreement_version: AGREEMENT_VERSION,
+        marketing_opt_in: marketing }));
     } catch (err) {
       // Only the server's own "a code is needed" - never any 400, which
       // would turn a rejected password into a request for a code.
@@ -510,7 +512,7 @@ function Register({ grantId, token, page, onDone, onCancel }: {
     try {
       const done = await viewerApi.confirm(grantId, token, {
         session: setup.session, code: code.trim(), accept_terms: terms,
-        marketing_opt_in: marketing });
+        agreement_version: AGREEMENT_VERSION, marketing_opt_in: marketing });
       onDone(done.id_token, done.expires_at ?? page.expires_at);
     } catch (err) {
       setError(String((err as Error).message));
@@ -587,13 +589,17 @@ function Register({ grantId, token, page, onDone, onCancel }: {
             <input type="password" value={password}
                    onChange={(e) => setPassword(e.target.value)} />
           </label>
-          {/* No link: the terms and privacy policy are not published yet,
-              and a link to nothing is worse than none. Held as open in the
-              share-recipient report. */}
+          {/* Linked since the pages exist (27 October 2026). They open in a
+              new tab, so the form keeps what has been typed. */}
           <label className="affirm">
             <input type="checkbox" checked={terms}
                    onChange={(e) => setTerms(e.target.checked)} />
-            <span>I accept ARQEDIA&rsquo;s terms of use and privacy policy.</span>
+            <span>
+              I accept ARQEDIA&rsquo;s{" "}
+              <a href={LEGAL.terms} target="_blank" rel="noopener">Terms of Service</a>
+              {" "}and{" "}
+              <a href={LEGAL.privacy} target="_blank" rel="noopener">Privacy Policy</a>.
+            </span>
           </label>
           <label className="affirm">
             <input type="checkbox" checked={marketing}

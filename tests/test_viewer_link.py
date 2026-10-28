@@ -226,7 +226,9 @@ class SignupLinkTest(Base):
         with mock.patch.object(self.signup, "_sql", db.sql):
             return self.signup.verify(EVENT, {"email": "a@firm.com",
                                               "code": "123456",
-                                              "password": "pw"})
+                                              "password": "pw",
+                                              "accept_terms": True,
+                                              "agreement_version": 1})
 
     def test_signup_links_an_existing_viewer_account(self):
         reply = self.verify()
@@ -288,7 +290,8 @@ class InvitationLinkTest(Base):
                 mock.patch.object(self.signup, "_record", lambda *a, **k: None):
             reply = self.signup.accept(EVENT, {
                 "email": "newcomer@firm.com", "token": token,
-                "password": "Zq7wTr4mPl9x"})
+                "password": "Zq7wTr4mPl9x",
+                "accept_terms": True, "agreement_version": 1})
         self.assertEqual(reply["statusCode"], 200)
         values = self.signup._ddb.update_item.call_args.kwargs[
             "ExpressionAttributeValues"]

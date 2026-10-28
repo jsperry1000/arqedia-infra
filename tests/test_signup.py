@@ -156,7 +156,9 @@ class SignupTest(unittest.TestCase):
         with mock.patch.object(self.signup, "_sql", db.sql):
             return self.signup.verify(EVENT, {"email": "a@firm.com",
                                               "code": "123456",
-                                              "password": "pw"})
+                                              "password": "pw",
+                                              "accept_terms": True,
+                                              "agreement_version": 1})
 
     def test_verify_copies_plan_and_intent_to_the_tenant(self):
         db = FakeSignupDb(pending=self.pending("business", "subscribe"))
@@ -206,7 +208,9 @@ class AllowlistTest(unittest.TestCase):
         with mock.patch.object(self.signup, "_sql", db.sql):
             return self.signup.verify(EVENT, {"email": email,
                                               "code": "123456",
-                                              "password": "pw"})
+                                              "password": "pw",
+                                              "accept_terms": True,
+                                              "agreement_version": 1})
 
     def test_an_invited_address_is_admitted(self):
         db = FakeSignupDb(allow=("a@firm.com",))
@@ -287,7 +291,9 @@ class FreeMailClaimTest(unittest.TestCase):
         with mock.patch.object(self.signup, "_sql", db.sql):
             return self.signup.verify(EVENT, {"email": email,
                                               "code": "123456",
-                                              "password": "pw"})
+                                              "password": "pw",
+                                              "accept_terms": True,
+                                              "agreement_version": 1})
 
     def test_a_gmail_signup_creates_a_tenant_and_writes_no_claim(self):
         db = FakeSignupDb(allow=("a@gmail.com",),
