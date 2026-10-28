@@ -2,6 +2,15 @@
   "environment": "sandbox",
   "products": [
     {
+      "name": "ARQEDIA Solo",
+      "product_id": "pro_01m61wfrfmntea644z6x4qmw8a",
+      "price_id": "pri_01m61wfrgv8ze6tkacx2vsfw92",
+      "amount": "800",
+      "currency": "USD",
+      "billing": "month",
+      "quantity": { "min": 1, "max": 1 }
+    },
+    {
       "name": "ARQEDIA Base",
       "product_id": "pro_01m2nqvjk8cxpj67ypjvedwhfj",
       "price_id": "pri_01m2nqvjr30had25yf55t1ppka",

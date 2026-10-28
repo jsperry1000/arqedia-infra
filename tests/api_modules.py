@@ -21,6 +21,7 @@ ENV = {
     "DATABASE": "arqedia",
     "PADDLE_API_BASE": "https://sandbox-api.paddle.test",
     "PADDLE_API_KEY_SECRET_ARN": "arn:paddle-key",
+    "PADDLE_PRICE_SOLO": "pri_solo",
     "PADDLE_PRICE_BASE": "pri_base", "PADDLE_PRICE_BUSINESS": "pri_business",
     "PADDLE_PRICE_TOPUP": "pri_topup",
 }

@@ -86,8 +86,9 @@ class PriceAgreementTest(unittest.TestCase):
                     % (plan["plan_key"], plan["monthly_price_cents"],
                        self.products[name]["amount"]))
                 checked += 1
-        self.assertEqual(checked, 2,
-                         "expected Base and Small Business to be checked")
+        self.assertEqual(checked, 3,
+                         "expected Solo, Base and Small Business to be "
+                         "checked")
 
     def test_a_priced_plan_bills_monthly(self):
         """A plan billed one_time would take one payment and renew nothing."""
@@ -278,10 +279,13 @@ class ShareOverageTest(unittest.TestCase):
     Paddle's."""
 
     MIGRATION = ROOT / "db" / "migrations" / "036_share_allowance.sql"
+    # Solo's, added 28 October 2026.
+    SOLO = ROOT / "db" / "migrations" / "050_plan_solo.sql"
 
     def test_the_published_overage_is_the_one_the_migration_writes(self):
         doc = json.loads(PLANS.read_text(encoding="utf-8"))
-        sql = self.MIGRATION.read_text(encoding="utf-8")
+        sql = (self.MIGRATION.read_text(encoding="utf-8")
+               + self.SOLO.read_text(encoding="utf-8"))
         written = {m.group(1): int(m.group(2)) for m in re.finditer(
             r"SELECT NULL, 'share_overage_(\w+)', (\d+)", sql)}
         self.assertEqual(doc["share_overage_cents"], written)
@@ -343,6 +347,49 @@ class WorkspaceCountTest(unittest.TestCase):
                 with self.subTest(plan=plan["plan_key"]):
                     self.assertEqual(plan["workspace_count"],
                                      written[plan["plan_key"]])
+
+
+class SoloPlanTest(unittest.TestCase):
+    """Solo, and Base at three seats (28 October 2026). Published here,
+    written by migration 050, and copied into signup.PLAN_SEATS - three
+    places, compared."""
+
+    MIGRATION = ROOT / "db" / "migrations" / "050_plan_solo.sql"
+
+    def plan(self, key):
+        return next(p for p in plans() if p["plan_key"] == key)
+
+    def test_the_solo_row_is_the_published_one(self):
+        sql = self.MIGRATION.read_text(encoding="utf-8")
+        found = re.search(
+            r"SELECT 'solo', '(\w+)', (\d+), (\d+), (\d+), (\d+), "
+            r"(\d+), (\d+), 1", sql)
+        self.assertIsNotNone(found, "050 does not insert the solo row")
+        p = self.plan("solo")
+        self.assertEqual(
+            (found.group(1),) + tuple(int(g) for g in found.groups()[1:]),
+            (p["name"], p["seat_count"], p["monthly_price_cents"],
+             p["monthly_credit_cents"], p["share_allowance"],
+             p["sections_per_template"], p["workspace_count"]))
+
+    def test_base_seats_are_the_published_ones(self):
+        sql = self.MIGRATION.read_text(encoding="utf-8")
+        found = re.search(
+            r"UPDATE plan SET seat_count = (\d+) WHERE plan_key = 'base'",
+            sql)
+        self.assertEqual(int(found.group(1)), self.plan("base")["seat_count"])
+
+    def test_signup_seats_agree_with_the_file(self):
+        """The invitation route's copy, read from the source as
+        TRIAL_DAYS is."""
+        text = (ROOT / "lambda" / "signup" / "app.py").read_text(
+            encoding="utf-8")
+        found = re.search(r"^PLAN_SEATS = (\{.*\})$", text, re.M)
+        self.assertIsNotNone(found, "signup/app.py has no PLAN_SEATS")
+        self.assertEqual(
+            json.loads(found.group(1)),
+            {p["plan_key"]: p["seat_count"] for p in plans()
+             if p["paddle_price_name"]})
 
 
 class TopUpIncrementTest(unittest.TestCase):

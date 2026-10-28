@@ -154,6 +154,14 @@ EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # never shown.
 AGREEMENT_VERSION = 1
 
+# SEATS EACH PLAN BUYS, for accepting an invitation. A copy of
+# plan.seat_count, which this function does not read: it bundles
+# lambda/signup only and asks tenant.plan, as it always has.
+# tests/test_plans_source.py fails if this and config/plans.json differ.
+# Base went from 2 to 3 and Solo was added on 28 October 2026 (migration
+# 050). An unknown plan gets the smallest, as seats.seats_bought does.
+PLAN_SEATS = {"solo": 1, "base": 3, "business": 5}
+
 TERMS_REQUIRED = ("Accept the Terms of Service and Privacy Policy to "
                   "continue.")
 TERMS_CHANGED = ("The terms have changed since this page was opened. Reload "
@@ -1046,7 +1054,8 @@ def accept(event, body):
     plan_rows = _sql("SELECT plan FROM tenant WHERE tenant_id = :t",
                      [_p("t", tenant_id)]).get("records", [])
     plan = ((_col(plan_rows[0], 0) if plan_rows else "base") or "base").strip().lower()
-    bought = {"base": 2, "business": 5, "small_business": 5}.get(plan, 2)
+    plan = "business" if plan == "small_business" else plan
+    bought = PLAN_SEATS.get(plan, min(PLAN_SEATS.values()))
 
     taken = _col(_sql("SELECT COUNT(*) FROM seat WHERE tenant_id = :t",
                       [_p("t", tenant_id)])["records"][0], 0)

@@ -38,6 +38,7 @@ API_KEY_SECRET_ARN = os.environ["PADDLE_API_KEY_SECRET_ARN"]
 # plan.plan_key to Paddle price id, from config/paddle/sandbox.json through
 # Terraform.
 PLAN_PRICES = {
+    "solo": os.environ["PADDLE_PRICE_SOLO"],
     "base": os.environ["PADDLE_PRICE_BASE"],
     "business": os.environ["PADDLE_PRICE_BUSINESS"],
 }

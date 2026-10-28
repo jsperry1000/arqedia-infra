@@ -73,6 +73,7 @@ locals {
   paddle_prices  = { for p in local.paddle_catalog.products : p.name => p.price_id }
 
   paddle_price_env = {
+    PADDLE_PRICE_SOLO     = local.paddle_prices["ARQEDIA Solo"]
     PADDLE_PRICE_BASE     = local.paddle_prices["ARQEDIA Base"]
     PADDLE_PRICE_BUSINESS = local.paddle_prices["ARQEDIA Small Business"]
     PADDLE_PRICE_TOPUP    = local.paddle_prices["ARQEDIA Top-up"]

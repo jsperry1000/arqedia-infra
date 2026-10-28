@@ -97,6 +97,11 @@ const ROWS: PlanRow[] = [
   { label: "Seats",
     of: (p) => p.seat_count,
     enterprise: ENTERPRISE_COLUMN.seats },
+  // No on a plan of one seat, Yes otherwise, as the pricing page renders
+  // it (config/plans.json, member_management_note).
+  { label: "Admin / Member Management",
+    of: (p) => (p.seat_count === 1 ? "No" : "Yes"),
+    enterprise: ENTERPRISE_COLUMN.member_management },
   // PACK-02: in the app only until the pricing page is redone before launch.
   // A dash for null, as the limits below: a plan with no number set has no
   // limit, which is not the same as none.
