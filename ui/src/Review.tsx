@@ -515,6 +515,11 @@ export function EngagementView({ id, onBack, onMemo }: {
     // a pasted address - is watching an engagement nothing is being written
     // to (17.3). It says so and moves, rather than polling for ever.
     let landedIn = id;
+    // Names stored by this upload, and the files refused for a name already
+    // taken (28 October 2026). A refusal is one file's, so the rest go on and
+    // every refusal is said together at the end.
+    const sent = new Set<string>();
+    const taken: string[] = [];
 
     for (let i = 0; i < list.length; i++) {
       setBusy(`Uploading ${i + 1} of ${list.length} \u2014 ${list[i].name}`);
@@ -522,14 +527,20 @@ export function EngagementView({ id, onBack, onMemo }: {
         // BOTH NAMES COME BACK (17.4). The engagement decides which screen
         // this is, and the filename is what the row will carry - neither is
         // worked out here any more.
-        const put = await api.upload(id, list[i]);
+        const put = await api.upload(id, list[i], sent);
+        sent.add(put.filename);
         landedIn = put.engagement || id;
         setExpected((e) => ({ names: [...(e?.names ?? []), put.filename],
                               known: e?.known ?? known }));
       } catch (err) {
+        if (statusOf(err) === 409) {
+          taken.push(reason(err));
+          setError(taken.join(" "));
+          continue;
+        }
         // A failure used to leave "Uploading" on screen indefinitely, which
         // reads as a hang rather than as the refusal it is.
-        setError(String((err as Error)?.message ?? err));
+        setError([...taken, String((err as Error)?.message ?? err)].join(" "));
         setBusy("");
         refresh();
         return;
@@ -2111,11 +2122,35 @@ export function EngagementView({ id, onBack, onMemo }: {
   );
 }
 
-/** What one document yielded, and what its type called for but did not. */
+/** What one document yielded, and what its type called for but did not.
+ *
+ *  A VALUE WHOSE FIELD IS GONE FROM THE CONFIGURATION IN USE is listed apart,
+ *  under its own heading. It was read under the revision then in use and keeps
+ *  that field's key for ever; a later revision that dropped the field, or
+ *  replaced it under another key, leaves it held and drawn on by no
+ *  memorandum. Shown, never hidden - nothing recorded is discarded - and said
+ *  plainly, because a value in the list reads as a value in use.
+ *
+ *  The count in the heading is unchanged: it is what was found of what was
+ *  looked for, and both of those belong to the revision it was read under. */
 function ValuePanel({ detail, onClose }: {
   detail: DocumentDetail;
   onClose: () => void;
 }) {
+  const gone = new Set(detail.not_in_use ?? []);
+  const inUse = detail.values.filter((v) => !gone.has(v.field_id));
+  const left = detail.values.filter((v) => gone.has(v.field_id));
+  const row = (v: DocumentDetail["values"][number], i: number) => (
+    <tr key={i}>
+      <td className="muted">{v.label}</td>
+      <td>{v.value}</td>
+      <td className="ref">
+        {v.locator_kind && v.locator_kind !== "none"
+          ? `${v.locator_kind} ${v.locator_index}`
+          : "—"}
+      </td>
+    </tr>
+  );
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <aside className="panel" onClick={(e) => e.stopPropagation()}>
@@ -2131,20 +2166,23 @@ function ValuePanel({ detail, onClose }: {
           <p className="muted">Nothing was extracted from this document.</p>
         )}
         <table>
-          <tbody>
-            {detail.values.map((v, i) => (
-              <tr key={i}>
-                <td className="muted">{v.label}</td>
-                <td>{v.value}</td>
-                <td className="ref">
-                  {v.locator_kind && v.locator_kind !== "none"
-                    ? `${v.locator_kind} ${v.locator_index}`
-                    : "\u2014"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
+          <tbody>{inUse.map(row)}</tbody>
         </table>
+
+        {left.length > 0 && (
+          <>
+            <h4>Not in the configuration in use</h4>
+            <p className="why warn">
+              Read under revision {detail.read_under ?? "?"}. Revision{" "}
+              {detail.revision_in_use}, in use now, has no such{" "}
+              {gone.size === 1 ? "field" : "fields"}, so no memorandum draws
+              on {left.length === 1 ? "this value" : "these values"}.
+            </p>
+            <table>
+              <tbody>{left.map(row)}</tbody>
+            </table>
+          </>
+        )}
 
         {detail.missing.length > 0 && (
           <>

@@ -50,7 +50,8 @@ class UploadKeyTest(unittest.TestCase):
 
     def upload(self, workspace=WORKSPACE):
         with mock.patch.object(self.app, "_sql",
-                               lambda s, p=None, tx=None: rows((11,))), \
+                               lambda s, p=None, tx=None: rows() if "FROM document" in s
+                               else rows((11,))), \
                 mock.patch.object(self.app, "_s3") as s3:
             s3.generate_presigned_url.return_value = "https://signed"
             out = self.app.upload_url(TENANT, workspace, "a@firm.com",

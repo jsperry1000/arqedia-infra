@@ -18,6 +18,9 @@
 
 # --- tables ----------------------------------------------------------------
 #
+# POINT-IN-TIME RECOVERY IS 7 DAYS, not the default 35: the Privacy Policy
+# (section 4, version 1) says backups go within 7 days, as Aurora's do.
+#
 # hash_key AND range_key, WHICH VALIDATE AS DEPRECATED, DELIBERATELY. Provider
 # 6.29 added key_schema in their place, and key_schema inside a
 # global_secondary_index plans as changed on every run (hashicorp/
@@ -75,7 +78,8 @@ resource "aws_dynamodb_table" "share_grant" {
   }
 
   point_in_time_recovery {
-    enabled = true
+    enabled                 = true
+    recovery_period_in_days = 7
   }
 
   deletion_protection_enabled = true
@@ -99,7 +103,8 @@ resource "aws_dynamodb_table" "viewer_account" {
   }
 
   point_in_time_recovery {
-    enabled = true
+    enabled                 = true
+    recovery_period_in_days = 7
   }
 
   deletion_protection_enabled = true
@@ -126,7 +131,8 @@ resource "aws_dynamodb_table" "share_access_log" {
   }
 
   point_in_time_recovery {
-    enabled = true
+    enabled                 = true
+    recovery_period_in_days = 7
   }
 
   deletion_protection_enabled = true

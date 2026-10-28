@@ -83,6 +83,41 @@ resource "aws_s3_bucket_versioning" "data" {
   }
 }
 
+# Privacy Policy §4 (version 1, 27 October 2026): earlier stored versions of a
+# deleted document, the facts read from it and the memoranda built from it are
+# deleted within 7 days. Versioning keeps every replaced or deleted object for
+# ever unless something expires it, and this is that something. Nothing reads
+# an earlier version back: the version ids recorded on document and memo rows
+# are provenance, and a deleted workspace is hidden, not removed from S3.
+#
+# Also in render.tf for the brand bucket.
+resource "aws_s3_bucket_lifecycle_configuration" "data" {
+  for_each = aws_s3_bucket.data
+  bucket   = each.value.id
+
+  # Versioning must be on before a noncurrent rule means anything.
+  depends_on = [aws_s3_bucket_versioning.data]
+
+  rule {
+    id     = "earlier-versions-7-days"
+    status = "Enabled"
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 7
+    }
+
+    # A delete marker with nothing left behind it.
+    expiration {
+      expired_object_delete_marker = true
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "data" {
   for_each = aws_s3_bucket.data
   bucket   = each.value.id

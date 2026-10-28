@@ -1397,6 +1397,55 @@ def set_active(tenant_id, email, document_id, active):
     return {"document_id": int(document_id), "active": bool(active)}
 
 
+def _not_in_revision(tenant_id, workspace_id, revision, scope, params):
+    """Values held under a field the revision does not have, grouped by field:
+    [{field_id, label, documents, values}].
+
+    A VALUE KEEPS ITS FIELD FOR EVER. It is read once, at filing, under the
+    key the revision then in use gave the field. A later revision that drops
+    the field - or replaces it with another key meaning the same thing, as
+    f_existing_bank_lines replaced f_credit_lines in Trade Finance - leaves
+    the value held and bound to nothing: composition picks values by the keys
+    a memo's sections name, so it is never drawn on and nothing says so.
+    This is what says so.
+
+    BY KEY, exactly as composition binds: a value whose field_id is a
+    config_field row of the revision is in it, a group column included.
+
+    The label is the one the value was read under, since the revision asked
+    about has none to give. `scope` narrows the documents, as SQL over d and
+    v, and names its own parameters."""
+    found = _sql(
+        """
+        SELECT v.field_id, d.config_revision,
+               COUNT(DISTINCT v.document_id), COUNT(*)
+        FROM extracted_value v
+        JOIN document d
+          ON d.document_id = v.document_id AND d.tenant_id = v.tenant_id
+        WHERE v.tenant_id = :t AND (%s)
+          AND NOT EXISTS (
+              SELECT 1 FROM config_field f
+              WHERE f.tenant_id = :t AND f.workspace_id = :w
+                AND f.revision = :r AND f.field_key = v.field_id)
+        GROUP BY v.field_id, d.config_revision
+        """ % scope,
+        [_p("t", tenant_id), _p("w", int(workspace_id)),
+         _p("r", int(revision))] + params,
+    ).get("records", [])
+
+    fields = {}
+    for r in found:
+        field_id = _col(r, 0)
+        held = fields.setdefault(field_id, {
+            "field_id": field_id,
+            "label": _label_for(config.load(tenant_id, workspace_id,
+                                            _col(r, 1) or 1), field_id),
+            "documents": 0, "values": 0})
+        held["documents"] += _col(r, 2) or 0
+        held["values"] += _col(r, 3) or 0
+    return sorted(fields.values(), key=lambda f: f["label"].lower())
+
+
 def document_values(tenant_id, document_id):
     """What was extracted from one document, and what its type called for but
     did not yield. An empty list of found values says less than a list of the
@@ -1425,9 +1474,15 @@ def document_values(tenant_id, document_id):
 
     # The revision the document was filed under, so "looked for, not found"
     # names the fields that were actually looked for at the time.
-    registry = config.load(
-        tenant_id, config.workspace_of(tenant_id, _col(records[0], 5)),
-        _col(records[0], 4) or 1)
+    workspace_id = config.workspace_of(tenant_id, _col(records[0], 5))
+    registry = config.load(tenant_id, workspace_id, _col(records[0], 4) or 1)
+
+    # Read under that revision, drawn on under the one in use now. A field
+    # the revision in use does not have holds values no memorandum reaches.
+    in_use = config.active_revision(tenant_id, workspace_id)
+    not_in_use = _not_in_revision(tenant_id, workspace_id, in_use,
+                                  "v.document_id = :d",
+                                  [_p("d", int(document_id))])
 
     values, found = [], set()
     for r in result.get("records", []):
@@ -1475,6 +1530,11 @@ def document_values(tenant_id, document_id):
         "values": values,
         "missing": missing,
         "expected": len(expected),
+        # Which revision it was read under, which is in use now, and the
+        # fields of this document the one in use does not have.
+        "read_under": _col(records[0], 4),
+        "revision_in_use": in_use,
+        "not_in_use": [f["field_id"] for f in not_in_use],
         # How many memoranda cite it, and whether a ledger line paid for it.
         "memos": _col(reach[0], 0) or 0,
         "charged": _col(reach[0], 1) is not None,
@@ -1683,7 +1743,7 @@ def get_memo(tenant_id, memo_id):
         """
         SELECT m.s3_bucket, m.s3_key, m.generated_at, m.generated_by,
                m.pdf_key, m.parent_memo_id, m.revision, m.modified_by,
-               m.modified_at, w.name
+               m.modified_at, w.name, m.config_revision, m.workspace_id
         FROM memo m
         LEFT JOIN workspace w
                ON w.workspace_id = m.workspace_id
@@ -1748,6 +1808,17 @@ def get_memo(tenant_id, memo_id):
         [_p("t", tenant_id), _p("m", int(memo_id))],
     )
 
+    # What its sources hold under fields its revision does not have, and so
+    # did not draw on. Worked out, not stored: a value never changes after
+    # filing and a revision never changes after publishing, so the answer is
+    # the same every time it is asked.
+    not_drawn_on = _not_in_revision(
+        tenant_id, config.workspace_of(tenant_id, _col(r, 11)),
+        _col(r, 10) or 1,
+        "v.document_id IN (SELECT ms.document_id FROM memo_source ms "
+        "WHERE ms.tenant_id = :t AND ms.memo_id = :m)",
+        [_p("m", int(memo_id))])
+
     return {
         "memo_id": int(memo_id),
         "generated_at": _col(r, 2),
@@ -1770,6 +1841,8 @@ def get_memo(tenant_id, memo_id):
                       "model_id": _col(w, 2), "completed_at": _col(w, 3),
                       "source": _col(w, 4), "config_revision": _col(w, 5)}
                      for w in rewritten.get("records", [])],
+        "config_revision": _col(r, 10),
+        "not_drawn_on": not_drawn_on,
     }
 
 
@@ -3027,6 +3100,23 @@ def _folder(name):
     return text[:_FOLDER_MAX] or None
 
 
+# A file uploaded under a name the engagement already holds (28 October
+# 2026). The key is the engagement and the file name, and the envelope that
+# starts extraction is named after the key - so the second upload replaced the
+# first one's file and envelope, and the first document never left
+# "extracting". Three of MANTY-TEST-2's did exactly that, paid for.
+#
+# REFUSED, BY DECISION, rather than kept under a key of its own. A new version
+# replaces the old one by removing it first; nothing is read or charged twice.
+ALREADY_HELD = ("%s already holds %s. To upload a new version, remove the one "
+                "there first.")
+
+
+class AlreadyHeld(ValueError):
+    """A 409, not a 400: nothing is wrong with the request, the name is
+    taken. The screen tells the two apart by the status."""
+
+
 def upload_url(tenant_id, workspace_id, email, engagement, filename,
                source_folder=None):
     """A short-lived signed link. The browser uploads straight to S3; the file
@@ -3087,6 +3177,19 @@ def upload_url(tenant_id, workspace_id, email, engagement, filename,
                                               engagement, filename)
     else:
         key = "tenants/%d/docs/%s/%s" % (tenant_id, engagement, filename)
+
+    # ASKED OF THE ROWS, NOT OF STORAGE. This role may not read the docs
+    # bucket, so a HEAD would answer 403 whether the file is there or not.
+    # A rejected row is left out: it is in no list, so nobody could remove
+    # it, and it is never read again. What this cannot see is a file sent
+    # seconds ago whose row the normalizer has not yet written - the screen
+    # refuses a name twice in one upload for that reason.
+    if _sql("SELECT document_id FROM document "
+            "WHERE tenant_id = :t AND s3_key = :k AND state <> 'rejected' "
+            "LIMIT 1",
+            [_p("t", tenant_id), _p("k", key)]).get("records"):
+        raise AlreadyHeld(ALREADY_HELD % (engagement, filename))
+
     url = _s3.generate_presigned_url(
         "put_object",
         Params={"Bucket": DOCS_BUCKET, "Key": key,
@@ -3336,6 +3439,59 @@ def _require_seats_admin(role):
             "only an administrator may change seats, the plan or the card")
 
 
+def _left_behind(tenant_id, workspace_id):
+    """Warnings for each field the revision in use has, the draft does not,
+    and filed documents hold values under.
+
+    Publishing such a draft strands those values: they stay held, and no
+    memorandum written under it draws on them (_not_in_revision). A warning,
+    never a refusal - dropping a field can be meant - but said before the
+    publish, while it can still be undone.
+
+    Only what THIS draft drops. A field already missing from the revision in
+    use was left behind by an earlier publish; the document drawer and the
+    memo say so, and repeating it here would warn about every draft for
+    ever. The documents are those composition reads: filed and in use."""
+    if int(workspace_id) != config.NO_WORKSPACE:
+        found = _sql("SELECT active_revision FROM workspace "
+                     "WHERE tenant_id = :t AND workspace_id = :w",
+                     [_p("t", tenant_id), _p("w", int(workspace_id))]
+                     ).get("records", [])
+        if not found or _col(found[0], 0) is None:
+            return []
+
+    scope = "d.workspace_id = :w AND d.state = 'filed' AND d.active = 1"
+    in_use = config.active_revision(tenant_id, workspace_id)
+    already = {f["field_id"] for f in _not_in_revision(
+        tenant_id, workspace_id, in_use, scope, [])}
+
+    warnings = []
+    for f in _not_in_revision(tenant_id, workspace_id, registry.DRAFT,
+                              scope, []):
+        if f["field_id"] in already:
+            continue
+        warnings.append({
+            "kind": "field-dropped-with-values",
+            "field": f["field_id"],
+            "detail": "'%s' is not in this draft, and %d filed document%s "
+                      "hold%s values for it. Once this is published, no "
+                      "memorandum will draw on them." % (
+                          f["label"], f["documents"],
+                          "" if f["documents"] == 1 else "s",
+                          "s" if f["documents"] == 1 else ""),
+        })
+    return warnings
+
+
+def validate_draft(tenant_id, workspace_id):
+    """The registry's checks of the draft, with the values it would leave
+    behind among the warnings."""
+    validation = registry.validate(tenant_id, workspace_id, registry.DRAFT)
+    validation["warnings"] = (list(validation.get("warnings") or [])
+                              + _left_behind(tenant_id, workspace_id))
+    return validation
+
+
 def config_state(tenant_id, workspace_id):
     """Where this workspace stands: what is published, whether a draft is
     open, and what publishing it would flag - with the tenant's workspaces,
@@ -3369,8 +3525,7 @@ def config_state(tenant_id, workspace_id):
             tenant_id, workspace_id).template_list(),
     }
     if draft:
-        state["validation"] = registry.validate(tenant_id, workspace_id,
-                                                registry.DRAFT)
+        state["validation"] = validate_draft(tenant_id, workspace_id)
     return state
 
 
@@ -4437,8 +4592,7 @@ def _dispatch(event, context):
             return _reply(200, registry.discard_draft(tenant_id, ws()))
 
         if route == "GET /config/draft/validate":
-            return _reply(200, registry.validate(tenant_id, ws(),
-                                                 registry.DRAFT))
+            return _reply(200, validate_draft(tenant_id, ws()))
 
         if route == "POST /config/publish":
             _require_admin(role)
@@ -4673,6 +4827,8 @@ def _dispatch(event, context):
         # 409: nothing is wrong with the request - there is simply no room.
         return _reply(409, {"error": str(exc)})
     except workspaces.Refused as exc:
+        return _reply(409, {"error": str(exc)})
+    except AlreadyHeld as exc:
         return _reply(409, {"error": str(exc)})
     except seats.LastAdmin as exc:
         return _reply(409, {"error": str(exc)})
