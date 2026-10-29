@@ -4,6 +4,8 @@ import { parseBlocks, serializeBlocks, blockToMarkdown, trailingOf, citationsIn,
          isCitable, footnoteRef, type Block, type Inline } from "./memodoc";
 import { citeChipHtml, inlinesToHtml, nodesToInlines } from "./memoedit";
 import type { Act } from "./undo";
+import { api, type DocumentDetail } from "./api";
+import { groupByType, type Place, type Source } from "./footnotefacts";
 
 /**
  * The memo as it reads.
@@ -338,19 +340,21 @@ function Editable({ html, onEdit, onSplit, deferred, className }: {
 }
 
 /**
- * Choosing the document a footnote cites.
+ * Choosing what a footnote cites.
  *
  * THE MEMO'S OWN SOURCES, AND NOTHING ELSE (decided 27 October 2026). The
  * save refuses a citation to any document that is not a source of the memo,
  * so listing the rest of the engagement would offer citations that cannot be
  * kept. A deleted source is left out for the same reason.
  *
- * Found by searching their names: every word typed must appear somewhere in
- * the name, in any order. The page is optional; without one the footnote
- * names the file alone, which opens it like any other.
+ * FOUND BY FACT, BY DOCUMENT TYPE OR BY NAME (29 October 2026), in one search,
+ * grouped by type: see footnotefacts.ts. A fact opens to the places it was
+ * read, and one of those goes in with its page. A document picked by name
+ * takes the page typed, or none; without one the footnote names the file
+ * alone, which opens it like any other.
  */
-function FootnotePicker({ names, ready, onPick, onClose }: {
-  names: string[];
+function FootnotePicker({ sources, ready, onPick, onClose }: {
+  sources: Source[];
   // False when there was no cursor in the text to put the footnote at.
   ready: boolean;
   onPick: (ref: string) => void;
@@ -358,14 +362,39 @@ function FootnotePicker({ names, ready, onPick, onClose }: {
 }) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState("");
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const found = names.filter((n) =>
-    words.every((w) => n.toLowerCase().includes(w)));
+  // Each source's values, asked for once as the picker opens. Until they
+  // come, its name is searchable and its facts are not.
+  const [details, setDetails] = useState<Record<number, DocumentDetail>>({});
+  const [waiting, setWaiting] = useState(sources.length);
+  const [failed, setFailed] = useState(0);
+  // The fact opened to its places, by type and label.
+  const [opened, setOpened] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    for (const s of sources) {
+      api.documentValues(s.documentId)
+        .then((d) => { if (live) setDetails((m) => ({ ...m, [s.documentId]: d })); })
+        .catch(() => { if (live) setFailed((n) => n + 1); })
+        .finally(() => { if (live) setWaiting((n) => n - 1); });
+    }
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const groups = useMemo(() => groupByType(sources, details, query),
+                         [sources, details, query]);
+  const documents = groups.flatMap((g) => g.documents);
+  const factCount = groups.reduce((n, g) => n + g.facts.length, 0);
   const pageNo = /^\d+$/.test(page.trim()) && Number(page) > 0
     ? Number(page) : null;
   const pageBad = page.trim() !== "" && pageNo === null;
   const pick = (name: string) => {
     if (ready && !pageBad) onPick(footnoteRef(name, pageNo));
+  };
+  // A fact's place carries its own page; the one typed is for a name.
+  const pickPlace = (place: Place) => {
+    if (ready) onPick(footnoteRef(place.name, place.page));
   };
 
   return (
@@ -389,38 +418,100 @@ function FootnotePicker({ names, ready, onPick, onClose }: {
             </p>
           )}
           <div className="footnote-fields">
-            <input type="text" autoFocus placeholder="Search the documents"
-                   aria-label="Search the documents" value={query}
-                   onChange={(e) => setQuery(e.target.value)}
-                   // One left: Enter takes it.
+            <input type="text" autoFocus
+                   placeholder="Search facts, document types or names"
+                   aria-label="Search facts, document types or names"
+                   value={query}
+                   onChange={(e) => { setQuery(e.target.value); setOpened(null); }}
+                   // One document left and no fact: Enter takes it.
                    onKeyDown={(e) => {
-                     if (e.key === "Enter" && found.length === 1) pick(found[0]);
+                     if (e.key === "Enter" && documents.length === 1
+                         && factCount === 0) pick(documents[0]);
                    }} />
             <input type="text" inputMode="numeric" placeholder="Page"
-                   aria-label="Page (optional)" className="footnote-page"
+                   aria-label="Page, for a document picked by name (optional)"
+                   title="For a document picked by name. A fact brings its own page."
+                   className="footnote-page"
                    value={page} onChange={(e) => setPage(e.target.value)} />
           </div>
           {pageBad && <p className="warn">A page is a whole number.</p>}
+          {waiting > 0 && (
+            <p className="muted small">
+              Reading the facts held in {waiting} of {sources.length}{" "}
+              {sources.length === 1 ? "document" : "documents"}&hellip;
+            </p>
+          )}
+          {failed > 0 && (
+            <p className="warn">
+              The facts of {failed} {failed === 1 ? "document" : "documents"}{" "}
+              could not be read. {failed === 1 ? "Its name" : "Their names"} can
+              still be searched.
+            </p>
+          )}
         </div>
         <div className="panel-body">
-          {found.length === 0 ? (
+          {groups.length === 0 ? (
             <p className="muted">
-              {names.length === 0 ? "This memo has no sources to cite."
-                                  : "No document's name matches."}
+              {sources.length === 0 ? "This memo has no sources to cite."
+                                    : "Nothing matches."}
             </p>
-          ) : (
-            <ul className="footnote-list">
-              {found.map((name) => (
-                <li key={name}>
-                  <button type="button" disabled={!ready || pageBad}
-                          onClick={() => pick(name)}
-                          title={"Cite " + footnoteRef(name, pageNo)}>
-                    {name}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          ) : groups.map((g) => (
+            <section key={g.type} className="footnote-group">
+              <h4>{g.type}</h4>
+              {g.facts.length > 0 && (
+                <ul className="footnote-list">
+                  {g.facts.map((f) => {
+                    const key = g.type + "\u0000" + f.label;
+                    const open = opened === key;
+                    return (
+                      <li key={key}>
+                        <button type="button"
+                                className={open ? "footnote-fact on" : "footnote-fact"}
+                                aria-expanded={open}
+                                onClick={() => setOpened(open ? null : key)}>
+                          <span className="fact-line">
+                            <span className="fact-label">{f.label}</span>{" "}
+                            <span className="fact-value">
+                              {f.places[0].values[0]}
+                            </span>
+                          </span>
+                        </button>
+                        {open && (
+                          <ul className="footnote-list footnote-places">
+                            {f.places.map((p) => (
+                              <li key={p.name + "#" + (p.page ?? "")}>
+                                <button type="button" disabled={!ready}
+                                        onClick={() => pickPlace(p)}
+                                        title={"Cite " + footnoteRef(p.name, p.page)}>
+                                  {footnoteRef(p.name, p.page)}
+                                  <span className="fact-value">
+                                    {p.values.join("; ")}
+                                  </span>
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {g.documents.length > 0 && (
+                <ul className="footnote-list">
+                  {g.documents.map((name) => (
+                    <li key={name}>
+                      <button type="button" disabled={!ready || pageBad}
+                              onClick={() => pick(name)}
+                              title={"Cite " + footnoteRef(name, pageNo)}>
+                        {name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ))}
         </div>
       </div>
     </div>
@@ -544,11 +635,12 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   // footnote is pressed, because the search box takes the focus after.
   const [picking, setPicking] = useState(false);
   const caret = useRef<{ host: HTMLElement; range: Range } | null>(null);
-  // What a footnote may cite: the sources, less any deleted, by name.
+  // What a footnote may cite: the sources, less any deleted.
   const citable = useMemo(
-    () => Object.keys(byFilename)
-      .filter((name) => isCitable(name) && !gone?.has(name))
-      .sort((a, b) => a.localeCompare(b)),
+    () => Object.entries(byFilename)
+      .filter(([name]) => isCitable(name) && !gone?.has(name))
+      .map(([name, documentId]) => ({ name, documentId }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
     [byFilename, gone]);
 
   // Told to the screen as it changes, and as none when this document goes -
@@ -1221,7 +1313,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
     </article>
     {/* After the memo, not in it: a drawer stacks in document order. */}
     {picking && (
-      <FootnotePicker names={citable} ready={!!caret.current}
+      <FootnotePicker sources={citable} ready={!!caret.current}
                       onPick={insertFootnote}
                       onClose={() => { caret.current = null; setPicking(false); }} />
     )}
