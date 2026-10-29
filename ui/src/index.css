@@ -1005,6 +1005,18 @@ p.warn { color: #b45309; }
 .memo.doc .doc-image { margin: 12px 0; }
 .memo.doc .doc-image img { display: block; max-width: 100%; height: auto; }
 .memo.doc .doc-image .block-tools { display: inline-block; margin: 4px 0 0; }
+/* Where the PDF starts a new page (29 October 2026): a dashed rule across
+   the memo, named in the middle, so the turn of the page is seen before
+   the PDF is. */
+.memo.doc .doc-pagebreak {
+  display: flex; align-items: center; gap: 10px; margin: 18px 0;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.memo.doc .doc-pagebreak::before, .memo.doc .doc-pagebreak::after {
+  content: ""; flex: 1; border-top: 1px dashed var(--medium);
+}
+.memo.doc .doc-pagebreak .block-tools { margin: 0; order: 1; }
 .block-tools .tool.danger { color: #b42318; border-color: #f3c9c4; opacity: 1; }
 .block-tools .tool.danger:hover { color: var(--paper); background: #b42318;
                                   border-color: #b42318; }

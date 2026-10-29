@@ -39,8 +39,8 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas as pdfcanvas
 from reportlab.platypus import (BaseDocTemplate, Frame, Image, KeepTogether,
-                                PageTemplate, Paragraph, Spacer, Table,
-                                TableStyle)
+                                PageBreakIfNotEmpty, PageTemplate, Paragraph,
+                                Spacer, Table, TableStyle)
 
 import style
 
@@ -746,6 +746,17 @@ def _image(data, image, styles):
                          styles["citation"])
 
 
+# --- a page break (29 October 2026) -----------------------------------------
+#
+# A person's own: "<!-- page break -->" on a line of its own, put in by the
+# editor where the next page should start. memodoc.ts's PAGE_BREAK, character
+# for character. An HTML comment, so anything else that shows the text hides
+# it. IF NOT EMPTY: a break at the top of a page - the first thing in the
+# memo, a second straight after a first, one where a page has just ended of
+# itself - starts no page, so a break never prints a blank one.
+_PAGE_BREAK = re.compile(r"^<!-- page break -->[ \t]*$")
+
+
 _DIVIDER = re.compile(r"\|(?:\s*:?-{2,}:?\s*\|)+")
 
 
@@ -830,7 +841,8 @@ def to_flowables(markdown, styles, palette, image_bytes=None):
     """Markdown to flowables. Handles the shapes the consolidation produces:
     headings, paragraphs, tables, blockquote gaps, bullets - and a person's
     own image, read through image_bytes(name), which returns the file or
-    None. Without it, as for a preview, there are no images to draw."""
+    None. Without it, as for a preview, there are no images to draw. And a
+    person's page break: see _PAGE_BREAK."""
     flow = []
     lines = _unwrap_tables(markdown).split("\n")
     i = 0
@@ -852,6 +864,12 @@ def to_flowables(markdown, styles, palette, image_bytes=None):
             flow.append(Spacer(1, 6))
             flow.append(_image(data, name, styles))
             flow.append(Spacer(1, 9))
+            i += 1
+            continue
+
+        # As written, as the image is: an indented one is not a break.
+        if _PAGE_BREAK.match(lines[i]):
+            flow.append(PageBreakIfNotEmpty())
             i += 1
             continue
 
@@ -957,7 +975,8 @@ def to_flowables(markdown, styles, palette, image_bytes=None):
             if not nxt:
                 break
             if (nxt.startswith(("#", ">", "- ", "* ", "|", "---"))
-                    or _IMAGE_LINE.match(lines[i])):
+                    or _IMAGE_LINE.match(lines[i])
+                    or _PAGE_BREAK.match(lines[i])):
                 break
             block.append(nxt)
             i += 1

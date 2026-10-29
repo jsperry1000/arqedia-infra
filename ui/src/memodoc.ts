@@ -73,6 +73,9 @@ export type Block =
   // of its own. The name is the server's, minted at upload; the file is in
   // storage, never in the text.
   | { id: string; source: string; kind: "image"; alt: string; image: string }
+  // Where the PDF starts a new page (29 October 2026): PAGE_BREAK_LINE on a
+  // line of its own. Nothing to type into; put in or taken out.
+  | { id: string; source: string; kind: "pagebreak" }
   // Anything unrecognised. Kept whole and shown as written rather than
   // guessed at, so a memo is never silently altered by being displayed.
   | { id: string; source: string; kind: "raw" };
@@ -104,6 +107,11 @@ const ONE_LINE_TABLE = /\|(?:\s*:?-{2,}:?\s*\|)+/;
 // The API's _IMAGE_LINE, character for character: what this shows as an
 // image is exactly what a save carries into the revision.
 const IMAGE = /^!\[([^\]\n]*)\]\(image:([0-9a-f]{32}\.(?:png|jpg))\)[ \t]*$/;
+// render/app.py's _PAGE_BREAK, character for character: what this shows as a
+// page break is exactly where the PDF starts a page. An HTML comment, so
+// anything else that shows the text hides it.
+export const PAGE_BREAK_LINE = "<!-- page break -->";
+const PAGE_BREAK = /^<!-- page break -->[ \t]*$/;
 
 /** The line for an image. A "]" or a line break in the alt would end it. */
 export function imageMarkdown(alt: string, image: string): string {
@@ -254,6 +262,13 @@ export function parseBlocks(markdown: string): Block[] {
       continue;
     }
 
+    if (PAGE_BREAK.test(line)) {
+      const { source, next } = take(i, i + 1);
+      add({ source, kind: "pagebreak" });
+      i = next;
+      continue;
+    }
+
     const heading = HEADING.exec(line);
     if (heading) {
       const { source, next } = take(i, i + 1);
@@ -355,7 +370,7 @@ export function parseBlocks(markdown: string): Block[] {
       if (l.trim() === "") break;
       if (end > i && (HEADING.test(l) || RULE.test(l.trim()) || QUOTE.test(l)
                       || BULLET.test(l) || NUMBERED.test(l) || isTableRow(l)
-                      || IMAGE.test(l))) break;
+                      || IMAGE.test(l) || PAGE_BREAK.test(l))) break;
       end++;
     }
     const { source, next } = take(i, end);
@@ -397,6 +412,9 @@ export function blockToMarkdown(block: Block, trailing: string): string {
       break;
     case "image":
       body = imageMarkdown(block.alt, block.image);
+      break;
+    case "pagebreak":
+      body = PAGE_BREAK_LINE;
       break;
     case "list":
       body = block.items.map((it) =>

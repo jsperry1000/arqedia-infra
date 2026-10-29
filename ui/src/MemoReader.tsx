@@ -849,6 +849,20 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
     ]), "add");
   }
 
+  /** A page break put in at a gap, on a line of its own: the PDF starts a
+   *  new page there. One act to undo. */
+  function insertPageBreak(index: number) {
+    if (!onChange) return;
+    const block: Block = { id: "new", source: "", kind: "pagebreak" };
+    // A last block carries no blank line after it; anywhere else does.
+    const trailing = index >= blocks.length ? "\n" : "\n\n";
+    onChange(serializeBlocks([
+      ...blocks.slice(0, index),
+      { ...block, source: blockToMarkdown(block, trailing) },
+      ...blocks.slice(index),
+    ]), "page-break");
+  }
+
   useEffect(() => {
     const at = opening.current;
     if (at === null) return;
@@ -1019,6 +1033,14 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
           </button>
         )}
         {editable && open && (
+          <button type="button" className="tool"
+                  onClick={() => insertPageBreak(
+                    blocks.findIndex((b) => b.id === block.id) + 1)}
+                  title="Start a new page of the PDF after this">
+            Insert page break
+          </button>
+        )}
+        {editable && open && (
           <button type="button" className="tool danger"
                   onClick={() => removeBlock(block.id)}
                   title="Take this out of the memo">
@@ -1140,6 +1162,24 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
               </figure>
             );
           }
+
+          case "pagebreak":
+            // Drawn on the screen as well, so where the PDF turns the page
+            // is never a surprise. Nothing to type into: put in or taken out.
+            return (
+              <div key={block.id} className="doc-pagebreak">
+                <span>Page break</span>
+                {editable && (
+                  <span className="block-tools">
+                    <button type="button" className="tool danger"
+                            onClick={() => removeBlock(block.id)}
+                            title="Take this page break out of the memo">
+                      Delete
+                    </button>
+                  </span>
+                )}
+              </div>
+            );
 
           case "rule":
             return <hr key={block.id} />;
