@@ -628,7 +628,7 @@ export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
           memorandum is chosen and published, your workspace has no facts and
           no document types: an upload cannot be given a type, and nothing can
           be filed or generated. Leaving now costs nothing and creates nothing
-          &mdash; you come back to this screen from Report Catalogue.
+          &mdash; you come back to this screen from Template Catalogue.
         </p>
       )}
 
