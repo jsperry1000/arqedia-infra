@@ -997,8 +997,16 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
              lit={lit} onLight={setLit} />
   );
 
-  /** The per-block controls. Always there, so they are never hunted for. */
-  function Tools({ block }: { block: Block }) {
+  /** The per-block controls. Always there, so they are never hunted for.
+   *
+   *  CALLED, NOT RENDERED AS <Tools />, and insertAt below the same (29
+   *  October 2026). A component declared inside MemoDocument is a new type
+   *  on every render, so React threw it away and built it again each time
+   *  the memo drew - and a paragraph being started lives in insertAt, so
+   *  its box was torn down mid-word: what was typed went in as a paragraph
+   *  of its own, a fresh empty box opened, and the caret jumped. Called as
+   *  a function, what it returns is part of this tree and is kept. */
+  function tools(block: Block) {
     const inlines = "inlines" in block ? block.inlines : [];
     const refs = citationsIn(inlines);
     const out = inlines.some((n, i) => n.kind === "cites" && shown[block.id + ":" + i]);
@@ -1071,8 +1079,9 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   }
 
   /** A place to start a new paragraph. Between every two blocks and at the
-   *  end, quiet until the pointer is near it. */
-  function Insert({ index }: { index: number }) {
+   *  end, quiet until the pointer is near it. Called, not rendered: see
+   *  tools. */
+  function insertAt(index: number) {
     if (!editable) return null;
     const uploading = placing.includes(index) && (
       <p className="muted small">Putting the image in&hellip;</p>
@@ -1212,7 +1221,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                             onEdit={commitInlines(block.id, (b, nodes) =>
                               ({ ...b, inlines: nodes } as Block))} />
                 ) : inlinesOf(block, block.inlines)}
-                <Tools block={block} />
+                {tools(block)}
               </H>
             );
           }
@@ -1226,7 +1235,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                               onEdit={commitInlines(block.id, (b, nodes) =>
                                 ({ ...b, inlines: nodes } as Block))} />
                   ) : inlinesOf(block, block.inlines)}
-                  <Tools block={block} />
+                  {tools(block)}
                 </p>
               </div>
             );
@@ -1252,14 +1261,14 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
             return (
               <div className="list-wrap" key={block.id}>
                 {block.ordered ? <ol>{items}</ol> : <ul>{items}</ul>}
-                <Tools block={block} />
+                {tools(block)}
               </div>
             );
 
           case "table":
             return (
               <div className="table-wrap" key={block.id}>
-                <div className="table-tools"><Tools block={block} /></div>
+                <div className="table-tools">{tools(block)}</div>
                 <table className={editing === block.id ? "editing" : undefined}>
                   <thead className={block.head.every((c) => c.length === 0)
                                     ? "empty" : undefined}>
@@ -1386,7 +1395,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                             onSplit={(before, after) =>
                               splitBlock(block, before, after)} />
                 ) : inlinesOf(block, block.inlines)}
-                <Tools block={block} />
+                {tools(block)}
               </p>
             );
         }
@@ -1395,12 +1404,12 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
         // end, so there is nowhere in the memo a new one cannot go.
         return (
           <Fragment key={block.id}>
-            <Insert index={index} />
+            {insertAt(index)}
             {content}
           </Fragment>
         );
       })}
-      <Insert index={blocks.length} />
+      {insertAt(blocks.length)}
     </article>
     {/* After the memo, not in it: a drawer stacks in document order. */}
     {picking && (
