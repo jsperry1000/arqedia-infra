@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { blockToMarkdown, headingText, imageMarkdown, imagesIn, parseBlocks,
+import { blockToMarkdown, footnoteRef, headingText, imageMarkdown, imagesIn,
+         isCitable, parseBlocks,
          sectionLabel, serializeBlocks, type Block } from "./memodoc";
 import { diffStep, undoStep } from "./undo";
 
@@ -106,5 +107,30 @@ describe("a section heading with no numeral", () => {
     expect(sectionLabel("", "Executive Summary")).toBe("Executive Summary");
     expect(sectionLabel("  ", "Executive Summary")).toBe("Executive Summary");
     expect(sectionLabel("IV", "Returns")).toBe("IV. Returns");
+  });
+});
+
+// A footnote put in by hand (footnote-insert): one of the memo's sources,
+// with a page or without.
+describe("a footnote put in by hand", () => {
+  it("is offered only for a name the save reads whole", () => {
+    expect(isCitable("STG-Short-term-Debt-as-of-07-31-2026.pdf")).toBe(true);
+    expect(isCitable("Accounts_(2025).XLSX")).toBe(true);
+    expect(isCitable("Inbox J Scott.pdf")).toBe(false);   // read from the space
+    expect(isCitable("scan.png")).toBe(false);            // never a citation
+  });
+
+  it("names the page where one is given, and the file alone where not", () => {
+    expect(footnoteRef("a.pdf", 4)).toBe("a.pdf, page 4");
+    expect(footnoteRef("a.pdf", null)).toBe("a.pdf");
+  });
+
+  it("reads back as a citation, beside one already there", () => {
+    const text = "Interest-free. *b.pdf, page 2* *" + footnoteRef("a.pdf", 4) + "*";
+    const para = parseBlocks(text)[0];
+    expect(para.kind === "para" && para.inlines).toEqual([
+      { kind: "text", text: "Interest-free. " },
+      { kind: "cites", refs: ["b.pdf, page 2", "a.pdf, page 4"] },
+    ]);
   });
 });
