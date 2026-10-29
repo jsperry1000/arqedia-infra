@@ -1150,7 +1150,7 @@ export default function App() {
             with the tenant's own memoranda behind one of them; they are the
             work and the reason for the screen, so they are the screen. */}
         <a className={catalogueClass} onClick={() => navigate("/catalogue")}>
-          Report Catalogue
+          Template Catalogue
         </a>
         {/* Sharing opens a choice, as Settings does (share-multi-memo). */}
         <div className="rail-item">

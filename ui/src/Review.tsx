@@ -1141,7 +1141,7 @@ export function EngagementView({ id, onBack, onMemo }: {
           {workspaceName ? <strong>{workspaceName}</strong> : "This workspace"}{" "}
           has nothing published yet, so there is nothing to read a document
           against. Publish its configuration first, under{" "}
-          <a onClick={() => navigate("/catalogue")}>Report Catalogue</a>.
+          <a onClick={() => navigate("/catalogue")}>Template Catalogue</a>.
         </p>
       ) : (<>
       {workspaceName && (
@@ -1285,7 +1285,7 @@ export function EngagementView({ id, onBack, onMemo }: {
           {types.length === 0 && (
             <p className="why warn">
               No document types yet. They come with a memorandum &mdash;
-              Report Catalogue.
+              Template Catalogue.
             </p>
           )}
           {/* What the batch is made of, and a way through it (21.3). The
@@ -1742,11 +1742,11 @@ export function EngagementView({ id, onBack, onMemo }: {
         <div className="revision-note">
           <span className="warn">
             This workspace has no published memorandum, so there is nothing to
-            generate. Take one under Report Catalogue and publish it.
+            generate. Take one under Template Catalogue and publish it.
           </span>
           <div className="form-actions">
             <button onClick={() => navigate("/catalogue")}>
-              Report Catalogue
+              Template Catalogue
             </button>
           </div>
         </div>
