@@ -211,7 +211,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
   const openBlocks = useRef<Record<string, string | null>>({});
   const [blockOpen, setBlockOpen] = useState(false);
   // The document whose block was opened last. Every other document on the
-  // screen shuts what it has open, so there is one box open at a time.
+  // screen shuts what it has open, so there is one box open at a time. A
+  // section is named by its place, not its heading: typing in the heading
+  // would otherwise make it another document, and it shut its own box.
   const [openDoc, setOpenDoc] = useState<string | null>(null);
 
   function record(next: Step[]) {
@@ -1168,14 +1170,17 @@ export function MemoView({ memoId, onBack, onOpen }: {
             </p>
           )}
 
-          {split.sections.map((s) => {
+          {split.sections.map((s, at) => {
             const run = runs[s.key];
             const result = run?.result ?? null;
             const accepted = acceptedBy[s.key] ?? [];
             const lost = result?.output_text
               ? lostCitations(s.text, result.output_text) : [];
             return (
-              <section className="rewrite-section" key={s.key}>
+              // Keyed by place, not by s.key: s.key is the heading, and
+              // typing in a heading changed it on every commit, so the
+              // section was built again and its open box shut mid-word.
+              <section className="rewrite-section" key={at}>
                 {result?.status === "done" && result.output_text ? (
                   <div className="rewrite-compare">
                     <div>
@@ -1196,8 +1201,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
                     <MemoDocument markdown={s.text} byFilename={byFilename}
                                   gone={gone} onOpen={openRef}
                                   {...imageProps} onImageFile={putImage}
-                                  onOpenChange={(id) => opened(s.key, id)}
-                                  othersOpen={openDoc !== null && openDoc !== s.key}
+                                  onOpenChange={(id) => opened("sec:" + at, id)}
+                                  othersOpen={openDoc !== null && openDoc !== "sec:" + at}
                                   onChange={updateRun ? undefined : (text, act) => change(
                                     act, replaceSection(draftRef.current, s.key, text))} />
                   </div>
