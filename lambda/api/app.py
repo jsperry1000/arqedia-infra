@@ -1925,6 +1925,12 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
     # memo_source kept (migration 028), it is refused as what it is. Refused
     # all the same, by decision: a revision never cites a document that is no
     # longer there. The person takes each one out, or generates again.
+    #
+    # THE ROOT'S SOURCES AND THE REVISED MEMO'S OWN (29 October 2026). An
+    # Update adds the documents filed since to its revision's sources, and
+    # this read the root's alone - so the next save by hand of that revision
+    # refused every citation the Update had brought in, as "not a source of
+    # this memo", and the person's changes came back unsaved.
     sources = _sql(
         """
         SELECT DISTINCT COALESCE(d.filename, ms.filename) AS filename,
@@ -1933,9 +1939,9 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
         LEFT JOIN document d
                ON d.document_id = ms.document_id
               AND d.tenant_id = ms.tenant_id
-        WHERE ms.tenant_id = :t AND ms.memo_id = :m
+        WHERE ms.tenant_id = :t AND ms.memo_id IN (:m, :root)
         """,
-        [_p("t", tenant_id), _p("m", root_id)],
+        [_p("t", tenant_id), _p("m", int(memo_id)), _p("root", root_id)],
     )
     known, deleted = set(), set()
     for r in sources.get("records", []):
@@ -2072,15 +2078,18 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
 
     # Sources carry forward: the revision rests on the same documents. With
     # the name memo_source kept for a deleted one, so the revision lists it
-    # by its name rather than as "a deleted document".
+    # by its name rather than as "a deleted document". The root's and the
+    # revised memo's own, as checked above: a document an Update brought in
+    # stays a source of every revision after it.
     _sql(
         """
         INSERT IGNORE INTO memo_source (memo_id, document_id, tenant_id,
                                         filename)
         SELECT :new_id, document_id, tenant_id, filename
-        FROM memo_source WHERE tenant_id = :t AND memo_id = :root
+        FROM memo_source WHERE tenant_id = :t AND memo_id IN (:m, :root)
         """,
-        [_p("new_id", new_id), _p("t", tenant_id), _p("root", root_id)],
+        [_p("new_id", new_id), _p("t", tenant_id), _p("m", int(memo_id)),
+         _p("root", root_id)],
     )
 
     # And the documents filed since that this text cites (Update only).
