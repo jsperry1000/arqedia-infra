@@ -23,6 +23,7 @@ it is about to matter, and says so.
 
 import os
 import re
+from html import escape
 
 import boto3
 
@@ -44,13 +45,15 @@ def sender():
 _ADDRESS = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-def send(to, subject, body, reply_to=None, bcc=None):
-    """One plain-text message. True where SES accepted it for `to`.
+def send(to, subject, body, reply_to=None, bcc=None, buttons=None):
+    """One message. True where SES accepted it for `to`.
 
-    Plain text rather than HTML: every message this product sends is a
-    sentence, a link and a date. HTML would add a template to maintain, a
-    second copy of every word, and a class of rendering problem in other
-    people's mail clients that we could not see.
+    Plain text, with an HTML part only where `buttons` is given: a dict of
+    {link: label}, each link a line of its own in `body`. Until 28 October
+    2026 every message was plain text alone, and the reasons still hold
+    against a template: so the HTML is not written, it is derived from the
+    text (html_part below). There is one copy of every word, and a client
+    showing the text part shows exactly what was always sent.
 
     A BCC NEVER COSTS THE RECIPIENT THEIR EMAIL (feature/share-sender-copy).
     It is added only when well formed and not the recipient's own address,
@@ -78,13 +81,17 @@ def send(to, subject, body, reply_to=None, bcc=None):
             Destination=destination,
             Message={
                 "Subject": {"Data": subject, "Charset": "UTF-8"},
-                "Body": {"Text": {"Data": body, "Charset": "UTF-8"}},
+                "Body": parts,
             },
             # The administrator who invited them, so a reply reaches a person
             # rather than a mailbox that does not exist - arqedia.com
             # publishes no MX record and a reply to the sender goes nowhere.
             **({"ReplyToAddresses": [reply_to]} if reply_to else {}),
         )
+
+    parts = {"Text": {"Data": body, "Charset": "UTF-8"}}
+    if buttons:
+        parts["Html"] = {"Data": html_part(body, buttons), "Charset": "UTF-8"}
 
     try:
         attempt(copy)
@@ -117,6 +124,76 @@ def _mask(address):
         return "?"
     local, domain = address.split("@", 1)
     return (local[:1] or "?") + "***@" + domain
+
+
+# --- the HTML part (28 October 2026) ----------------------------------------
+#
+# A link becomes a button, with the link itself in small type beneath it for
+# a client that will not follow the button. Everything else is the text part,
+# escaped, a paragraph to each blank-line-separated block.
+#
+# COPIED FROM ui/src/tokens.css, deliberately. A mail client drops
+# stylesheets, so an email cannot import the token file and every value must
+# be inline. These are the one sanctioned copy (CLAUDE.md, Brand and colour,
+# amended 28 October 2026); a change to a token there is made here too.
+# Navy, not gold: opening a share or an invitation charges nothing.
+_DEEP = "#002561"      # --deep
+_MEDIUM = "#2279B2"    # --medium, the link colour
+_PAPER = "#ffffff"     # --paper
+_INK_2 = "#3c4a5c"     # --ink-2, body prose
+_MUTED = "#64748b"     # --muted
+_RADIUS = "3px"        # --radius
+_SANS = ("'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', "
+         "system-ui, Helvetica, Arial, sans-serif")  # --sans
+
+
+def html_part(body, buttons):
+    """The text part as HTML, each line that is a key of `buttons` drawn as
+    a button labelled with its value.
+
+    A table, not a styled <a> alone: Outlook ignores padding on an inline
+    link, and a table cell is the shape every client draws as a block."""
+    out = []
+    para = []
+
+    def flush():
+        if not para:
+            return
+        indented = all(line.startswith("    ") for line in para)
+        style = "margin:0 0 16px;" + ("padding-left:16px;font-weight:600;"
+                                      if indented else "")
+        out.append('<p style="%s">%s</p>' % (
+            style, "<br>".join(escape(line.strip()) for line in para)))
+        del para[:]
+
+    for line in body.split("\n"):
+        link = line.strip()
+        if link in buttons:
+            flush()
+            href = escape(link, quote=True)
+            out.append(
+                '<table role="presentation" cellspacing="0" cellpadding="0" '
+                'border="0" style="margin:0 0 8px;"><tr>'
+                '<td style="background:%s;border-radius:%s;">'
+                '<a href="%s" style="display:inline-block;padding:10px 20px;'
+                'color:%s;text-decoration:none;font-weight:600;">%s</a>'
+                '</td></tr></table>'
+                % (_DEEP, _RADIUS, href, _PAPER, escape(buttons[link])))
+            out.append(
+                '<p style="margin:0 0 16px;font-size:12px;color:%s;">'
+                'If the button does not work, copy this link into your '
+                'browser:<br><a href="%s" style="color:%s;'
+                'word-break:break-all;">%s</a></p>'
+                % (_MUTED, href, _MEDIUM, escape(link)))
+        elif link:
+            para.append(line)
+        else:
+            flush()
+    flush()
+    return ('<!doctype html><html><body style="margin:0;padding:24px;'
+            'background:%s;"><div style="max-width:560px;font-family:%s;'
+            'font-size:15px;line-height:1.5;color:%s;">%s</div></body></html>'
+            % (_PAPER, _SANS, _INK_2, "".join(out)))
 
 
 # --- what the invitation says ----------------------------------------------

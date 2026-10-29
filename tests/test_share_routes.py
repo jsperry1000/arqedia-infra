@@ -186,8 +186,10 @@ class SendTest(unittest.TestCase):
         s._render = render
 
         self.mails = []
-        s.mail.send = lambda to, subject, body, reply_to=None, bcc=None: \
-            self.mails.append((to, subject, body, reply_to, bcc)) or True
+        self.buttons = []
+        s.mail.send = lambda to, subject, body, reply_to=None, bcc=None, \
+            buttons=None: self.buttons.append(buttons) or self.mails.append(
+                (to, subject, body, reply_to, bcc)) or True
 
     def tearDown(self):
         self.aws.stop()
@@ -1266,9 +1268,22 @@ class BatchTest(SendTest):
         for gid in ids:
             self.assertNotIn("notified_at", self.grant(gid))
         self.share.mail.send = lambda to, subject, body, reply_to=None, \
-            bcc=None: self.mails.append((to, subject, body, reply_to,
-                                         bcc)) or True
+            bcc=None, buttons=None: self.mails.append(
+                (to, subject, body, reply_to, bcc)) or True
         self.assertTrue(self.share.notify(1, "sp@ebl.test", ids)["sent"])
+
+    def test_each_link_is_a_button_named_for_its_memorandum(self):
+        """28 October 2026. A batch of one says what the single email says."""
+        self.send(memo=11)
+        self.assertEqual(list(self.buttons[-1].values()),
+                         ["Open the memorandum"])
+        sent = self.batch([11, 12])
+        self.share.notify(1, "sp@ebl.test", [s["grant_id"] for s in sent])
+        buttons = self.buttons[-1]
+        self.assertEqual(len(buttons), 2)
+        for link, label in buttons.items():
+            self.assertIn(link, self.mails[-1][2])
+            self.assertTrue(label.startswith("Open "))
 
     def test_notify_refuses_mixed_recipients_other_tenants_and_more_than_5(
             self):
@@ -1410,6 +1425,57 @@ class MailBccTest(unittest.TestCase):
         self.mail._ses.send_email.side_effect = Exception("down")
         self.assertFalse(self.mail.send("r@client.test", "s", "b"))
         self.assertEqual(self.mail._ses.send_email.call_count, 1)
+
+
+class MailButtonsTest(unittest.TestCase):
+    """The HTML part (28 October 2026): a link in the text becomes a button
+    with the link in small type beneath it, and every other word is the
+    text part's. SES is a mock."""
+
+    LINK = "https://app.test/view/g1#t=tok&x=<1>"
+
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, {"SENDER": "no-reply@x.test"})
+        self.env.start()
+        self.mail = load(API, "mail")
+        self.mail._ses = mock.MagicMock()
+
+    def tearDown(self):
+        self.env.stop()
+
+    def body(self, **kw):
+        self.mail.send("r@client.test", "s", "Open it here:\n\n%s\n\nBye."
+                       % self.LINK, **kw)
+        return self.mail._ses.send_email.call_args.kwargs["Message"]["Body"]
+
+    def test_without_buttons_the_message_is_plain_text_alone(self):
+        self.assertEqual(list(self.body()), ["Text"])
+
+    def test_the_text_part_is_unchanged_by_buttons(self):
+        plain = self.body()["Text"]
+        self.assertEqual(self.body(buttons={self.LINK: "Open"})["Text"], plain)
+
+    def test_the_link_is_a_button_with_the_link_beneath_it(self):
+        html = self.body(buttons={self.LINK: "Open the memorandum"})["Html"][
+            "Data"]
+        href = 'href="https://app.test/view/g1#t=tok&amp;x=&lt;1&gt;"'
+        self.assertEqual(html.count(href), 2)
+        self.assertIn(">Open the memorandum</a>", html)
+        self.assertIn("If the button does not work, copy this link", html)
+        self.assertIn("<p", html.split("Open it here:")[0])
+        self.assertIn("Bye.", html)
+        # Navy, never gold: opening a share charges nothing.
+        self.assertIn("background:#002561", html)
+        self.assertNotIn("FFDD00", html.upper())
+
+    def test_words_are_escaped(self):
+        html = self.mail.html_part("A <b> & B\n", {})
+        self.assertIn("A &lt;b&gt; &amp; B", html)
+
+    def test_indented_lines_are_one_set_off_paragraph(self):
+        html = self.mail.html_part("    Lender Brief\n    Company A\n", {})
+        self.assertIn("padding-left:16px", html)
+        self.assertIn("Lender Brief<br>Company A", html)
 
 
 class RulesTest(unittest.TestCase):
