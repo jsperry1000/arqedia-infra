@@ -248,7 +248,7 @@ export function SignUp({ onSignIn, onSignedUp }: {
             )}
             <label className="row">
               <span>Your name</span>
-              <input value={personName} placeholder="Susan Perry"
+              <input value={personName} placeholder="John Smith"
                      onChange={(e) => setPersonName(e.target.value)} />
             </label>
             <label className="row">
