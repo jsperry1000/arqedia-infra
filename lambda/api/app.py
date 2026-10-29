@@ -1743,11 +1743,15 @@ def get_memo(tenant_id, memo_id):
         """
         SELECT m.s3_bucket, m.s3_key, m.generated_at, m.generated_by,
                m.pdf_key, m.parent_memo_id, m.revision, m.modified_by,
-               m.modified_at, w.name, m.config_revision, m.workspace_id
+               m.modified_at, w.name, m.config_revision, m.workspace_id,
+               e.name
         FROM memo m
         LEFT JOIN workspace w
                ON w.workspace_id = m.workspace_id
               AND w.tenant_id = m.tenant_id
+        LEFT JOIN engagement e
+               ON e.engagement_id = m.engagement_id
+              AND e.tenant_id = m.tenant_id
         WHERE m.tenant_id = :tenant_id AND m.memo_id = :memo_id
         """,
         [_p("tenant_id", tenant_id), _p("memo_id", int(memo_id))],
@@ -1830,6 +1834,9 @@ def get_memo(tenant_id, memo_id):
         "modified_at": _col(r, 8),
         # The workspace's name, null for a memo from before workspaces.
         "workspace": workspace,
+        # The engagement's name, for the head of the memo page. Null where
+        # the row has none.
+        "engagement": _col(r, 12),
         "markdown": markdown,
         "sources": [{"document_id": _col(s, 0),
                      # A source deleted before migration 028 ran has no name

@@ -466,6 +466,8 @@ export type Memo = {
   modified_at: string | null;
   /** The workspace's name; null for a memo from before workspaces. */
   workspace: string | null;
+  /** The engagement's name; null where the memo row names none. */
+  engagement: string | null;
   /** Its title block carries Number, Version and Workspace rows, filled in
    *  by the server from the memo row and taken out again on revise. */
   markdown: string;
