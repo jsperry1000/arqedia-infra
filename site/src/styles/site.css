@@ -217,36 +217,23 @@ footer p{font-size:14px;color:var(--muted);margin:0}
 
 /* --- starter packs -------------------------------------------------------- */
 
-.packs{position:relative;max-width:520px;margin:26px 0 30px}
-.pack-trigger{
-  width:100%;display:flex;align-items:center;gap:14px;
-  font:inherit;font-size:17px;font-family:var(--serif);color:var(--deep);
-  background:var(--paper);border:1px solid var(--rule);border-radius:var(--radius);
-  padding:15px 18px;cursor:pointer;text-align:left;
-  transition:border-color 200ms ease-out,box-shadow 200ms ease-out}
-.pack-trigger:hover{border-color:var(--medium)}
-.pack-trigger[aria-expanded="true"]{border-color:var(--deep);box-shadow:0 2px 14px rgba(0,37,97,.1)}
-.pack-trigger span:first-child{flex:1}
-.chev{width:9px;height:9px;border-right:1.6px solid var(--medium);
-  border-bottom:1.6px solid var(--medium);transform:rotate(45deg) translate(-2px,-2px);
-  transition:transform 220ms ease-out}
-.pack-trigger[aria-expanded="true"] .chev{transform:rotate(225deg) translate(-3px,-3px)}
-
-.pack-list{
-  position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:20;
-  list-style:none;margin:0;padding:6px;
-  background:var(--paper);border:1px solid var(--rule);border-radius:var(--radius);
-  box-shadow:0 10px 34px rgba(0,37,97,.14);max-height:330px;overflow:auto}
-.pack-list li{padding:0}
-.pack-list button{
-  width:100%;text-align:left;font:inherit;font-size:15px;color:var(--ink);
-  background:transparent;border:0;border-radius:var(--radius);
-  padding:11px 13px;cursor:pointer;display:block}
-.pack-list button:hover,.pack-list button:focus-visible{background:var(--wash)}
-.pack-list button[aria-selected="true"]{background:var(--light);color:var(--deep)}
-.pack-list button b{display:block;font-family:var(--serif);font-size:16px;font-weight:400;color:var(--deep)}
-.pack-list button small{display:block;font-size:12.5px;color:var(--muted);margin-top:2px}
-.pack-note{margin:14px 0 0;font-size:14.5px;color:var(--ink-2);min-height:3em}
+/* Static since 29 October 2026: workspaces, and the templates each holds
+   beneath it on a rule, as a tree. */
+.packs{max-width:680px;margin:26px 0 30px;display:grid;gap:14px}
+.pack-ws{background:var(--paper);border:1px solid var(--rule);
+  border-radius:var(--radius);padding:16px 20px 10px}
+.pack-ws-name{margin:0;font-family:var(--serif);font-size:18px;color:var(--deep)}
+.pack-ws-name span{font-family:var(--sans);font-size:11px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted);margin-left:10px}
+.pack-tpls{list-style:none;margin:8px 0 0 6px;padding:0 0 0 20px;
+  border-left:1.5px solid var(--line)}
+.pack-tpls li{position:relative;padding:8px 0}
+.pack-tpls li::before{content:"";position:absolute;left:-20px;top:19px;
+  width:13px;border-top:1.5px solid var(--line)}
+.pack-tpls b{display:block;font-family:var(--serif);font-weight:400;
+  font-size:16px;color:var(--deep)}
+.pack-tpls small{display:block;font-size:12.5px;line-height:1.55;
+  color:var(--muted);margin-top:3px}
 
 /* The Terms, Privacy and Refund pages (27 October 2026). Long text read
    once, carefully: the section headings are smaller than a marketing page's
