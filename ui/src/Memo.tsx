@@ -578,12 +578,29 @@ export function MemoView({ memoId, onBack, onOpen }: {
   async function downloadPdf() {
     // Rendered on demand, so it takes a couple of seconds on a long memo.
     // Saying so beats a button that appears to do nothing.
+    //
+    // THE TAB IS OPENED ON THE CLICK, NOT WHEN THE PDF IS READY. A browser
+    // lets a page open one only for a few seconds after a click - Chrome's
+    // is five - and blocks it without a word after that. A memo carrying
+    // pages of a PDF takes seven or eight to render, so a tab opened then
+    // never appeared and the button seemed to do nothing (29 October 2026).
+    // Opened blank, cut loose from this page, and sent to the PDF when its
+    // link arrives. Where even that is blocked it is said, not left silent.
+    const tab = window.open("", "_blank");
+    if (!tab) {
+      setSaveError("The browser blocked the tab the PDF opens in. Allow "
+        + "pop-ups for this site and press Download PDF again.");
+      return;
+    }
+    tab.opener = null;
+    tab.document.title = "Rendering…";
     setRendering(true);
     setSaveError("");
     try {
       const { url } = await api.memoPdf(memoId);
-      window.open(url, "_blank", "noopener");
+      tab.location.href = url;
     } catch (err) {
+      tab.close();
       setSaveError(String((err as Error)?.message ?? err));
     } finally {
       setRendering(false);
