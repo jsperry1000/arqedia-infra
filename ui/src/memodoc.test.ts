@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { blockToMarkdown, footnoteRef, headingText, imageMarkdown, imagesIn,
-         isCitable, parseBlocks,
+         isCitable, PAGE_BREAK_LINE, parseBlocks,
          sectionLabel, serializeBlocks, type Block } from "./memodoc";
 import { diffStep, undoStep } from "./undo";
 
@@ -132,5 +132,40 @@ describe("a footnote put in by hand", () => {
       { kind: "text", text: "Interest-free. " },
       { kind: "cites", refs: ["b.pdf, page 2", "a.pdf, page 4"] },
     ]);
+  });
+});
+
+// A page break put in by hand (29 October 2026): where the PDF starts a page.
+describe("a page break", () => {
+  const text = "One.\n\n<!-- page break -->\n\nTwo.";
+
+  it("is a block of its own, and comes back character for character", () => {
+    expect(parseBlocks(text).map((b) => b.kind)).toEqual(["para", "pagebreak", "para"]);
+    expect(serializeBlocks(parseBlocks(text))).toBe(text);
+  });
+
+  it("ends the paragraph above it", () => {
+    const tight = "One line.\n<!-- page break -->\nAnother.";
+    expect(parseBlocks(tight).map((b) => b.kind)).toEqual(["para", "pagebreak", "para"]);
+    expect(serializeBlocks(parseBlocks(tight))).toBe(tight);
+  });
+
+  it("is only the line on its own, unindented and as written", () => {
+    for (const other of ["See <!-- page break --> here.", "  <!-- page break -->",
+                         "<!-- pagebreak -->", "<!-- Page Break -->"]) {
+      expect(parseBlocks(other).some((b) => b.kind === "pagebreak")).toBe(false);
+    }
+  });
+
+  it("put in is one step, and undoing it gives the memo back", () => {
+    const plain = "One.\n\nTwo.";
+    const blocks = parseBlocks(plain);
+    const block: Block = { id: "new", source: "", kind: "pagebreak" };
+    const after = serializeBlocks([...blocks.slice(0, 1),
+      { ...block, source: blockToMarkdown(block, "\n") }, ...blocks.slice(1)]);
+    expect(after).toBe("One.\n\n" + PAGE_BREAK_LINE + "\n\nTwo.");
+    const step = diffStep("page-break", plain, after)!;
+    expect(step.before).toHaveLength(0);
+    expect(undoStep(after, step)).toBe(plain);
   });
 });
