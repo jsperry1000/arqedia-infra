@@ -928,6 +928,29 @@ p.warn { color: #b45309; }
 }
 .footnote-list button:hover:not(:disabled) { background: var(--wash); color: var(--deep); }
 .footnote-list button:disabled { background: transparent; color: var(--muted); }
+/* Found by fact or by type (29 October 2026): the results under their
+   document type, a fact as its label and the value read, opening to the
+   places it was read, set in under it. */
+.footnote-group + .footnote-group { margin-top: 6px; }
+.footnote-group h4 { margin: 14px 0 2px; }
+.footnote-list button.footnote-fact { word-break: normal; }
+.footnote-list button.footnote-fact.on { background: var(--wash); color: var(--deep); }
+.footnote-fact .fact-label { font-weight: 600; color: var(--deep); }
+.footnote-list .fact-value { color: var(--muted); }
+/* A value can be a paragraph. Two lines of it say which fact this is; the
+   rest made the list a page of prose to scroll through. Rendered: without
+   the cap, three facts filled the drawer. On a line inside the button, not
+   the button: overflow clips at the padding's edge, and the padding showed
+   the top of a third line. */
+.footnote-fact .fact-line {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.footnote-places { margin: 2px 0 6px 18px; border-left: 2px solid var(--light); }
+.footnote-places .fact-value {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; font-size: 12px; word-break: normal;
+}
 
 /* A place to start a paragraph. A thin strip between blocks: nothing until
    the pointer is near it, so a document being read is not a page of plus
