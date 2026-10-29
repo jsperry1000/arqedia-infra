@@ -463,15 +463,21 @@ class ReviseFromUpdate(unittest.TestCase):
         self.update_revisions = ()
         # The root's sources: name, and whether its document has gone.
         self.sources = (("a.pdf", False),)
+        # The revised memo's own, beyond the root's: what an Update added.
+        # Read only where the memo being revised is not the root.
+        self.own_sources = ()
+        self.root = None
 
         def sql(statement, params=None):
             values = {p["name"]: value(p) for p in (params or [])}
             self.statements.append((statement, values))
             if "SELECT s3_key, template_key, config_revision" in statement:
-                return rows(("memos/100.md", "credit", 3, None, 1, 42,
+                return rows(("memos/100.md", "credit", 3, self.root, 1, 42,
                              "live", WORKSPACE))
             if "FROM memo_source ms" in statement:
-                return rows(*self.sources)
+                own = self.own_sources if values.get("m") != values.get(
+                    "root") else ()
+                return rows(*(self.sources + own))
             if "state = 'filed' AND active = 1" in statement:
                 return rows((8, "b.pdf"), (9, "b.pdf"), (5, "a.pdf"))
             if "SELECT rewrite_id FROM memo_rewrite" in statement:
@@ -566,6 +572,26 @@ class ReviseFromUpdate(unittest.TestCase):
         [carry] = [s for s, _ in self.statements
                    if "SELECT :new_id, document_id" in s]
         self.assertIn("tenant_id, filename", carry)
+
+    def test_a_save_of_an_updated_revision_keeps_what_the_update_added(self):
+        # Memo 243's case, 29 October 2026: an Update brought in d.pdf, filed
+        # since the root was written. Saved again by hand, the revision was
+        # refused - the check read the root's sources alone.
+        self.root = 100
+        self.own_sources = (("d.pdf", False),)
+        self.app.revise_memo(TENANT, EMAIL, MEMO,
+                             "Text. *a.pdf, page 1* *d.pdf, page 2*")
+        self.assertEqual(self.inserted_memo()["config_revision"], 3)
+        [carry] = [v for s, v in self.statements
+                   if "SELECT :new_id, document_id" in s]
+        self.assertEqual((carry["m"], carry["root"]), (MEMO, 100))
+
+    def test_a_save_still_refuses_what_neither_holds(self):
+        self.root = 100
+        self.own_sources = (("d.pdf", False),)
+        with self.assertRaises(ValueError) as caught:
+            self.app.revise_memo(TENANT, EMAIL, MEMO, "Text. *e.pdf, page 1*")
+        self.assertIn("e.pdf", str(caught.exception))
 
     def test_the_revision_comes_from_the_rows(self):
         self.update_revisions = ((9,),)
