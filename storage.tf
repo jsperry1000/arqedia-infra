@@ -164,9 +164,18 @@ resource "aws_s3_bucket_public_access_block" "data" {
 #           watches this bucket either. POST, not PUT: the upload is a signed
 #           POST whose policy carries content-length-range, so S3 itself
 #           refuses an image over its size. A PUT link cannot say that.
+#
+# AND ONE READ, ADDED 29 OCTOBER 2026 (pdf-page-insert):
+#
+#   docs    GET as well, so the browser can read a filed PDF's bytes and draw
+#           a page of it into a memo as an image. The link it reads through
+#           is the one "Open the original document" already signs
+#           (document_passage in lambda/api/app.py): one key, inside the
+#           tenant's own prefix, an hour. Opening that link in a tab never
+#           needed CORS; reading it from the page does.
 locals {
   upload_methods = {
-    docs    = ["PUT"]
+    docs    = ["PUT", "GET"]
     review  = ["PUT"]
     curated = ["POST"]
   }

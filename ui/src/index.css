@@ -946,6 +946,30 @@ p.warn { color: #b45309; }
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
   overflow: hidden;
 }
+/* Pages of a PDF to put into a memo (29 October 2026): a grid of thumbnails,
+   each a button, the picked ones ringed in the deep. */
+.pdf-thumbs {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 14px; padding-top: 12px;
+}
+.pdf-thumbs .pdf-thumb {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 6px; background: var(--paper); color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: 3px; font-weight: 400;
+}
+.pdf-thumbs .pdf-thumb:hover:not(:disabled) {
+  background: var(--wash); border-color: var(--medium); color: var(--deep);
+}
+.pdf-thumbs .pdf-thumb.on {
+  border-color: var(--deep); box-shadow: 0 0 0 2px var(--deep);
+  background: var(--wash); color: var(--deep);
+}
+.pdf-thumb canvas {
+  display: block; width: 100%; height: auto; min-height: 60px;
+  background: var(--wash);
+}
+.pdf-thumb-n { font-size: 12px; }
+.pdf-panel .panel-body h4:first-child { margin-top: 12px; }
 .footnote-places { margin: 2px 0 6px 18px; border-left: 2px solid var(--light); }
 .footnote-places .fact-value {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
