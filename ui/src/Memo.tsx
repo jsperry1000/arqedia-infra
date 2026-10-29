@@ -284,6 +284,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
     let live = true;
     setLoaded(false);
     setMemo(null);
+    setSaving(false);
     setMode("read");
     setSaveError("");
     setKeeping("");
@@ -893,12 +894,15 @@ export function MemoView({ memoId, onBack, onOpen }: {
       kept.current = { id: memoId, payload: "null" };
       latest.current = { id: memoId, payload: "null" };
       setMode("read");
+      // Still saving until the new memo is on the screen: the load below
+      // ends it. Ended here, the Save button came back over the old copy
+      // for as long as the new memo took to load, which read as the save
+      // not having happened.
       onOpen(revised.memo_id);
     } catch (err) {
       // A citation naming a document that is not a source of this memo is
       // refused rather than saved. The message names which.
       setSaveError(errorText(err));
-    } finally {
       setSaving(false);
     }
   }
@@ -1036,7 +1040,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
         )}
       </div>
 
-      {mode === "read" && hasChanges && (
+      {mode === "read" && hasChanges && !saving && (
+        // Not while saving: the changes are on their way into a new memo.
         // .unsaved, not the plain note Catalogue and Welcome share: this one
         // gates an action in the head - Share - so it has to be seen, not
         // merely present.
