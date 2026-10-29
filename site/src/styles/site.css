@@ -223,8 +223,11 @@ footer p{font-size:14px;color:var(--muted);margin:0}
 .pack-ws{background:var(--paper);border:1px solid var(--rule);
   border-radius:var(--radius);padding:16px 20px 10px}
 .pack-ws-name{margin:0;font-family:var(--serif);font-size:18px;color:var(--deep)}
-.pack-ws-name span{font-family:var(--sans);font-size:11px;letter-spacing:.08em;
-  text-transform:uppercase;color:var(--muted);margin-left:10px}
+/* WORKSPACE and MEMO TEMPLATE: the two labels say what each line is, and
+   are meant to stand out - bold, in --medium, the blue. */
+.pack-label{font-family:var(--sans);font-size:11px;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--medium);
+  margin-left:10px}
 .pack-tpls{list-style:none;margin:8px 0 0 6px;padding:0 0 0 20px;
   border-left:1.5px solid var(--line)}
 .pack-tpls li{position:relative;padding:8px 0}
