@@ -734,6 +734,23 @@ p.warn { color: #b45309; }
   border-bottom: 1px solid var(--line);
 }
 
+/* Search within a memo (UI-01), under the memo's name in its pinned head.
+   Its controls are links, not buttons: .memo-head button pushes right. */
+.memo-search {
+  display: flex; align-items: center; gap: 10px; margin-top: 8px;
+  font-size: 13px;
+}
+.memo-search input {
+  width: 220px; padding: 5px 10px; font-size: 13px;
+}
+.memo-search .count { color: var(--muted); white-space: nowrap; }
+.memo-search a { cursor: pointer; font-size: 15px; line-height: 1; }
+.memo-search a[aria-disabled="true"] { color: var(--muted); cursor: default; }
+::highlight(memo-search) { background-color: var(--light); color: var(--ink); }
+::highlight(memo-search-current) {
+  background-color: var(--medium); color: var(--paper);
+}
+
 /* Go and Save side by side. Each button pushes right on its own, so without
    this the second takes all the space between them. */
 .memo-head button + button,
