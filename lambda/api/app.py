@@ -4352,8 +4352,9 @@ def _dispatch(event, context):
             subject, text = mail.invitation(
                 email, invited["accept_url"], invited["expires_at"],
                 invited["role"])
-            invited["sent"] = mail.send(invited["email"], subject, text,
-                                        reply_to=email)
+            invited["sent"] = mail.send(
+                invited["email"], subject, text, reply_to=email,
+                buttons={invited["accept_url"]: "Accept the invitation"})
             return _reply(201, invited)
 
         if route == "DELETE /seats/invitations/{invitation_id}":

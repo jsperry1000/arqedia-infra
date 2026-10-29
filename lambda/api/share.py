@@ -613,9 +613,9 @@ def _mail(email, tenant_name, grant):
     """The email, after everything else has happened - and never at its
     expense (mail.py). The grant stands whether SES accepts it or not, and
     the screen says which."""
+    link = _link(grant["grant_id"], grant["link_token"])
     subject, text = mail.share_invitation(
-        email, tenant_name, grant["memo_label"], grant.get("subject"),
-        _link(grant["grant_id"], grant["link_token"]),
+        email, tenant_name, grant["memo_label"], grant.get("subject"), link,
         grant["expires_at"], bool(grant.get("expiry_set_by_tenant")))
     # The sender is copied, BCC, on the same message (feature/share-sender-
     # copy): the real ARQEDIA email in their own inbox, to forward if they
@@ -623,7 +623,8 @@ def _mail(email, tenant_name, grant):
     # link takes a device verified by a code sent to the grant's recipient,
     # and nobody else (fix/share-link-possession-read).
     sent = mail.send(grant["recipient_email"], subject, text,
-                     reply_to=email, bcc=email)
+                     reply_to=email, bcc=email,
+                     buttons={link: "Open the memorandum"})
     if sent:
         _mark_notified([grant["grant_id"]])
     return sent
@@ -714,15 +715,19 @@ def notify(tenant_id, email, grant_ids):
             raise AlreadyNotified("One of these shares has just been emailed.")
         raise
 
+    shares = [{"memo_label": g["memo_label"], "subject": g.get("subject"),
+               "link": _link(g["grant_id"], g["link_token"]),
+               "expires_at": g["expires_at"],
+               "expiry_set_by_tenant": bool(g.get("expiry_set_by_tenant"))}
+              for g in grants]
     subject, text = mail.share_batch_invitation(
-        email, _tenant_name(tenant_id),
-        [{"memo_label": g["memo_label"], "subject": g.get("subject"),
-          "link": _link(g["grant_id"], g["link_token"]),
-          "expires_at": g["expires_at"],
-          "expiry_set_by_tenant": bool(g.get("expiry_set_by_tenant"))}
-         for g in grants])
+        email, _tenant_name(tenant_id), shares)
+    # One button to each memorandum, named for it; a batch of one is the
+    # single email, and its button says what the single email's does.
+    buttons = ({shares[0]["link"]: "Open the memorandum"} if len(shares) == 1
+               else {s["link"]: "Open " + s["memo_label"] for s in shares})
     sent = mail.send(recipients.pop(), subject, text, reply_to=email,
-                     bcc=email)
+                     bcc=email, buttons=buttons)
     if not sent:
         _unclaim(claimed)
     print("[share-notified] tenant=%s shares=%d sent=%s" % (

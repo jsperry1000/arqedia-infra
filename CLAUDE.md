@@ -142,6 +142,20 @@ that declares a colour, a typeface or a radius. The application imports it from
 `index.css`; the marketing site imports the same file. A value that is needed
 and missing is added there, never redeclared.
 
+**Amended 28 October 2026 (feature/email-buttons): email carries a button,
+and the one copy of the tokens.** Until then every email the product sent
+was plain text alone (`lambda/api/mail.py`). A share email, single or batch,
+and the seat invitation now also carry an HTML part. In it each link is a
+navy button, with the link itself in small type beneath for a client that
+will not follow the button. The HTML is derived from the text part, not
+written separately: one copy of every word, and the text part is unchanged.
+A mail client drops stylesheets, so the HTML cannot import `tokens.css`.
+`mail.py` therefore holds inline copies of `--deep`, `--medium`, `--paper`,
+`--ink-2`, `--muted`, `--radius` and `--sans`, each commented with its token.
+They are the one sanctioned copy outside `tokens.css`, and a change to one
+of those tokens is made there too. The PDF renderer's colours in
+`lambda/render/style.py` predate this and are not covered by it.
+
 **One mark.** `/brand/logo-deep.svg` and `/brand/logo-white.svg` at the
 repository root. Both surfaces reference them by relative path; there is no
 copy. The current pair are placeholders and say so in their own source.

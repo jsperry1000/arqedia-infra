@@ -81,6 +81,13 @@ class InvitationMailTest(unittest.TestCase):
         self.assertIn(ADMIN, subject)
         self.assertIn(ADMIN, text)
 
+    def test_the_link_is_a_button(self):
+        """As the share email's is (28 October 2026)."""
+        send = mock.Mock(return_value=True)
+        _, body = self.invite(send)
+        self.assertEqual(send.call_args.kwargs["buttons"],
+                         {body["accept_url"]: "Accept the invitation"})
+
 
 class InvitationWordingTest(unittest.TestCase):
     """mail.invitation on its own: it composes, it does not send."""
