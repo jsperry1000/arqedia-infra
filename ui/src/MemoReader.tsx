@@ -6,6 +6,7 @@ import { citeChipHtml, inlinesToHtml, nodesToInlines } from "./memoedit";
 import type { Act } from "./undo";
 import { api, type DocumentDetail } from "./api";
 import { groupByType, type Place, type Source } from "./footnotefacts";
+import { PdfPagePicker, type PagePicked } from "./PdfPages";
 
 /**
  * The memo as it reads.
@@ -527,6 +528,12 @@ function fileOf(data: DataTransfer | null): File | null {
   return files.find((f) => f.type.startsWith("image/")) ?? files[0] ?? null;
 }
 
+/** A PDF, which opens on its pages rather than being refused as an image
+ *  (pdf-page-insert). */
+function isPdf(file: File): boolean {
+  return file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+}
+
 export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                               onOpenChange, imageSrc, onImageError,
                               onImageFile }: {
@@ -642,6 +649,11 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
       .map(([name, documentId]) => ({ name, documentId }))
       .sort((a, b) => a.name.localeCompare(b.name)),
     [byFilename, gone]);
+  // Pages of a PDF being chosen, and the gap they go into: from a source or
+  // a file chosen there, or the PDF dropped or pasted that opened it.
+  const [pdfAt, setPdfAt] = useState<{ index: number; file: File | null } | null>(null);
+  const pdfSources = useMemo(
+    () => citable.filter((s) => /\.pdf$/i.test(s.name)), [citable]);
 
   // Told to the screen as it changes, and as none when this document goes -
   // a section swapped for its rewrite takes its open block with it.
@@ -663,20 +675,29 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   const [dropAt, setDropAt] = useState<number | null>(null);
   // Gaps with an image on its way into storage.
   const [placing, setPlacing] = useState<number[]>([]);
-  // An image in storage, waiting to go into the memo.
-  const [arrived, setArrived] = useState<{ at: number; block: Block } | null>(null);
+  // Images in storage, waiting to go into the memo together.
+  const [arrived, setArrived] = useState<{ at: number; blocks: Block[] } | null>(null);
 
   /** An image dropped or pasted: into storage first, then into the memo
    *  between blocks, on a line of its own. One act to undo. */
   async function insertImage(file: File, index: number) {
+    await insertImages([{ file, alt: file.name.replace(/\.[^.]*$/, "") }], index);
+  }
+
+  /** Pages of a PDF, drawn as images: each into storage in turn, then all
+   *  into the memo at once, in order - one act to undo, as one image is.
+   *  The first refused stops the rest, and the screen says why. */
+  async function insertImages(items: PagePicked[], index: number) {
     if (!onImageFile) return;
     setPlacing((p) => [...p, index]);
     try {
-      const image = await onImageFile(file);
-      if (image) {
-        setArrived({ at: index, block: { id: "new", source: "", kind: "image",
-          alt: file.name.replace(/\.[^.]*$/, ""), image } });
+      const stored: Block[] = [];
+      for (const { file, alt } of items) {
+        const image = await onImageFile(file);
+        if (!image) break;
+        stored.push({ id: "new", source: "", kind: "image", alt, image });
       }
+      if (stored.length > 0) setArrived({ at: index, blocks: stored });
     } finally {
       setPlacing((p) => { const i = p.indexOf(index); return p.filter((_, k) => k !== i); });
     }
@@ -689,11 +710,11 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
     if (!arrived || put.current === arrived || !onChange) return;
     put.current = arrived;
     const at = Math.min(arrived.at, blocks.length);
-    // One blank line after it: a source ending "\n" is its line and one
+    // One blank line after each: a source ending "\n" is its line and one
     // blank one, once joined.
     onChange(serializeBlocks([
       ...blocks.slice(0, at),
-      { ...arrived.block, source: blockToMarkdown(arrived.block, "\n") },
+      ...arrived.blocks.map((b) => ({ ...b, source: blockToMarkdown(b, "\n") })),
       ...blocks.slice(at),
     ]), "image");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -988,6 +1009,15 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
             Insert footnote
           </button>
         )}
+        {editable && open && onImageFile && (
+          <button type="button" className="tool"
+                  onClick={() => setPdfAt({
+                    index: blocks.findIndex((b) => b.id === block.id) + 1,
+                    file: null })}
+                  title="Put pages of a PDF in after this, as images">
+            Insert PDF pages
+          </button>
+        )}
         {editable && open && (
           <button type="button" className="tool danger"
                   onClick={() => removeBlock(block.id)}
@@ -1060,7 +1090,8 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
         const at = dropAt ?? gapAt(e.clientY);
         setDropAt(null);
         const file = fileOf(e.dataTransfer);
-        if (file) insertImage(file, at);
+        if (file && isPdf(file)) setPdfAt({ index: at, file });
+        else if (file) insertImage(file, at);
       }}
       // Pasted, it goes after the block open, or where a paragraph is being
       // started. Text is the block's own and never reaches here.
@@ -1074,7 +1105,8 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
         if (at === null) return;
         // A paragraph started for the image is not wanted once it is in.
         setAdding(null);
-        insertImage(file, at);
+        if (isPdf(file)) setPdfAt({ index: at, file });
+        else insertImage(file, at);
       }}>
       {blocks.map((block, index) => {
         const content = (() => {
@@ -1316,6 +1348,15 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
       <FootnotePicker sources={citable} ready={!!caret.current}
                       onPick={insertFootnote}
                       onClose={() => { caret.current = null; setPicking(false); }} />
+    )}
+    {pdfAt && (
+      <PdfPagePicker sources={pdfSources} dropped={pdfAt.file}
+                     onInsert={(pages) => {
+                       const at = pdfAt.index;
+                       setPdfAt(null);
+                       insertImages(pages, at);
+                     }}
+                     onClose={() => setPdfAt(null)} />
     )}
     </>
   );
