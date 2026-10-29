@@ -535,7 +535,7 @@ function isPdf(file: File): boolean {
 }
 
 export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
-                              onOpenChange, imageSrc, onImageError,
+                              onOpenChange, othersOpen, imageSrc, onImageError,
                               onImageFile }: {
   markdown: string;
   byFilename: Record<string, number>;
@@ -550,6 +550,10 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   // block between opening and closing it is one edit to undo, and undo
   // waits while a block is open.
   onOpenChange?: (open: string | null) => void;
+  // A block has been opened in another document on the same screen - a
+  // section beside this one, while rewriting. Whatever is open here closes,
+  // so there is one box open on the screen and not one per section.
+  othersOpen?: boolean;
   // An image's link by its name: undefined while it is being asked for,
   // null where the memo does not hold it.
   imageSrc?: (image: string) => string | null | undefined;
@@ -662,6 +666,15 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   useEffect(() => { reportOpen.current = onOpenChange; });
   useEffect(() => { reportOpen.current?.(open); }, [open]);
   useEffect(() => () => reportOpen.current?.(null), []);
+
+  // Shut by a block opened elsewhere on the screen. Closed as Done closes
+  // it, so what was typed is kept and a block emptied is dropped.
+  useEffect(() => {
+    if (!othersOpen) return;
+    if (editing !== null) finish(editing);
+    setAdding(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [othersOpen]);
 
   // A memorandum is a hundred thousand characters. Parsed on every keystroke
   // it would be, and the whole document laid out again with it.
@@ -1003,7 +1016,13 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
         )}
         {editable && (
           <button type="button" className={open ? "tool on" : "tool"}
-                  onClick={() => (open ? finish(block.id) : setEditing(block.id))}
+                  // Opening this closes a paragraph being started: one box
+                  // open at a time. What was typed in it goes in as it shuts.
+                  onClick={() => {
+                    if (open) { finish(block.id); return; }
+                    setAdding(null);
+                    setEditing(block.id);
+                  }}
                   title={open ? "Finish editing" : "Edit this"}>
             {open ? "Done" : block.kind === "table" ? "Edit table" : "Edit"}
           </button>

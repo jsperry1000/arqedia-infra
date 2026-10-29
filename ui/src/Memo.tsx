@@ -210,6 +210,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
   // The block open in each document on the screen: undo waits while any is.
   const openBlocks = useRef<Record<string, string | null>>({});
   const [blockOpen, setBlockOpen] = useState(false);
+  // The document whose block was opened last. Every other document on the
+  // screen shuts what it has open, so there is one box open at a time.
+  const [openDoc, setOpenDoc] = useState<string | null>(null);
 
   function record(next: Step[]) {
     historyRef.current = next;
@@ -681,6 +684,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
     if (id !== null && id !== (openBlocks.current[doc] ?? null)) session.current++;
     openBlocks.current = { ...openBlocks.current, [doc]: id };
     setBlockOpen(Object.values(openBlocks.current).some((v) => v !== null));
+    if (id !== null) setOpenDoc(doc);
+    else setOpenDoc((was) => (was === doc ? null : was));
   }
 
   /** Take back the last step. Refused while a block is open or a rewrite is
@@ -1148,6 +1153,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
                               gone={gone} onOpen={openRef}
                               {...imageProps} onImageFile={putImage}
                               onOpenChange={(id) => opened("head", id)}
+                              othersOpen={openDoc !== null && openDoc !== "head"}
                               onChange={updateRun ? undefined : (text, act) => change(
                                 act, joinSections(text, split.hasHead, split.sections))} />
               </div>
@@ -1191,6 +1197,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
                                   gone={gone} onOpen={openRef}
                                   {...imageProps} onImageFile={putImage}
                                   onOpenChange={(id) => opened(s.key, id)}
+                                  othersOpen={openDoc !== null && openDoc !== s.key}
                                   onChange={updateRun ? undefined : (text, act) => change(
                                     act, replaceSection(draftRef.current, s.key, text))} />
                   </div>
@@ -1298,6 +1305,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
                       onOpen={openRef}
                       {...imageProps} onImageFile={putImage}
                       onOpenChange={(id) => opened("doc", id)}
+                      othersOpen={openDoc !== null && openDoc !== "doc"}
                       onChange={updateRun ? undefined
                                           : (text, act) => change(act, text)} />
       )}
