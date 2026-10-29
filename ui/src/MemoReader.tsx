@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState,
          type DragEvent } from "react";
 import { parseBlocks, serializeBlocks, blockToMarkdown, trailingOf, citationsIn,
-         type Block, type Inline } from "./memodoc";
-import { inlinesToHtml, nodesToInlines } from "./memoedit";
+         isCitable, footnoteRef, type Block, type Inline } from "./memodoc";
+import { citeChipHtml, inlinesToHtml, nodesToInlines } from "./memoedit";
 import type { Act } from "./undo";
 
 /**
@@ -337,6 +337,96 @@ function Editable({ html, onEdit, onSplit, deferred, className }: {
   );
 }
 
+/**
+ * Choosing the document a footnote cites.
+ *
+ * THE MEMO'S OWN SOURCES, AND NOTHING ELSE (decided 27 October 2026). The
+ * save refuses a citation to any document that is not a source of the memo,
+ * so listing the rest of the engagement would offer citations that cannot be
+ * kept. A deleted source is left out for the same reason.
+ *
+ * Found by searching their names: every word typed must appear somewhere in
+ * the name, in any order. The page is optional; without one the footnote
+ * names the file alone, which opens it like any other.
+ */
+function FootnotePicker({ names, ready, onPick, onClose }: {
+  names: string[];
+  // False when there was no cursor in the text to put the footnote at.
+  ready: boolean;
+  onPick: (ref: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState("");
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const found = names.filter((n) =>
+    words.every((w) => n.toLowerCase().includes(w)));
+  const pageNo = /^\d+$/.test(page.trim()) && Number(page) > 0
+    ? Number(page) : null;
+  const pageBad = page.trim() !== "" && pageNo === null;
+  const pick = (name: string) => {
+    if (ready && !pageBad) onPick(footnoteRef(name, pageNo));
+  };
+
+  return (
+    <div className="panel-backdrop" onClick={onClose}>
+      <div className="panel narrow footnote-panel" role="dialog"
+           aria-label="Insert a footnote"
+           onClick={(e) => e.stopPropagation()}
+           onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
+        <div className="panel-head">
+          <a className="panel-close" onClick={onClose}>Close</a>
+          <h3>Insert a footnote</h3>
+          {!ready ? (
+            <p className="warn">
+              Click in the text where the footnote goes, then press Insert
+              footnote again.
+            </p>
+          ) : (
+            <p className="muted small">
+              It goes where the cursor was. Only this memo's sources can be
+              cited.
+            </p>
+          )}
+          <div className="footnote-fields">
+            <input type="text" autoFocus placeholder="Search the documents"
+                   aria-label="Search the documents" value={query}
+                   onChange={(e) => setQuery(e.target.value)}
+                   // One left: Enter takes it.
+                   onKeyDown={(e) => {
+                     if (e.key === "Enter" && found.length === 1) pick(found[0]);
+                   }} />
+            <input type="text" inputMode="numeric" placeholder="Page"
+                   aria-label="Page (optional)" className="footnote-page"
+                   value={page} onChange={(e) => setPage(e.target.value)} />
+          </div>
+          {pageBad && <p className="warn">A page is a whole number.</p>}
+        </div>
+        <div className="panel-body">
+          {found.length === 0 ? (
+            <p className="muted">
+              {names.length === 0 ? "This memo has no sources to cite."
+                                  : "No document's name matches."}
+            </p>
+          ) : (
+            <ul className="footnote-list">
+              {found.map((name) => (
+                <li key={name}>
+                  <button type="button" disabled={!ready || pageBad}
+                          onClick={() => pick(name)}
+                          title={"Cite " + footnoteRef(name, pageNo)}>
+                    {name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** The file a drop or a paste carries, an image first: the image wins a
  *  mixed paste (graphics-insert N5). Any other file is still handed on, so
  *  the person is told what an image has to be rather than nothing
@@ -450,6 +540,16 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   const [dropRow, setDropRow] = useState<{ r: number; below: boolean } | null>(null);
   // Counts the rows moved, for the rows' key: see the table below.
   const [moved, setMoved] = useState(0);
+  // A footnote being chosen, and the cursor it goes at: taken when Insert
+  // footnote is pressed, because the search box takes the focus after.
+  const [picking, setPicking] = useState(false);
+  const caret = useRef<{ host: HTMLElement; range: Range } | null>(null);
+  // What a footnote may cite: the sources, less any deleted, by name.
+  const citable = useMemo(
+    () => Object.keys(byFilename)
+      .filter((name) => isCitable(name) && !gone?.has(name))
+      .sort((a, b) => a.localeCompare(b)),
+    [byFilename, gone]);
 
   // Told to the screen as it changes, and as none when this document goes -
   // a section swapped for its rewrite takes its open block with it.
@@ -573,6 +673,37 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
       return { ...b, rows };
     }, "row");
     setMoved((n) => n + 1);
+  }
+
+  /** Where the cursor is, if it is in the text of the open block. */
+  function caretInBlock(): { host: HTMLElement; range: Range } | null {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    const at = range.startContainer;
+    const host = (at.nodeType === 1 ? at as Element : at.parentElement)
+      ?.closest<HTMLElement>(".editable");
+    if (!host || !article.current?.contains(host)) return null;
+    return { host, range: range.cloneRange() };
+  }
+
+  /** A footnote put in at the cursor, as the same locked mark a citation
+   *  wears in the editor, and read back with the rest of the block. A space
+   *  goes before it where the word before runs up to it. */
+  function insertFootnote(ref: string) {
+    const at = caret.current;
+    caret.current = null;
+    setPicking(false);
+    if (!at || !at.host.isConnected) return;
+    at.host.focus();
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(at.range);
+    const node = at.range.startContainer;
+    const before = node.nodeType === 3
+      ? (node.nodeValue ?? "").slice(0, at.range.startOffset) : "";
+    const space = before && !/\s$/.test(before) ? "&nbsp;" : "";
+    document.execCommand("insertHTML", false, space + citeChipHtml(ref));
   }
 
   /** The gap a row held over row `r` would drop into, by which half of the
@@ -750,6 +881,21 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
             {open ? "Done" : block.kind === "table" ? "Edit table" : "Edit"}
           </button>
         )}
+        {editable && open && block.kind !== "heading" && (
+          <button type="button" className="tool"
+                  // Taken on the press, before the button has the focus and
+                  // the cursor is gone from the text.
+                  onMouseDown={(e) => { e.preventDefault(); caret.current = caretInBlock(); }}
+                  // From the keyboard there was no press: the selection is
+                  // still in the text, so it is taken here.
+                  onClick={() => {
+                    if (!caret.current) caret.current = caretInBlock();
+                    setPicking(true);
+                  }}
+                  title="Cite one of this memo's sources where the cursor is">
+            Insert footnote
+          </button>
+        )}
         {editable && open && (
           <button type="button" className="tool danger"
                   onClick={() => removeBlock(block.id)}
@@ -801,6 +947,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   }
 
   return (
+    <>
     <article className="memo doc" ref={article}
       // Dropped anywhere on the memo, an image goes into the gap nearest the
       // pointer, marked while it is held over it.
@@ -1072,5 +1219,12 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
       })}
       <Insert index={blocks.length} />
     </article>
+    {/* After the memo, not in it: a drawer stacks in document order. */}
+    {picking && (
+      <FootnotePicker names={citable} ready={!!caret.current}
+                      onPick={insertFootnote}
+                      onClose={() => { caret.current = null; setPicking(false); }} />
+    )}
+    </>
   );
 }
