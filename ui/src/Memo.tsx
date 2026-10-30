@@ -4,6 +4,7 @@ import { api, chargeKey, imageTooBig, statusOf, type Memo, type Passage,
          type Quote, type Rewrite, type UpdateRun } from "./api";
 import { headingText, imagesIn } from "./memodoc";
 import { MemoDocument, type Ref } from "./MemoReader";
+import { MemoSearch } from "./MemoSearch";
 import { useBackAction, usePinTop, Working } from "./shell";
 import { money, ShareSendPanel } from "./Share";
 import { balanceFor } from "./upgrade";
@@ -215,6 +216,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
   // section is named by its place, not its heading: typing in the heading
   // would otherwise make it another document, and it shut its own box.
   const [openDoc, setOpenDoc] = useState<string | null>(null);
+  // What the search looks through: every memo document on the screen, the
+  // reader's or a rewrite's.
+  const page = useRef<HTMLDivElement>(null);
 
   function record(next: Step[]) {
     historyRef.current = next;
@@ -958,7 +962,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
   );
 
   return (
-    <div className={mode !== "read" ? "wide" : ""}>
+    <div className={mode !== "read" ? "wide" : ""} ref={page}>
 
       <div className="memo-head pinned" style={{ top: pinTop }}>
         <div>
@@ -973,6 +977,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
               ? ` \u00b7 revised ${(memo.modified_at ?? "").slice(0, 16)} by ${memo.modified_by}`
               : ""}
           </p>
+          {/* In the pinned head, so it stays in reach at the foot of a long
+              memo, and stays as it was in and out of a rewrite (UI-01). */}
+          <MemoSearch within={page} />
         </div>
 
         {mode === "read" ? (

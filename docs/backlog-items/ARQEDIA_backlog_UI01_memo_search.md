@@ -72,3 +72,13 @@ still not built: grep of `Memo.tsx` and `MemoReader.tsx` finds none.
 Typing in the search bar highlights every match in the rendered memo, reports
 how many there are, and moves between them. While editing, a match is locatable
 in both panes.
+
+**Built 29 October 2026 (feature/memo-search).** `ui/src/MemoSearch.tsx`, in
+the memo's pinned head. Case-insensitive; "3 of 11" with previous and next
+(Enter, Shift+Enter; Escape clears); every match marked and the current one
+marked more strongly, through the CSS Custom Highlight API rather than
+elements, so neither React's DOM nor an open edit box is touched. A block
+open for editing is searched with the rest, and the search is re-run as the
+memo changes. Citations, block tools, insert points and page-break labels are
+not searched. Whole-word and case-sensitive are not built. Where the browser
+lacks the API the count and jumps still work and the marks are not drawn.
