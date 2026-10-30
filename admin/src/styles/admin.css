@@ -223,6 +223,24 @@ p.error {
   cursor: default;
 }
 
+/* Forgot your password, Back to sign in: under the button, not beside it. */
+.card p.aside {
+  margin: 14px 0 0;
+  text-align: center;
+  font-size: 13px;
+}
+
+/* The same card inside the signed-in frame (Change password), so it sits
+   under the tabs rather than a sixth of the way down the window. */
+.card.inline {
+  margin: 8px 0 0;
+}
+
+.card label + p.note {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+}
+
 /* The QR code, centred on white.
  *
  * WHITE UNDER IT IS NOT DECORATION. A QR reader needs the quiet zone and the
