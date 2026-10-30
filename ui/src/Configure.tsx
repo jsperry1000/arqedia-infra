@@ -58,6 +58,28 @@ function toggled(open: Set<string>, key: string): Set<string> {
   return next;
 }
 
+/** Whether a fact answers a search, by its name OR ITS KEY. The key is often
+ *  what a guidance document names, and the name has since drifted from it.
+ *  `needle` is already trimmed and lower-cased. A key's underscores read as
+ *  spaces too, so "facility amount" finds f_facility_amount. */
+function byKey(f: ConfigField, needle: string) {
+  const key = f.key.toLowerCase();
+  return key.includes(needle) || key.replace(/[_-]+/g, " ").includes(needle);
+}
+
+function factMatches(f: ConfigField, needle: string) {
+  return !needle || f.label.toLowerCase().includes(needle) || byKey(f, needle);
+}
+
+/** The key beside a fact found by it and not by its name, so the match that
+ *  brought it onto the list can be seen. */
+function matchedKey(f: ConfigField, needle: string) {
+  if (!needle || f.label.toLowerCase().includes(needle) || !byKey(f, needle)) {
+    return null;
+  }
+  return <span className="muted small"> {f.key}</span>;
+}
+
 /** The kinds that brought something, in the order a person meets them. A
  *  schema is the one word the configuration screen never uses, so it is not
  *  reported either - it is machinery, and every fact it carries is listed. */
@@ -908,8 +930,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   // nothing on screen to connect the two.
   const sortedFields = useMemo(() => {
     const needle = fieldFilter.trim().toLowerCase();
-    return allFields.filter((f) => !needle ||
-      f.label.toLowerCase().includes(needle) ||
+    return allFields.filter((f) => factMatches(f, needle) ||
       (f.description ?? "").toLowerCase().includes(needle));
   }, [allFields, fieldFilter]);
 
@@ -1290,7 +1311,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   /** One fact on a section's list, ticked to bind it. The tick and the name
    *  do different things: wrapping both in one label meant clicking a name to
    *  read what the fact is silently bound it. */
-  const bindRow = (s: ConfigSection, f: ConfigField) => {
+  const bindRow = (s: ConfigSection, f: ConfigField, needle = "") => {
     const on = s.fields.includes(f.key);
     return (
       <div className="bind" key={f.key}>
@@ -1302,6 +1323,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             long label is cut rather than pushing its column wider than the
             one beside it. */}
         <a title={f.label} onClick={() => setEditField(f.key)}>{f.label}</a>
+        {matchedKey(f, needle)}
         {f.is_group && (
           <span className="muted small"> (table)</span>
         )}
@@ -1584,7 +1606,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       </p>
 
       <div className="filters">
-        <input placeholder="Filter fields" value={fieldFilter}
+        <input placeholder="Filter by name, key or description" value={fieldFilter}
                onChange={(e) => setFieldFilter(e.target.value)} />
         <span className="muted">
           {sortedFields.length} of {draft?.fields.length ?? 0}
@@ -1821,7 +1843,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 )}
 
                 <div className="filters">
-                  <input placeholder="Search facts" value={sectionSearch}
+                  <input placeholder="Search facts by name or key" value={sectionSearch}
                          onChange={(e) => setSectionSearch(e.target.value)} />
                   {sectionSearch && (
                     <a className="small"
@@ -1855,7 +1877,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                   const needle = sectionSearch.trim().toLowerCase();
                   const fields = g.fields.filter((f) =>
                     !s.fields.includes(f.key)
-                    && (!needle || f.label.toLowerCase().includes(needle)));
+                    && factMatches(f, needle));
 
                   // EVERYTHING OPEN. This is where facts are bound to a
                   // section, and a person doing that needs to see the whole
@@ -1876,7 +1898,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                         {needle ? "none matching" : "all bound"}
                       </div>
                     )}
-                    {fields.map((f) => bindRow(s, f))}
+                    {fields.map((f) => bindRow(s, f, needle))}
                   </div>
                   );
                 })}
@@ -1957,6 +1979,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             <tr key={f.key} className={bound.has(f.key) ? "" : "aside"}>
               <td>
                 <a onClick={() => setEditField(f.key)}>{f.label}</a>
+                {matchedKey(f, fieldFilter.trim().toLowerCase())}
                 {f.is_group && (
                   <span className="muted small">
                     {" "}table of {f.columns.length}
@@ -2145,7 +2168,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 end &mdash; changing it here changes it there.
               </p>
               <div className="filters">
-                <input placeholder="Search facts" value={typeFieldSearch}
+                <input placeholder="Search facts by name or key" value={typeFieldSearch}
                        onChange={(e) => setTypeFieldSearch(e.target.value)} />
                 {typeFieldSearch && (
                   <a className="small"
@@ -2204,8 +2227,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                       // Searching narrows what is shown and never what is
                       // ticked - a fact already looked for stays looked for
                       // whether or not it matches what was typed.
-                      const needle = typeFieldSearch.trim().toLowerCase();
-                      return !needle || f.label.toLowerCase().includes(needle);
+                      return factMatches(f,
+                        typeFieldSearch.trim().toLowerCase());
                     })
                     .map((f) => {
                     const on = typeFields.includes(f.key);
@@ -2219,6 +2242,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                             ? typeFields.filter((x) => x !== f.key)
                             : [...typeFields, f.key])} />{" "}
                         <a onClick={() => setEditField(f.key)}>{f.label}</a>
+                        {matchedKey(f, typeFieldSearch.trim().toLowerCase())}
                         {f.is_group && (
                           <span className="muted small"> (table)</span>
                         )}
