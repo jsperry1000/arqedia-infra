@@ -28,9 +28,10 @@ def memo_row(memo_id, parent=None, revision=1, engagement="Knightsbridge",
              subject="Knightsbridge Ltd", generated="2026-10-01 10:00:00"):
     """list_all_memos' SELECT, in column order: memo_id, template_key,
     config_revision, parent_memo_id, revision, generated_at, engagement name,
-    subject_name, and since PACK-01 the memo's workspace."""
+    subject_name, since PACK-01 the memo's workspace, and since migration 051
+    what the engagement is shown as."""
     return (memo_id, "lender", 3, parent, revision, generated, engagement,
-            subject, 2)
+            subject, 2, engagement)
 
 
 class AllMemosTest(unittest.TestCase):

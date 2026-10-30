@@ -222,7 +222,7 @@ class GenerateRoute(unittest.TestCase):
 
         def sql(statement, params=None, tx=None):
             if "FROM engagement WHERE" in statement:
-                return rows((ENGAGEMENT_ID, "Meridian", "Meridian Ltd", "open"))
+                return rows((ENGAGEMENT_ID, "Meridian", "Meridian Ltd", "open", None))
             return rows()
 
         for p in [

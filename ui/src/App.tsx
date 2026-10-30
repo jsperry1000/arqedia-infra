@@ -440,6 +440,25 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
   const [loadError, setLoadError] = useState("");
   // Which row is being archived or restored, so two clicks cannot race.
   const [busy, setBusy] = useState("");
+  // The row being renamed, by its name, and what is typed (migration 051).
+  // Only what it is shown as changes: the name stays its address and folder.
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameText, setRenameText] = useState("");
+
+  async function rename(r: Engagement) {
+    if (busy) return;
+    setBusy(r.engagement);
+    setOpenError("");
+    try {
+      await api.renameEngagement(r.engagement, renameText);
+      setRenaming(null);
+      await load();
+    } catch (err) {
+      setOpenError(String((err as Error)?.message ?? err));
+    } finally {
+      setBusy("");
+    }
+  }
 
   // Show archived (14.3). Off by default, so the working list is the working
   // list; on, the archived ones join it MARKED rather than mixed in, and can
@@ -586,8 +605,35 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
       <table>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.engagement} onClick={() => onOpen(r.engagement)}>
-              <td><a>{r.engagement}</a></td>
+            <tr key={r.engagement}
+                onClick={() => { if (renaming !== r.engagement) onOpen(r.engagement); }}>
+              <td>
+                {renaming === r.engagement ? (
+                  <form className="inline" style={{ marginTop: 0 }}
+                        onClick={(e) => e.stopPropagation()}
+                        onSubmit={(e) => { e.preventDefault(); void rename(r); }}>
+                    <input value={renameText} autoFocus
+                           aria-label={"Show " + r.engagement + " as"}
+                           placeholder={r.engagement}
+                           onChange={(e) => setRenameText(e.target.value)}
+                           onKeyDown={(e) => { if (e.key === "Escape") setRenaming(null); }} />
+                    <button className="plain" disabled={busy === r.engagement}>
+                      {busy === r.engagement ? "Saving..." : "Save"}
+                    </button>
+                    <a className="small" onClick={() => setRenaming(null)}>Cancel</a>
+                  </form>
+                ) : (
+                  <>
+                    <a>{r.engagement_shown ?? r.engagement}</a>
+                    {/* The name it is filed under, where it is shown as
+                        something else: the address and the folder still
+                        carry it. */}
+                    {r.display_name && (
+                      <div className="muted small">Filed as {r.engagement}</div>
+                    )}
+                  </>
+                )}
+              </td>
               <td className={r.subject_name ? "muted" : "warn"}>
                 {r.subject_name ?? "No subject"}
               </td>
@@ -630,6 +676,21 @@ function Engagements({ onOpen }: { onOpen: (id: string) => void }) {
                      }
                    }}>
                   {r.status === "archived" ? "Restore" : "Archive"}
+                </a>{" "}
+                {/* Renames what it is shown as; empty puts the name back.
+                    Its documents, its address and its memoranda already
+                    written are unchanged. */}
+                <a className="small"
+                   title={"Change what this engagement is shown as. It stays "
+                     + "filed as " + r.engagement + "; memoranda generated "
+                     + "from now on carry the new name."}
+                   onClick={(e) => {
+                     e.stopPropagation();
+                     setOpenError("");
+                     setRenameText(r.display_name ?? r.engagement);
+                     setRenaming(r.engagement);
+                   }}>
+                  Rename
                 </a>
               </td>
             </tr>

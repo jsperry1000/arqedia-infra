@@ -250,6 +250,10 @@ locals {
     # the same act with the other value (14.1, 14.3).
     "PUT /engagements/{id}/state",
 
+    # What one is shown as (migration 051). Its name, the folder in every
+    # storage key, does not change.
+    "PUT /engagements/{id}/name",
+
     "GET /engagements/{id}/documents",
     "GET /engagements/{id}/pending",
 

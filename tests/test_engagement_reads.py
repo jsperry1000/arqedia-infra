@@ -38,7 +38,7 @@ def sent(params):
 class Recorder:
     """Answers whatever the statement asks for, and keeps every statement."""
 
-    def __init__(self, engagement=(ENGAGEMENT_ID, NAME, SUBJECT, "open"),
+    def __init__(self, engagement=(ENGAGEMENT_ID, NAME, SUBJECT, "open", None),
                  listed=(), documents=(), memos=()):
         self.engagement = engagement
         self.listed = listed
@@ -119,7 +119,7 @@ class ResolveTest(unittest.TestCase):
         self.assertNotIn("INSERT", db.every_statement())
 
     def test_a_null_subject_is_no_subject(self):
-        db = Recorder(engagement=(ENGAGEMENT_ID, NAME, None, "open"))
+        db = Recorder(engagement=(ENGAGEMENT_ID, NAME, None, "open", None))
         self.assertIsNone(self.resolve(db)["subject_name"])
 
 
@@ -141,7 +141,7 @@ class ListEngagementsTest(unittest.TestCase):
         subject and then thinking better of the first upload left a row
         nothing would ever show."""
         [row], _ = self.listing(
-            (51, "Brand-New", None, 0, None, "open", None, None))
+            (51, "Brand-New", None, 0, None, "open", None, None, None))
         self.assertEqual(row["engagement"], "Brand-New")
         self.assertEqual(row["documents"], 0)
         self.assertIsNone(row["last_activity"])
@@ -179,7 +179,7 @@ class ListEngagementsTest(unittest.TestCase):
     def test_every_field_the_screen_reads(self):
         [row], _ = self.listing(
             (ENGAGEMENT_ID, NAME, SUBJECT, 3, "2026-09-21 10:00:00",
-             "open", None, None))
+             "open", None, None, None))
         self.assertEqual(row, {
             "engagement_id": ENGAGEMENT_ID,
             "engagement": NAME,
@@ -191,6 +191,9 @@ class ListEngagementsTest(unittest.TestCase):
             "status": "open",
             "archived_by": None,
             "archived_at": None,
+            # Migration 051: what it is shown as, its name where not renamed.
+            "display_name": None,
+            "engagement_shown": NAME,
         })
 
 
@@ -335,7 +338,7 @@ class OpenEngagementTest(unittest.TestCase):
                 self.exists = True
                 return {"records": []}
             if s.startswith("SELECT engagement_id, name, subject_name, status"):
-                return rows((ENGAGEMENT_ID, NAME, None, "open")) \
+                return rows((ENGAGEMENT_ID, NAME, None, "open", None)) \
                     if self.exists else rows()
             if s.startswith("SELECT engagement_id FROM engagement"):
                 return rows((ENGAGEMENT_ID,)) if self.exists else rows()
@@ -443,7 +446,7 @@ class GenerateTest(unittest.TestCase):
 
     def test_the_payload_carries_the_engagement_id(self):
         _, _, _, invoked = self.generate(
-            (ENGAGEMENT_ID, NAME, SUBJECT, "open"))
+            (ENGAGEMENT_ID, NAME, SUBJECT, "open", None))
         payload = json.loads(invoked.invoke.call_args.kwargs["Payload"])
         self.assertEqual(payload["engagement_id"], ENGAGEMENT_ID)
         # The name travels too: the memo's storage key is built from it.

@@ -112,6 +112,9 @@ export function EngagementView({ id, onBack, onMemo }: {
   // told - so this screen holds File and says why, rather than letting the
   // server refuse a click it could have prevented.
   const [subject, setSubject] = useState<string | null>(null);
+  // What the engagement is shown as (migration 051); the address keeps its
+  // name, which is `id`.
+  const [shownAs, setShownAs] = useState<string | null>(null);
   const [subjectDraft, setSubjectDraft] = useState("");
   const [editingSubject, setEditingSubject] = useState(false);
   const [subjectSaid, setSubjectSaid] = useState("");
@@ -216,6 +219,7 @@ export function EngagementView({ id, onBack, onMemo }: {
     setDocs(d.documents);
     setMemos(m.memos);
     setSubject(p.subject_name);
+    setShownAs(p.engagement_shown ?? null);
 
     // A sent file is seen once a row it produced is on screen.
     setExpected((e) => {
@@ -1066,9 +1070,11 @@ export function EngagementView({ id, onBack, onMemo }: {
     );
   }
 
+  const shown = shownAs ?? id;
+
   return (
     <div>
-      <h2>{id}</h2>
+      <h2>{shown}</h2>
 
       {/* The subject, above the upload control and above everything else
           (SUBJ-01). It is here rather than in a drawer because a person
@@ -1490,7 +1496,7 @@ export function EngagementView({ id, onBack, onMemo }: {
             <UpgradePrompt tone="warn" action="Top up"
                            to={balanceFor(
                              fileQuote.total_cents - fileQuote.available_cents,
-                             `Filing ${fileQuote.quantity} documents in ${id}`,
+                             `Filing ${fileQuote.quantity} documents in ${shown}`,
                              back)}>
               {fileQuote.affordable_count === 0
                 ? "There is not enough balance to file any of these. Nothing "
@@ -1788,7 +1794,7 @@ export function EngagementView({ id, onBack, onMemo }: {
         <UpgradePrompt tone="warn" action="Top up"
                        to={balanceFor(
                          memoQuote.total_cents - memoQuote.available_cents,
-                         `Generating a memorandum from ${id}`, back)}>
+                         `Generating a memorandum from ${shown}`, back)}>
           A memorandum costs {money(memoQuote.total_cents)} and{" "}
           {money(memoQuote.available_cents)} is available. Nothing has been
           charged.
@@ -1978,7 +1984,7 @@ export function EngagementView({ id, onBack, onMemo }: {
                   // the address now (11.1).
                   <button onClick={() => navigate(balanceFor(
                     memoQuote.total_cents - memoQuote.available_cents,
-                    `Generating a memorandum from ${id}`, back))}>
+                    `Generating a memorandum from ${shown}`, back))}>
                     Top up
                   </button>
                 ) : (

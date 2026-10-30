@@ -965,7 +965,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
           <h2>Memo {memo.label}</h2>
           <p className="muted">
             {memo.workspace ? `Workspace ${memo.workspace} · ` : ""}
-            {memo.engagement ? `Engagement ${memo.engagement} · ` : ""}
+            {memo.engagement
+              ? `Engagement ${memo.engagement_shown ?? memo.engagement} · ` : ""}
             Generated {(memo.generated_at ?? "").slice(0, 16)}
             {memo.generated_by ? " by " + memo.generated_by : ""}
             {memo.modified_by

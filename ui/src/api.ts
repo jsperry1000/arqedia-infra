@@ -341,6 +341,11 @@ export type Engagement = {
    *  what the address carries; this is what the reads are keyed on. */
   engagement_id: number;
   engagement: string;
+  /** What a person renamed it to, or null (migration 051). The name above
+   *  stays the address and the folder; this is only what is shown. */
+  display_name: string | null;
+  /** What every screen shows: display_name where set, the name where not. */
+  engagement_shown: string;
   documents: number;
   last_activity: string;
   /** The company these memoranda are about. Null on every engagement opened
@@ -468,6 +473,9 @@ export type Memo = {
   workspace: string | null;
   /** The engagement's name; null where the memo row names none. */
   engagement: string | null;
+  /** What it is shown as now (migration 051). The memo's own text keeps the
+   *  name it was generated with. */
+  engagement_shown: string | null;
   /** Its title block carries Number, Version and Workspace rows, filled in
    *  by the server from the memo row and taken out again on revise. */
   markdown: string;
@@ -1358,6 +1366,18 @@ export const api = {
     body: JSON.stringify({ status }),
   }),
 
+  /** Change what an engagement is shown as; empty puts its name back
+   *  (migration 051). The name - the address and the storage folder - does
+   *  not change. Refused where another engagement in the workspace is
+   *  already shown as it. */
+  renameEngagement: (id: string, displayName: string): Promise<{
+    engagement_id: number; engagement: string;
+    display_name: string | null; engagement_shown: string;
+  }> => call(`/engagements/${encodeURIComponent(id)}/name`, {
+    method: "PUT",
+    body: JSON.stringify({ display_name: displayName }),
+  }),
+
   /** Open an engagement by name, creating its row if there is none.
    *
    *  THE SCREEN CANNOT JUST NAVIGATE ANY MORE. The reads ask engagement_id
@@ -1380,6 +1400,7 @@ export const api = {
   // that list is the one that has to hold File and say why.
   pending: (id: string): Promise<{
     pending: Pending[]; subject_name: string | null;
+    engagement_shown?: string;
   }> => call(`/engagements/${encodeURIComponent(id)}/pending`),
 
   /** Name the subject of an engagement, or change it.
