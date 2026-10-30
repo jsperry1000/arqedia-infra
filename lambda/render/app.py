@@ -34,6 +34,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from reportlab.lib import colors
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase.pdfmetrics import stringWidth
@@ -837,6 +838,39 @@ def _take_trailing_heading(flow):
 _BARE_NUMERAL = re.compile(r"^\.\s+")
 
 
+# --- an indent (30 October 2026) --------------------------------------------
+#
+# Two spaces a level at the start of a paragraph or a bullet, up to
+# _MAX_INDENT, a tab counting as four. memodoc.ts's indentLevel, the same way,
+# so a level in the editor is a level here. Every line used to be stripped
+# before it was read, so an indent was dropped and a bullet under a bullet
+# printed level with it.
+_MAX_INDENT = 3
+# Points a level. The editor steps it at 1.5em.
+_INDENT_STEP = 18
+
+
+def _indent_of(line):
+    """The level of a line, from the whitespace it starts with."""
+    lead = line[:len(line) - len(line.lstrip(" \t"))]
+    return min(len(lead.replace("\t", "    ")) // 2, _MAX_INDENT)
+
+
+def _indented(styles, name, level):
+    """A style moved in by `level` steps, made once a render and kept beside
+    the rest. The style itself at level nought."""
+    if level <= 0:
+        return styles[name]
+    key = "%s-%d" % (name, level)
+    if key not in styles:
+        base = styles[name]
+        styles[key] = ParagraphStyle(
+            key, parent=base,
+            leftIndent=base.leftIndent + _INDENT_STEP * level,
+            bulletIndent=base.bulletIndent + _INDENT_STEP * level)
+    return styles[key]
+
+
 def to_flowables(markdown, styles, palette, image_bytes=None):
     """Markdown to flowables. Handles the shapes the consolidation produces:
     headings, paragraphs, tables, blockquote gaps, bullets - and a person's
@@ -959,8 +993,9 @@ def to_flowables(markdown, styles, palette, image_bytes=None):
             continue
 
         if stripped.startswith("- ") or stripped.startswith("* "):
-            flow.append(_para(stripped[2:], styles["bullet"],
-                                  bulletText="\u2022"))
+            flow.append(_para(stripped[2:],
+                              _indented(styles, "bullet", _indent_of(lines[i])),
+                              bulletText="\u2022"))
             i += 1
             continue
 
@@ -968,6 +1003,8 @@ def to_flowables(markdown, styles, palette, image_bytes=None):
         # its own paragraph broke any wrapped text into separate lines with a
         # paragraph gap between them - invisible while the model emitted one
         # long line per paragraph, and wrong the moment it did not.
+        # Its first line says how far in it sits, as the editor reads it.
+        level = _indent_of(lines[i])
         block = [stripped]
         i += 1
         while i < len(lines):
@@ -986,7 +1023,7 @@ def to_flowables(markdown, styles, palette, image_bytes=None):
                 and len(paragraph) > 2:
             flow.append(_para(paragraph, styles["citation"]))
         else:
-            flow.append(_para(paragraph, styles["body"]))
+            flow.append(_para(paragraph, _indented(styles, "body", level)))
 
     return flow
 
