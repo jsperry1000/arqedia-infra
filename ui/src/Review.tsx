@@ -2143,6 +2143,19 @@ function ValuePanel({ detail, onClose }: {
   detail: DocumentDetail;
   onClose: () => void;
 }) {
+  // THE ORIGINAL, from the name at the top. Asked for as the drawer opens
+  // rather than on the click: a tab opened after an await is a popup, and a
+  // browser blocks it. The link is the passage's own - signed for an hour,
+  // the same one "Open the file" uses on a row waiting to be filed. Where it
+  // cannot be had, the name stays plain text.
+  const [original, setOriginal] = useState<string | null>(null);
+  useEffect(() => {
+    setOriginal(null);
+    api.passage(detail.document_id, null)
+      .then((p) => setOriginal(p.source_url))
+      .catch(() => setOriginal(null));
+  }, [detail.document_id]);
+
   const gone = new Set(detail.not_in_use ?? []);
   const inUse = detail.values.filter((v) => !gone.has(v.field_id));
   const left = detail.values.filter((v) => gone.has(v.field_id));
@@ -2161,7 +2174,16 @@ function ValuePanel({ detail, onClose }: {
     <div className="panel-backdrop" onClick={onClose}>
       <aside className="panel" onClick={(e) => e.stopPropagation()}>
         <a onClick={onClose} className="panel-close">Close</a>
-        <h3>{detail.filename}</h3>
+        <h3>
+          {original
+            ? (
+              <a href={original} target="_blank" rel="noreferrer"
+                 title="Open the original file in a new tab">
+                {detail.filename}
+              </a>
+            )
+            : detail.filename}
+        </h3>
         <p className="muted">
           {detail.document_type ?? "unclassified"} &middot; {detail.pages} pages
           &middot; read by {detail.method ?? "unknown"}
