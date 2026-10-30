@@ -208,6 +208,21 @@ def _subject_of(tenant_id, engagement_id):
     return (_col(found[0], 0) or "").strip() or None
 
 
+def _shown_as(tenant_id, engagement_id, name):
+    """What the engagement is shown as now, for the Engagement row of the
+    memorandum (migration 051): its display name where one is set, `name`
+    where none is or the row cannot be read.
+
+    THE CURRENT ONE, as the subject is. A rename reaches every memorandum
+    generated afterwards; one already generated keeps what its text says."""
+    found = _sql(
+        "SELECT display_name FROM engagement "
+        "WHERE tenant_id = :t AND engagement_id = :e",
+        [_p("t", tenant_id), _p("e", int(engagement_id))]).get("records", [])
+    shown = (_col(found[0], 0) or "").strip() if found else ""
+    return shown or name
+
+
 def _subject_of_memo(tenant_id, memo_id):
     """The subject of the engagement a memo belongs to, for a rewrite.
 
@@ -1611,7 +1626,7 @@ def _compose_memo(event, written):
     subject = subject_name or cleanup.subject_from(values)
     parts = [
         cleanup.front_matter(
-            subject, engagement,
+            subject, _shown_as(tenant_id, engagement_id, engagement),
             generated_at.strftime("%d %B %Y, %H:%M UTC"),
             len(document_ids), len({v["filename"] for v in values}),
             registry.label_for_template(template_key),

@@ -231,7 +231,7 @@ class EngagementListTest(unittest.TestCase):
         # columns are the row's own: id, name, subject, count, last activity.
         def sql(statement, params=None, tx=None):
             return rows((42, NAME, subject, 3, "2026-09-21 10:00:00",
-                         "open", None, None))
+                         "open", None, None, None))
         with mock.patch.object(self.app, "_sql", sql):
             return self.app.list_engagements(TENANT, 3)
 

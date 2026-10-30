@@ -20,6 +20,8 @@ export type BatchMemo = {
   number: string;
   generated_at: string | null;
   engagement: string | null;
+  /** What the engagement is shown as (migration 051). */
+  engagement_shown?: string | null;
   subject_name: string | null;
   unsaved: boolean;
 };
@@ -156,7 +158,8 @@ function matches(fields: (string | null | undefined)[], text: string): boolean {
  *  range over the date generated. */
 export function filterMemos(memos: BatchMemo[], f: Filter): BatchMemo[] {
   return memos.filter((m) =>
-    matches([m.label, m.engagement, m.subject_name, m.number], f.text)
+    matches([m.label, m.engagement_shown ?? m.engagement, m.subject_name,
+             m.number], f.text)
     && inRange(m.generated_at, f));
 }
 

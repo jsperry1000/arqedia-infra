@@ -29,7 +29,8 @@ class MemoHeadEngagementTest(unittest.TestCase):
                 asked["memo"] = s
                 return rows(("curated", "k.md", "2026-10-29 10:00:00",
                              "a@firm.com", None, None, 1, None, None,
-                             "Trade Finance", 3, 12, engagement))
+                             "Trade Finance", 3, 12, engagement,
+                             engagement))
             return rows()
 
         with mock.patch.object(self.app, "_sql", sql), \

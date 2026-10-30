@@ -14,6 +14,7 @@ Routes:
   GET  /engagements                      what this tenant has
   POST /engagements                      open one by name, creating its row
   PUT  /engagements/{id}/state           archive it, or bring it back
+  PUT  /engagements/{id}/name            what it is shown as; the name stays
   GET  /engagements/{id}/pending         analysed, awaiting confirmation
   POST /engagements/{id}/file            confirm types and file
 
@@ -405,6 +406,10 @@ def engagement_id(tenant_id, workspace_id, name, created_by=None):
 _SUBJECT_MAX = 255
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
+# What an engagement is shown as (migration 051). The column's bound, which
+# is name's: a shown name is no longer than the one it stands for.
+_DISPLAY_MAX = 120
+
 SUBJECT_REQUIRED = (
     "Name the subject of this engagement before filing: the company these "
     "memoranda are about. Every document is read for the subject's facts, "
@@ -541,7 +546,8 @@ def engagement_named(tenant_id, workspace_id, engagement):
     a lookup on the raw path parameter misses every name typed with a space
     in it."""
     found = _sql(
-        "SELECT engagement_id, name, subject_name, status FROM engagement "
+        "SELECT engagement_id, name, subject_name, status, display_name "
+        "FROM engagement "
         "WHERE tenant_id = :t AND workspace_id = :w AND name = :n",
         [_p("t", tenant_id), _p("w", workspace_id),
          _p("n", _clean(engagement))]).get("records", [])
@@ -550,7 +556,74 @@ def engagement_named(tenant_id, workspace_id, engagement):
     return {"engagement_id": _col(found[0], 0),
             "engagement": _col(found[0], 1),
             "subject_name": (_col(found[0], 2) or "").strip() or None,
-            "status": _col(found[0], 3)}
+            "status": _col(found[0], 3),
+            "display_name": _col(found[0], 4),
+            "engagement_shown": _col(found[0], 4) or _col(found[0], 1)}
+
+
+def _shown_elsewhere(tenant_id, workspace_id, shown, engagement_id=None):
+    """The engagement, other than `engagement_id`, that this workspace's list
+    already shows as `shown`, or None (migration 051).
+
+    Against what each one SHOWS: its display name where it has one, its name
+    where it does not. The collation folds case, so "Meridian" is taken by
+    "meridian" - the rule uq_engagement_name keeps for names."""
+    found = _sql(
+        "SELECT name FROM engagement "
+        "WHERE tenant_id = :t AND workspace_id = :w "
+        "AND COALESCE(display_name, name) = :s "
+        "AND engagement_id <> :e LIMIT 1",
+        [_p("t", tenant_id), _p("w", workspace_id), _p("s", shown),
+         _p("e", int(engagement_id or 0))]).get("records", [])
+    return _col(found[0], 0) if found else None
+
+
+def rename_engagement(tenant_id, workspace_id, email, engagement,
+                      display_name):
+    """Change what an engagement is shown as, or put back its name.
+
+    THE NAME DOES NOT MOVE (migration 051). It is the folder in every storage
+    key and what a new upload is resolved by, so renaming it would send the
+    next upload to a new, empty engagement. Only display_name changes, and
+    every screen shows it; a memorandum generated from now on prints it in
+    its Engagement row, and one already generated keeps what it says.
+
+    EMPTY PUTS THE NAME BACK: display_name is cleared to NULL rather than
+    set to a copy of name, so the row says plainly that nothing is renamed.
+
+    UNIQUE IN THE WORKSPACE against what every other engagement shows, so
+    the list never holds two rows a person cannot tell apart.
+
+    ANY SEAT, as setting the subject and archiving are."""
+    found = engagement_named(tenant_id, workspace_id, engagement)
+    if found is None:
+        return None
+
+    shown = " ".join(str(display_name or "").split())
+    if _CONTROL.search(shown):
+        raise ValueError("a name cannot contain control characters")
+    if len(shown) > _DISPLAY_MAX:
+        raise ValueError("a name can be at most %d characters" % _DISPLAY_MAX)
+    stored = shown if shown and shown != found["engagement"] else None
+
+    if _shown_elsewhere(tenant_id, workspace_id,
+                        stored or found["engagement"],
+                        found["engagement_id"]) is not None:
+        raise ValueError("Another engagement in this workspace is already "
+                         "shown as %s." % (stored or found["engagement"]))
+
+    _sql("UPDATE engagement SET display_name = :d, renamed_by = :who, "
+         "renamed_at = UTC_TIMESTAMP() "
+         "WHERE tenant_id = :t AND engagement_id = :e",
+         [_p("d", stored), _p("who", email), _p("t", tenant_id),
+          _p("e", int(found["engagement_id"]))])
+
+    print("[engagement-renamed] tenant=%s engagement=%s shown=%r by=%s" % (
+        tenant_id, found["engagement"], stored, email))
+    return {"engagement_id": found["engagement_id"],
+            "engagement": found["engagement"],
+            "display_name": stored,
+            "engagement_shown": stored or found["engagement"]}
 
 
 def open_engagement(tenant_id, workspace_id, email, engagement):
@@ -583,6 +656,12 @@ def open_engagement(tenant_id, workspace_id, email, engagement):
     if found:
         return dict(found, created=False)
 
+    # A new name another engagement is already shown as would put two rows
+    # in the list that read the same (migration 051).
+    if _shown_elsewhere(tenant_id, workspace_id, name) is not None:
+        raise ValueError("Another engagement in this workspace is already "
+                         "shown as %s." % name)
+
     opened = engagement_id(tenant_id, workspace_id, name, email)
     if opened is None:
         raise ValueError("that engagement could not be opened")
@@ -590,7 +669,8 @@ def open_engagement(tenant_id, workspace_id, email, engagement):
     print("[engagement-opened] tenant=%s engagement=%s by=%s" % (
         tenant_id, name, email))
     return {"engagement_id": int(opened), "engagement": name,
-            "subject_name": None, "status": "open", "created": True}
+            "subject_name": None, "status": "open", "display_name": None,
+            "engagement_shown": name, "created": True}
 
 
 # --- archiving (Group 14) --------------------------------------------------
@@ -733,7 +813,8 @@ def list_engagements(tenant_id, workspace_id, include_archived=False):
                MAX(d.filed_at)      AS last_activity,
                e.status,
                e.archived_by,
-               e.archived_at
+               e.archived_at,
+               e.display_name
         FROM engagement e
         LEFT JOIN document d
                ON d.tenant_id = e.tenant_id
@@ -742,7 +823,7 @@ def list_engagements(tenant_id, workspace_id, include_archived=False):
           AND e.workspace_id = :workspace_id
           AND (e.status = 'open' OR :include_archived)
         GROUP BY e.engagement_id, e.name, e.subject_name, e.created_at,
-                 e.status, e.archived_by, e.archived_at
+                 e.status, e.archived_by, e.archived_at, e.display_name
         ORDER BY COALESCE(MAX(d.filed_at), e.created_at) DESC
         """,
         [_p("tenant_id", tenant_id), _p("workspace_id", workspace_id),
@@ -756,7 +837,11 @@ def list_engagements(tenant_id, workspace_id, include_archived=False):
          "last_activity": _col(r, 4),
          "status": _col(r, 5),
          "archived_by": _col(r, 6),
-         "archived_at": _col(r, 7)}
+         "archived_at": _col(r, 7),
+         # What the row is shown as (migration 051). "engagement" stays the
+         # name, because it is the address and the folder.
+         "display_name": _col(r, 8),
+         "engagement_shown": _col(r, 8) or _col(r, 1)}
         for r in result.get("records", [])
     ]
 
@@ -1744,7 +1829,7 @@ def get_memo(tenant_id, memo_id):
         SELECT m.s3_bucket, m.s3_key, m.generated_at, m.generated_by,
                m.pdf_key, m.parent_memo_id, m.revision, m.modified_by,
                m.modified_at, w.name, m.config_revision, m.workspace_id,
-               e.name
+               e.name, COALESCE(e.display_name, e.name)
         FROM memo m
         LEFT JOIN workspace w
                ON w.workspace_id = m.workspace_id
@@ -1837,6 +1922,9 @@ def get_memo(tenant_id, memo_id):
         # The engagement's name, for the head of the memo page. Null where
         # the row has none.
         "engagement": _col(r, 12),
+        # What it is shown as now (migration 051); the text keeps the name
+        # it was generated with.
+        "engagement_shown": _col(r, 13),
         "markdown": markdown,
         "sources": [{"document_id": _col(s, 0),
                      # A source deleted before migration 028 ran has no name
@@ -2647,7 +2735,8 @@ def list_all_memos(tenant_id, workspace_id, email):
         """
         SELECT m.memo_id, m.template_key, m.config_revision,
                m.parent_memo_id, m.revision, m.generated_at,
-               e.name, e.subject_name, m.workspace_id
+               e.name, e.subject_name, m.workspace_id,
+               COALESCE(e.display_name, e.name)
         FROM memo m
         LEFT JOIN engagement e
                ON e.engagement_id = m.engagement_id
@@ -2667,6 +2756,7 @@ def list_all_memos(tenant_id, workspace_id, email):
         "number": "%s.%s" % (_col(r, 3) or _col(r, 0), _col(r, 4)),
         "generated_at": _col(r, 5),
         "engagement": _col(r, 6),
+        "engagement_shown": _col(r, 9),
         "subject_name": _col(r, 7),
     } for r in rows]
 
@@ -4162,6 +4252,16 @@ def _dispatch(event, context):
                 return _reply(404, {"error": NO_SUCH_ENGAGEMENT % engagement})
             return _reply(200, changed)
 
+        # What an engagement is shown as (migration 051). Its name, the
+        # address and the folder, does not change.
+        if route == "PUT /engagements/{id}/name":
+            body = json.loads(event.get("body") or "{}")
+            renamed = rename_engagement(tenant_id, ws(), email, engagement,
+                                        body.get("display_name"))
+            if renamed is None:
+                return _reply(404, {"error": NO_SUCH_ENGAGEMENT % engagement})
+            return _reply(200, renamed)
+
         # Opening an engagement from the form. A POST because it creates a
         # row; GET /engagements answers what exists and must never make
         # something exist.
@@ -4202,7 +4302,9 @@ def _dispatch(event, context):
                 return _reply(404, {"error": NO_SUCH_ENGAGEMENT % engagement})
             return _reply(200, {
                 "pending": list_pending(tenant_id, found["engagement_id"]),
-                "subject_name": found["subject_name"]})
+                "subject_name": found["subject_name"],
+                "display_name": found["display_name"],
+                "engagement_shown": found["engagement_shown"]})
 
         if route == "POST /engagements/{id}/file":
             body = json.loads(event.get("body") or "{}")

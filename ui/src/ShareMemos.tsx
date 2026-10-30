@@ -30,7 +30,7 @@ import {
  * happens.
  */
 
-type MemoKey = "label" | "engagement" | "generated_at" | "number";
+type MemoKey = "label" | "engagement_shown" | "generated_at" | "number";
 
 type Outcome = {
   memo_id: number;
@@ -260,7 +260,7 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
               <thead>
                 <tr>
                   <th></th>
-                  {th("label", "Memorandum")}{th("engagement", "Engagement")}
+                  {th("label", "Memorandum")}{th("engagement_shown", "Engagement")}
                   {th("generated_at", "Generated")}{th("number", "Number")}
                 </tr>
               </thead>
@@ -276,7 +276,8 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
                           two rows of the same template apart. */}
                       <input type="checkbox"
                              aria-label={`${m.label} ${m.number}`
-                               + (m.engagement ? `, ${m.engagement}` : "")}
+                               + (m.engagement ? `, ${m.engagement_shown
+                                                     ?? m.engagement}` : "")}
                              checked={selected.includes(m.memo_id)}
                              disabled={m.unsaved}
                              onChange={() => tick(m)} />
@@ -286,7 +287,7 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
                       {m.subject_name && <div className="muted small">{m.subject_name}</div>}
                       {m.unsaved && <div className="small">unsaved changes</div>}
                     </td>
-                    <td>{m.engagement ?? "—"}</td>
+                    <td>{m.engagement_shown ?? m.engagement ?? "—"}</td>
                     <td className="ref">{day(m.generated_at)}</td>
                     <td className="ref">{m.number}</td>
                   </tr>

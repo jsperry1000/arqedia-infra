@@ -36,7 +36,7 @@ def sent(params):
 class Db:
     """Answers the resolve and the read-back, and keeps every statement."""
 
-    def __init__(self, engagement=(ENGAGEMENT_ID, NAME, None, "open"),
+    def __init__(self, engagement=(ENGAGEMENT_ID, NAME, None, "open", None),
                  memo_parent=(None,), updated=1):
         self.engagement = engagement
         self.memo_parent = memo_parent
@@ -127,7 +127,7 @@ class ArchiveEngagementTest(unittest.TestCase):
     def setUp(self):
         self.app = load_api()
 
-    def act(self, status, engagement=(ENGAGEMENT_ID, NAME, None, "open")):
+    def act(self, status, engagement=(ENGAGEMENT_ID, NAME, None, "open", None)):
         db = Db(engagement=engagement)
         with mock.patch.object(self.app, "_sql", db.sql):
             out = self.app.set_engagement_state(TENANT, 3, WHO, NAME, status)
@@ -146,7 +146,7 @@ class ArchiveEngagementTest(unittest.TestCase):
         """A restored engagement that still said who archived it would read
         as archived to anybody looking at the row."""
         out, db = self.act(
-            "open", engagement=(ENGAGEMENT_ID, NAME, None, "archived"))
+            "open", engagement=(ENGAGEMENT_ID, NAME, None, "archived", None))
         self.assertEqual(out["status"], "open")
         [(statement, _)] = db.writes()
         self.assertIn("status = 'open'", statement)
@@ -157,7 +157,7 @@ class ArchiveEngagementTest(unittest.TestCase):
         """Resolved without regard to status, or archiving would be a
         one-way door."""
         _, db = self.act(
-            "open", engagement=(ENGAGEMENT_ID, NAME, None, "archived"))
+            "open", engagement=(ENGAGEMENT_ID, NAME, None, "archived", None))
         [(resolve, _)] = [(s, p) for s, p in db.statements
                           if s.startswith("SELECT engagement_id, name")]
         self.assertNotIn("status =", resolve)
@@ -265,7 +265,7 @@ class ListsLeaveArchivedOutTest(unittest.TestCase):
                 self.app, "_sql",
                 lambda s, p=None, tx=None: rows(
                     (ENGAGEMENT_ID, NAME, None, 0, None,
-                     "archived", WHO, "2026-09-22 10:00:00"))):
+                     "archived", WHO, "2026-09-22 10:00:00", None))):
             [row] = self.app.list_engagements(TENANT, 3, True)
         self.assertEqual(row["status"], "archived")
         self.assertEqual(row["archived_by"], WHO)
