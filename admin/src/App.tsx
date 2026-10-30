@@ -9,15 +9,23 @@
  * THREE SCREENS, ALL READING. Tenants, one tenant's seats, and signups.
  * Nothing on this console writes, because there is nothing on the other end
  * to write to - the admin API declares three GET routes and no others.
+ *
+ * AND ONE ABOUT YOURSELF (29 October 2026): changing your own password, and
+ * resetting it from the sign-in card when it is forgotten. Both go to the
+ * staff pool through Amplify, as signing in does; neither touches the admin
+ * API or any tenant's data.
  */
 import { useCallback, useEffect, useState } from "react";
 import { Amplify } from "aws-amplify";
 import {
+  confirmResetPassword,
   confirmSignIn,
   fetchAuthSession,
   getCurrentUser,
+  resetPassword,
   signIn,
   signOut,
+  updatePassword,
 } from "aws-amplify/auth";
 // THE QR CODE IS DRAWN HERE, IN THE PAGE. qrcode.react encodes a string into
 // SVG elements React renders; there is no image service, no canvas sent
@@ -78,9 +86,23 @@ Amplify.configure({
  * CONTINUE_SIGN_IN_WITH_TOTP_SETUP, CONFIRM_SIGN_IN_WITH_TOTP_CODE. A step
  * we do not recognise says so by name instead of looking like a wrong
  * password.
+ *
+ * FORGOTTEN PASSWORDS (29 October 2026) are two more steps, before sign-in
+ * rather than inside it:
+ *
+ *   forgot      the address, and Cognito emails a code to it
+ *   reset       the code and a new password; then back to "password", and
+ *               the sign-in that follows still asks for the authenticator
+ *
+ * THE CARD NEVER SAYS WHETHER AN ADDRESS HAS AN ACCOUNT, as the
+ * application's does not (ui/src/App.tsx, sendCode): the pool prevents
+ * user-existence errors, and a card that answered differently would undo it.
  */
 
-type Step = "password" | "new" | "totp-setup" | "totp";
+const POLICY = "Fourteen characters or more, with an upper case letter, a "
+  + "lower case letter, a number and a symbol.";
+
+type Step = "password" | "new" | "totp-setup" | "totp" | "forgot" | "reset";
 
 function SignIn({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState<Step>("password");
@@ -89,8 +111,18 @@ function SignIn({ onDone }: { onDone: () => void }) {
   const [answer, setAnswer] = useState("");
   const [setupUri, setSetupUri] = useState("");
   const [secret, setSecret] = useState("");
+  const [code, setCode] = useState("");
   const [error, setError] = useState("");
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+
+  function go(next: Step) {
+    setError("");
+    setNote("");
+    setAnswer("");
+    setCode("");
+    setStep(next);
+  }
 
   /** One place reads the step Amplify returned, so no caller has to know
    *  which challenge follows which. */
@@ -132,6 +164,38 @@ function SignIn({ onDone }: { onDone: () => void }) {
     setError("");
     setBusy(true);
     try {
+      if (step === "forgot") {
+        try {
+          await resetPassword({ username: email });
+        } catch (err) {
+          const name = (err as { name?: string })?.name;
+          // About this person, not about existence: said as Cognito says it.
+          if (name === "LimitExceededException"
+              || name === "TooManyRequestsException") {
+            setError((err as { message?: string })?.message || String(err));
+            return;
+          }
+          // An unknown address answers InvalidParameterException some of the
+          // time; it moves on like any other, so nothing is revealed.
+          if (name !== "InvalidParameterException") {
+            setError("A reset code could not be sent. Try again in a few "
+                     + "minutes.");
+            return;
+          }
+        }
+        go("reset");
+        setNote("If that address has a staff account, a code is on its way "
+                + "to it. It lasts an hour.");
+        return;
+      }
+      if (step === "reset") {
+        await confirmResetPassword({
+          username: email, confirmationCode: code.trim(), newPassword: answer });
+        setPassword("");
+        go("password");
+        setNote("Password changed. Sign in with it.");
+        return;
+      }
       if (step === "password") {
         const res = await signIn({ username: email, password });
         if (res.isSignedIn) {
@@ -176,11 +240,33 @@ function SignIn({ onDone }: { onDone: () => void }) {
         </>
       )}
 
+      {step === "forgot" && (
+        <>
+          <p className="note">Enter your staff address and a code will be
+            emailed to it.</p>
+          <label htmlFor="email">Email</label>
+          <input id="email" type="email" autoComplete="username" value={email}
+                 onChange={(e) => setEmail(e.target.value)} required />
+        </>
+      )}
+
+      {step === "reset" && (
+        <>
+          <label htmlFor="code">Code from the email</label>
+          <input id="code" inputMode="numeric" autoComplete="one-time-code"
+                 value={code} onChange={(e) => setCode(e.target.value)}
+                 required />
+          <label htmlFor="new">New password</label>
+          <p className="note">{POLICY}</p>
+          <input id="new" type="password" autoComplete="new-password"
+                 value={answer} onChange={(e) => setAnswer(e.target.value)}
+                 required />
+        </>
+      )}
+
       {step === "new" && (
         <>
-          <p className="note">Set a password. Fourteen characters or more,
-            with an upper case letter, a lower case letter, a number and a
-            symbol.</p>
+          <p className="note">Set a password. {POLICY}</p>
           <label htmlFor="new">New password</label>
           <input id="new" type="password" autoComplete="new-password"
                  value={answer} onChange={(e) => setAnswer(e.target.value)}
@@ -225,10 +311,76 @@ function SignIn({ onDone }: { onDone: () => void }) {
         </>
       )}
 
+      {note && <p className="note">{note}</p>}
       {error && <p className="error">{error}</p>}
 
       <button className="go" type="submit" disabled={busy}>
         {busy ? "Working…" : "Continue"}
+      </button>
+
+      {step === "password" && (
+        <p className="aside">
+          <button type="button" className="link" onClick={() => go("forgot")}>
+            Forgot your password?
+          </button>
+        </p>
+      )}
+      {(step === "forgot" || step === "reset") && (
+        <p className="aside">
+          <button type="button" className="link" onClick={() => go("password")}>
+            Back to sign in
+          </button>
+        </p>
+      )}
+    </form>
+  );
+}
+
+/* --- your own password ------------------------------------------------------
+ *
+ * Signed in, so Cognito needs the current password and nothing else: the
+ * access token proves the authenticator was answered at sign-in.
+ */
+
+function ChangePassword() {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setDone(false);
+    setBusy(true);
+    try {
+      await updatePassword({ oldPassword: current, newPassword: next });
+      setCurrent("");
+      setNext("");
+      setDone(true);
+    } catch (err) {
+      setError((err as { message?: string })?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="card inline" onSubmit={submit}>
+      <h1>Change password</h1>
+      <label htmlFor="current">Current password</label>
+      <input id="current" type="password" autoComplete="current-password"
+             value={current} onChange={(e) => setCurrent(e.target.value)}
+             required />
+      <label htmlFor="next">New password</label>
+      <p className="note">{POLICY}</p>
+      <input id="next" type="password" autoComplete="new-password"
+             value={next} onChange={(e) => setNext(e.target.value)} required />
+      {done && <p className="note">Password changed.</p>}
+      {error && <p className="error">{error}</p>}
+      <button className="go" type="submit" disabled={busy}>
+        {busy ? "Working…" : "Change password"}
       </button>
     </form>
   );
@@ -432,7 +584,7 @@ function Signups() {
 
 /* --- the frame ------------------------------------------------------------ */
 
-type Tab = "tenants" | "seats" | "signups";
+type Tab = "tenants" | "seats" | "signups" | "password";
 
 export function App() {
   const [ready, setReady] = useState(false);
@@ -471,6 +623,10 @@ export function App() {
           <span className="who">
             {who}
             {" · "}
+            <button className="link" onClick={() => setTab("password")}>
+              Change password
+            </button>
+            {" · "}
             <button className="link" onClick={async () => {
               await signOut();
               setWho("");
@@ -495,6 +651,7 @@ export function App() {
         )}
         {tab === "seats" && tenant && <Seats tenant={tenant} />}
         {tab === "signups" && <Signups />}
+        {tab === "password" && <ChangePassword />}
       </div>
     </>
   );
