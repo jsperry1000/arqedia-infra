@@ -446,6 +446,54 @@ export function blockToMarkdown(block: Block, trailing: string): string {
   return body.replace(/[ \t]+$/gm, "") + trailing;
 }
 
+/**
+ * Indent (30 October 2026): two spaces a level at the start of a paragraph or
+ * a list item, up to MAX_INDENT. render/app.py's _indent_of reads the same
+ * spaces the same way, so a level here is a level in the PDF. A tab counts as
+ * four spaces, as Python's expandtabs(4) does there.
+ */
+export const MAX_INDENT = 3;
+
+/** The level of an indent or a list item's prefix. */
+export function indentLevel(lead: string): number {
+  const spaces = (/^[ \t]*/.exec(lead)?.[0] ?? "").replace(/\t/g, "    ").length;
+  return Math.min(Math.floor(spaces / 2), MAX_INDENT);
+}
+
+/** The spaces for a level, held between none and MAX_INDENT. */
+export function indentOf(level: number): string {
+  return "  ".repeat(Math.max(0, Math.min(level, MAX_INDENT)));
+}
+
+/** A list item's prefix at another level, its marker unchanged. */
+export function reindent(prefix: string, level: number): string {
+  return indentOf(level) + prefix.trimStart();
+}
+
+/**
+ * Bullets on or off (30 October 2026), as one block becomes another. A
+ * paragraph becomes a bulleted list of one item; a numbered list becomes a
+ * bulleted one; a bulleted list becomes a paragraph per item. The indent
+ * goes with it either way. The PDF draws "- " as a bullet; it has no
+ * numbered list, so bullets are what this writes.
+ */
+export function toggleBullets(block: Block): Block[] {
+  if (block.kind === "para") {
+    return [{ id: block.id, source: "", kind: "list", ordered: false,
+              items: [{ prefix: block.indent + "- ", inlines: block.inlines }] }];
+  }
+  if (block.kind === "list" && block.ordered) {
+    return [{ ...block, ordered: false, items: block.items.map((it) => ({
+      ...it, prefix: indentOf(indentLevel(it.prefix)) + "- " })) }];
+  }
+  if (block.kind === "list") {
+    return block.items.map((it, k) => ({
+      id: k === 0 ? block.id : "new", source: "", kind: "para" as const,
+      indent: indentOf(indentLevel(it.prefix)), inlines: it.inlines }));
+  }
+  return [block];
+}
+
 /** The blank space a block's source ends with, so an edit keeps the spacing
  *  around it and the document does not close up.
  *

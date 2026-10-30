@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState,
          type DragEvent } from "react";
 import { parseBlocks, serializeBlocks, blockToMarkdown, trailingOf, citationsIn,
-         isCitable, footnoteRef, type Block, type Inline } from "./memodoc";
+         isCitable, footnoteRef, indentLevel, indentOf, reindent,
+         toggleBullets, type Block, type Inline } from "./memodoc";
 import { citeChipHtml, inlinesToHtml, nodesToInlines } from "./memoedit";
 import type { Act } from "./undo";
 import { api, type DocumentDetail } from "./api";
@@ -235,7 +236,7 @@ function calloutKind(inlines: Inline[]): string {
  * short pause after typing stops, and again the moment focus leaves. By the
  * time anything else happens the edit is already in.
  */
-function Editable({ html, onEdit, onSplit, deferred, className }: {
+function Editable({ html, onEdit, onSplit, onIndent, deferred, className }: {
   html: string;
   onEdit: (root: HTMLElement) => void;
   // A paragraph that does not exist yet is read out only when it is finished,
@@ -247,6 +248,10 @@ function Editable({ html, onEdit, onSplit, deferred, className }: {
   // a heading, a table cell - Enter does nothing, because a heading on two
   // lines is not a thing a memorandum has.
   onSplit?: (before: HTMLElement, after: HTMLElement) => void;
+  // Tab and Shift+Tab, where the block can be indented: a paragraph or a list
+  // item. Handed the box itself, so what is in it is read as it stands.
+  // Absent, Tab moves on as it does anywhere else.
+  onIndent?: (host: HTMLElement, out: boolean) => void;
   className?: string;
 }) {
   // A span, not a div: a paragraph is a <p>, and a block element inside one
@@ -304,6 +309,11 @@ function Editable({ html, onEdit, onSplit, deferred, className }: {
         if (meta && (e.key === "b" || e.key === "i")) {
           e.preventDefault();
           document.execCommand(e.key === "b" ? "bold" : "italic");
+          return;
+        }
+        if (e.key === "Tab" && onIndent && box.current) {
+          e.preventDefault();
+          onIndent(box.current, e.shiftKey);
           return;
         }
         if (e.key === "Enter") {
@@ -517,6 +527,13 @@ function FootnotePicker({ sources, ready, onPick, onClose }: {
       </div>
     </div>
   );
+}
+
+/** How far an indented paragraph or list item sits in from the margin: a
+ *  level a step, as the PDF steps it (render/app.py's _INDENT_STEP). */
+function indentStyle(lead: string) {
+  const level = indentLevel(lead);
+  return level ? { marginLeft: `${level * 1.5}em` } : undefined;
 }
 
 /** The file a drop or a paste carries, an image first: the image wins a
@@ -862,6 +879,41 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
     ]), "add");
   }
 
+  /** Indent or outdent (30 October 2026): a paragraph whole, or the list
+   *  item whose box `host` is - every item together where there is none.
+   *  What is in the box is read from it, so nothing typed a moment ago is
+   *  lost to the change, and the box stays open with the cursor in it. */
+  function shiftIndent(block: Block, host: HTMLElement | null, out: boolean) {
+    const by = out ? -1 : 1;
+    if (block.kind === "para") {
+      replace(block.id, (b) => b.kind !== "para" ? b : {
+        ...b, indent: indentOf(indentLevel(b.indent) + by),
+        inlines: host ? nodesToInlines(host) : b.inlines }, "indent");
+      return;
+    }
+    if (block.kind !== "list") return;
+    const li = host?.closest("li");
+    const k = li?.parentElement
+      ? Array.from(li.parentElement.children).indexOf(li) : -1;
+    replace(block.id, (b) => b.kind !== "list" ? b : {
+      ...b, items: b.items.map((it, i) => k >= 0 && i !== k ? it : {
+        prefix: reindent(it.prefix, indentLevel(it.prefix) + by),
+        inlines: i === k && host ? nodesToInlines(host) : it.inlines }) },
+      "indent");
+  }
+
+  /** Bullets on or off (30 October 2026): see toggleBullets. One block may
+   *  become several, so it is written here rather than through replace. A
+   *  block becoming several takes the blank line after it on the last. */
+  function bullets(block: Block) {
+    if (!onChange) return;
+    const next = toggleBullets(block);
+    const trailing = trailingOf(block.source);
+    onChange(serializeBlocks(blocks.flatMap((b) => b.id !== block.id ? [b]
+      : next.map((n, k) => ({ ...n, source: blockToMarkdown(n,
+          k === next.length - 1 ? trailing : "\n") })))), "bullets");
+  }
+
   /** A page break put in at a gap, on a line of its own: the PDF starts a
    *  new page there. One act to undo. */
   function insertPageBreak(index: number) {
@@ -1034,6 +1086,36 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                   title={open ? "Finish editing" : "Edit this"}>
             {open ? "Done" : block.kind === "table" ? "Edit table" : "Edit"}
           </button>
+        )}
+        {/* Bullets and indent (30 October 2026), on a paragraph or a list.
+            BULLETS LETS THE FOCUS GO: the block changes shape and its box is
+            built again, so what was typed is written in first, by the box
+            losing focus, and the new box takes the focus back. INDENT KEEPS
+            IT: the press is held off the text, the box stays, and the cursor
+            says which item moves. Tab and Shift+Tab do the same. */}
+        {editable && open && (block.kind === "para" || block.kind === "list") && (
+          <>
+            <button type="button"
+                    className={block.kind === "list" && !block.ordered ? "tool on" : "tool"}
+                    onClick={() => bullets(block)}
+                    title={block.kind === "list" && !block.ordered
+                      ? "Take the bullets off: a paragraph for each item"
+                      : "Make this a bulleted list"}>
+              Bullets
+            </button>
+            <button type="button" className="tool"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => shiftIndent(block, caretInBlock()?.host ?? null, false)}
+                    title="Indent this (Tab)">
+              Indent
+            </button>
+            <button type="button" className="tool"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => shiftIndent(block, caretInBlock()?.host ?? null, true)}
+                    title="Bring this back out (Shift+Tab)">
+              Outdent
+            </button>
+          </>
         )}
         {editable && open && block.kind !== "heading" && (
           <button type="button" className="tool"
@@ -1244,7 +1326,8 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
             // Keyed by position and count, as the table rows are, and for
             // the same reason: breaking an item in two shifts the ones below.
             const items = block.items.map((it, k) => (
-              <li key={k + "/" + block.items.length}>
+              <li key={k + "/" + block.items.length}
+                  style={indentStyle(it.prefix)}>
                 {editing === block.id ? (
                   <Editable html={inlinesToHtml(it.inlines, goneRef)}
                             onEdit={(root) => replace(block.id, (b) => {
@@ -1254,7 +1337,8 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                               return { ...b, items: next };
                             })}
                             onSplit={(before, after) =>
-                              splitBlock(block, before, after, k)} />
+                              splitBlock(block, before, after, k)}
+                            onIndent={(host, out) => shiftIndent(block, host, out)} />
                 ) : inlinesOf(block, it.inlines)}
               </li>
             ));
@@ -1387,13 +1471,17 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
 
           default:
             return (
-              <p key={block.id}>
+              <p key={block.id}
+                 style={block.kind === "para" ? indentStyle(block.indent) : undefined}>
                 {editing === block.id ? (
                   <Editable html={inlinesToHtml(block.inlines, goneRef)}
                             onEdit={commitInlines(block.id, (b, nodes) =>
                               ({ ...b, inlines: nodes } as Block))}
                             onSplit={(before, after) =>
-                              splitBlock(block, before, after)} />
+                              splitBlock(block, before, after)}
+                            onIndent={block.kind === "para"
+                              ? (host, out) => shiftIndent(block, host, out)
+                              : undefined} />
                 ) : inlinesOf(block, block.inlines)}
                 {tools(block)}
               </p>
