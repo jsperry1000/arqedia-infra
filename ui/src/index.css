@@ -516,8 +516,11 @@ p.warn { color: #b45309; }
   color: var(--muted); border-bottom: 1px solid var(--line);
 }
 /* A citation. Bracketed, smaller and in the brand mid blue, so a paragraph
-   carrying four of them still reads as prose. */
-.memo em {
+   carrying four of them still reads as prose.
+   BY ITS CLASS, NOT ITS TAG (31 October 2026). This was `.memo em`, so a
+   word a person put in italics was drawn as a citation - small and blue -
+   while bold read as bold. Italics are prose and take only the slant. */
+.memo em.ref {
   color: var(--medium); font-size: 12px; font-style: italic;
   margin: 0 2px; white-space: normal;
 }
