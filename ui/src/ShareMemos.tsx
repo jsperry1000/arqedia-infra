@@ -9,7 +9,8 @@ import {
   money, useSort,
 } from "./Share";
 import {
-  MAX_BATCH, NO_FILTER, filterMemos, planBatch, resendsFor, sortRows, toggle,
+  MAX_BATCH, NO_FILTER, filterMemos, planBatch, resendsFor, sharesByMemo,
+  sortRows, toggle,
   type BatchMemo, type Filter, type Plan,
 } from "./shareBatch";
 
@@ -97,8 +98,15 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
     return m ? `${m.label} ${m.number}` : `memo ${id}`;
   };
 
+  // Who each memorandum has gone to, when and from whom (31 October 2026),
+  // from the shares this screen already reads for its re-sends. The filter
+  // reads the same addresses, so typing a recipient finds what they got.
+  const sharedTo = sharesByMemo(grants);
+  const sharedWith = (id: number) => (sharedTo.get(id) ?? [])
+    .flatMap((g) => [g.recipient_email, g.sent_by]);
+
   const shown = memos === null ? [] : (() => {
-    const kept = filterMemos(memos, filter);
+    const kept = filterMemos(memos, filter, sharedWith);
     return sort.key ? sortRows(kept, sort.key, sort.dir) : kept;
   })();
   const th = (k: MemoKey, label: string) => (
@@ -244,7 +252,7 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
       {memos !== null && memos.length > 0 && !started && (
         <>
           <FilterRow filter={filter} onChange={setFilter}
-                     placeholder="Filter by name, engagement or number"
+                     placeholder="Memo, engagement or recipient"
                      dateLabel="Generated" />
           <p className="muted small">
             {selected.length} of {MAX_BATCH} ticked.
@@ -262,6 +270,7 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
                   <th></th>
                   {th("label", "Memorandum")}{th("engagement_shown", "Engagement")}
                   {th("generated_at", "Generated")}{th("number", "Number")}
+                  <th>Shared with</th>
                 </tr>
               </thead>
               <tbody>
@@ -290,6 +299,19 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
                     <td>{m.engagement_shown ?? m.engagement ?? "—"}</td>
                     <td className="ref">{day(m.generated_at)}</td>
                     <td className="ref">{m.number}</td>
+                    <td className="small">
+                      {(sharedTo.get(m.memo_id) ?? []).length === 0
+                        ? <span className="muted">—</span>
+                        : sharedTo.get(m.memo_id)!.map((g) => (
+                          <div key={g.grant_id}>
+                            {g.recipient_email}
+                            <div className="muted">
+                              {day(g.sent_at)} &middot; by {g.sent_by}
+                              {g.revoked && " · revoked"}
+                            </div>
+                          </div>
+                        ))}
+                    </td>
                   </tr>
                 ))}
               </tbody>
