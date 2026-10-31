@@ -1534,12 +1534,16 @@ export const api = {
    *  configuration in use and the documents filed now, and what is new set
    *  beside the saved text to accept or discard. THIS CHARGES for one
    *  memorandum, on the click. Answers at once with the run to poll. */
-  startUpdate: (memoId: number, idempotencyKey: string): Promise<Started & {
+  // `section`, a saved heading as the memo writes it ("## II. Business"),
+  // updates that section alone, at its own price (31 October 2026).
+  startUpdate: (memoId: number, idempotencyKey: string,
+                section?: string): Promise<Started & {
     memo_id: number; config_revision: number;
   }> =>
     call(`/memos/${memoId}/update`, {
       method: "POST",
-      body: JSON.stringify({ idempotency_key: idempotencyKey }),
+      body: JSON.stringify({ idempotency_key: idempotencyKey,
+                             ...(section ? { section } : {}) }),
     }),
 
   updateProgress: (memoId: number, run: string): Promise<UpdateRun> =>

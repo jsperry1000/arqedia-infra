@@ -2443,7 +2443,12 @@ def _update_key(tenant_id, memo_id, run):
         int(tenant_id), int(memo_id), run)
 
 
-def update_memo(tenant_id, email, memo_id, idempotency_key):
+# A section heading of a saved memo, as the screen and composition's
+# _SAVED_HEADING split on it: level two, at the start of the line.
+_UPDATE_HEADING = re.compile(r"^##(?!#)\s+\S")
+
+
+def update_memo(tenant_id, email, memo_id, idempotency_key, section=None):
     """Charge for one Update and start it. Returns the run to poll.
 
     CHARGED AS A GENERATION, memo_generated, on the click (decision of 16
@@ -2453,12 +2458,19 @@ def update_memo(tenant_id, email, memo_id, idempotency_key):
     when composition cannot be started, by composition when the run fails.
     A run that finishes with some sections failed is not - it delivered.
 
+    ONE SECTION (31 October 2026): `section` is a heading of the saved memo,
+    as the screen lists them, and only that section is written and offered.
+    Charged as memo_section_updated, its own price (migration 052), and
+    refunded as a generation is. The heading is checked against the saved
+    text here, above the charge; whether the configuration in use writes it
+    is composition's to say, and a section it does not write is refunded.
+
     THE REVISION IN USE, read here once and carried in the event, so the
     revision charged for is the revision that runs."""
     found = _sql(
         """
         SELECT template_key, engagement_id, parent_memo_id, revision,
-               workspace_id
+               workspace_id, s3_bucket, s3_key
         FROM memo WHERE tenant_id = :t AND memo_id = :m
         """,
         [_p("t", tenant_id), _p("m", int(memo_id))]).get("records", [])
@@ -2481,10 +2493,23 @@ def update_memo(tenant_id, email, memo_id, idempotency_key):
         raise ValueError("this memorandum is not in the configuration in "
                          "use, so it cannot be updated")
 
+    section = str(section or "").strip() or None
+    if section is not None:
+        saved = _s3.get_object(Bucket=_col(found[0], 5),
+                               Key=_col(found[0], 6))["Body"].read() \
+                   .decode("utf-8")
+        headings = {line.strip() for line in saved.replace("\r\n", "\n")
+                    .split("\n") if _UPDATE_HEADING.match(line)}
+        if section not in headings:
+            raise ValueError("that section is not in the memo as saved")
+
     paid = wallet.charge(
-        tenant_id, email, "memo_generated", 1,
+        tenant_id, email,
+        "memo_section_updated" if section else "memo_generated", 1,
         reference=registry_now.label_for_template(template_key)
-                  + " - update of memo " + label,
+                  + (" - update of " + section.lstrip("#").strip()
+                     + " in memo " if section else " - update of memo ")
+                  + label,
         idempotency_key=idempotency_key)
 
     # THE RUN IS THE CHARGE'S, derived from its key. wallet.charge answers a
@@ -2507,6 +2532,8 @@ def update_memo(tenant_id, email, memo_id, idempotency_key):
     state = {"status": "running", "run": run, "memo_id": int(memo_id),
              "config_revision": revision, "requested_by": email,
              "started_at": started_at}
+    if section:
+        state["section"] = section
 
     # Written before the invocation, so the first poll finds a run rather
     # than nothing.
@@ -2526,7 +2553,7 @@ def update_memo(tenant_id, email, memo_id, idempotency_key):
                                 "template_key": template_key,
                                 "config_revision": revision,
                                 "run": run, "requested_by": email,
-                                "entry_id": entry_id}))
+                                "entry_id": entry_id, "section": section}))
     except Exception as exc:  # noqa: BLE001 - refunded, then reported
         # Left running, the screen would poll a run nothing will finish.
         print("[update-not-started] tenant=%s memo=%s run=%s %r" % (
@@ -4572,7 +4599,8 @@ def _dispatch(event, context):
         if route == "POST /memos/{memo_id}/update":
             body = json.loads(event.get("body") or "{}")
             started = update_memo(tenant_id, email, params.get("memo_id"),
-                                  _key(body, "update", params.get("memo_id")))
+                                  _key(body, "update", params.get("memo_id")),
+                                  body.get("section"))
             if started is None:
                 return _reply(404, {"error": "not found"})
             return _reply(202, started)

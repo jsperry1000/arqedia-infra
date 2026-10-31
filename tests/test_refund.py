@@ -216,6 +216,19 @@ class RefundGenerationTest(unittest.TestCase):
         self.assertFalse(out["refunded"])
         self.assertEqual(db.sent("INSERT INTO wallet_bucket"), [])
 
+    def test_an_update_of_one_section_is_refunded_as_itself(self):
+        # 31 October 2026: fifty cents back, named for what it reverses.
+        db = self.generation()
+        db.event = "memo_section_updated"
+        db.unit_cents = 50
+        out = self.run_refund(db)
+        self.assertTrue(out["refunded"])
+        self.assertEqual(out["amount_cents"], 50)
+        [(_, values, _)] = db.sent("INSERT INTO wallet_ledger")
+        self.assertEqual(values["e"], "memo_section_updated_refund")
+        self.assertEqual(values["a"], -50)
+        self.assertEqual(values["k"], "refund:memo:50")
+
     def test_an_entry_that_is_not_a_generation_is_not_refunded(self):
         # A wrong id must not hand back a filing or a top-up.
         db = self.generation()
