@@ -70,6 +70,9 @@ export function inlinesToHtml(inlines: Inline[],
     if (n.kind === "text") return escapeHtml(n.text);
     if (n.kind === "bold") return "<strong>" + escapeHtml(n.text) + "</strong>";
     if (n.kind === "em") return "<em>" + escapeHtml(n.text) + "</em>";
+    if (n.kind === "boldem") {
+      return "<strong><em>" + escapeHtml(n.text) + "</em></strong>";
+    }
     return n.refs.map((r) => citeChipHtml(r, gone(r))).join("");
   }).join("");
 }
@@ -92,7 +95,7 @@ function tidy(nodes: Inline[]): Inline[] {
   // italic. The space belongs outside the run.
   const spaced: Inline[] = [];
   for (const n of out) {
-    if (n.kind === "bold" || n.kind === "em") {
+    if (n.kind === "bold" || n.kind === "em" || n.kind === "boldem") {
       const lead = /^\s*/.exec(n.text)![0];
       const tail = /\s*$/.exec(n.text)![0];
       const body = n.text.slice(lead.length, n.text.length - tail.length);
@@ -133,8 +136,8 @@ function tidy2(nodes: Inline[]): Inline[] {
 /**
  * What the editor now holds, as inline content.
  *
- * Only the marks the memo uses are read back: bold, emphasis and citation
- * marks. A browser that pastes a font tag, a colour or a heading contributes
+ * Only the marks the memo uses are read back: bold, emphasis, the two
+ * together, and citation marks. A browser that pastes a font tag, a colour or a heading contributes
  * its text and nothing else - a memo is not a place for a reader's
  * clipboard formatting to arrive unannounced.
  */
@@ -146,7 +149,9 @@ export function nodesToInlines(root: Node): Inline[] {
       // A contenteditable ends lines with a non-breaking space; it is a space.
       const text = (node.nodeValue ?? "").replace(/\u00a0/g, " ");
       if (!text) return;
-      out.push(bold ? { kind: "bold", text }
+      // Both at once is a mark of its own, not bold with the slant lost.
+      out.push(bold && em ? { kind: "boldem", text }
+             : bold ? { kind: "bold", text }
              : em ? { kind: "em", text }
              : { kind: "text", text });
       return;
