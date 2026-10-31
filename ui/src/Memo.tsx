@@ -90,6 +90,15 @@ function splitSections(markdown: string): {
            sections };
 }
 
+/** A heading reduced to what identifies it: no hashes, no case, single
+ *  spaces, no stray stop. The API's _heading_norm and composition's,
+ *  character for character, so a section finds its prompt here exactly as
+ *  Update finds the section. */
+function headingKey(text: string): string {
+  return text.replace(/^#+/, "").trim().split(/\s+/).join(" ")
+    .replace(/^\.\s+/, "").toLowerCase();
+}
+
 function joinSections(head: string, hasHead: boolean, sections: Part[]): string {
   return (hasHead ? [head] : []).concat(sections.map((s) => s.text)).join("\n");
 }
@@ -1289,6 +1298,23 @@ export function MemoView({ memoId, onBack, onOpen }: {
                       setPrompts((prev) => ({ ...prev, [s.key]: value }));
                     }} />
                 )}
+                {/* The section's own prompt, as configured now (31 October
+                    2026), into the box above - to read and change before Go,
+                    as if it had been pasted. */}
+                {!run && !updateRun && memo.section_prompts && (() => {
+                  const configured = memo.section_prompts[headingKey(s.heading)];
+                  if (configured === undefined) return null;
+                  return (
+                    <p className="rewrite-note muted small">
+                      {configured ? (
+                        <a onClick={() => setPrompts((prev) =>
+                          ({ ...prev, [s.key]: configured }))}>
+                          Use this section&rsquo;s prompt
+                        </a>
+                      ) : "This section has no prompt in the configuration."}
+                    </p>
+                  );
+                })()}
               </section>
             );
           })}

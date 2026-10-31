@@ -1815,6 +1815,41 @@ def _with_identity(markdown, number, version, workspace):
     return "\n".join(lines)
 
 
+def _heading_norm(text):
+    """A heading reduced to what identifies it - composition's _heading_norm,
+    character for character, so a heading matches here exactly as Update
+    matches it. Memo.tsx's headingKey is the third copy."""
+    text = " ".join((text or "").lstrip("#").split())
+    return re.sub(r"^\.\s+", "", text).lower()
+
+
+def _section_prompts(tenant_id, workspace_id, template_key, revision):
+    """{normalised saved heading: prompt} for one memo (31 October 2026).
+
+    What each of its sections is told to read like IN THE CONFIGURATION IN
+    USE NOW, for Rewrite's "Use this section's prompt". A saved heading is
+    looked up in the revision the memo was written under to find its section,
+    as Update does, so a section renamed since still finds its prompt; the
+    prompt is then the one in use. A section the configuration in use no
+    longer has is absent; one with no prompt is there, empty, so the screen
+    can say so."""
+    earlier = config.load(tenant_id, workspace_id, revision)
+    now = config.load(tenant_id, workspace_id,
+                      config.active_revision(tenant_id, workspace_id))
+    if not earlier.has_template(template_key) \
+            or not now.has_template(template_key):
+        return {}
+    prompts = {s["key"]: (s.get("prompt") or "").strip()
+               for s in now.sections_for(template_key)}
+    out = {}
+    for s in earlier.sections_for(template_key):
+        num = (s.get("num") or "").strip()
+        heading = "%s. %s" % (num, s["title"]) if num else s["title"]
+        if s["key"] in prompts:
+            out.setdefault(_heading_norm(heading), prompts[s["key"]])
+    return out
+
+
 def get_memo(tenant_id, memo_id):
     """A memo, a signed link to its PDF, and the documents behind it.
 
@@ -1829,7 +1864,7 @@ def get_memo(tenant_id, memo_id):
         SELECT m.s3_bucket, m.s3_key, m.generated_at, m.generated_by,
                m.pdf_key, m.parent_memo_id, m.revision, m.modified_by,
                m.modified_at, w.name, m.config_revision, m.workspace_id,
-               e.name, COALESCE(e.display_name, e.name)
+               e.name, COALESCE(e.display_name, e.name), m.template_key
         FROM memo m
         LEFT JOIN workspace w
                ON w.workspace_id = m.workspace_id
@@ -1908,6 +1943,18 @@ def get_memo(tenant_id, memo_id):
         "WHERE ms.tenant_id = :t AND ms.memo_id = :m)",
         [_p("m", int(memo_id))])
 
+    # Each section's prompt as configured now, for Rewrite. A memo that
+    # cannot be matched to its configuration still opens: the shortcut is
+    # simply not offered.
+    try:
+        section_prompts = _section_prompts(
+            tenant_id, config.workspace_of(tenant_id, _col(r, 11)),
+            _col(r, 14), _col(r, 10) or 1)
+    except Exception as exc:  # noqa: BLE001 - logged; the memo still opens
+        print("[section-prompts-unread] tenant=%s memo=%s %r" % (
+            tenant_id, memo_id, exc))
+        section_prompts = {}
+
     return {
         "memo_id": int(memo_id),
         "generated_at": _col(r, 2),
@@ -1938,6 +1985,7 @@ def get_memo(tenant_id, memo_id):
                      for w in rewritten.get("records", [])],
         "config_revision": _col(r, 10),
         "not_drawn_on": not_drawn_on,
+        "section_prompts": section_prompts,
     }
 
 

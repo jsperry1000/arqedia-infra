@@ -499,6 +499,11 @@ export type Memo = {
   config_revision: number | null;
   /** What its sources hold under fields that revision does not have. */
   not_drawn_on: NotDrawnOn[];
+  /** Each section's "How it should read" in the configuration in use now,
+   *  by normalised saved heading (see headingKey in Memo.tsx). A section the
+   *  configuration no longer has is absent; one with no prompt is "".
+   *  Optional: an API from before 31 October 2026 sends none. */
+  section_prompts?: Record<string, string>;
 };
 
 // One section rewritten by the model at a person's prompt. output_text is
