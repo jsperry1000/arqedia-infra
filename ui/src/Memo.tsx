@@ -236,6 +236,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
   // Minted when the confirmation opens, so a retry of the same press is the
   // same charge and the next press is a new one.
   const updateKey = useRef("");
+  // Every section, or one: a saved heading as the memo writes it (31
+  // October 2026). One is its own, lower price.
+  const [updateScope, setUpdateScope] = useState("");
 
   const [loaded, setLoaded] = useState(false);
   const [keeping, setKeeping] = useState<"" | "keeping" | "kept" | "failed">("");
@@ -737,11 +740,18 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
   /** The confirmation, priced by the server before anything is charged. */
   function openUpdate() {
+    setConfirmingUpdate(true);
+    scopeUpdate("");
+  }
+
+  /** Every section or one, priced again. A new key with it: what is
+   *  charged has changed, so a press after this is a different charge. */
+  function scopeUpdate(scope: string) {
     setSaveError("");
+    setUpdateScope(scope);
     setUpdateQuote(null);
     updateKey.current = chargeKey();
-    setConfirmingUpdate(true);
-    api.walletQuote("memo_generated", 1)
+    api.walletQuote(scope ? "memo_section_updated" : "memo_generated", 1)
       .then(setUpdateQuote)
       .catch((err) => {
         setUpdateQuote(null);
@@ -754,7 +764,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
     setStartingUpdate(true);
     setSaveError("");
     try {
-      const started = await api.startUpdate(memoId, updateKey.current);
+      const started = await api.startUpdate(memoId, updateKey.current,
+                                            updateScope || undefined);
       setUpdated(null);
       setConfirmingUpdate(false);
       // Could not even be started, and already refunded (20.1).
@@ -1384,6 +1395,33 @@ export function MemoView({ memoId, onBack, onOpen }: {
             <div className="form">
               <h4>Update memo {memo.label}</h4>
 
+              {/* Every section, or one of the memo's own as saved (31
+                  October 2026). The list is the saved text's headings, the
+                  same the API checks the choice against. */}
+              <label className="row">
+                <span>What to update</span>
+                <select value={updateScope} disabled={startingUpdate}
+                        onChange={(e) => scopeUpdate(e.target.value)}>
+                  <option value="">Every section</option>
+                  {splitSections(memo.markdown).sections.map((s) => (
+                    <option key={s.key} value={s.heading}>
+                      {s.heading.replace(/^#+\s*/, "")}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {updateScope ? (
+                <p className="muted small">
+                  This section alone is written again from the configuration
+                  in use and the documents filed in this engagement now, and
+                  what is new is set beside your text, to accept or discard.
+                  Your text stays exactly as you wrote it. Where the documents
+                  now say something different from it, that is added as an
+                  Open Item in this section. No other section is touched.
+                  Nothing is saved until you save a revision.
+                </p>
+              ) : (
               <p className="muted small">
                 Every section is written again from the configuration in use
                 and the documents filed in this engagement now. What is new
@@ -1394,11 +1432,13 @@ export function MemoView({ memoId, onBack, onOpen }: {
                 template is offered at the end. Nothing is saved until you
                 save a revision.
               </p>
+              )}
 
               {updateQuote && (
                 <div className="quote">
                   <div>
-                    <span>1 update, charged as a memorandum</span>
+                    <span>{updateScope ? "1 section update"
+                                       : "1 update, charged as a memorandum"}</span>
                     <b>{money(updateQuote.total_cents)}</b>
                   </div>
                   <div>

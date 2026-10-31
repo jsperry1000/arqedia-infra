@@ -44,6 +44,9 @@ and the documents now on file (see _update):
     {"action": "update", "tenant_id": 1, "memo_id": 7, "engagement_id": 3,
      "template_key": "credit", "config_revision": 9, "run": "<hex>",
      "requested_by": "a@b.test"}
+
+with "section": "## II. Business", a saved heading, to update that section
+alone.
 """
 
 import datetime
@@ -635,6 +638,11 @@ UPDATE_FAULT = ("The update stopped because of a fault on our side. "
 # the run is offered as usual.
 UPDATE_SECTION_FAULT = ("This section could not be compared because of a "
                         "fault on our side. Run the update again.")
+# An Update of one section whose heading the configuration in use does not
+# write - retyped in the memo, or gone from the template. Refunded.
+UPDATE_SECTION_UNKNOWN = ("This section is not one the configuration in use "
+                          "writes, so it cannot be updated on its own. Its "
+                          "heading may have been changed in the memo.")
 
 # A section heading as composition writes it: "## I. Introduction". Level two
 # only, so a subheading the section itself carries is never mistaken for it.
@@ -838,14 +846,38 @@ def _record_claim(tenant_id, memo_id, section_key, ordinal, text, values):
 
 # --- writing the sections --------------------------------------------------
 
-def _write_sections(registry, template_key, values, subject_name):
+def _reads(registry, template_key, only):
+    """The section `only` and every composed section it reads, however
+    indirectly. A composed section is drafted from those, so an Update of it
+    alone still has to draft them; assembled ones are always built."""
+    composed = {s["key"]: s
+                for s in registry.sections_of_kind("composed", template_key)}
+    need, stack = set(), [only]
+    while stack:
+        key = stack.pop()
+        if key in need:
+            continue
+        need.add(key)
+        stack.extend(k for k in composed.get(key, {}).get(
+            "context_sections", []) if k in composed)
+    return need
+
+
+def _write_sections(registry, template_key, values, subject_name, only=None):
     """Stages 1 to 3 for one template: assemble, draft, consolidate.
 
     Generation and Update both write through here, so a section Update puts
     beside a person's text is written exactly as a generated one would be.
 
+    `only` is one section's key, for an Update of that section alone (31
+    October 2026). Every assembled section is still built - that is no model
+    call, and it is what a composed section reads - but only the composed
+    sections it needs are drafted, and only it is consolidated. The rest are
+    returned as assembled and must not be offered.
+
     Returns (sections, assembled, empty_sections, tokens_in, tokens_out)."""
     tokens_in = tokens_out = 0
+    drafting = _reads(registry, template_key, only) if only else None
 
     # 1. Assemble the deterministic sections. They are the context for the rest.
     assembled = {}
@@ -860,6 +892,11 @@ def _write_sections(registry, template_key, values, subject_name):
 
     # 2. Draft the composed sections from that context.
     for section in registry.sections_of_kind("composed", template_key):
+        if drafting is not None and section["key"] not in drafting:
+            assembled[section["key"]] = {
+                "title": section["title"], "num": section["num"],
+                "markdown": "", "values": []}
+            continue
         markdown, used, usage = _compose(section, assembled, subject_name)
         tokens_in += usage.get("input_tokens", 0)
         tokens_out += usage.get("output_tokens", 0)
@@ -875,6 +912,8 @@ def _write_sections(registry, template_key, values, subject_name):
 
     empty_sections = []
     for section in sections:
+        if only and section["key"] != only:
+            continue
         block = assembled[section["key"]]
         if not block["markdown"].strip():
             empty_sections.append(section["title"])
@@ -1226,6 +1265,20 @@ def _update(event):
                           "configuration in use")
         earlier = config.load(tenant_id, workspace_id, from_revision)
 
+        # ONE SECTION (31 October 2026): the saved heading the person chose,
+        # resolved to its key as every saved heading is below. One that
+        # resolves to nothing the configuration in use writes is refused
+        # before any model call, and the charge goes back.
+        only = None
+        chosen = str(event.get("section") or "").strip()
+        if chosen:
+            state["section"] = chosen
+            only = _keys_by_heading(earlier, template_key).get(
+                _heading_norm(chosen))
+            if only is None or only not in {
+                    s["key"] for s in registry.sections_for(template_key)}:
+                return finish("failed", error=UPDATE_SECTION_UNKNOWN)
+
         values = _load_values(tenant_id, workspace_id, engagement_id)
         if not values:
             return finish("failed", error="no document filed in this "
@@ -1234,7 +1287,7 @@ def _update(event):
         subject_name = _subject_of(tenant_id, engagement_id)
 
         sections, assembled, _empty, tokens_in, tokens_out = _write_sections(
-            registry, template_key, values, subject_name)
+            registry, template_key, values, subject_name, only=only)
 
         # Which saved section is which, by section_key.
         now_keys = {s["key"] for s in sections}
@@ -1255,7 +1308,12 @@ def _update(event):
         # that came back empty has nothing to add to what a person wrote.
         jobs = [s for s in sections
                 if s["key"] in matched
+                and (only is None or s["key"] == only)
                 and assembled[s["key"]]["markdown"].strip()]
+        # The other sections were not written this time, so nothing is said
+        # about them either.
+        if only:
+            kept = []
 
         def compare(section):
             try:
@@ -1280,7 +1338,10 @@ def _update(event):
         # one; otherwise each sits in the section it came from. Not to one
         # whose own comparison failed: that section is offered as a failure,
         # and an Open Item put in it would be offered nowhere.
+        # Not on an Update of one other section: Open Items is not offered
+        # then, and an item sent there would be offered nowhere.
         target = ("open_items" if "open_items" in matched
+                  and only in (None, "open_items")
                   and not results.get("open_items", (None, None))[1]
                   else None)
         placements = {key: [] for key in matched}
@@ -1311,6 +1372,8 @@ def _update(event):
         changed = unchanged = failed = 0
         for section in sections:
             key = section["key"]
+            if only and key != only:
+                continue
             if key in matched:
                 heading = matched[key]["heading"]
                 saved_text = matched[key]["text"]

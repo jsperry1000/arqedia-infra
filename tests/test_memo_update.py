@@ -159,7 +159,11 @@ class UpdateRun(unittest.TestCase):
                 return {"Body": body}
             raise self.app.ClientError("NoSuchKey")
 
-        def write_sections(registry, template_key, values, subject):
+        self.only = []
+
+        def write_sections(registry, template_key, values, subject,
+                           only=None):
+            self.only.append(only)
             sections = registry.sections_for(template_key)
             assembled = {s["key"]: {"num": s["num"], "title": s["title"],
                                     "markdown": FRESH[s["key"]],
@@ -191,11 +195,12 @@ class UpdateRun(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def run_update(self):
-        result = self.app._update({
+    def run_update(self, **extra):
+        result = self.app._update(dict({
             "action": "update", "tenant_id": TENANT, "memo_id": MEMO,
             "engagement_id": 42, "template_key": "credit",
-            "config_revision": 9, "run": RUN, "requested_by": EMAIL})
+            "config_revision": 9, "run": RUN, "requested_by": EMAIL},
+            **extra))
         state = json.loads(self.puts[-1]["Body"].decode("utf-8"))
         return result, state
 
@@ -342,6 +347,44 @@ class UpdateRun(unittest.TestCase):
         self.assertEqual(row["error"], self.app.UPDATE_SECTION_FAULT)
         self.assertNotIn("ValueError", row["error"])
 
+    # --- one section (31 October 2026) ----------------------------------
+
+    def test_one_section_is_written_and_compared_alone(self):
+        self.answers["business"] = {"additions": [
+            {"after": 1, "text": "A new grower in Texas. [[C3]]"}]}
+        result, state = self.run_update(section="## II. Business")
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(self.only, ["business"])
+        self.assertEqual(self.calls, ["business"])
+        # Its row, and nothing else - not even the section new in the
+        # template, which an Update of every section would offer.
+        self.assertEqual([r["heading"] for r in self.rows], ["## II. Business"])
+        self.assertEqual(state["section"], "## II. Business")
+        self.assertEqual(state["kept"], [])
+
+    def test_a_contradiction_stays_in_the_one_section(self):
+        self.answers["business"] = {"open_items": [
+            {"after": 1, "text": "Three here; four on file. [[C2]]"}]}
+        self.run_update(section="## II. Business")
+        row = self.row_for("## II. Business")
+        self.assertIn("> **Open item.** Three here; four on file.",
+                      row["output"])
+        self.assertNotIn("## VIII. Open Items",
+                         [r["heading"] for r in self.rows])
+
+    def test_a_section_the_configuration_does_not_write_is_refunded(self):
+        with mock.patch.object(self.app, "_refund_generation",
+                               return_value={"refunded": True,
+                                             "amount_cents": 50}) as refund:
+            result, state = self.run_update(
+                section="## III. Our view of the people")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(state["error"], self.app.UPDATE_SECTION_UNKNOWN)
+        self.assertTrue(state["refunded"])
+        refund.assert_called_once()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.only, [])
+
     def test_a_finished_run_is_not_run_again(self):
         done = {"status": "done", "run": RUN}
         with mock.patch.object(self.app, "_get_update", return_value=done):
@@ -350,6 +393,63 @@ class UpdateRun(unittest.TestCase):
                 "config_revision": 9})
         self.assertEqual(result["status"], "already-done")
         self.assertEqual(self.calls, [])
+
+
+class WriteOneSection(unittest.TestCase):
+    """_write_sections with only: every assembled section built, but only the
+    composed ones the section reads drafted, and only it consolidated."""
+
+    def setUp(self):
+        self.app = load_composition()
+        self.drafted, self.consolidated = [], []
+        sections = [
+            section("business", "I", "Business"),
+            dict(section("summary", "II", "Summary", kind="composed"),
+                 context_sections=["business"]),
+            dict(section("view", "III", "View", kind="composed"),
+                 context_sections=["summary"]),
+            dict(section("other", "IV", "Other", kind="composed"),
+                 context_sections=["business"]),
+        ]
+
+        class Registry(FakeRegistry):
+            def sections_of_kind(self, kind, key):
+                return [s for s in self.sections if s["kind"] == kind]
+
+        self.registry = Registry(sections)
+
+        def compose(s, assembled, subject=None):
+            self.drafted.append(s["key"])
+            return "drafted " + s["key"] + "\n", [], {}
+
+        def consolidate(s, markdown, subject=None):
+            self.consolidated.append(s["key"])
+            return markdown, {}
+
+        for name, fn in (("_compose", compose), ("_consolidate", consolidate),
+                         ("_assemble_extract",
+                          lambda r, s, v: ("facts\n", []))):
+            p = mock.patch.object(self.app, name, side_effect=fn)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_a_composed_section_drafts_what_it_reads_and_no_more(self):
+        self.app._write_sections(self.registry, "credit", [], None,
+                                 only="view")
+        self.assertEqual(self.drafted, ["summary", "view"])
+        self.assertEqual(self.consolidated, ["view"])
+
+    def test_an_assembled_section_drafts_nothing(self):
+        self.app._write_sections(self.registry, "credit", [], None,
+                                 only="business")
+        self.assertEqual(self.drafted, [])
+        self.assertEqual(self.consolidated, ["business"])
+
+    def test_without_only_everything_is_written(self):
+        self.app._write_sections(self.registry, "credit", [], None)
+        self.assertEqual(self.drafted, ["summary", "view", "other"])
+        self.assertEqual(self.consolidated,
+                         ["business", "summary", "view", "other"])
 
 
 class Insertion(unittest.TestCase):
@@ -381,8 +481,14 @@ class UpdateRoute(unittest.TestCase):
     def setUp(self):
         self.app = load_api()
         self.charges, self.invocations, self.puts = [], [], []
-        self.memo = (("credit", 42, 100, 2, WORKSPACE),)
+        self.memo = (("credit", 42, 100, 2, WORKSPACE, "curated",
+                      "memos/120.md"),)
         self.registry = FakeRegistry(REVISION_9)
+
+        def get_object(Bucket, Key):
+            body = mock.MagicMock()
+            body.read.return_value = SAVED.encode("utf-8")
+            return {"Body": body}
 
         patches = [
             mock.patch.object(self.app, "_sql",
@@ -399,10 +505,35 @@ class UpdateRoute(unittest.TestCase):
                                   self.invocations.append(k)),
             mock.patch.object(self.app._s3, "put_object",
                               side_effect=lambda **k: self.puts.append(k)),
+            mock.patch.object(self.app._s3, "get_object",
+                              side_effect=get_object),
         ]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
+
+    def test_one_section_is_charged_at_its_own_price_and_sent(self):
+        self.app.update_memo(TENANT, EMAIL, MEMO, "idem-1", "## II. Business")
+        [(args, kwargs)] = self.charges
+        self.assertEqual(args[2], "memo_section_updated")
+        self.assertIn("update of II. Business in memo 100.2",
+                      kwargs["reference"])
+        payload = json.loads(self.invocations[0]["Payload"])
+        self.assertEqual(payload["section"], "## II. Business")
+        state = json.loads(self.puts[0]["Body"].decode("utf-8"))
+        self.assertEqual(state["section"], "## II. Business")
+
+    def test_a_section_not_in_the_saved_memo_is_refused_before_the_charge(self):
+        with self.assertRaises(ValueError):
+            self.app.update_memo(TENANT, EMAIL, MEMO, "idem-1",
+                                 "## IX. Nowhere")
+        self.assertEqual(self.charges, [])
+        self.assertEqual(self.invocations, [])
+
+    def test_every_section_sends_none(self):
+        self.app.update_memo(TENANT, EMAIL, MEMO, "idem-1")
+        payload = json.loads(self.invocations[0]["Payload"])
+        self.assertIsNone(payload["section"])
 
     def test_it_charges_as_a_generation_and_runs_under_the_revision_in_use(self):
         started = self.app.update_memo(TENANT, EMAIL, MEMO, "idem-1")
@@ -432,14 +563,16 @@ class UpdateRoute(unittest.TestCase):
         self.assertEqual(len(self.puts), 1)
 
     def test_no_engagement_is_refused_before_the_charge(self):
-        self.memo = (("credit", None, 100, 2, WORKSPACE),)
+        self.memo = (("credit", None, 100, 2, WORKSPACE, "curated",
+                      "memos/120.md"),)
         with self.assertRaises(ValueError):
             self.app.update_memo(TENANT, EMAIL, MEMO, "idem-1")
         self.assertEqual(self.charges, [])
         self.assertEqual(self.invocations, [])
 
     def test_a_template_not_in_use_is_refused_before_the_charge(self):
-        self.memo = (("kyc", 42, 100, 2, WORKSPACE),)
+        self.memo = (("kyc", 42, 100, 2, WORKSPACE, "curated",
+                      "memos/120.md"),)
         with self.assertRaises(ValueError):
             self.app.update_memo(TENANT, EMAIL, MEMO, "idem-1")
         self.assertEqual(self.charges, [])

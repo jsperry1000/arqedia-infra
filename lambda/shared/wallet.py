@@ -439,9 +439,12 @@ def refund_generation(tenant_id, charge_entry_id, email=None):
     document and a ledger entry sharing a number would collide and the
     second refund would be refused as a repeat.
 
-    ONLY A GENERATION. The entry must be memo_generated; anything else is
-    refused rather than refunded, so a wrong id passed here cannot hand back
-    a filing or a top-up.
+    ONLY A GENERATION. The entry must be memo_generated, or
+    memo_section_updated - an Update of one section (31 October 2026), which
+    is a generation of that section. Anything else is refused rather than
+    refunded, so a wrong id passed here cannot hand back a filing or a
+    top-up. The refund row is named for the charge it reverses:
+    memo_generated_refund, memo_section_updated_refund.
 
     Everything else is refund()'s: the ledger row first and negative, what was
     paid rather than today's price, a new refund bucket of thirty days, one
@@ -453,16 +456,20 @@ def refund_generation(tenant_id, charge_entry_id, email=None):
     return _give_back(
         tenant_id, charge_entry_id,
         key="refund:memo:%d" % int(charge_entry_id),
-        event_type="memo_generated_refund",
+        event_type=None,
         reference="refund of entry %d, a memorandum that was not written"
                   % int(charge_entry_id),
-        email=email, what="generation", only_event="memo_generated")
+        email=email, what="generation",
+        only_event=("memo_generated", "memo_section_updated"))
 
 
 def _give_back(tenant_id, charge_entry_id, key, event_type, reference,
                email, what, only_event=None):
     """The one way money comes back. refund() and refund_generation() differ
-    only in the key, the ledger row's type and its wording."""
+    only in the key, the ledger row's type and its wording.
+
+    only_event is one event type or several. event_type None names the
+    refund row after the charge it reverses, as <event>_refund."""
     paid = _sql(
         """
         SELECT unit_cents, event_type FROM wallet_ledger
@@ -474,10 +481,14 @@ def _give_back(tenant_id, charge_entry_id, key, event_type, reference,
         return {"refunded": False, "amount_cents": 0, "repeated": False,
                 "reason": "the charge named by this %s is not there" % what}
 
-    if only_event and _col(paid[0], 1) != only_event:
+    charged = _col(paid[0], 1)
+    allowed = (only_event,) if isinstance(only_event, str) else only_event
+    if allowed and charged not in allowed:
         return {"refunded": False, "amount_cents": 0, "repeated": False,
                 "reason": "entry %d is not a %s charge"
-                          % (int(charge_entry_id), only_event)}
+                          % (int(charge_entry_id), " or ".join(allowed))}
+    if event_type is None:
+        event_type = "%s_refund" % charged
 
     unit = int(_col(paid[0], 0) or 0)
     if unit <= 0:
