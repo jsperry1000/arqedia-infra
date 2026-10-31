@@ -62,9 +62,13 @@ function toggled(open: Set<string>, key: string): Set<string> {
  *  what a guidance document names, and the name has since drifted from it.
  *  `needle` is already trimmed and lower-cased. A key's underscores read as
  *  spaces too, so "facility amount" finds f_facility_amount. */
-function byKey(f: ConfigField, needle: string) {
-  const key = f.key.toLowerCase();
+function keyMatches(raw: string, needle: string) {
+  const key = raw.toLowerCase();
   return key.includes(needle) || key.replace(/[_-]+/g, " ").includes(needle);
+}
+
+function byKey(f: ConfigField, needle: string) {
+  return keyMatches(f.key, needle);
 }
 
 function factMatches(f: ConfigField, needle: string) {
@@ -1622,7 +1626,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       </p>
 
       <div className="filters">
-        <SearchBox placeholder="Search document types" value={typeSearch}
+        <SearchBox placeholder="Search by name, key or description" value={typeSearch}
                    onChange={(e) => setTypeSearch(e.target.value)} />
         {typeSearch && (
           <a className="small" onClick={() => setTypeSearch("")}>Clear</a>
@@ -2070,6 +2074,7 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             const types = needle
               ? group.types.filter((t) =>
                   t.label.toLowerCase().includes(needle)
+                  || keyMatches(t.key, needle)
                   || (t.description ?? "").toLowerCase().includes(needle))
               : group.types;
             if (types.length === 0) return null;
@@ -2098,6 +2103,12 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                     <a onClick={() => setEditType(t.key)}>
                       <strong>{t.label}</strong>
                     </a>
+                    {/* The key beside a type found by it and not by its
+                        name, as on a fact. */}
+                    {needle && !t.label.toLowerCase().includes(needle)
+                      && keyMatches(t.key, needle) && (
+                      <span className="muted small"> {t.key}</span>
+                    )}
                     <div className="muted small">{t.description}</div>
                   </td>
                   {/* WHAT HAPPENS, THEN WHAT IS SET (5 October 2026). Every
