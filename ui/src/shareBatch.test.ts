@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_BATCH, NO_FILTER, filterHistory, filterMemos, planBatch, resendsFor,
-  sortRows, toggle, type BatchMemo,
+  sharesByMemo, sortRows, toggle, type BatchMemo,
 } from "./shareBatch";
 
 const memo = (id: number, extra: Partial<BatchMemo> = {}): BatchMemo => ({
@@ -121,11 +121,33 @@ describe("filtering Share a memo", () => {
     expect(filterMemos(memos, { ...NO_FILTER, text: "22.3" }).map((m) => m.memo_id)).toEqual([2]);
   });
 
+  it("filters by who a memo was shared with, or by", () => {
+    const shared = (id: number) => id === 2 ? ["j.ferrers@northbank.com",
+                                               "susan@vantage.test"] : [];
+    expect(filterMemos(memos, { ...NO_FILTER, text: "northbank" }, shared)
+      .map((m) => m.memo_id)).toEqual([2]);
+    expect(filterMemos(memos, { ...NO_FILTER, text: "susan" }, shared)
+      .map((m) => m.memo_id)).toEqual([2]);
+  });
+
   it("filters by date generated, inclusive", () => {
     expect(filterMemos(memos, { text: "", from: "2026-10-02", to: "" })
       .map((m) => m.memo_id)).toEqual([2]);
     expect(filterMemos(memos, { text: "", from: "", to: "2026-10-01" })
       .map((m) => m.memo_id)).toEqual([1]);
+  });
+});
+
+describe("shares by memorandum", () => {
+  it("groups each memo's shares, newest first", () => {
+    const by = sharesByMemo([
+      { memo_id: 1, sent_at: "2026-10-01T10:00:00Z", recipient_email: "a" },
+      { memo_id: 2, sent_at: "2026-10-02T10:00:00Z", recipient_email: "b" },
+      { memo_id: 1, sent_at: "2026-10-05T10:00:00Z", recipient_email: "c" },
+    ]);
+    expect(by.get(1)?.map((g) => g.recipient_email)).toEqual(["c", "a"]);
+    expect(by.get(2)?.length).toBe(1);
+    expect(by.get(3)).toBeUndefined();
   });
 });
 
