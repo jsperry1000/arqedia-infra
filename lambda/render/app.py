@@ -141,6 +141,14 @@ def _col(record, i):
 # --- markdown -> flowables -------------------------------------------------
 
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
+# Bold and italic at once, "***text***", put in by the editor (31 October
+# 2026). Read BEFORE _BOLD, which would otherwise take the first two
+# asterisks and leave the third to pair as an italic across the </b> - a
+# mismatched tag, and the paragraph lost to _safe's fallback. The words
+# inside neither start nor end on an asterisk, so bold written hard against
+# it - "**a*****b***" - is left to _BOLD; memodoc.ts's parseInlines reads
+# the same text the same way.
+_BOLD_ITALIC = re.compile(r"\*\*\*([^*\n](?:[^\n]*?[^*\n])?)\*\*\*")
 # Asterisk emphasis, and underscore emphasis ONLY when the underscores are
 # bounded by whitespace or a line edge. A filename like
 # CE_AML_Policy_v1_signed_with_annex.pdf is not emphasis, and treating it as
@@ -334,6 +342,7 @@ def _inline(text):
     text = (text.replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;"))
+    text = _BOLD_ITALIC.sub(r"<b><i>\1</i></b>", text)
     text = _BOLD.sub(r"<b>\1</b>", text)
     # Italic in a memo is a citation, not emphasis. In the PDF it becomes a
     # superscript number and the full reference is collected at the end. The

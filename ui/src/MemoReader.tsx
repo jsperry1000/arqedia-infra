@@ -199,6 +199,9 @@ function Inlines({ nodes, blockId, shown, onToggle, byFilename, gone, onOpen,
         if (n.kind === "text") return <span key={i}>{n.text}</span>;
         if (n.kind === "bold") return <strong key={i}>{n.text}</strong>;
         if (n.kind === "em") return <em key={i}>{n.text}</em>;
+        if (n.kind === "boldem") {
+          return <strong key={i}><em>{n.text}</em></strong>;
+        }
         const key = blockId + ":" + i;
         return (
           <Citations key={i} refs={n.refs} shown={!!shown[key]}

@@ -49,6 +49,8 @@ export type Inline =
   | { kind: "text"; text: string }
   | { kind: "bold"; text: string }
   | { kind: "em"; text: string }
+  // Bold and italic at once (31 October 2026): "***text***".
+  | { kind: "boldem"; text: string }
   // A RUN of citations, not one: "…increase. *a.docx, section 1* *a.pdf,
   // page 2* *b.pdf, page 5*" is three references to one statement, and the
   // reader wants them as one mark, not three.
@@ -166,6 +168,17 @@ export function parseInlines(text: string): Inline[] {
 
   let i = 0;
   while (i < text.length) {
+    // Bold and italic together, before bold alone claims the first two.
+    // render/app.py's _BOLD_ITALIC reads the same three either side.
+    if (text.startsWith("***", i) && text[i + 3] !== "*") {
+      const end = text.indexOf("***", i + 3);
+      if (end > i + 3 && !text.slice(i + 3, end).includes("\n")) {
+        flush();
+        out.push({ kind: "boldem", text: text.slice(i + 3, end) });
+        i = end + 3;
+        continue;
+      }
+    }
     if (text.startsWith("**", i)) {
       const end = text.indexOf("**", i + 2);
       if (end > i + 2) {
@@ -212,6 +225,7 @@ export function inlinesToMarkdown(inlines: Inline[]): string {
     if (n.kind === "text") return n.text;
     if (n.kind === "bold") return "**" + n.text + "**";
     if (n.kind === "em") return "*" + n.text + "*";
+    if (n.kind === "boldem") return "***" + n.text + "***";
     return n.refs.map((r) => "*" + r + "*").join(" ");
   }).join("");
 }
