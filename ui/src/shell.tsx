@@ -68,6 +68,19 @@ export function TableScroll({ label, children }: {
   );
 }
 
+/** Every search box in the product (31 October 2026), so they all read as
+ *  one thing and are seen: a heavy mid blue border, and a glass in the light
+ *  on a deep tile at the right-hand end. It takes what an input takes. The
+ *  glass is drawing only - Enter and typing do the searching, as before. */
+export function SearchBox(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <span className="searchbox">
+      <input {...props} />
+      <span className="searchbox-glass" aria-hidden="true" />
+    </span>
+  );
+}
+
 /** The one working indicator (UX-12): what is running, named, over a moving
  *  bar. Announced to a screen reader as it changes; the bar stands still
  *  where the person has asked for less motion. */

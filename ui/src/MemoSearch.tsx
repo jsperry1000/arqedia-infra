@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { SearchBox } from "./shell";
 
 /**
  * Search within a memo (UI-01).
@@ -152,17 +153,17 @@ export function MemoSearch({ within }: { within: RefObject<HTMLElement | null> }
 
   return (
     <div className="memo-search" role="search">
-      <input type="search" value={query} placeholder="Search this memo"
-             aria-label="Search this memo"
-             onChange={(e) => setQuery(e.target.value)}
-             onKeyDown={(e) => {
-               if (e.key === "Enter") {
-                 e.preventDefault();
-                 step(e.shiftKey ? -1 : 1);
-               } else if (e.key === "Escape") {
-                 setQuery("");
-               }
-             }} />
+      <SearchBox type="search" value={query} placeholder="Search this memo"
+                 aria-label="Search this memo"
+                 onChange={(e) => setQuery(e.target.value)}
+                 onKeyDown={(e) => {
+                   if (e.key === "Enter") {
+                     e.preventDefault();
+                     step(e.shiftKey ? -1 : 1);
+                   } else if (e.key === "Escape") {
+                     setQuery("");
+                   }
+                 }} />
       {query.trim() && (
         <>
           <span className="count" aria-live="polite">

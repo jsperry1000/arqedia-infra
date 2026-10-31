@@ -8,6 +8,7 @@ import type { Act } from "./undo";
 import { api, type DocumentDetail } from "./api";
 import { groupByType, type Place, type Source } from "./footnotefacts";
 import { PdfPagePicker, type PagePicked } from "./PdfPages";
+import { SearchBox } from "./shell";
 
 /**
  * The memo as it reads.
@@ -429,16 +430,16 @@ function FootnotePicker({ sources, ready, onPick, onClose }: {
             </p>
           )}
           <div className="footnote-fields">
-            <input type="text" autoFocus
-                   placeholder="Search facts, document types or names"
-                   aria-label="Search facts, document types or names"
-                   value={query}
-                   onChange={(e) => { setQuery(e.target.value); setOpened(null); }}
-                   // One document left and no fact: Enter takes it.
-                   onKeyDown={(e) => {
-                     if (e.key === "Enter" && documents.length === 1
-                         && factCount === 0) pick(documents[0]);
-                   }} />
+            <SearchBox type="text" autoFocus
+                       placeholder="Search facts, document types or names"
+                       aria-label="Search facts, document types or names"
+                       value={query}
+                       onChange={(e) => { setQuery(e.target.value); setOpened(null); }}
+                       // One document left and no fact: Enter takes it.
+                       onKeyDown={(e) => {
+                         if (e.key === "Enter" && documents.length === 1
+                             && factCount === 0) pick(documents[0]);
+                       }} />
             <input type="text" inputMode="numeric" placeholder="Page"
                    aria-label="Page, for a document picked by name (optional)"
                    title="For a document picked by name. A fact brings its own page."
