@@ -960,6 +960,13 @@ export function MemoView({ memoId, onBack, onOpen }: {
   const updatedUnder = (memo.rewrites ?? [])
     .find((w) => w.source === "update")?.config_revision ?? null;
 
+  // The sections back from a rewrite or an Update and not yet accepted or
+  // discarded, by name, for the note that says why Save is held.
+  const waiting = Object.entries(runs).filter(([, r]) => r.result !== null)
+    .map(([key]) => headingText(
+      (key.startsWith(ADDS) ? key.slice(ADDS.length) : key)
+        .replace(/ #\d+$/, "")));
+
   const blockedTitle = updateRun ? "Wait for the update to finish."
     : blocked ? "Accept or discard every rewrite first." : undefined;
 
@@ -1080,6 +1087,32 @@ export function MemoView({ memoId, onBack, onOpen }: {
           share this memo: what is shared is the memo as saved.
           {keeping === "keeping" && <span> Keeping&hellip;</span>}
           {keeping === "kept" && <span> Kept.</span>}
+        </p>
+      )}
+
+      {/* WHY SAVE IS GREY, SAID HERE (31 October 2026). A rewrite or an
+          Update's section left undecided holds the save, and its Accept and
+          Discard are on the redraft screen, not this one - so the only
+          reason given was the button's hover text, and a memo with fourteen
+          images put in looked as if it would not save at all. */}
+      {mode === "read" && hasChanges && !saving && blocked && (
+        <p className="working-note unsaved">
+          <strong>Saving is held.</strong>{" "}
+          {updateRun
+            ? "An update is still running. Its sections can be saved once it "
+              + "finishes and each is accepted or discarded."
+            : inFlight > 0
+              ? `${inFlight === 1 ? "A section is" : inFlight + " sections are"}`
+                + " still being rewritten. Each can be saved once it is back"
+                + " and accepted or discarded."
+              : <>
+                  {waiting.length === 1 ? "A section is" : `${waiting.length} sections are`}
+                  {" "}waiting for you to accept or discard
+                  {waiting.length > 0 && <>: {waiting.join(", ")}</>}.{" "}
+                  <a onClick={openRewrite}>
+                    Review {waiting.length === 1 ? "it" : "them"}
+                  </a>
+                </>}
         </p>
       )}
 
