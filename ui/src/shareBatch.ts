@@ -154,13 +154,25 @@ function matches(fields: (string | null | undefined)[], text: string): boolean {
   return !t || fields.some((v) => (v ?? "").toLowerCase().includes(t));
 }
 
-/** Share a memo's list: text over name, engagement and number; the date
- *  range over the date generated. */
-export function filterMemos(memos: BatchMemo[], f: Filter): BatchMemo[] {
+/** Share a memo's list: text over name, engagement and number, and over who
+ *  each memo has been shared with and by (`sharedWith`, 31 October 2026);
+ *  the date range over the date generated. */
+export function filterMemos(memos: BatchMemo[], f: Filter,
+                            sharedWith: (memoId: number) => string[] = () => []):
+    BatchMemo[] {
   return memos.filter((m) =>
     matches([m.label, m.engagement_shown ?? m.engagement, m.subject_name,
-             m.number], f.text)
+             m.number, ...sharedWith(m.memo_id)], f.text)
     && inRange(m.generated_at, f));
+}
+
+/** Each memorandum's shares, newest first: who got it, when, and from whom. */
+export function sharesByMemo<T extends { memo_id: number; sent_at: string }>(
+    grants: T[]): Map<number, T[]> {
+  const out = new Map<number, T[]>();
+  for (const g of grants) out.set(g.memo_id, [...(out.get(g.memo_id) ?? []), g]);
+  for (const list of out.values()) list.sort((a, b) => b.sent_at.localeCompare(a.sent_at));
+  return out;
 }
 
 export type HistoryRow = {
