@@ -15,7 +15,7 @@ import {
   type GenerateRun,
 } from "./api";
 import { useNavigate } from "react-router-dom";
-import { TableScroll, useBackAction, Working } from "./shell";
+import { SearchBox, TableScroll, useBackAction, Working } from "./shell";
 import { balanceFor, UpgradePrompt } from "./upgrade";
 import { activeName, useWorkspace } from "./workspace";
 
@@ -1301,9 +1301,9 @@ export function EngagementView({ id, onBack, onMemo }: {
             {perType.map(([label, n]) => `${label} ${n}`).join(" · ")}
           </p>
           <div className="filters">
-            <input placeholder="Search by name, folder or type"
-                   value={pendingSearch}
-                   onChange={(e) => setPendingSearch(e.target.value)} />
+            <SearchBox placeholder="Search by name, folder or type"
+                       value={pendingSearch}
+                       onChange={(e) => setPendingSearch(e.target.value)} />
             {pendingSearch && (
               <a className="small" onClick={() => setPendingSearch("")}>Clear</a>
             )}
@@ -1559,7 +1559,7 @@ export function EngagementView({ id, onBack, onMemo }: {
       {!shut.has("filed") && docs.length > 0 && (
         <>
           <div className="filters">
-            <input
+            <SearchBox
               placeholder="Filter by name or type"
               value={nameFilter}
               onChange={(e) => setNameFilter(e.target.value)}

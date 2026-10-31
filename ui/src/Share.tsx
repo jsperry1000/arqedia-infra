@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { TableScroll, useBackAction, Working } from "./shell";
+import { SearchBox, TableScroll, useBackAction, Working } from "./shell";
 import {
   api, chargeKey, statusOf,
   type ShareAllowance, type ShareGrant, type ShareSent,
@@ -286,8 +286,8 @@ export function FilterRow({ filter, onChange, placeholder, dateLabel }: {
 }) {
   return (
     <div className="filters">
-      <input placeholder={placeholder} value={filter.text}
-             onChange={(e) => onChange({ ...filter, text: e.target.value })} />
+      <SearchBox placeholder={placeholder} value={filter.text}
+                 onChange={(e) => onChange({ ...filter, text: e.target.value })} />
       <label className="muted small">
         {dateLabel} from{" "}
         <input type="date" value={filter.from}

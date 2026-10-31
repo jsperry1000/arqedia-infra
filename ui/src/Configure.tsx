@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { useBackAction, usePinTop, Working } from "./shell";
+import { SearchBox, useBackAction, usePinTop, Working } from "./shell";
 import {
   api,
   type ConfigCategory,
@@ -1606,8 +1606,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       </p>
 
       <div className="filters">
-        <input placeholder="Filter by name, key or description" value={fieldFilter}
-               onChange={(e) => setFieldFilter(e.target.value)} />
+        <SearchBox placeholder="Filter by name, key or description" value={fieldFilter}
+                   onChange={(e) => setFieldFilter(e.target.value)} />
         <span className="muted">
           {sortedFields.length} of {draft?.fields.length ?? 0}
         </span>
@@ -1622,8 +1622,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       </p>
 
       <div className="filters">
-        <input placeholder="Search document types" value={typeSearch}
-               onChange={(e) => setTypeSearch(e.target.value)} />
+        <SearchBox placeholder="Search document types" value={typeSearch}
+                   onChange={(e) => setTypeSearch(e.target.value)} />
         {typeSearch && (
           <a className="small" onClick={() => setTypeSearch("")}>Clear</a>
         )}
@@ -1843,8 +1843,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 )}
 
                 <div className="filters">
-                  <input placeholder="Search facts by name or key" value={sectionSearch}
-                         onChange={(e) => setSectionSearch(e.target.value)} />
+                  <SearchBox placeholder="Search facts by name or key" value={sectionSearch}
+                             onChange={(e) => setSectionSearch(e.target.value)} />
                   {sectionSearch && (
                     <a className="small"
                        onClick={() => setSectionSearch("")}>Clear</a>
@@ -2168,8 +2168,8 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                 end &mdash; changing it here changes it there.
               </p>
               <div className="filters">
-                <input placeholder="Search facts by name or key" value={typeFieldSearch}
-                       onChange={(e) => setTypeFieldSearch(e.target.value)} />
+                <SearchBox placeholder="Search facts by name or key" value={typeFieldSearch}
+                           onChange={(e) => setTypeFieldSearch(e.target.value)} />
                 {typeFieldSearch && (
                   <a className="small"
                      onClick={() => setTypeFieldSearch("")}>Clear</a>
