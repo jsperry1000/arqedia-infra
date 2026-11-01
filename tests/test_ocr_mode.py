@@ -1,12 +1,13 @@
 """
-How a scan is read: text mode, and only when the layer is thin (decided
-5 October 2026). Run from the repository root:
+How a scan is read: text mode always (decided 5 October 2026), and by OCR
+where the layer is thin or the type says always (restored 1 November 2026,
+when a garbled layer was seen). Run from the repository root:
 
     python -m unittest discover -s tests
 
-The configuration still says FORMS and always-OCR for twelve and four types;
-these prove the API no longer obeys either, because both cost money for
-output nothing reads (see the note above _start_ocr in lambda/api/app.py).
+The configuration still says FORMS for twelve types; these prove the API does
+not obey it, because it costs money for output nothing reads. It does obey
+always-OCR again (see the note above _start_ocr in lambda/api/app.py).
 """
 
 import unittest
@@ -26,8 +27,10 @@ class Registry:
     def read_mode_for(self, document_type):
         return "forms"
 
+    ocr_always = True
+
     def always_ocr(self, document_type):
-        return True
+        return self.ocr_always
 
 
 class Db:
@@ -55,9 +58,9 @@ class OcrModeTest(unittest.TestCase):
     def setUp(self):
         self.app = load_api()
 
-    def test_the_override_is_text_and_thin_only(self):
+    def test_the_override_is_text_and_always_ocr_is_obeyed(self):
         self.assertEqual(self.app.OCR_READ_MODE, "text")
-        self.assertTrue(self.app.OCR_ONLY_WHEN_THIN)
+        self.assertFalse(self.app.OCR_ONLY_WHEN_THIN)
 
     def test_ocr_asks_textract_for_text_whatever_the_type_says(self):
         with mock.patch.object(self.app, "textract") as textract, \
@@ -77,14 +80,16 @@ class OcrModeTest(unittest.TestCase):
                                 [(7, "audited-statements")])
         self.assertEqual(textract.start.call_args.kwargs["read_mode"], "forms")
 
-    def file(self, thin):
+    def file(self, thin, ocr_always=True):
         db = Db(thin)
+        registry = Registry()
+        registry.ocr_always = ocr_always
         with mock.patch.object(self.app, "_sql", db.sql), \
                 mock.patch.object(self.app, "wallet") as wallet, \
                 mock.patch.object(self.app, "config") as config, \
                 mock.patch.object(self.app, "_s3") as s3, \
                 mock.patch.object(self.app, "_start_ocr") as start_ocr:
-            config.for_workspace.return_value = Registry()
+            config.for_workspace.return_value = registry
             wallet.charge.return_value = {"entry_id": 5}
             s3.get_object.return_value = {
                 "Body": mock.MagicMock(read=lambda: b"{}")}
@@ -93,9 +98,15 @@ class OcrModeTest(unittest.TestCase):
                 [{"document_id": 7}], "key-1")
         return out, start_ocr
 
-    def test_a_usable_layer_is_filed_not_ocrd_despite_always_ocr(self):
-        """22 of 24 such layers carried 92-100% of OCR's numbers on dev."""
+    def test_a_usable_layer_is_ocrd_where_the_type_says_always(self):
+        """Manty SA's note 9: a layer that held every figure, in no order."""
         out, start_ocr = self.file(thin=False)
+        start_ocr.assert_called_once()
+        self.assertEqual(out["reading"], 1)
+        self.assertEqual(out["filed"], 0)
+
+    def test_a_usable_layer_is_filed_as_it_is_otherwise(self):
+        out, start_ocr = self.file(thin=False, ocr_always=False)
         start_ocr.assert_not_called()
         self.assertEqual(out["filed"], 1)
         self.assertEqual(out["reading"], 0)

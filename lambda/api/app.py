@@ -1018,9 +1018,19 @@ def _envelope_suffix(page_from, part_index):
 # case was not seen - so the rule went, at $12.35 of OCR on dev, and it may
 # return if a garbled layer ever is.
 #
+# IT RETURNED, 1 November 2026. A garbled layer was seen: Manty SA's 2024
+# audited accounts, note 9, five credit lines in a table. The layer gave the
+# lenders in one block and the amounts in another, out of order, with the
+# heading after them, so nothing tied a bank to its figure and extraction
+# kept three names and no amounts. DetectDocumentText on the same page gave
+# each lender followed by its 2024 and 2023 figures. So always_ocr is obeyed
+# again, in TEXT mode at $0.0015 a page; FORMS stays overridden, for the
+# reason above. The screen said "will be read by OCR" for these types all
+# along (Review.tsx), and was not true until now.
+#
 # THE CONFIGURE CONTROLS STAY, and say this (ui/src/config-parts.tsx).
 OCR_READ_MODE = textract.TEXT
-OCR_ONLY_WHEN_THIN = True
+OCR_ONLY_WHEN_THIN = False
 
 
 def _ocr_mode(registry, document_type):
@@ -1249,8 +1259,8 @@ def file_documents(tenant_id, workspace_id, email, engagement, decisions,
              [_p("e", charge_entry_id), _p("t", tenant_id),
               _p("d", document_id)])
 
-        # always_ocr is configured and no longer obeyed: see the note above
-        # _start_ocr. A thin layer is the only reason to OCR.
+        # A thin layer, or a type set to always_ocr - obeyed again since 1
+        # November 2026: see the note above _start_ocr.
         if thin or (not OCR_ONLY_WHEN_THIN
                     and registry.always_ocr(document_type)):
             # Gathered, not started: every part of one file in this filing
