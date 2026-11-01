@@ -42,8 +42,8 @@ import { ACT_SAID, diffStep, fitHistory, pushStep, restoreKeys, undoStep,
  * coming back reopens it where it was. Only saving a revision or Discard
  * changes ends it.
  *
- * Update is the third way, offered on a memo a person has saved (16 October
- * 2026). Every section is written again from the configuration in use and the
+ * Update is the third way (16 October 2026), offered on every memo since 1
+ * November 2026 - a fresh generation as well as a saved revision. Every section is written again from the configuration in use and the
  * documents filed now, and what is new comes back as rewrites do: beside the
  * section, to accept or discard. The saved text is never changed by it - an
  * accepted section is the saved one with additions set in - and a section new
@@ -970,10 +970,16 @@ export function MemoView({ memoId, onBack, onOpen }: {
   const blockedTitle = updateRun ? "Wait for the update to finish."
     : blocked ? "Accept or discard every rewrite first." : undefined;
 
-  // Offered on a memo a person has saved. It works on the memo as saved, so
-  // unsaved changes are saved or discarded first - Share's rule, for the
-  // same reason.
-  const updatable = memo.revision > 1;
+  // It works on the memo as saved, so unsaved changes are saved or discarded
+  // first - Share's rule, for the same reason.
+  //
+  // ON A FRESH GENERATION TOO (1 November 2026). It was offered only from a
+  // memo's second version, on the reasoning that Update protects a person's
+  // edits and a generation has none. But it is also how a section is
+  // written again after its facts or prompt change, without a whole
+  // Generate - and a generation with nothing to save had no way to reach it
+  // (memo 282.1). Nothing server-side ever required a saved revision.
+  const updatable = true;
   const updateTitle = updateRun ? "The update is running."
     : hasChanges ? "Save or discard your changes first. Update works on the "
                    + "memo as saved."
