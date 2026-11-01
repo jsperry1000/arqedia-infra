@@ -670,6 +670,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   const [note, setNote] = useState("");
   // Publishing is asked from the bar and confirmed in a drawer.
   const [publishing, setPublishing] = useState(false);
+  // Every published revision, read in a drawer over the editor (1 November
+  // 2026). The History list lived only on the screen shown with no draft
+  // open, so reading it meant discarding the draft.
+  const [reviewingVersions, setReviewingVersions] = useState(false);
 
   // A Member reads the configuration and changes none of it (ROLE-01). Null
   // while the token is read, and then everything is offered as before:
@@ -1484,6 +1488,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             ? "Nothing published yet"
             : `Live: revision ${state.active_revision}`}
           {" "}&middot; Publish applies to all memoranda
+          {state.revisions.some((r) => r.status === "published") && (<>
+            {" "}&middot;{" "}
+            <a onClick={() => setReviewingVersions(true)}>Published versions</a>
+          </>)}
         </span>
         {/* Asked every time. Nothing here can tell whether the draft differs
             from the live revision, so it cannot say more than this. */}
@@ -2324,6 +2332,55 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
       )}
 
       </>)}
+
+      {/* Every published revision, over the editor, the draft left as it is.
+          Read only: putting another revision in use is refused while a draft
+          is open (registry.select_revision), so it is said rather than
+          offered. The same list the no-draft screen shows as History. */}
+      {reviewingVersions && (
+        <div className="panel-backdrop" onClick={() => setReviewingVersions(false)}>
+          <div className="panel narrow" onClick={(e) => e.stopPropagation()}
+               onKeyDown={(e) => { if (e.key === "Escape") setReviewingVersions(false); }}>
+            <a className="panel-close" onClick={() => setReviewingVersions(false)}>
+              Close
+            </a>
+            <h3>Published versions</h3>
+            <p className="muted small">
+              Every revision of this workspace&rsquo;s configuration that has
+              been published, newest first. The one in use is what new
+              documents are read against and new memoranda written against.
+              Your draft stays open while you read this.
+            </p>
+            <table className="docs">
+              <tbody>
+                {/* The draft is in the list the API sends; it is not a
+                    published version. */}
+                {state.revisions.filter((r) => r.status === "published").map((r) => (
+                  <tr key={r.revision}>
+                    <td><strong>Revision {r.revision}</strong></td>
+                    <td className="muted">{r.note}</td>
+                    <td className="muted">
+                      {(r.published_at ?? "").slice(0, 16)}
+                      {r.published_by ? " · " + r.published_by : ""}
+                    </td>
+                    <td>
+                      {r.revision === state.active_revision && (
+                        <span className="in-use">in use</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="muted small">
+              To put an earlier revision back in use, publish or discard this
+              draft first: a draft is a copy of the revision it was opened
+              from, and switching underneath it would have its publish
+              overwrite the one you chose.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* 5 --- publish ------------------------------------------------------ */}
       {/* Asked from the bar, so it is reachable from anywhere on the page, and
