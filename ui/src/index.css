@@ -724,6 +724,9 @@ p.warn { color: #b45309; }
   resize: vertical;
 }
 .rewrite-prompt:focus-visible { outline: 2px solid var(--medium); outline-offset: 2px; }
+/* It grows with what is written (useGrows), so the drag handle would only
+   be undone by the next keystroke. */
+.rewrite-prompt.grows { resize: none; }
 
 /* The memo's head is held under the site header (sticky at
    20, so this sits beneath it at 10, and under the drawer at 30). Its offset

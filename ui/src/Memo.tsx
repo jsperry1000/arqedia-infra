@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, chargeKey, imageTooBig, statusOf, type Memo, type Passage,
          type Quote, type Rewrite, type UpdateRun } from "./api";
+import { useGrows } from "./config-parts";
 import { headingText, imagesIn } from "./memodoc";
 import { MemoDocument, type Ref } from "./MemoReader";
 import { MemoSearch } from "./MemoSearch";
@@ -97,6 +98,24 @@ function splitSections(markdown: string): {
 function headingKey(text: string): string {
   return text.replace(/^#+/, "").trim().split(/\s+/).join(" ")
     .replace(/^\.\s+/, "").toLowerCase();
+}
+
+/** A section's rewrite instruction (1 November 2026). Two rows held a
+ *  configured prompt of twenty lines as a slot to scroll through; it now
+ *  starts at four and grows with what is typed or pasted, to forty lines,
+ *  then scrolls - useGrows, as "How it should read" in Configure. A
+ *  component of its own because the hook cannot sit in the sections' loop. */
+function RewritePrompt({ value, placeholder, onChange }: {
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  const box = useGrows(value, 40);
+  return (
+    <textarea className="rewrite-prompt grows" rows={4} ref={box}
+      placeholder={placeholder} value={value}
+      onChange={(e) => onChange(e.target.value)} />
+  );
 }
 
 function joinSections(head: string, hasHead: boolean, sections: Part[]): string {
@@ -1328,14 +1347,12 @@ export function MemoView({ memoId, onBack, onOpen }: {
                 </div>
 
                 {!run && !updateRun && (
-                  <textarea className="rewrite-prompt" rows={2}
+                  <RewritePrompt
                     placeholder={"How " + headingText(s.heading)
                                  + " should be rewritten"}
                     value={prompts[s.key] ?? ""}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setPrompts((prev) => ({ ...prev, [s.key]: value }));
-                    }} />
+                    onChange={(value) =>
+                      setPrompts((prev) => ({ ...prev, [s.key]: value }))} />
                 )}
                 {/* The section's own prompt, as configured now (31 October
                     2026), into the box above - to read and change before Go,
