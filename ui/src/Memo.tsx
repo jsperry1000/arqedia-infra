@@ -986,6 +986,18 @@ export function MemoView({ memoId, onBack, onOpen }: {
       (key.startsWith(ADDS) ? key.slice(ADDS.length) : key)
         .replace(/ #\d+$/, "")));
 
+  // NOTHING TO SAVE BUT AN INSTRUCTION NOT RUN (1 November 2026). A typed
+  // prompt is kept as unsaved work, so the note said there were unsaved
+  // changes - and Save, which saves text, stayed grey with no reason given,
+  // because the text was as saved (memo 287.3). Said for what it is.
+  const unrun = Object.keys(typedPrompts);
+  const onlyUnrun = !!memo && unrun.length > 0 && draft === memo.markdown
+    && acceptedIds.length === 0 && Object.keys(runs).length === 0
+    && !updateRun;
+  const unrunNames = unrun.map((key) => headingText(key.replace(/ #\d+$/, "")));
+  const clearUnrun = () => setPrompts((prev) => Object.fromEntries(
+    Object.entries(prev).filter(([key]) => !unrun.includes(key))));
+
   const blockedTitle = updateRun ? "Wait for the update to finish."
     : blocked ? "Accept or discard every rewrite first." : undefined;
 
@@ -1036,7 +1048,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
 
         {mode === "read" ? (
           <>
-            {hasChanges && (
+            {/* Not when an unrun instruction is all there is: nothing to
+                save, and the note below says so. */}
+            {hasChanges && !onlyUnrun && (
               <button onClick={save} disabled={!canSave} title={blockedTitle}>
                 {saving ? "Saving\u2026" : "Save as a new revision"}
               </button>
@@ -1100,7 +1114,21 @@ export function MemoView({ memoId, onBack, onOpen }: {
         )}
       </div>
 
-      {mode === "read" && hasChanges && !saving && (
+      {mode === "read" && !saving && onlyUnrun && (
+        <p className="working-note unsaved">
+          <strong>
+            {unrun.length === 1 ? "An instruction" : `${unrun.length} instructions`}
+            {" "}typed for {unrunNames.join(", ")}{" "}
+            {unrun.length === 1 ? "has" : "have"} not been run.
+          </strong>{" "}
+          Nothing in the memo has changed, so there is nothing to save.{" "}
+          <a onClick={openRewrite}>Open {unrun.length === 1 ? "it" : "them"}</a>
+          {" "}to press Go, or <a onClick={clearUnrun}>clear {unrun.length === 1
+            ? "it" : "them"}</a>.
+        </p>
+      )}
+
+      {mode === "read" && hasChanges && !saving && !onlyUnrun && (
         // Not while saving: the changes are on their way into a new memo.
         // .unsaved, not the plain note Catalogue and Welcome share: this one
         // gates an action in the head - Share - so it has to be seen, not
