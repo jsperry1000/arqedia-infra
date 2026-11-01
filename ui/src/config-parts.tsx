@@ -212,6 +212,10 @@ export function columnsForSave(columns: ConfigColumn[]) {
  * explains itself tells the next person exactly what to switch back on.
  * What is stored is shown and kept - a save sends the stored values back -
  * so nothing configured is lost if the override is lifted.
+ *
+ * ALWAYS-OCR IS LIVE AGAIN, 1 November 2026: a garbled text layer was seen,
+ * and the switch went back on. Its tick is offered; the read mode is still
+ * fixed at plain text.
  */
 export function ReadModeControls({ readMode, alwaysOcr, onChange }: {
   readMode: string;
@@ -238,16 +242,17 @@ export function ReadModeControls({ readMode, alwaysOcr, onChange }: {
       </p>
 
       <label className="inline-check">
-        <input type="checkbox" checked={alwaysOcr} disabled
+        <input type="checkbox" checked={alwaysOcr}
                onChange={(e) => onChange({
                  read_mode: readMode, always_ocr: e.target.checked })} />
         Always read by OCR, even where the file carries text
       </label>
       <p className="muted small">
-        Not applied today: a document is read by OCR only where it carries
-        too little text of its own. In 22 of 24 documents measured, the
-        text a file already carried held 92&ndash;100% of the figures OCR
-        found. This returns if a garbled text layer is ever seen.
+        For statements and schedules laid out in tables. A file&rsquo;s own
+        text can hold every figure in the wrong order &mdash; the lenders in
+        one list, their amounts in another &mdash; and OCR reads the page as
+        it looks, row by row. Without this, a document is read by OCR only
+        where it carries too little text of its own.
       </p>
     </>
   );

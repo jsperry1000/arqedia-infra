@@ -2116,16 +2116,15 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                       carries too little text, whatever the type says - see
                       ReadModeControls. A setting that differs is still shown,
                       marked as not applied, so nobody reads "forms" here and
-                      believes it. */}
+                      believes it. ALWAYS OCR IS APPLIED AGAIN (1 November
+                      2026); only the read mode is still overridden. */}
                   <td className="muted small">
                     text
-                    {(t.read_mode !== "text" || t.always_ocr) && (
+                    {t.always_ocr && " \u00b7 always OCR"}
+                    {t.read_mode !== "text" && (
                       <span title="Set on this type, and not applied: every
-                                   scan is read as plain text, by OCR only
-                                   where the file carries too little text.">
-                        {" \u00b7 set to "}{t.read_mode}
-                        {t.always_ocr ? ", always OCR" : ""}
-                        {", not applied"}
+                                   document is read as plain text.">
+                        {" \u00b7 set to "}{t.read_mode}{", not applied"}
                       </span>
                     )}
                   </td>
