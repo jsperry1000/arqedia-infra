@@ -298,6 +298,16 @@ class SubjectRuleTest(unittest.TestCase):
                                           3, 3)
         self.assertIn("| **Subject** | %s |" % SUBJECT, block)
 
+    def test_the_front_matter_names_the_configuration_revision(self):
+        block = self.cleanup.front_matter(SUBJECT, NAME, "21 September 2026",
+                                          3, 3, config_revision=61)
+        self.assertIn("| **Configuration** | Revision 61 |", block)
+
+    def test_the_front_matter_without_a_revision_has_no_row(self):
+        block = self.cleanup.front_matter(SUBJECT, NAME, "21 September 2026",
+                                          3, 3)
+        self.assertNotIn("Configuration", block)
+
 
 if __name__ == "__main__":
     unittest.main()
