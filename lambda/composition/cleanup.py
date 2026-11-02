@@ -259,7 +259,7 @@ def subject_rule(subject_name):
 # ---------------------------------------------------------------------------
 
 def front_matter(subject, engagement, generated_at, document_count, source_count,
-                 title=None):
+                 title=None, config_revision=None):
     """The title block. Structured data, so it is built rather than written.
 
     Where no source states a legal name, the engagement name stands in. A
@@ -271,7 +271,12 @@ def front_matter(subject, engagement, generated_at, document_count, source_count
     the string "Due Diligence Memorandum" until a tenant held more than one
     memorandum, at which point a credit memorandum came out headed as a due
     diligence one - the same hard-coding as the template module, in the one
-    place a reader looks first."""
+    place a reader looks first.
+
+    THE CONFIGURATION REVISION is the one the memo was generated under, so a
+    reader can tell which published prompts wrote it. Written once, here: an
+    Update never rewrites the front matter, so a memo updated under a later
+    revision still shows the revision it was generated under."""
     try:
         lines = [
             "# " + (title or "Due Diligence Memorandum"),
@@ -281,6 +286,11 @@ def front_matter(subject, engagement, generated_at, document_count, source_count
             "| **Subject** | %s |" % (subject or engagement),
             "| **Engagement** | %s |" % engagement,
             "| **Generated** | %s |" % generated_at,
+        ]
+        if config_revision is not None:
+            lines.append("| **Configuration** | Revision %d |"
+                         % config_revision)
+        lines += [
             "| **Documents reviewed** | %d |" % document_count,
             "| **Sources cited** | %d |" % source_count,
             "",
