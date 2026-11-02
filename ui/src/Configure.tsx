@@ -134,10 +134,17 @@ type FieldDraft = {
 };
 
 function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments,
-                    error, readOnly }: {
+                    error, readOnly, sections, onBind }: {
   initial?: ConfigField;
   /** A Member reading the card: Save is not offered (ROLE-01). */
   readOnly?: boolean;
+  /** Every assembled section, memorandum by memorandum, so the card can say
+   *  where this fact is rendered and bind it from here. Composed sections
+   *  are left out: they read sections, never bound facts (CFG-02). */
+  sections?: { key: string; label: string; list: ConfigSection[] }[];
+  /** Bind or unbind this fact on one section. Saved at once, as a tick on
+   *  a section's own list is - not held for the card's Save. */
+  onBind?: (s: ConfigSection, on: boolean) => void;
   onSave: (f: FieldDraft) => void;
   onCancel: () => void;
   onDelete?: () => void;
@@ -170,6 +177,11 @@ function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments,
   // being written into two visible rows.
   const describe = useGrows(f.description);
 
+  // Where this fact is rendered, opened from the count beside its name.
+  const [showSections, setShowSections] = useState(false);
+  const usedIn = (sections ?? []).flatMap((g) => g.list)
+    .filter((s) => initial && s.fields.includes(initial.key)).length;
+
   return (
     <div className="form">
       <h4>{existing ? "Edit field" : "New field"}</h4>
@@ -193,10 +205,51 @@ function FieldForm({ initial, onSave, onCancel, onDelete, onShowDocuments,
               </a>
             </span>
           )}
+          {existing && sections && (
+            <span className="muted small">
+              {" · "}used in{" "}
+              <a onClick={() => setShowSections(!showSections)}>
+                {usedIn === 0
+                  ? <span className="warn">no section</span>
+                  : usedIn + (usedIn === 1 ? " section" : " sections")}
+              </a>
+            </span>
+          )}
         </span>
         <input id={"name-" + key} value={f.label} autoFocus
                onChange={(e) => setF({ ...f, label: e.target.value })} />
       </div>
+
+      {/* The sections that render this fact, ticked, under the memorandum
+          each belongs to. A tick saves at once, as on a section's own list:
+          it changes the section, not this card, so the card's Save and
+          Cancel neither carry nor undo it. */}
+      {existing && initial && sections && showSections && (
+        <div className="row">
+          <span>Sections</span>
+          <div>
+            {sections.length === 0 && (
+              <p className="muted small">No memorandum has a section yet.</p>
+            )}
+            {sections.map((g) => (
+              <div key={g.key}>
+                <p className="muted small"><strong>{g.label}</strong></p>
+                {g.list.map((s) => {
+                  const on = s.fields.includes(initial.key);
+                  return (
+                    <label className="bind" key={s.key}>
+                      <input type="checkbox" checked={on}
+                             disabled={readOnly || !onBind}
+                             onChange={() => onBind?.(s, !on)} />
+                      {" "}{sectionLabel(s.numeral, s.title)}
+                    </label>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <label className="row">
         <span>What it is</span>
@@ -2463,6 +2516,22 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
             <FieldForm
               error={error}
               readOnly={readOnly}
+              sections={templates
+                .map((t) => ({
+                  key: t.key,
+                  label: t.label || t.key,
+                  list: (draft?.sections ?? [])
+                    .filter((s) => s.template_key === t.key
+                      && s.kind !== "composed")
+                    .sort((a, b) => a.sort_order - b.sort_order),
+                }))
+                .filter((g) => g.list.length > 0)}
+              onBind={(s, on) => {
+                if (!editField) return;
+                setFields(s, on
+                  ? [...s.fields, editField]
+                  : s.fields.filter((x) => x !== editField));
+              }}
               onShowDocuments={() => {
                 if (!editField) return;
                 setOpenField(editField);
