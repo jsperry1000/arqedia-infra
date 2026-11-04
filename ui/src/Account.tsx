@@ -518,7 +518,7 @@ function Subscription() {
           <span className="lbl">Plan</span>
           <span className="big serif">{plan ? plan.name : "None"}</span>
           <span className="muted small">
-            {plan ? `${money(plan.monthly_price_cents)} / month`
+            {plan ? `${money(plan.monthly_price_cents)} / month + tax`
                   : "No plan while on trial"}
           </span>
         </div>
@@ -580,7 +580,9 @@ function Subscription() {
                 )}
                 <span className="plan-name">{p.name}</span>
                 <span className="plan-price">
-                  {money(p.monthly_price_cents)} / month
+                  {/* Tax-exclusive: Paddle adds it at checkout, by where the
+                      buyer is (decision record, 19 September 2026). */}
+                  {money(p.monthly_price_cents)} / month + tax
                 </span>
                 {p.plan_key === view.plan && (
                   <span className="in-use">current</span>
@@ -928,7 +930,8 @@ function Balance() {
       setSaid(result.repeated
         ? `Already bought: ${money(result.amount_cents)}. Nothing was charged `
           + "twice."
-        : `${money(result.amount_cents)} charged. The credit lands when the `
+        : `${money(result.amount_cents)} plus tax charged. The credit lands `
+          + "when the "
           + "payment completes, which is usually seconds.");
       // Ten tries, three seconds apart: the webhook is its own journey.
       for (let i = 0; i < 10; i++) {
@@ -1041,7 +1044,7 @@ function Balance() {
                   ? "Reading what an increment costs." : undefined}>
           {busy ? "Charging…"
             : topup === null ? "Top up"
-            : `Top up ${money(increments * topup)}`}
+            : `Top up ${money(increments * topup)} + tax`}
         </button>
         <span className="muted small">
           {said || "In $5 increments, charged to the card Paddle holds. There "
@@ -1084,7 +1087,8 @@ function Balance() {
               </div>
 
               <p className="muted small">
-                Charged to the card Paddle holds, now. The credit arrives when
+                Charged to the card Paddle holds, now, with tax added by Paddle
+                according to your location. The credit arrives when
                 Paddle reports the payment, which is usually seconds and is
                 not instant &mdash; nothing here grants money, the webhook
                 does. Purchased credit expires 30 days after purchase.
@@ -1110,7 +1114,7 @@ function Balance() {
               <div className="form-actions">
                 <button className="spend" disabled={!!busy}
                         onClick={() => { setConfirming(false); topUp(); }}>
-                  Charge {money(increments * topup)}
+                  Charge {money(increments * topup)} + tax
                 </button>
                 <a className="secondary"
                    onClick={() => setConfirming(false)}>Cancel</a>

@@ -186,7 +186,8 @@ const plain = (n: number) => String(n)
 function header(plan: Plan): string {
   const price = plan.monthly_price_cents === null
     ? 'negotiated'
-    : `${money0(plan.monthly_price_cents as number)} / month`
+    // Tax-exclusive: Paddle adds it at checkout (go-live stage 5).
+    : `${money0(plan.monthly_price_cents as number)} / month + tax`
   return `      <th><span class="plan-name">${escape(plan.name)}</span>`
     + `<span class="plan-price">${price}</span></th>`
 }
