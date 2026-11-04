@@ -14,9 +14,9 @@
 # THE QUEUE receives Lambda's failure record for every event the processor
 # still failed on after two retries. Nothing is lost silently.
 #
-# THE ALARM goes into ALARM when the queue holds any message. It has no
-# action yet: no notification target exists in this stack, and creating one
-# is a decision of its own.
+# THE ALARM goes into ALARM when the queue holds any message, and emails
+# info@arqedia.com through ops_alerts.tf - again when the queue is empty
+# (go-live stage 9, 4 November 2026).
 #
 # The queue holds verified Paddle payloads, which carry the customer's email
 # address. Retention is fourteen days, the SQS maximum, and it is encrypted.
@@ -122,6 +122,8 @@ resource "aws_cloudwatch_metric_alarm" "paddle_processor_failed" {
   comparison_operator = "GreaterThanThreshold"
   threshold           = 0
   treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.ops_alerts.arn]
+  ok_actions          = [aws_sns_topic.ops_alerts.arn]
   tags                = { Name = "${local.name_prefix}-paddle-processor-failed" }
 }
 

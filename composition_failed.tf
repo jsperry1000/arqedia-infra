@@ -34,7 +34,10 @@ resource "aws_sqs_queue" "composition_failed" {
 }
 
 # ANY FAILURE AT ALL, AND NOBODY IS WOKEN (decided 19 October 2026). Visible
-# in the console; who gets paged is a separate decision.
+# in the console; who gets paged is a separate decision. Amended 4 November
+# 2026 (go-live stage 9): it emails info@arqedia.com through ops_alerts.tf.
+# The run is already refunded; the email is so that a death is seen. No
+# ok_actions - Sent is back to zero five minutes later regardless.
 #
 # ON MESSAGES SENT, NOT MESSAGES VISIBLE - unlike the Paddle alarm, and for a
 # reason. The handler below deletes each message within seconds, so a count
@@ -52,6 +55,7 @@ resource "aws_cloudwatch_metric_alarm" "composition_failed" {
   comparison_operator = "GreaterThanThreshold"
   threshold           = 0
   treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.ops_alerts.arn]
   tags                = { Name = "${local.name_prefix}-composition-failed" }
 }
 
