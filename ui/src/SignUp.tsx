@@ -6,6 +6,7 @@ import { config } from "./config";
 import { REGIONS, JURISDICTIONS } from "./mock";
 import { TRIAL_DAYS } from "./trial";
 import { AGREEMENT_VERSION, LEGAL } from "./legal";
+import { isPasswordRefusal, PASSWORD_RULES, passwordProblem } from "./passwordrules";
 
 /**
  * Signing up. Unattended: no queue, no manual approval, no card.
@@ -95,6 +96,9 @@ export function SignUp({ onSignIn, onSignedUp }: {
   // and 27 October 2026): it is what the person agrees to at the moment the
   // workspace is made, and the server records the version with the tenant.
   const [terms, setTerms] = useState(false);
+  // The server refused the password on the last step. There is no Back from
+  // there, because the code has gone, so the box comes to the person.
+  const [passwordRefused, setPasswordRefused] = useState(false);
 
   // What leaving would leave behind, so the Leave question can say it truly
   // (22.1). `contacted`: begin() has been called, so signup_attempt holds a
@@ -107,10 +111,12 @@ export function SignUp({ onSignIn, onSignedUp }: {
 
   const domain = email.includes("@") ? email.split("@")[1] : "";
 
+  const lacking = passwordProblem(password);
+
   const ready =
-    step === 0 ? /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) && password.length >= 12 :
+    step === 0 ? /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) && !lacking :
     step === 1 ? org.trim().length > 0 :
-    step === VERIFY ? code.trim().length === 6 && terms :
+    step === VERIFY ? code.trim().length === 6 && terms && !lacking :
     true;
 
   function message(err: unknown) {
@@ -151,7 +157,9 @@ export function SignUp({ onSignIn, onSignedUp }: {
       await signIn({ username: email, password });
       onSignedUp();
     } catch (err) {
-      setError(message(err));
+      const said = message(err);
+      if (isPasswordRefusal(said)) setPasswordRefused(true);
+      setError(said);
     } finally {
       setBusy("");
     }
@@ -256,9 +264,10 @@ export function SignUp({ onSignIn, onSignedUp }: {
               <input type="password" value={password}
                      onChange={(e) => setPassword(e.target.value)} />
               <span className="muted small">
-                Twelve characters or more. You set it now and are not asked to
-                change it on first sign-in.
+                {PASSWORD_RULES} You set it now and are not asked to change it
+                on first sign-in.
               </span>
+              {password && lacking && <span className="warn small">{lacking}</span>}
             </label>
           </>
         )}
@@ -354,6 +363,17 @@ export function SignUp({ onSignIn, onSignedUp }: {
             <p className="muted small">
               It lasts fifteen minutes. Asking for another voids the first.
             </p>
+            {passwordRefused && (
+              <label className="row">
+                <span>Password</span>
+                <input type="password" value={password}
+                       onChange={(e) => setPassword(e.target.value)} />
+                <span className="muted small">
+                  {PASSWORD_RULES} Your code is still good.
+                </span>
+                {lacking && <span className="warn small">{lacking}</span>}
+              </label>
+            )}
             {/* The pages open in a new tab, so the code typed above is not
                 lost reading them. */}
             <label className="affirm">

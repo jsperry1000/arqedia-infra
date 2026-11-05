@@ -210,8 +210,11 @@ class LookupLeavesSignupAloneTest(Base):
         counts = [st for st, _ in db.statements
                   if st.startswith("SELECT COUNT(*) FROM signup_attempt")]
         self.assertEqual(len(counts), 2)
+        # Since 5 November 2026 the limits count codes sent and nothing else,
+        # which leaves a lookup out by naming the one outcome that counts.
         for st in counts:
-            self.assertIn("outcome NOT IN ('lookup', 'lookup_limited')", st)
+            self.assertIn("outcome = 'code_sent'", st)
+            self.assertNotIn("lookup", st)
 
     def test_the_admin_signup_list_leaves_answered_lookups_out(self):
         text = (ROOT / "lambda/admin/cross_tenant.py").read_text()
