@@ -774,6 +774,12 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
   const [openFactGroups, setOpenFactGroups] = useState<Set<string>>(new Set());
   const [openDocGroups, setOpenDocGroups] = useState<Set<string>>(new Set());
   const [typeSearch, setTypeSearch] = useState("");
+  // The document types filing offers: the published revision's, read by the
+  // same call the filing screen makes (5 November 2026). A type in the draft
+  // and not in here is marked, because it does not appear in filing until
+  // the configuration is published - which looked like a fault. Null until
+  // read, or where it could not be: then nothing is marked.
+  const [publishedTypes, setPublishedTypes] = useState<Set<string> | null>(null);
 
   useEffect(() => {
     if (!openSection) return;
@@ -891,6 +897,10 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
     setValidation(s.validation ?? null);
     if (s.draft) setDraft(await api.draft());
     else setDraft(null);
+    // After every change and every publish, so the marks follow both.
+    api.documentTypes()
+      .then((r) => setPublishedTypes(new Set(r.types.map((t) => t.key))))
+      .catch(() => setPublishedTypes(null));
   }
 
   useEffect(() => {
@@ -2164,6 +2174,12 @@ export function ConfigureView({ onBack }: { onBack: () => void }) {
                     <a onClick={() => setEditType(t.key)}>
                       <strong>{t.label}</strong>
                     </a>
+                    {publishedTypes && !publishedTypes.has(t.key) && (
+                      <span className="warn small"
+                            title="Filing offers this type once the configuration is published.">
+                        {" · not published yet"}
+                      </span>
+                    )}
                     {/* The key beside a type found by it and not by its
                         name, as on a fact. */}
                     {needle && !t.label.toLowerCase().includes(needle)
