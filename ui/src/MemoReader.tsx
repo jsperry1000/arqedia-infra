@@ -306,7 +306,14 @@ function Editable({ html, onEdit, onSplit, onIndent, deferred, className }: {
         if (pending.current) clearTimeout(pending.current);
         pending.current = setTimeout(commit, 400);
       }}
-      onBlur={commit}
+      onBlur={(e) => {
+        // Tabbing to a new paragraph's own buttons is not leaving it: each of
+        // them reads the box itself, and it would be gone before they could
+        // be reached.
+        const to = e.relatedTarget as Element | null;
+        if (deferred && to?.closest?.(".new-para")) return;
+        commit();
+      }}
       onKeyDown={(e) => {
         // Bold and italic are the only marks a memo uses.
         const meta = e.metaKey || e.ctrlKey;
@@ -679,6 +686,15 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   const [pdfAt, setPdfAt] = useState<{ index: number; file: File | null } | null>(null);
   const pdfSources = useMemo(
     () => citable.filter((s) => /\.pdf$/i.test(s.name)), [citable]);
+  // The one file chooser for Insert image, and the gap the image goes into.
+  // It sits outside every box: choosing a file takes the focus away, which
+  // shuts a new paragraph, and a chooser inside that would go with it.
+  const imageInput = useRef<HTMLInputElement | null>(null);
+  const imageGap = useRef(0);
+  function chooseImage(at: number) {
+    imageGap.current = at;
+    imageInput.current?.click();
+  }
 
   // Told to the screen as it changes, and as none when this document goes -
   // a section swapped for its rewrite takes its open block with it.
@@ -867,11 +883,17 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
    *  nothing at all in the stored form - a blank line between two others - so
    *  a new one put there straight away would vanish on being read back, and
    *  taking the caret with it. It goes in when it is finished, and a new one
-   *  left empty was never there. */
-  function addParagraph(index: number, root: HTMLElement) {
-    if (!onChange) return;
+   *  left empty was never there.
+   *
+   *  IT GOES IN ONCE. The box is read when focus leaves it and again as it
+   *  closes, and pressing Done is both, so the paragraph went in twice. What
+   *  has gone in is taken out of the box: a second reading finds it empty.
+   *  True where something went in. */
+  function addParagraph(index: number, root: HTMLElement): boolean {
+    if (!onChange) return false;
     const inlines = nodesToInlines(root);
-    if (!inlines.some((n) => n.kind === "cites" || n.text.trim() !== "")) return;
+    if (!inlines.some((n) => n.kind === "cites" || n.text.trim() !== "")) return false;
+    root.innerHTML = "";
     const block: Block = { id: "new", source: "", kind: "para", indent: "",
                            inlines };
     // A last block carries no blank line after it; anywhere else does.
@@ -881,6 +903,16 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
       { ...block, source: blockToMarkdown(block, trailing) },
       ...blocks.slice(index),
     ]), "add");
+    return true;
+  }
+
+  /** A new paragraph's box shut by one of its own buttons: what was typed goes
+   *  in, and the answer is the gap after it, for whatever the button puts in. */
+  function leaveNew(button: HTMLElement, index: number): number {
+    const root = button.closest(".new-para")?.querySelector<HTMLElement>(".editable");
+    const wrote = !!root && addParagraph(index, root);
+    setAdding(null);
+    return wrote ? index + 1 : index;
   }
 
   /** Indent or outdent (30 October 2026): a paragraph whole, or the list
@@ -1145,6 +1177,14 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
             Insert PDF pages
           </button>
         )}
+        {editable && open && onImageFile && (
+          <button type="button" className="tool"
+                  onClick={() => chooseImage(
+                    blocks.findIndex((b) => b.id === block.id) + 1)}
+                  title="Put an image in after this: a PNG or a JPEG">
+            Insert image
+          </button>
+        )}
         {editable && open && (
           <button type="button" className="tool"
                   onClick={() => insertPageBreak(
@@ -1178,15 +1218,38 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
         {uploading}
         <p className="new-para" data-gap={index}>
           <Editable html="" deferred
-                    onEdit={(root) => addParagraph(index, root)}
+                    // Focus gone elsewhere: it is in, so the box shuts. Left
+                    // open it would offer the same words to be finished again.
+                    onEdit={(root) => { if (addParagraph(index, root)) setAdding(null); }}
                     onSplit={(before) => {
                       addParagraph(index, before);
                       // Enter finishes this one and offers the next.
                       setAdding(index + 1);
                     }} />
+          {/* Each holds the press off the text, so the box is still here for
+              the click. Left to take the focus, the press would shut it and
+              the button with it. */}
           <span className="block-tools">
             <button type="button" className="tool on"
-                    onClick={() => setAdding(null)}>Done</button>
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={(e) => { leaveNew(e.currentTarget, index); }}>Done</button>
+            {onImageFile && (
+              <>
+                <button type="button" className="tool"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={(e) => setPdfAt({
+                          index: leaveNew(e.currentTarget, index), file: null })}
+                        title="Put pages of a PDF in here, as images">
+                  Insert PDF pages
+                </button>
+                <button type="button" className="tool"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={(e) => chooseImage(leaveNew(e.currentTarget, index))}
+                        title="Put an image in here: a PNG or a JPEG">
+                  Insert image
+                </button>
+              </>
+            )}
           </span>
         </p>
         </>
@@ -1503,6 +1566,16 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
       })}
       {insertAt(blocks.length)}
     </article>
+    {editable && onImageFile && (
+      <input ref={imageInput} type="file" accept="image/png,image/jpeg" hidden
+             aria-label="Image to insert, PNG or JPEG"
+             onChange={(e) => {
+               const file = e.target.files?.[0];
+               // Cleared, so the same file can be chosen twice running.
+               e.target.value = "";
+               if (file) insertImage(file, imageGap.current);
+             }} />
+    )}
     {/* After the memo, not in it: a drawer stacks in document order. */}
     {picking && (
       <FootnotePicker sources={citable} ready={!!caret.current}
