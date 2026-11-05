@@ -58,6 +58,7 @@ import re
 import secrets
 import time
 import datetime
+from email.utils import formataddr
 
 import boto3
 from botocore.exceptions import ClientError
@@ -732,7 +733,8 @@ def begin(event, body):
     )
 
     _ses.send_email(
-        Source=SENDER,
+        # Named, as every other message the product sends now is (mail.py).
+        Source=formataddr(("ARQEDIA", SENDER)),
         Destination={"ToAddresses": [email]},
         Message={
             "Subject": {"Data": "Your ARQEDIA code"},

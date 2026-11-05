@@ -23,6 +23,7 @@ it is about to matter, and says so.
 
 import os
 import re
+from email.utils import formataddr
 from html import escape
 
 import boto3
@@ -77,7 +78,12 @@ def send(to, subject, body, reply_to=None, bcc=None, buttons=None):
         if with_copy:
             destination["BccAddresses"] = [with_copy]
         _ses.send_email(
-            Source=address,
+            # A name as well as the address (5 November 2026), as Cognito's
+            # own messages have always gone out: "ARQEDIA <no-reply@...>".
+            # A bare address is one more thing a filter scores against an
+            # unfamiliar sender. SES's ses:FromAddress is the address alone,
+            # so the IAM condition in share.tf is unaffected.
+            Source=formataddr(("ARQEDIA", address)),
             Destination=destination,
             Message={
                 "Subject": {"Data": subject, "Charset": "UTF-8"},

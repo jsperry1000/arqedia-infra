@@ -65,6 +65,7 @@ import time
 import urllib.parse
 import uuid
 from decimal import Decimal
+from email.utils import formataddr
 
 import boto3
 from botocore.exceptions import ClientError
@@ -502,7 +503,10 @@ def _send_email_code(grant, purpose):
     subject, text = _email_code_message(grant, code, purpose)
     try:
         sent = _ses.send_email(
-            Source=sender,
+            # Named, as the API's messages are (mail.py, 5 November 2026).
+            # ses:FromAddress, which this role's policy conditions on, is the
+            # address alone.
+            Source=formataddr(("ARQEDIA", sender)),
             Destination={"ToAddresses": [grant["recipient_email"]]},
             Message={"Subject": {"Data": subject, "Charset": "UTF-8"},
                      "Body": {"Text": {"Data": text, "Charset": "UTF-8"}}})
