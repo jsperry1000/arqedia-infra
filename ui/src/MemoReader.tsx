@@ -564,7 +564,7 @@ function isPdf(file: File): boolean {
 
 export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                               onOpenChange, othersOpen, imageSrc, onImageError,
-                              onImageFile }: {
+                              onImageFile, engagement }: {
   markdown: string;
   byFilename: Record<string, number>;
   /** Filenames whose document has been deleted (8.2). */
@@ -590,6 +590,8 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   // A file dropped or pasted, put into storage: its name, or null where it
   // was refused - the screen says why.
   onImageFile?: (file: File) => Promise<string | null>;
+  // The memo's engagement, for the other PDFs filed on it.
+  engagement?: string | null;
 }) {
   // Which runs are out, by block and position. Put away by default: a memo is
   // read far more often than it is checked.
@@ -664,6 +666,9 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   const opening = useRef<number | null>(null);
   // Where a new paragraph is being typed, before it is part of the memo.
   const [adding, setAdding] = useState<number | null>(null);
+  // What that box opens holding: what followed the cursor when Enter was
+  // pressed in the one before it.
+  const [addingHtml, setAddingHtml] = useState("");
   // A row being dragged by its grip, and the row it is held over with which
   // half of it - above or below is where it would go.
   const dragging = useRef<{ id: string; from: number } | null>(null);
@@ -1219,13 +1224,20 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
         <>
         {uploading}
         <p className="new-para" data-gap={index}>
-          <Editable html="" deferred
+          <Editable html={addingHtml} deferred
                     // Focus gone elsewhere: it is in, so the box shuts. Left
                     // open it would offer the same words to be finished again.
                     onEdit={(root) => { if (addParagraph(index, root)) setAdding(null); }}
-                    onSplit={(before) => {
-                      addParagraph(index, before);
-                      // Enter finishes this one and offers the next.
+                    onSplit={(before, after) => {
+                      // Nothing before the cursor: nothing to finish, so what
+                      // was lifted out goes back and the box stays.
+                      if (!addParagraph(index, before)) {
+                        before.append(...Array.from(after.childNodes));
+                        return;
+                      }
+                      // Enter finishes this one and offers the next, holding
+                      // what followed the cursor.
+                      setAddingHtml(after.innerHTML);
                       setAdding(index + 1);
                     }} />
           {/* Each holds the press off the text, so the box is still here for
@@ -1274,7 +1286,11 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
         {uploading}
         <div className={dropAt === index ? "insert-point drop-here" : "insert-point"}
              data-gap={index}>
-          <button type="button" onClick={() => { setEditing(null); setAdding(index); }}
+          <button type="button" onClick={() => {
+                    setEditing(null);
+                    setAddingHtml("");
+                    setAdding(index);
+                  }}
                   title="Start a paragraph here, or paste an image into it">+</button>
         </div>
       </>
@@ -1597,7 +1613,8 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                       onClose={() => { caret.current = null; setPicking(false); }} />
     )}
     {pdfAt && (
-      <PdfPagePicker sources={pdfSources} dropped={pdfAt.file}
+      <PdfPagePicker sources={pdfSources} engagement={engagement ?? null}
+                     dropped={pdfAt.file}
                      onInsert={(pages) => {
                        const at = pdfAt.index;
                        setPdfAt(null);

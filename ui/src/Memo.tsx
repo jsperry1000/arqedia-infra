@@ -1272,7 +1272,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
               <div className="rewrite-body">
                 <MemoDocument markdown={split.head} byFilename={byFilename}
                               gone={gone} onOpen={openRef}
-                              {...imageProps} onImageFile={putImage}
+                              {...imageProps} onImageFile={putImage} engagement={memo.engagement}
                               onOpenChange={(id) => opened("head", id)}
                               othersOpen={openDoc !== null && openDoc !== "head"}
                               onChange={updateRun ? undefined : (text, act) => change(
@@ -1319,7 +1319,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
                   <div className="rewrite-body">
                     <MemoDocument markdown={s.text} byFilename={byFilename}
                                   gone={gone} onOpen={openRef}
-                                  {...imageProps} onImageFile={putImage}
+                                  {...imageProps} onImageFile={putImage} engagement={memo.engagement}
                                   onOpenChange={(id) => opened("sec:" + at, id)}
                                   othersOpen={openDoc !== null && openDoc !== "sec:" + at}
                                   onChange={updateRun ? undefined : (text, act) => change(
@@ -1442,7 +1442,7 @@ export function MemoView({ memoId, onBack, onOpen }: {
       ) : (
         <MemoDocument markdown={draft} byFilename={byFilename} gone={gone}
                       onOpen={openRef}
-                      {...imageProps} onImageFile={putImage}
+                      {...imageProps} onImageFile={putImage} engagement={memo.engagement}
                       onOpenChange={(id) => opened("doc", id)}
                       othersOpen={openDoc !== null && openDoc !== "doc"}
                       onChange={updateRun ? undefined

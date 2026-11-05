@@ -118,9 +118,12 @@ function Thumb({ doc, n, picked, onToggle }: {
   );
 }
 
-export function PdfPagePicker({ sources, dropped, onInsert, onClose }: {
+export function PdfPagePicker({ sources, engagement, dropped, onInsert, onClose }: {
   /** The memo's sources that are PDFs, less any deleted. */
   sources: Source[];
+  /** The engagement's name, for what else is filed on it; null where the memo
+   *  names none. */
+  engagement: string | null;
   /** A PDF dropped or pasted on the memo, opened straight away. */
   dropped: File | null;
   onInsert: (pages: PagePicked[]) => void;
@@ -135,6 +138,42 @@ export function PdfPagePicker({ sources, dropped, onInsert, onClose }: {
   const [picked, setPicked] = useState<number[]>([]);
   const [busy, setBusy] = useState("");
   const [search, setSearch] = useState("");
+  // What else is filed on the engagement: see the effect below.
+  const [filed, setFiled] = useState<Source[]>([]);
+  const [asking, setAsking] = useState(!!engagement);
+  const [filedFailed, setFiledFailed] = useState(false);
+
+  /** THE ENGAGEMENT'S OTHER PDFS (5 November 2026). A document filed after the
+   *  memo was written is not one of its sources, and may be exactly the page
+   *  wanted. It can be offered because a page goes in as an image, which cites
+   *  nothing and is not checked against the sources (Reading and citation,
+   *  amended 26 October); pageAlt keeps its alt text from reading as a
+   *  citation. A footnote stays with the memo's own sources.
+   *
+   *  Filed and active: what composition writes from, so one set aside is not
+   *  offered. By name, because one file can hold several documents, and the
+   *  link opens the file. */
+  useEffect(() => {
+    if (!engagement) return;
+    let live = true;
+    api.documents(engagement).then(({ documents }) => {
+      if (!live) return;
+      const held = new Set(sources.map((s) => s.name));
+      const byName = new Map<string, number>();
+      for (const d of documents) {
+        if (d.state !== "filed" || !d.active || !/\.pdf$/i.test(d.filename)
+            || held.has(d.filename) || byName.has(d.filename)) continue;
+        byName.set(d.filename, d.document_id);
+      }
+      setFiled([...byName].map(([name, documentId]) => ({ name, documentId }))
+        .sort((a, b) => a.name.localeCompare(b.name)));
+    }).catch(() => {
+      if (live) setFiledFailed(true);
+    }).finally(() => {
+      if (live) setAsking(false);
+    });
+    return () => { live = false; };
+  }, [engagement, sources]);
 
   /** Another PDF, or none: what was read from the last one goes with it. */
   function choose(next: From | null) {
@@ -207,6 +246,20 @@ export function PdfPagePicker({ sources, dropped, onInsert, onClose }: {
   const pageCount = doc?.numPages ?? 0;
   const words = searchWords(search);
   const found = sources.filter((s) => matches(words, s.name));
+  const foundFiled = filed.filter((s) => matches(words, s.name));
+
+  const listOf = (list: Source[]) => (
+    <ul className="footnote-list">
+      {list.map((s) => (
+        <li key={s.documentId}>
+          <button type="button" onClick={() => choose(
+            { name: s.name, read: () => readSource(s.documentId) })}>
+            {s.name}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
 
   return (
     <div className="panel-backdrop" onClick={onClose}>
@@ -243,11 +296,11 @@ export function PdfPagePicker({ sources, dropped, onInsert, onClose }: {
               )}
             </div>
           )}
-          {!from && sources.length > 0 && (
+          {!from && sources.length + filed.length > 0 && (
             <div className="footnote-fields">
               <SearchBox type="text" autoFocus
-                         placeholder="Search this memo's sources by name"
-                         aria-label="Search this memo's sources by name"
+                         placeholder="Search these PDFs by name"
+                         aria-label="Search these PDFs by name"
                          value={search}
                          onChange={(e) => setSearch(e.target.value)} />
             </div>
@@ -262,17 +315,29 @@ export function PdfPagePicker({ sources, dropped, onInsert, onClose }: {
                 <p className="muted">None of this memo&rsquo;s sources is a PDF.</p>
               ) : found.length === 0 ? (
                 <p className="muted">No source&rsquo;s name matches that.</p>
-              ) : (
-                <ul className="footnote-list">
-                  {found.map((s) => (
-                    <li key={s.documentId}>
-                      <button type="button" onClick={() => choose(
-                        { name: s.name, read: () => readSource(s.documentId) })}>
-                        {s.name}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+              ) : listOf(found)}
+              {(asking || filedFailed || filed.length > 0) && (
+                <>
+                  <h4>Also filed on this engagement</h4>
+                  {asking ? (
+                    <p className="muted">Looking&hellip;</p>
+                  ) : filedFailed ? (
+                    <p className="warn">
+                      These could not be listed. This memo&rsquo;s sources and
+                      a PDF from your computer still work.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="muted small">
+                        Not among what this memo was written from, so its facts
+                        and citations do not reflect them.
+                      </p>
+                      {foundFiled.length === 0 ? (
+                        <p className="muted">No filed PDF&rsquo;s name matches that.</p>
+                      ) : listOf(foundFiled)}
+                    </>
+                  )}
+                </>
               )}
               <h4>From your computer</h4>
               <input type="file" accept="application/pdf,.pdf"
