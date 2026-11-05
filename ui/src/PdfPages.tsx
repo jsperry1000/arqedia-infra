@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { api } from "./api";
-import type { Source } from "./footnotefacts";
+import { matches, searchWords, type Source } from "./footnotefacts";
 import { pageAlt, pageFileName, pageScale } from "./pdfimage";
+import { SearchBox } from "./shell";
 
 /**
  * Choosing the pages of a PDF that go into a memo (29 October 2026). See
@@ -133,6 +134,7 @@ export function PdfPagePicker({ sources, dropped, onInsert, onClose }: {
   // picked in.
   const [picked, setPicked] = useState<number[]>([]);
   const [busy, setBusy] = useState("");
+  const [search, setSearch] = useState("");
 
   /** Another PDF, or none: what was read from the last one goes with it. */
   function choose(next: From | null) {
@@ -203,6 +205,8 @@ export function PdfPagePicker({ sources, dropped, onInsert, onClose }: {
   }
 
   const pageCount = doc?.numPages ?? 0;
+  const words = searchWords(search);
+  const found = sources.filter((s) => matches(words, s.name));
 
   return (
     <div className="panel-backdrop" onClick={onClose}>
@@ -239,6 +243,15 @@ export function PdfPagePicker({ sources, dropped, onInsert, onClose }: {
               )}
             </div>
           )}
+          {!from && sources.length > 0 && (
+            <div className="footnote-fields">
+              <SearchBox type="text" autoFocus
+                         placeholder="Search this memo's sources by name"
+                         aria-label="Search this memo's sources by name"
+                         value={search}
+                         onChange={(e) => setSearch(e.target.value)} />
+            </div>
+          )}
           {error && <p className="error">{error}</p>}
         </div>
         <div className="panel-body">
@@ -247,9 +260,11 @@ export function PdfPagePicker({ sources, dropped, onInsert, onClose }: {
               <h4>This memo&rsquo;s sources</h4>
               {sources.length === 0 ? (
                 <p className="muted">None of this memo&rsquo;s sources is a PDF.</p>
+              ) : found.length === 0 ? (
+                <p className="muted">No source&rsquo;s name matches that.</p>
               ) : (
                 <ul className="footnote-list">
-                  {sources.map((s) => (
+                  {found.map((s) => (
                     <li key={s.documentId}>
                       <button type="button" onClick={() => choose(
                         { name: s.name, read: () => readSource(s.documentId) })}>
