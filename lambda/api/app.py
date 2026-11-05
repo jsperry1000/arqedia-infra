@@ -4055,7 +4055,11 @@ def share_route(route, tenant_id, email, params, event, workspace=None):
             # The id carries a '#'. Unquoted, as an engagement name is, so it
             # reads the same whether or not the gateway decoded it first.
             grant_id = urllib.parse.unquote(params.get("grant_id") or "")
-            revoked = share.revoke(tenant_id, email, grant_id)
+            # "Tell them by email" (5 November 2026). Absent is silent, so a
+            # screen from before it revokes as it always did.
+            body = json.loads(event.get("body") or "{}")
+            revoked = share.revoke(tenant_id, email, grant_id,
+                                   notify=body.get("notify") is True)
             if revoked is None:
                 return _reply(404, {"error": "not found"})
             return _reply(200, revoked)

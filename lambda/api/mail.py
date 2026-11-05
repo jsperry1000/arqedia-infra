@@ -257,8 +257,57 @@ _SHARE_CLOSE = (
     "This address does not take replies; use Reply and it will reach %s.\n")
 
 
+def _on(iso):
+    """A stored timestamp as a day a person reads: "1 November 2026"."""
+    text = str(iso or "")[:10]
+    try:
+        year, month, day = (int(p) for p in text.split("-"))
+        return "%d %s %d" % (day, _MONTHS[month - 1], year)
+    except (ValueError, IndexError):
+        return text
+
+
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December")
+
+
+def _update_line(updates):
+    """The sentence a share carries when it is a later revision of a
+    memorandum this person was already sent (5 November 2026)."""
+    if not updates:
+        return ""
+    return ("This is an updated version of %s, which was shared with you on "
+            "%s.\n\n" % (updates["label"], _on(updates.get("shared_at"))))
+
+
+def share_revoked(revoked_by, tenant_name, memo_label, subject):
+    """A share taken back, told to the person it was sent to (5 November
+    2026). Sent only where the person revoking left "Tell them by email"
+    ticked.
+
+    NO LINK. There is nothing left to open, and a link in a message saying
+    access has ended reads as a trick. IT SAYS WHAT REVOKING CANNOT DO, as
+    the screen says it to the sender: a copy already downloaded stays where
+    it is."""
+    mail_subject = "%s has withdrawn a memorandum shared with you" % revoked_by
+    body = (
+        "%s at %s has withdrawn your access to a memorandum shared with you "
+        "through ARQEDIA:\n"
+        "\n"
+        "    %s\n"
+        "    %s\n"
+        "\n"
+        "The link you were sent no longer opens it. A copy you already "
+        "downloaded is not affected; ARQEDIA cannot recall it.\n"
+        "\n"
+        "ARQEDIA\n"
+        "This address does not take replies; use Reply and it will reach %s.\n"
+    ) % (revoked_by, tenant_name, memo_label, subject or "", revoked_by)
+    return mail_subject, body
+
+
 def share_invitation(shared_by, tenant_name, memo_label, subject, link,
-                     expires_at, expiry_set_by_tenant):
+                     expires_at, expiry_set_by_tenant, updates=None):
     """A memorandum, shared with somebody outside the workspace.
 
     IT NAMES THE PERSON AND THE FIRM. Unlike a seat invitation, the recipient
@@ -275,6 +324,9 @@ def share_invitation(shared_by, tenant_name, memo_label, subject, link,
     IT SAYS WHAT REGISTERING DOES only where registering would do it. A date
     the tenant chose is a ceiling, and promising six months over it would be
     untrue.
+
+    IT SAYS WHEN IT IS AN UPDATE (5 November 2026): `updates`, where this
+    person was already sent an earlier revision, names that one.
     """
     mail_subject = "%s has shared a memorandum with you" % shared_by
     keep = "" if expiry_set_by_tenant else _SHARE_KEEP
@@ -284,6 +336,7 @@ def share_invitation(shared_by, tenant_name, memo_label, subject, link,
         "    %s\n"
         "    %s\n"
         "\n"
+        + _update_line(updates) +
         "Open it here:\n"
         "\n"
         "%s\n"
@@ -325,7 +378,8 @@ def share_batch_invitation(shared_by, tenant_name, shares):
         s = shares[0]
         return share_invitation(shared_by, tenant_name, s["memo_label"],
                                 s.get("subject"), s["link"], s["expires_at"],
-                                bool(s.get("expiry_set_by_tenant")))
+                                bool(s.get("expiry_set_by_tenant")),
+                                updates=s.get("updates"))
 
     dates = {str(s["expires_at"])[:10] for s in shares}
     same_day = len(dates) == 1
@@ -335,6 +389,10 @@ def share_batch_invitation(shared_by, tenant_name, shares):
         if s.get("subject"):
             title += " — " + s["subject"]
         lines.append("    %s\n" % title)
+        if s.get("updates"):
+            lines.append("    An updated version of %s, shared with you on "
+                         "%s.\n" % (s["updates"]["label"],
+                                    _on(s["updates"].get("shared_at"))))
         lines.append("    %s\n" % s["link"])
         if not same_day:
             lines.append("    Access ends on %s.\n" % str(s["expires_at"])[:10])

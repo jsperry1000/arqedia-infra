@@ -187,7 +187,27 @@ def _memo(tenant_id, memo_id):
     return {"memo_id": int(_col(r, 0)),
             "label": "%s %s.%s" % (label, _col(r, 3) or _col(r, 0),
                                    _col(r, 4)),
-            "subject": (_col(r, 5) or "").strip() or _col(r, 6) or ""}
+            "subject": (_col(r, 5) or "").strip() or _col(r, 6) or "",
+            # The series and the place in it, as the label numbers them: a
+            # revision's root is the generated original it was revised from.
+            "root": int(_col(r, 3) or _col(r, 0)),
+            "revision": int(_col(r, 4) or 1)}
+
+
+def _series(tenant_id, memo_ids):
+    """Each memorandum's series and revision, by id: {memo_id: (root,
+    revision)}. This tenant's only; an id it does not hold is left out."""
+    ids = sorted({int(m) for m in memo_ids})
+    if not ids:
+        return {}
+    slots = ", ".join(":m%d" % i for i in range(len(ids)))
+    rows = _sql(
+        "SELECT memo_id, COALESCE(parent_memo_id, memo_id), revision "
+        "FROM memo WHERE tenant_id = :t AND memo_id IN (%s)" % slots,
+        [_p("t", tenant_id)] + [_p("m%d" % i, m) for i, m in enumerate(ids)]
+    ).get("records", [])
+    return {int(_col(r, 0)): (int(_col(r, 1)), int(_col(r, 2) or 1))
+            for r in rows}
 
 
 def _tenant_name(tenant_id):
@@ -368,6 +388,66 @@ def _registered(viewer_id):
     return bool((item or {}).get("registered"))
 
 
+def _earlier_revision(tenant_id, viewer_id, memo):
+    """The earlier revision of this memorandum this tenant already sent this
+    person, as {"label", "shared_at"}, or None (5 November 2026).
+
+    So the email can say "This is an updated version of 287.2". The latest
+    earlier one they were sent; a revoked one still counts, because it was
+    sent. The earlier share is left exactly as it is - no revoke (decided).
+
+    A COURTESY, NEVER A REFUSAL. Anything that goes wrong here is logged and
+    the ordinary email goes out."""
+    root, revision = memo.get("root"), memo.get("revision")
+    if root is None or revision is None:
+        return None
+    try:
+        found, start = [], None
+        while True:
+            kwargs = {"IndexName": "viewer-index",
+                      "KeyConditionExpression": "viewer_account_id = :v",
+                      "ExpressionAttributeValues": {":v": viewer_id},
+                      "ScanIndexForward": False}
+            if start:
+                kwargs["ExclusiveStartKey"] = start
+            page = _table("grant").query(**kwargs)
+            found.extend(page.get("Items", []))
+            start = page.get("LastEvaluatedKey")
+            if not start or len(found) >= 200:
+                break
+        sent = [g for g in found
+                if int(g.get("tenant_id", -1)) == int(tenant_id)
+                and g.get("status") == rules.ACTIVE
+                and int(g.get("memo_id", -1)) != memo["memo_id"]]
+        if not sent:
+            return None
+        series = _series(tenant_id, [g["memo_id"] for g in sent])
+        best = None
+        for g in sent:
+            place = series.get(int(g["memo_id"]))
+            if not place or place[0] != root or place[1] >= revision:
+                continue
+            if best is None or place[1] > best[0]:
+                best = (place[1], g)
+        if best is None:
+            return None
+        g = best[1]
+        return {"label": g["memo_label"],
+                "shared_at": g.get("created_at") or g.get("sent_at")}
+    except Exception as exc:  # noqa: BLE001 - the ordinary email still goes
+        print("[share-update-lookup-failed] tenant=%s memo=%s %r" % (
+            tenant_id, memo.get("memo_id"), exc))
+        return None
+
+
+def _updates_of(grant):
+    """What a grant records it updates, for its email, or None."""
+    if not grant.get("updates_label"):
+        return None
+    return {"label": grant["updates_label"],
+            "shared_at": grant.get("updates_shared_at")}
+
+
 def send(tenant_id, email, memo_id, body):
     """Share one memorandum with one address. Returns the grant as the list
     shows it, or None where the tenant has no such memorandum.
@@ -538,6 +618,12 @@ def _send_new(tenant_id, email, memo, recipient, viewer_id, grant_id,
             "opens": 0,
             "downloads": 0,
         }
+        # An earlier revision of this memorandum sent to this person, held on
+        # the grant so a batch's one email can say so too.
+        updates = _earlier_revision(tenant_id, viewer_id, memo)
+        if updates:
+            item["updates_label"] = updates["label"]
+            item["updates_shared_at"] = updates["shared_at"]
         # What an earlier attempt already counted and charged stays counted
         # and charged, so no click counts or charges a grant twice.
         for kept in ("counted_period", "over", "charge_entry_id",
@@ -602,21 +688,24 @@ def _send_new(tenant_id, email, memo, recipient, viewer_id, grant_id,
                                    ":now": rules.iso(rules.now())})
     item = dict(item, status=rules.ACTIVE, over=over, charged_cents=charged)
 
-    sent = _mail(email, tenant_name, item) if notify_now else None
+    sent = (_mail(email, tenant_name, item, _updates_of(item))
+            if notify_now else None)
     print("[share-sent] tenant=%s memo=%s over=%s charged=%s sent=%s" % (
         tenant_id, memo["memo_id"], over, charged, sent))
     return dict(_view(item), sent=sent, reinstated=False,
                 charged_cents=charged)
 
 
-def _mail(email, tenant_name, grant):
+def _mail(email, tenant_name, grant, updates=None):
     """The email, after everything else has happened - and never at its
     expense (mail.py). The grant stands whether SES accepts it or not, and
-    the screen says which."""
+    the screen says which. A re-send passes no `updates`: the same
+    memorandum again is not an update of anything."""
     link = _link(grant["grant_id"], grant["link_token"])
     subject, text = mail.share_invitation(
         email, tenant_name, grant["memo_label"], grant.get("subject"), link,
-        grant["expires_at"], bool(grant.get("expiry_set_by_tenant")))
+        grant["expires_at"], bool(grant.get("expiry_set_by_tenant")),
+        updates=updates)
     # The sender is copied, BCC, on the same message (feature/share-sender-
     # copy): the real ARQEDIA email in their own inbox, to forward if they
     # wish. It opens nothing for them or anybody they forward it to - the
@@ -718,7 +807,8 @@ def notify(tenant_id, email, grant_ids):
     shares = [{"memo_label": g["memo_label"], "subject": g.get("subject"),
                "link": _link(g["grant_id"], g["link_token"]),
                "expires_at": g["expires_at"],
-               "expiry_set_by_tenant": bool(g.get("expiry_set_by_tenant"))}
+               "expiry_set_by_tenant": bool(g.get("expiry_set_by_tenant")),
+               "updates": _updates_of(g)}
               for g in grants]
     subject, text = mail.share_batch_invitation(
         email, _tenant_name(tenant_id), shares)
@@ -812,7 +902,7 @@ def listing(tenant_id, workspace_id=None):
             "allowance": allowance(tenant_id)}
 
 
-def revoke(tenant_id, email, grant_id):
+def revoke(tenant_id, email, grant_id, notify=False):
     """End future access. Any seat, in every state, capped included
     (share_viewer_spec section 6).
 
@@ -823,7 +913,14 @@ def revoke(tenant_id, email, grant_id):
 
     IT DOES NOT RECALL A COPY ALREADY DOWNLOADED, and the screen says so at
     the point of sending (section 5). Returns None where there is no such
-    grant in this tenant."""
+    grant in this tenant.
+
+    THE RECIPIENT IS TOLD where `notify` asks it (5 November 2026, ticked by
+    default on the screen; unticked is a silent revoke, for a share sent to
+    the wrong address). After the write, never at its expense: a send that
+    fails leaves the share revoked, and `notified` says which. Nobody is
+    told of a share already revoked, or of one whose email never went - they
+    were never told it existed."""
     at = rules.iso(rules.now())
     try:
         result = _table("grant").update_item(
@@ -835,14 +932,26 @@ def revoke(tenant_id, email, grant_id):
             ExpressionAttributeValues={":y": True, ":at": at, ":by": email,
                                        ":t": int(tenant_id),
                                        ":active": rules.ACTIVE},
-            ReturnValues="ALL_NEW")
+            ReturnValues="ALL_OLD")
     except ClientError as exc:
         if _conditional_failure(exc):
             return None
         raise
+    was = result["Attributes"]
+    now = dict(was, revoked=True, revoked_at=at, revoked_by=email)
     print("[share-revoked] tenant=%s grant=%s" % (tenant_id,
                                                    str(grant_id)[:12]))
-    return _view(result["Attributes"])
+
+    notified = None
+    if notify and not was.get("revoked") and was.get("notified_at"):
+        subject, text = mail.share_revoked(
+            email, was.get("tenant_name") or _tenant_name(tenant_id),
+            was["memo_label"], was.get("subject"))
+        notified = mail.send(was["recipient_email"], subject, text,
+                             reply_to=email)
+        print("[share-revoke-notified] tenant=%s grant=%s sent=%s" % (
+            tenant_id, str(grant_id)[:12], notified))
+    return dict(_view(now), notified=notified)
 
 
 # --- a deleted workspace (PACK-02 D) ----------------------------------------

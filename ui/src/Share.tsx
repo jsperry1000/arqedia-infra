@@ -7,6 +7,29 @@ import {
 import {
   NO_FILTER, filterHistory, sortRows, type Filter, type SortDir,
 } from "./shareBatch";
+import { recipientSuggestions } from "./recipients";
+
+/** The recipient field, offering the addresses this workspace has shared
+ *  with (5 November 2026). A native datalist: typing filters it, and an
+ *  address nobody has been sent is typed as before. */
+export function RecipientInput({ value, onChange, grants, id }: {
+  value: string;
+  onChange: (v: string) => void;
+  grants: ShareGrant[];
+  id: string;
+}) {
+  const known = recipientSuggestions(grants);
+  return (
+    <>
+      <input placeholder="name@firm.com" value={value} list={id}
+             autoComplete="off"
+             onChange={(e) => onChange(e.target.value)} />
+      <datalist id={id}>
+        {known.map((a) => <option key={a} value={a} />)}
+      </datalist>
+    </>
+  );
+}
 
 /**
  * Sharing. Who a memorandum has been sent to, what they did with it, and
@@ -118,6 +141,8 @@ export function ShareSendPanel({ memoId, label, onClose }: {
   onClose: () => void;
 }) {
   const [allowance, setAllowance] = useState<ShareAllowance | null>(null);
+  // Who this workspace has shared with, for the recipient field.
+  const [grants, setGrants] = useState<ShareGrant[]>([]);
   const [to, setTo] = useState("");
   const [expiry, setExpiry] = useState<string>("default");
   const [affirmed, setAffirmed] = useState(false);
@@ -133,7 +158,9 @@ export function ShareSendPanel({ memoId, label, onClose }: {
 
   async function load() {
     try {
-      setAllowance((await api.shares()).allowance);
+      const listed = await api.shares();
+      setAllowance(listed.allowance);
+      setGrants(listed.grants);
     } catch (err) {
       setError(errorText(err));
     }
@@ -201,8 +228,8 @@ export function ShareSendPanel({ memoId, label, onClose }: {
         <div className="form">
           <label className="row">
             <span>Recipient email</span>
-            <input placeholder="name@firm.com" value={to}
-                   onChange={(e) => setTo(e.target.value)} />
+            <RecipientInput value={to} onChange={setTo} grants={grants}
+                            id="share-recipients" />
           </label>
 
           <label className="row">
@@ -323,6 +350,12 @@ export function ShareView({ onBack, onMemo }: {
   // The grant being sent again, and its own §7.2 box.
   const [again, setAgain] = useState<string>("");
   const [affirmed, setAffirmed] = useState(false);
+  // The grant being revoked, and whether to tell them (5 November 2026):
+  // ticked by default, unticked for a share sent to the wrong address.
+  const [revoking, setRevoking] = useState<string>("");
+  const [tell, setTell] = useState(true);
+  // What the last revoke did about the email.
+  const [revoked, setRevoked] = useState("");
   const sort = useSort<HistoryKey>();
   const [filter, setFilter] = useState<Filter>(NO_FILTER);
 
@@ -340,8 +373,16 @@ export function ShareView({ onBack, onMemo }: {
   async function revoke(g: ShareGrant) {
     setBusy(g.grant_id);
     setError("");
+    setRevoked("");
     try {
-      await api.revokeShare(g.grant_id);
+      const out = await api.revokeShare(g.grant_id, tell);
+      setRevoking("");
+      setRevoked(out.notified === true
+        ? `Revoked. ${g.recipient_email} has been told by email.`
+        : out.notified === false
+          ? `Revoked. The email telling ${g.recipient_email} could not be `
+            + "sent; their access has ended all the same."
+          : `Revoked. ${g.recipient_email} was not emailed.`);
       await load();
     } catch (err) {
       setError(errorText(err));
@@ -390,6 +431,7 @@ export function ShareView({ onBack, onMemo }: {
 
       {allowance && <AllowanceLine allowance={allowance} />}
       {error && <p className="error">{error}</p>}
+      {revoked && <p className="revision-note">{revoked}</p>}
       {grants === null && !error && <Working what="Reading what has been shared" />}
 
       {grants !== null && grants.length === 0 && (
@@ -458,12 +500,29 @@ export function ShareView({ onBack, onMemo }: {
                         Cancel
                       </a>
                     </div>
+                  ) : revoking === g.grant_id ? (
+                    // Asked here, as Send again asks its question: whether
+                    // to tell them, ticked unless somebody unticks it.
+                    <div className="share-again">
+                      <label className="affirm">
+                        <input type="checkbox" checked={tell}
+                               onChange={(e) => setTell(e.target.checked)} />
+                        <span>Tell them by email</span>
+                      </label>
+                      <button onClick={() => revoke(g)}
+                              disabled={busy === g.grant_id}>
+                        {busy === g.grant_id ? "Revoking…" : "Revoke"}
+                      </button>
+                      <a className="secondary" onClick={() => setRevoking("")}>
+                        Cancel
+                      </a>
+                    </div>
                   ) : (
                     <div className="row-tools">
                       {!g.revoked && (
-                        <button onClick={() => revoke(g)}
+                        <button onClick={() => { setRevoking(g.grant_id); setTell(true); }}
                                 disabled={busy === g.grant_id}>
-                          {busy === g.grant_id ? "Revoking…" : "Revoke"}
+                          Revoke
                         </button>
                       )}
                       <a className="secondary"
