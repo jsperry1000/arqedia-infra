@@ -95,8 +95,20 @@ MAX_ATTEMPTS = 5
 
 # Rate limits, per hour. The domain rule does most of the work; these stop a
 # script rather than a person.
+#
+# CODES SENT, NOT ATTEMPTS (5 November 2026). Every row in signup_attempt used
+# to count - refusals included, and the rate_limited row each refusal writes -
+# so a person who was refused once and tried again kept themselves locked out,
+# and a password Cognito refused spent the hour's allowance. What costs us is
+# an email sent, so that is what is counted; a refusal costs nothing to answer.
+#
+# A FREE-MAIL ADDRESS IS COUNTED BY ITSELF. gmail.com is not a firm, so three
+# codes to three strangers there in an hour stopped every gmail address on
+# every connection. It is counted by address (the hash signup_attempt already
+# keeps); a firm's domain is still counted as one.
 MAX_PER_IP_HOUR = 5
 MAX_PER_DOMAIN_HOUR = 3
+COUNTED = "outcome = 'code_sent'"
 
 # The sign-in lookup's own limits, per connection (decision of 14 October
 # 2026). Its rows sit in signup_attempt under these outcomes and are left out
@@ -105,7 +117,6 @@ LOOKUP_PER_IP_MINUTE = 1
 LOOKUP_PER_IP_HOUR = 5
 LOOKUP_ANSWERED = "lookup"
 LOOKUP_LIMITED = "lookup_limited"
-NOT_LOOKUP = f"outcome NOT IN ('{LOOKUP_ANSWERED}', '{LOOKUP_LIMITED}')"
 
 # What somebody came to do (decision record, amendment of 17 September 2026).
 INTENTS = {"trial", "subscribe"}
@@ -601,11 +612,18 @@ def _checks(email, domain, ip):
 
     hour = "DATE_SUB(NOW(), INTERVAL 1 HOUR)"
 
-    per_domain = _sql(
-        f"SELECT COUNT(*) FROM signup_attempt "
-        f"WHERE email_domain = :d AND created_at > {hour} AND {NOT_LOOKUP}",
-        [_p("d", domain)],
-    )["records"][0]
+    if domain in FREE_MAIL:
+        per_domain = _sql(
+            f"SELECT COUNT(*) FROM signup_attempt "
+            f"WHERE email_hash = :h AND created_at > {hour} AND {COUNTED}",
+            [_p("h", _sha(email))],
+        )["records"][0]
+    else:
+        per_domain = _sql(
+            f"SELECT COUNT(*) FROM signup_attempt "
+            f"WHERE email_domain = :d AND created_at > {hour} AND {COUNTED}",
+            [_p("d", domain)],
+        )["records"][0]
     if _col(per_domain, 0) >= MAX_PER_DOMAIN_HOUR:
         return _refuse(domain, email, ip, "rate_limited",
                        "Too many attempts. Try again in an hour.",
@@ -614,7 +632,7 @@ def _checks(email, domain, ip):
     if ip:
         per_ip = _sql(
             f"SELECT COUNT(*) FROM signup_attempt "
-            f"WHERE ip = :ip AND created_at > {hour} AND {NOT_LOOKUP}",
+            f"WHERE ip = :ip AND created_at > {hour} AND {COUNTED}",
             [_p("ip", ip)],
         )["records"][0]
         if _col(per_ip, 0) >= MAX_PER_IP_HOUR:
@@ -812,6 +830,16 @@ def verify(event, body):
                            f"{domain} already has an ARQEDIA workspace. Ask an "
                            f"administrator there to invite you to a seat.")
 
+    # THE LAST THING CHECKED BEFORE ANYTHING IS MADE, as accept() does (10.7),
+    # and after the code, so nobody learns anything without one. A password
+    # Cognito would refuse was found inside the transaction below and answered
+    # as a 500 (5 November 2026, for want of one upper case letter). Refused
+    # here it costs a sentence: the code stays good, and like a wrong code it
+    # is not recorded, so putting it right spends none of the hourly attempts.
+    problem = _password_problem(password)
+    if problem:
+        return _reply(400, {"error": problem})
+
     org = _col(r, 4) or domain
     jurisdiction = _col(r, 5)
     region = _col(r, 6) or "us-east-2"
@@ -968,6 +996,16 @@ def verify(event, body):
                 pass
         print("[signup-failed] domain=%s %r" % (domain, exc))
         _record(domain, email, ip, "failed", _failure_detail(exc))
+
+        # What answers where the check above could not read the policy, or
+        # Cognito refuses for a reason it does not model: as in accept(), a
+        # refusal about the password is not a failure of ours.
+        code_refused, said = _cognito_refusal(exc)
+        if code_refused in ("InvalidPasswordException",
+                            "InvalidParameterException") and said:
+            return _reply(400, {"error": _password_problem(password)
+                                or PASSWORD_REFUSED})
+
         return _reply(500, {"error": "The account could not be created. "
                                      "Nothing was charged and nothing was kept."})
 
