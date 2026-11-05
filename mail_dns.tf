@@ -56,6 +56,45 @@ resource "aws_route53_record" "root_mx" {
   }
 }
 
+# --- a MAIL FROM domain of our own (5 November 2026) --------------------------
+#
+# The envelope sender - the Return-Path a receiving server checks SPF against -
+# was amazonses.com, so SPF passed for Amazon's domain and not ours, and DMARC
+# rested on DKIM alone. With bounce.arqedia.com it passes as arqedia.com, which
+# is what a receiving filter scores. Asked for as part of mail going to junk.
+#
+# THE IDENTITY STAYS OUTSIDE TERRAFORM; this sets one attribute of it. If the
+# MX record below is ever missing, SES falls back to its own domain rather
+# than refusing to send (UseDefaultValue): the product keeps sending, only the
+# alignment is lost.
+locals {
+  mail_from_domain = "bounce.${local.root_domain}"
+}
+
+resource "aws_ses_domain_mail_from" "sender" {
+  domain                 = data.aws_ses_domain_identity.sender.domain
+  mail_from_domain       = local.mail_from_domain
+  behavior_on_mx_failure = "UseDefaultValue"
+}
+
+# Where SES's own bounce handling receives for that domain, in this region.
+resource "aws_route53_record" "mail_from_mx" {
+  zone_id = aws_route53_zone.root.zone_id
+  name    = local.mail_from_domain
+  type    = "MX"
+  ttl     = 600
+  records = ["10 feedback-smtp.${var.aws_region}.amazonses.com"]
+}
+
+# SPF for the envelope domain: SES only. Nothing else sends as bounce.
+resource "aws_route53_record" "mail_from_spf" {
+  zone_id = aws_route53_zone.root.zone_id
+  name    = local.mail_from_domain
+  type    = "TXT"
+  ttl     = 600
+  records = ["v=spf1 include:amazonses.com ~all"]
+}
+
 # Lets Outlook clients find the mailbox settings for an @arqedia.com address.
 resource "aws_route53_record" "autodiscover" {
   zone_id = aws_route53_zone.root.zone_id
