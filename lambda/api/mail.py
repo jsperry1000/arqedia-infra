@@ -277,6 +277,17 @@ _MONTHS = ("January", "February", "March", "April", "May", "June", "July",
            "August", "September", "October", "November", "December")
 
 
+def _sender_named(address, shown_as):
+    """Who a share is from, as the subject and the body's first line say it
+    (5 November 2026): the person's name, and in the body the address beside
+    it, so a recipient can see who the name is. The address alone where
+    there is no name. Reply-To and the closing line keep the address."""
+    name = (shown_as or "").strip()
+    if not name or name.lower() == str(address).lower():
+        return address, address
+    return name, "%s (%s)" % (name, address)
+
+
 def _update_line(updates):
     """The sentence a share carries when it is a later revision of a
     memorandum this person was already sent (5 November 2026)."""
@@ -286,7 +297,8 @@ def _update_line(updates):
             "%s.\n\n" % (updates["label"], _on(updates.get("shared_at"))))
 
 
-def share_revoked(revoked_by, tenant_name, memo_label, subject):
+def share_revoked(revoked_by, tenant_name, memo_label, subject,
+                  shown_as=None):
     """A share taken back, told to the person it was sent to (5 November
     2026). Sent only where the person revoking left "Tell them by email"
     ticked.
@@ -295,7 +307,8 @@ def share_revoked(revoked_by, tenant_name, memo_label, subject):
     access has ended reads as a trick. IT SAYS WHAT REVOKING CANNOT DO, as
     the screen says it to the sender: a copy already downloaded stays where
     it is."""
-    mail_subject = "%s has withdrawn a memorandum shared with you" % revoked_by
+    name, lead = _sender_named(revoked_by, shown_as)
+    mail_subject = "%s has withdrawn a memorandum shared with you" % name
     body = (
         "%s at %s has withdrawn your access to a memorandum shared with you "
         "through ARQEDIA:\n"
@@ -308,12 +321,13 @@ def share_revoked(revoked_by, tenant_name, memo_label, subject):
         "\n"
         "ARQEDIA\n"
         "This address does not take replies; use Reply and it will reach %s.\n"
-    ) % (revoked_by, tenant_name, memo_label, subject or "", revoked_by)
+    ) % (lead, tenant_name, memo_label, subject or "", revoked_by)
     return mail_subject, body
 
 
 def share_invitation(shared_by, tenant_name, memo_label, subject, link,
-                     expires_at, expiry_set_by_tenant, updates=None):
+                     expires_at, expiry_set_by_tenant, updates=None,
+                     shown_as=None):
     """A memorandum, shared with somebody outside the workspace.
 
     IT NAMES THE PERSON AND THE FIRM. Unlike a seat invitation, the recipient
@@ -334,7 +348,8 @@ def share_invitation(shared_by, tenant_name, memo_label, subject, link,
     IT SAYS WHEN IT IS AN UPDATE (5 November 2026): `updates`, where this
     person was already sent an earlier revision, names that one.
     """
-    mail_subject = "%s has shared a memorandum with you" % shared_by
+    name, lead = _sender_named(shared_by, shown_as)
+    mail_subject = "%s has shared a memorandum with you" % name
     keep = "" if expiry_set_by_tenant else _SHARE_KEEP
     body = (
         "%s at %s has shared a memorandum with you through ARQEDIA:\n"
@@ -355,12 +370,12 @@ def share_invitation(shared_by, tenant_name, memo_label, subject, link,
         "\n"
         "%s"
         + _SHARE_CLOSE
-    ) % (shared_by, tenant_name, memo_label, subject or "", link,
+    ) % (lead, tenant_name, memo_label, subject or "", link,
          str(expires_at)[:10], keep, shared_by)
     return mail_subject, body
 
 
-def share_batch_invitation(shared_by, tenant_name, shares):
+def share_batch_invitation(shared_by, tenant_name, shares, shown_as=None):
     """Several memoranda, shared with one person in one go - one email
     (feature/share-multi-memo, decision of 8 October 2026).
 
@@ -385,7 +400,7 @@ def share_batch_invitation(shared_by, tenant_name, shares):
         return share_invitation(shared_by, tenant_name, s["memo_label"],
                                 s.get("subject"), s["link"], s["expires_at"],
                                 bool(s.get("expiry_set_by_tenant")),
-                                updates=s.get("updates"))
+                                updates=s.get("updates"), shown_as=shown_as)
 
     dates = {str(s["expires_at"])[:10] for s in shares}
     same_day = len(dates) == 1
@@ -408,7 +423,8 @@ def share_batch_invitation(shared_by, tenant_name, shares):
             if same_day else "")
     keep = (_SHARE_KEEP if any(not s.get("expiry_set_by_tenant")
                                for s in shares) else "")
-    mail_subject = "%s has shared %d memoranda with you" % (shared_by,
+    name, lead = _sender_named(shared_by, shown_as)
+    mail_subject = "%s has shared %d memoranda with you" % (name,
                                                             len(shares))
     body = (
         "%s at %s has shared %d memoranda with you through ARQEDIA. Each has "
@@ -422,7 +438,7 @@ def share_batch_invitation(shared_by, tenant_name, shares):
         "%s"
         "%s"
         + _SHARE_CLOSE
-    ) % (shared_by, tenant_name, len(shares), "".join(lines), ends, keep,
+    ) % (lead, tenant_name, len(shares), "".join(lines), ends, keep,
          shared_by)
     return mail_subject, body
 

@@ -253,6 +253,19 @@ def caller(event):
     return int(raw), email, role
 
 
+def shown_name(event, email):
+    """The caller's name as a recipient should read it (5 November 2026):
+    the token's name claim, set at signup and on accepting an invitation.
+    The address where there is none, or where the name is the address
+    itself - which is what both store when nobody typed a name."""
+    claims = (event.get("requestContext", {})
+                   .get("authorizer", {})
+                   .get("jwt", {})
+                   .get("claims", {}))
+    name = str(claims.get("name") or "").strip()
+    return name if name and name.lower() != str(email).lower() else email
+
+
 def _key(body, kind, engagement):
     """The idempotency key for a charge.
 
@@ -4039,6 +4052,11 @@ def share_route(route, tenant_id, email, params, event, workspace=None):
     memorandum back (share_viewer_spec section 6)."""
     import share
 
+    # Who the recipient is told it is from: the person's name, with the
+    # address beside it in the body (5 November 2026). Reply-To stays the
+    # address.
+    shown = shown_name(event, email)
+
     try:
         if route == "GET /shares":
             return _reply(200, share.listing(
@@ -4046,7 +4064,8 @@ def share_route(route, tenant_id, email, params, event, workspace=None):
 
         if route == "POST /memos/{memo_id}/shares":
             body = json.loads(event.get("body") or "{}")
-            sent = share.send(tenant_id, email, params.get("memo_id"), body)
+            sent = share.send(tenant_id, email, params.get("memo_id"), body,
+                              shown_as=shown)
             if sent is None:
                 return _reply(404, {"error": "not found"})
             return _reply(201, sent)
@@ -4059,14 +4078,16 @@ def share_route(route, tenant_id, email, params, event, workspace=None):
             # screen from before it revokes as it always did.
             body = json.loads(event.get("body") or "{}")
             revoked = share.revoke(tenant_id, email, grant_id,
-                                   notify=body.get("notify") is True)
+                                   notify=body.get("notify") is True,
+                                   shown_as=shown)
             if revoked is None:
                 return _reply(404, {"error": "not found"})
             return _reply(200, revoked)
 
         if route == "POST /shares/notify":
             body = json.loads(event.get("body") or "{}")
-            notified = share.notify(tenant_id, email, body.get("grant_ids"))
+            notified = share.notify(tenant_id, email, body.get("grant_ids"),
+                                    shown_as=shown)
             if notified is None:
                 return _reply(404, {"error": "not found"})
             return _reply(200, notified)
