@@ -39,7 +39,7 @@ export function searchWords(query: string): string[] {
   return query.toLowerCase().split(/\s+/).filter(Boolean);
 }
 
-function matches(words: string[], text: string): boolean {
+export function matches(words: string[], text: string): boolean {
   const hay = text.toLowerCase();
   return words.every((w) => hay.includes(w));
 }
