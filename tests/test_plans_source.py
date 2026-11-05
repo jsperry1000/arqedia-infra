@@ -332,16 +332,21 @@ class MonthlyCreditTest(unittest.TestCase):
 
 class WorkspaceCountTest(unittest.TestCase):
     """How many workspaces a plan holds (PACK-02). Published here, enforced
-    by the plan table that migration 046 writes - two copies, compared."""
+    by the plan table that migrations 046 and 053 write - two copies,
+    compared. The later migration's number is the one in force."""
 
-    MIGRATION = ROOT / "db" / "migrations" / "046_workspace_limit.sql"
+    MIGRATIONS = [ROOT / "db" / "migrations" / "046_workspace_limit.sql",
+                  ROOT / "db" / "migrations"
+                  / "053_workspace_count_base_business.sql"]
 
     def test_the_published_count_is_the_one_the_migration_writes(self):
-        sql = self.MIGRATION.read_text(encoding="utf-8")
-        written = {m.group(2): int(m.group(1)) for m in re.finditer(
-            r"UPDATE plan SET workspace_count = (\d+) "
-            r"WHERE plan_key = '(\w+)'", sql)}
-        self.assertEqual(written, {"base": 1, "business": 5})
+        written = {}
+        for migration in self.MIGRATIONS:
+            sql = migration.read_text(encoding="utf-8")
+            written.update({m.group(2): int(m.group(1)) for m in re.finditer(
+                r"UPDATE plan SET workspace_count = (\d+) "
+                r"WHERE plan_key = '(\w+)'", sql)})
+        self.assertEqual(written, {"base": 2, "business": 4})
         for plan in plans():
             if plan["plan_key"] in written:
                 with self.subTest(plan=plan["plan_key"]):

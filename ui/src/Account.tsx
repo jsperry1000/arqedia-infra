@@ -1244,6 +1244,11 @@ function Seats() {
   const [role, setRole] = useState<"admin" | "member">("member");
   const [invited, setInvited] = useState<Invited | null>(null);
   const [copied, setCopied] = useState(false);
+  // WHY AN INVITATION WAS REFUSED, said beside Invite (5 November 2026). It
+  // went to the error at the head of the tab, a screen above the button, so
+  // a refused invitation - an address that belongs to another workspace, on
+  // a trial - looked like nothing happening at all.
+  const [inviteError, setInviteError] = useState("");
 
   // WHICH WORKSPACES A MEMBER SEES (PACK-02 C). An administrator sees every
   // one; a member only those ticked here, at least one. The list is the
@@ -1299,6 +1304,7 @@ function Seats() {
   async function sendInvite() {
     setBusy("Inviting");
     setError("");
+    setInviteError("");
     setInvited(null);
     setCopied(false);
     try {
@@ -1308,7 +1314,7 @@ function Seats() {
       setEmail("");
       await load();
     } catch (err) {
-      setError(message(err));
+      setInviteError(message(err));
     } finally {
       setBusy("");
     }
@@ -1529,18 +1535,29 @@ function Seats() {
                 : "\u00a0"}
           </span>
         </div>
+        {inviteError && <p className="error">{inviteError}</p>}
       </div>
 
       {/* The other way out of a full workspace, which the screen never
           offered although the server's own refusal names it: "All N seats are
           taken or reserved. Remove one, or change the plan." (seats.py:260).
-          Removing somebody was the only thing on offer here (11.1). */}
+          Removing somebody was the only thing on offer here (11.1).
+          A PLAN OF ONE SEAT IS SAID FOR WHAT IT IS (5 November 2026): there
+          is nobody to remove, so the only way to invite is a bigger plan. */}
       {state.free === 0 && (
         <UpgradePrompt action="See plans">
-          All {state.bought}{" "}
-          {state.bought === 1 ? "seat is" : "seats are"} taken or reserved.
-          Seats come with the plan &mdash; a bigger one is how a workspace
-          gets more of them, and nobody has to be removed to make room.
+          {state.bought === 1 ? (
+            <>
+              This plan has one seat, and it is yours, so nobody else can be
+              invited. Inviting a colleague needs a plan with more seats.
+            </>
+          ) : (
+            <>
+              All {state.bought} seats are taken or reserved. Seats come with
+              the plan &mdash; a bigger one is how a workspace gets more of
+              them, and nobody has to be removed to make room.
+            </>
+          )}
         </UpgradePrompt>
       )}
 
