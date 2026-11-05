@@ -227,6 +227,16 @@ memo opens (#323). Both applied and walked; 20.2 with a real timeout. Failed
 extraction (EXT-02) is still not refunded. A transient model failure is still
 not retried inside the run (20.4).
 
+**Amended 5 November 2026 (EXT-02).** The sentence above was overtaken on 20
+October: failed extraction IS refunded. Extraction marks a failed document
+and refunds it where it holds no values (#341, applied 24 October), with
+`wallet.refund()` keyed `refund:<document_id>`, as failed OCR is. What it
+could not catch - a timeout, an out-of-memory kill, a crash - now lands on
+the `extraction-failed` queue and `arqedia-dev-extraction-failed` marks and
+refunds it the same way. Extraction that never starts is reported by the
+reconcile job as `[stuck]` and emailed; it is refunded by hand, because
+reconcile writes nothing.
+
 **Debit on the click.** The price is shown and accepted before anything is
 filed. Every charge carries an idempotency key minted where the click happens;
 a retry is refused as a repeat.
@@ -497,6 +507,10 @@ quietly, and every mocked screen carries the marker at the top of its own tab.
 - **Failed extraction is charged and not refunded (EXT-02).** Filing and
   generation refund on failure (Money, amended 19 October); extraction does
   not. **Before real customer data (20 October 2026).**
+  **Closed 5 November 2026.** Refunded since #341 (20 October); the crash
+  and never-started cases on `feature/ext02-crash-and-stuck`. See Money,
+  amended 5 November. The Review screen says "charge refunded" beside
+  "extraction failed" where it is true.
 - **The EU stack is decided, not built.** See Settled decisions, Second region
   (EU). Nothing exists yet: no EU account, no build branch, and the region
   choice at sign-up is still mocked in `ui/src/mock.tsx`.

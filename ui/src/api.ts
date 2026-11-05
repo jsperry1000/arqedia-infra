@@ -417,6 +417,9 @@ export type Doc = {
    *  Whatever values it wrote before failing are still in `values`. */
   extraction_error: string | null;
   values: number;
+  /** Its $0.25 came back (EXT-02): OCR, extraction or its failure handler
+   *  refunded it. Optional: an API from before 5 November 2026 sends none. */
+  refunded?: boolean;
 };
 
 export type DocType = {

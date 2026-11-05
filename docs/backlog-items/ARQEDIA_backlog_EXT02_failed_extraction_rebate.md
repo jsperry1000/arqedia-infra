@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Status | Parked. Decision approved, not built |
+| Status | Parked. Decision approved, not built. **Superseded: built — #341 (20 October 2026) and `feature/ext02-crash-and-stuck` (5 November 2026); see the last section** |
 | Priority | Before the first paying tenant |
 | Type | Wallet, extraction, spec amendment |
 | Raised | 21 September 2026 |
@@ -140,3 +140,33 @@ on-failure destination, and nothing refunds them. Document 862 on tenant 2
 (filed and charged 23 September, OCR succeeded 20:29:52 UTC, no extraction
 log at any time) is that case on dev and stays charged. Also not done: the
 Review screen says "extraction failed" and does not say the charge came back.
+
+---
+
+### Decision, 5 November 2026, and built on `feature/ext02-crash-and-stuck`
+
+**Case 3, a crash, timeout or out-of-memory kill.** Extraction gets an
+on-failure destination, the `extraction-failed` queue, retries left at two.
+`lambda/extraction_failed` reads each record, finds the document from the
+envelope, marks it `extraction_error = 'extraction_died'` where nothing has
+marked it, and refunds it where it holds no values - extraction's own rule
+and `wallet.refund()`'s own key. A refund that throws sends the message
+round again and is retried. The queue's alarm emails info@arqedia.com.
+
+**Case 4, extraction never starting: alert only.** The reconcile job, which
+writes nothing by design, now also asks for documents charged more than an
+hour ago, never marked and not refunded, and names each on a `[stuck]` line
+while it is under two hours old. A metric filter on that line feeds the
+`document-stuck` alarm. Refund and mark by hand; the procedure is in
+`ops_alerts.tf`.
+
+**The Review screen** says "charge refunded" beside "extraction failed"
+where a `refund:<document_id>` row exists. `GET /engagements/{id}/documents`
+carries `refunded`.
+
+**Found while building, 5 November 2026.** Run against dev, the stuck query
+first found tenant 5's documents 1229, 1231 and 1233 - charged on 28 October
+(entry 167) and never marked. Each had been refunded that day
+(`refund:1229`, `:1231`, `:1233`), as had 1239, which is why the query
+excludes refunded documents. With that, nothing on dev is stuck. Document
+862 is no longer in the database.
