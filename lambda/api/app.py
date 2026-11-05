@@ -1438,7 +1438,11 @@ def list_documents(tenant_id, engagement_id):
                extraction_error,
                (SELECT COUNT(*) FROM extracted_value v
                  WHERE v.document_id = d.document_id
-                   AND v.tenant_id = d.tenant_id) AS values_found
+                   AND v.tenant_id = d.tenant_id) AS values_found,
+               EXISTS (SELECT 1 FROM wallet_ledger r
+                        WHERE r.tenant_id = d.tenant_id
+                          AND r.idempotency_key
+                              = CONCAT('refund:', d.document_id)) AS refunded
         FROM document d
         WHERE tenant_id = :tenant_id
           AND state IN ('filed', 'reading')
@@ -1469,7 +1473,11 @@ def list_documents(tenant_id, engagement_id):
          # its own. Whatever values it did write are still counted below -
          # a failure part way through leaves real facts behind it.
          "extraction_error": _col(r, 12),
-         "values": _col(r, 13)}
+         "values": _col(r, 13),
+         # Whether its charge came back (EXT-02): a 'refund:<document_id>'
+         # row, written by whichever failure came first - OCR, extraction,
+         # extraction-failed, or by hand.
+         "refunded": bool(_col(r, 14))}
         for r in result.get("records", [])
     ]
 

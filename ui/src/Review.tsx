@@ -1681,6 +1681,14 @@ export function EngagementView({ id, onBack, onMemo }: {
                           <a onClick={() => openValues(d.document_id)}>
                             {d.values}
                           </a>
+                          {/* Said where it is true (EXT-02): a document that
+                              read nothing is refunded, one that read some
+                              values keeps its charge. */}
+                          {d.refunded && (
+                            <span className="muted small">
+                              {" · charge refunded"}
+                            </span>
+                          )}
                         </>
                       )
                       : d.state === "reading" || !d.extracted_at

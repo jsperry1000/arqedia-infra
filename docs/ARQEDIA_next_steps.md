@@ -21,7 +21,7 @@ Grouped by area, not by priority. Where a source states urgency, it is in the Wo
 | | 20.3 | Carry the ledger entry id into composition and store it on the memo | — | UX02 G20 |
 | | 20.4 | Retry a transient model failure inside the run | — | UX02 G20 |
 | | 20.5 | The screen shows a failed generation | — | UX02 G20 |
-| | EXT-02 | Refund a failed extraction | Mechanism PROPOSED: `wallet.refund()` as for OCR, rather than a credit bucket | backlog EXT02 |
+| | EXT-02 | Refund a failed extraction. **Closed 5 November 2026:** `wallet.refund()` decided and built 20 October (#341); crash and never-started cases on `feature/ext02-crash-and-stuck` | — | backlog EXT02 |
 | | 18.13(3) | Enforce plan limits (recorded in migration 033, not enforced) | — | UX02 G18; process_changing_prices |
 | | 18.16 | `plans.json` into the API bundle | "a build change" | UX02 G18 |
 | | 19.3 | Preselect a plan | — | UX02 G19 |

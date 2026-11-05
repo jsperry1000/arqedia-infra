@@ -21,6 +21,13 @@ start that.
 Runs on a schedule. Every object older than ORPHAN_AFTER_MINUTES is a
 candidate - younger ones may legitimately still be in flight, and the
 arithmetic behind that number is in observability.tf beside the schedule.
+
+AND A SECOND QUESTION (EXT-02 case 4, decided 5 November 2026): is a
+document charged for and never extracted? Extraction that never STARTS -
+its rule disabled, its event dropped - leaves no failure anywhere, as the
+normalizer's does, and the $0.25 stays taken. One [stuck] line per such
+document, for an alarm to count. STILL ONLY A SELECT: refunding one is done
+by hand, because this function writes nothing (reconcile.tf).
 """
 
 import datetime
@@ -66,6 +73,20 @@ _CHUNK = 200
 # silent run and a run that did not happen look identical otherwise.
 ORPHAN = "[orphan]"
 SUMMARY = "[reconcile]"
+STUCK = "[stuck]"
+
+# A document is stuck once its charge is this old with no extraction mark.
+# Extraction takes minutes; with OCR first and two retries of a 300-second
+# timeout it is still well inside the hour - the same arithmetic as
+# ORPHAN_AFTER_MINUTES, doubled.
+STUCK_AFTER_MINUTES = int(os.environ.get("STUCK_AFTER_MINUTES", "60"))
+
+# And reported only while younger than this. Each document is named on the
+# runs inside the window - four at a fifteen-minute schedule - and then no
+# more, so the alarm fires for a new one rather than sitting in ALARM for
+# ever over an old one. Every stuck document, whatever its age, is still
+# COUNTED on the summary line, as the historical orphans are.
+STUCK_REPORT_MINUTES = int(os.environ.get("STUCK_REPORT_MINUTES", "120"))
 
 
 def _historical_cutoff():
@@ -148,8 +169,54 @@ def _candidates(cutoff):
     return out, scanned
 
 
+def _stuck():
+    """Documents charged for and never marked by extraction, with the age
+    of their charge in minutes.
+
+    THE CHARGE'S TIME, NOT filed_at. filed_at is the row's insert - the
+    upload - and a document can wait days between upload and File. The
+    ledger entry is the moment it was paid for, which is when extraction
+    should have followed. 'reading' is included: a document whose OCR never
+    answered is charged and stuck all the same.
+
+    NOT ONE ALREADY REFUNDED. A document whose charge came back - by the
+    collector, or by hand - is settled even with no extraction mark: on 5
+    November 2026 this found tenant 5's 1229, 1231 and 1233, charged on 28
+    October and each refunded the same day ('refund:<document_id>')."""
+    rows = _sql(
+        """
+        SELECT d.tenant_id, d.document_id, d.state,
+               TIMESTAMPDIFF(MINUTE, l.created_at, UTC_TIMESTAMP())
+        FROM document d
+        JOIN wallet_ledger l ON l.tenant_id = d.tenant_id
+                            AND l.entry_id = d.charge_entry_id
+        WHERE d.state IN ('filed', 'reading')
+          AND d.extracted_at IS NULL AND d.extraction_error IS NULL
+          AND l.created_at < UTC_TIMESTAMP() - INTERVAL %d MINUTE
+          AND NOT EXISTS (
+            SELECT 1 FROM wallet_ledger r
+            WHERE r.tenant_id = d.tenant_id
+              AND r.idempotency_key = CONCAT('refund:', d.document_id))
+        ORDER BY d.tenant_id, d.document_id
+        """ % STUCK_AFTER_MINUTES).get("records", [])
+    out = []
+    for r in rows:
+        values = [next(iter(c.values())) for c in r]
+        out.append((values[0], values[1], values[2], int(values[3] or 0)))
+    return out
+
+
 def lambda_handler(event, context):
     now = datetime.datetime.now(datetime.timezone.utc)
+
+    stuck = _stuck()
+    reported = 0
+    for tenant_id, document_id, state, age in stuck:
+        if age >= STUCK_REPORT_MINUTES:
+            continue
+        reported += 1
+        print("%s tenant=%s doc=%s state=%s charged_minutes_ago=%d"
+              % (STUCK, tenant_id, document_id, state, age))
     cutoff = now - datetime.timedelta(minutes=ORPHAN_AFTER_MINUTES)
 
     candidates, scanned = _candidates(cutoff)
@@ -172,10 +239,12 @@ def lambda_handler(event, context):
     # every line for the same reason - a count that only appears when it is
     # non-zero is a count nobody notices changing.
     print("%s scanned=%d older_than=%dm candidates=%d orphans=%d historical=%d"
+          " stuck=%d stuck_reported=%d"
           % (SUMMARY, scanned, ORPHAN_AFTER_MINUTES, len(candidates),
-             len(orphans), historical))
+             len(orphans), historical, len(stuck), reported))
 
     return {"scanned": scanned, "candidates": len(candidates),
             "orphans": len(orphans), "keys": orphans[:100],
             "historical": historical,
-            "older_than_minutes": ORPHAN_AFTER_MINUTES}
+            "older_than_minutes": ORPHAN_AFTER_MINUTES,
+            "stuck": len(stuck), "stuck_reported": reported}

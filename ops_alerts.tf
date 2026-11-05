@@ -2,8 +2,8 @@
 # Ops alerts (go-live stage 9, decided 4 November 2026).
 #
 # Until this file, no alarm in the stack told anybody anything: each went into
-# ALARM in the console and waited for someone to look. Three now email
-# info@arqedia.com:
+# ALARM in the console and waited for someone to look. These email
+# info@arqedia.com (the last two added 5 November 2026, EXT-02):
 #
 #   paddle-processor-failed   a Paddle event failed and waits in its queue -
 #                             a customer may have paid and received nothing.
@@ -12,6 +12,10 @@
 #   paddle-needs-review       the processor flagged an event (below).
 #   composition-failed        composition died; composition-failed has already
 #                             refunded the run. Visibility only.
+#   extraction-failed         extraction died; extraction-failed marked and
+#                             refunded the document (extraction_failed.tf).
+#   document-stuck            a document was charged and extraction never
+#                             marked it (below). Refund by hand.
 #
 # THE SUBSCRIPTION MUST BE CONFIRMED. AWS emails info@arqedia.com a link
 # after the first apply, and nothing is delivered until it is clicked.
@@ -88,4 +92,52 @@ resource "aws_cloudwatch_metric_alarm" "paddle_needs_review" {
   treat_missing_data  = "notBreaching"
   alarm_actions       = [aws_sns_topic.ops_alerts.arn]
   tags                = { Name = "${local.name_prefix}-paddle-needs-review" }
+}
+
+# --- a document charged and never extracted (EXT-02 case 4) ----------------
+#
+# The reconcile job prints one [stuck] line per document charged more than an
+# hour ago that extraction never marked and that has not been refunded, while
+# it is under two hours old - so each is named on about four runs and the
+# alarm fires for a new one rather than sitting in ALARM over an old one.
+# Alert only, decided 5 November 2026: reconcile writes nothing.
+#
+# PATTERN PROVED with test-metric-filter: it matched the [stuck] line and
+# refused the summary line, which carries "stuck=" too, an [orphan] line and
+# the bare word mid-sentence.
+#
+# WHEN IT FIRES, the line names tenant and document. Refund by hand with
+# wallet.refund(tenant_id, document_id, charge_entry_id) - keyed, so it
+# cannot pay twice - and mark the row so the screen stops waiting:
+#
+#   UPDATE document SET extracted_at = UTC_TIMESTAMP(),
+#     extraction_error = 'extraction_never_ran'
+#   WHERE tenant_id = :t AND document_id = :d AND extracted_at IS NULL
+resource "aws_cloudwatch_log_metric_filter" "document_stuck" {
+  name           = "${local.name_prefix}-document-stuck"
+  log_group_name = "/aws/lambda/${aws_lambda_function.reconcile.function_name}"
+  pattern        = "%\\[stuck\\]%"
+
+  metric_transformation {
+    name          = "DocumentStuck"
+    namespace     = "ARQEDIA/${local.name_prefix}"
+    value         = "1"
+    default_value = "0"
+    unit          = "Count"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "document_stuck" {
+  alarm_name          = "${local.name_prefix}-document-stuck"
+  alarm_description   = "A document was charged and extraction never marked it. Refund and mark by hand: ops_alerts.tf."
+  namespace           = "ARQEDIA/${local.name_prefix}"
+  metric_name         = "DocumentStuck"
+  statistic           = "Sum"
+  period              = 900
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.ops_alerts.arn]
+  tags                = { Name = "${local.name_prefix}-document-stuck" }
 }
