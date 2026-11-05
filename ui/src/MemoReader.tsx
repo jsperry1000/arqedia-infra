@@ -725,8 +725,10 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   const [dropAt, setDropAt] = useState<number | null>(null);
   // Gaps with an image on its way into storage.
   const [placing, setPlacing] = useState<number[]>([]);
-  // Images in storage, waiting to go into the memo together.
-  const [arrived, setArrived] = useState<{ at: number; blocks: Block[] } | null>(null);
+  // Images in storage, waiting to go into the memo together; or a page break
+  // from a new paragraph's box, waiting for what was typed there to go in.
+  const [arrived, setArrived] = useState<{ at: number; blocks: Block[];
+                                           act?: Act } | null>(null);
 
   /** An image dropped or pasted: into storage first, then into the memo
    *  between blocks, on a line of its own. One act to undo. */
@@ -766,7 +768,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
       ...blocks.slice(0, at),
       ...arrived.blocks.map((b) => ({ ...b, source: blockToMarkdown(b, "\n") })),
       ...blocks.slice(at),
-    ]), "image");
+    ]), arrived.act ?? "image");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arrived]);
 
@@ -1250,6 +1252,18 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                 </button>
               </>
             )}
+            {/* Not insertPageBreak: that writes from the memo as this render
+                has it, which would overwrite what was typed, written a moment
+                before in the same click. */}
+            <button type="button" className="tool"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={(e) => setArrived({
+                      at: leaveNew(e.currentTarget, index),
+                      blocks: [{ id: "new", source: "", kind: "pagebreak" }],
+                      act: "page-break" })}
+                    title="Start a new page of the PDF here">
+              Insert page break
+            </button>
           </span>
         </p>
         </>
