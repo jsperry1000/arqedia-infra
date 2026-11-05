@@ -1628,8 +1628,15 @@ export const api = {
     }),
 
   /** End future access. It cannot recall a copy already downloaded. */
-  revokeShare: (grantId: string): Promise<ShareGrant> =>
-    call(`/shares/${encodeURIComponent(grantId)}/revoke`, { method: "POST" }),
+  /** `notify`: "Tell them by email" (5 November 2026). `notified` is null
+   *  where nobody was told - unticked, or never emailed in the first place -
+   *  and false where the email failed; the share is revoked either way. */
+  revokeShare: (grantId: string, notify = false):
+      Promise<ShareGrant & { notified: boolean | null }> =>
+    call(`/shares/${encodeURIComponent(grantId)}/revoke`, {
+      method: "POST",
+      body: JSON.stringify({ notify }),
+    }),
 
   /** Every live memorandum across engagements, for Share a memo, with
    *  whether this person keeps unsaved changes on each. */

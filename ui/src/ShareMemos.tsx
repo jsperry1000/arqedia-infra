@@ -5,8 +5,8 @@ import {
   type ShareAllowance, type ShareGrant,
 } from "./api";
 import {
-  AllowanceLine, Authority, CannotRecall, FilterRow, Scope, day, errorText,
-  money, useSort,
+  AllowanceLine, Authority, CannotRecall, FilterRow, RecipientInput, Scope,
+  day, errorText, money, useSort,
 } from "./Share";
 import {
   MAX_BATCH, NO_FILTER, filterMemos, planBatch, resendsFor, sharesByMemo,
@@ -322,8 +322,8 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
           <div className="form">
             <label className="row">
               <span>Recipient email</span>
-              <input placeholder="name@firm.com" value={to}
-                     onChange={(e) => { setTo(e.target.value); setShortfall(null); }} />
+              <RecipientInput value={to} grants={grants} id="batch-recipients"
+                              onChange={(v) => { setTo(v); setShortfall(null); }} />
             </label>
 
             <label className="row">
