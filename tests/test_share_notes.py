@@ -165,5 +165,56 @@ class NotesTest(unittest.TestCase):
                       self.mails[-1][2])
 
 
+@unittest.skipUnless(HAVE, "moto, boto3, pypdf or reportlab not installed")
+class SenderNameTest(unittest.TestCase):
+    """The person's name, not their address, leads (5 November 2026)."""
+
+    setUp = routes.SendTest.setUp
+    tearDown = routes.SendTest.tearDown
+
+    def send(self, shown_as=None, **extra):
+        body = dict({"recipient": "j.ferrers@northbank.com",
+                     "authority_affirmed": True, "idempotency_key": "k1"},
+                    **extra)
+        return self.share.send(1, "sp@ebl.test", 11, body, shown_as=shown_as)
+
+    def test_the_share_email_leads_with_the_name(self):
+        self.send(shown_as="Steve Perry")
+        to, subject, body, reply_to, _ = self.mails[-1]
+        self.assertEqual(subject, "Steve Perry has shared a memorandum with you")
+        self.assertTrue(body.startswith("Steve Perry (sp@ebl.test) at TESTCO A "))
+        # A reply still reaches the address, and says so.
+        self.assertEqual(reply_to, "sp@ebl.test")
+        self.assertIn("it will reach sp@ebl.test", body)
+
+    def test_with_no_name_it_is_the_address_as_before(self):
+        self.send()
+        _, subject, body, _, _ = self.mails[-1]
+        self.assertEqual(subject, "sp@ebl.test has shared a memorandum with you")
+        self.assertTrue(body.startswith("sp@ebl.test at TESTCO A "))
+
+    def test_a_name_that_is_the_address_is_not_said_twice(self):
+        self.send(shown_as="SP@ebl.test")
+        _, subject, body, _, _ = self.mails[-1]
+        self.assertTrue(subject.startswith("sp@ebl.test has shared"))
+        self.assertNotIn("(sp@ebl.test)", body)
+
+    def test_the_batch_email_leads_with_the_name(self):
+        sent = self.send(notify=False)
+        self.share.notify(1, "sp@ebl.test", [sent["grant_id"]],
+                          shown_as="Steve Perry")
+        self.assertTrue(self.mails[-1][1].startswith("Steve Perry has shared"))
+
+    def test_the_revoke_email_leads_with_the_name(self):
+        sent = self.send()
+        self.share.revoke(1, "sp@ebl.test", sent["grant_id"], notify=True,
+                          shown_as="Steve Perry")
+        _, subject, body, reply_to, _ = self.mails[-1]
+        self.assertEqual(subject,
+                         "Steve Perry has withdrawn a memorandum shared with you")
+        self.assertTrue(body.startswith("Steve Perry (sp@ebl.test) at "))
+        self.assertEqual(reply_to, "sp@ebl.test")
+
+
 if __name__ == "__main__":
     unittest.main()

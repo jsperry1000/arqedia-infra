@@ -448,7 +448,7 @@ def _updates_of(grant):
             "shared_at": grant.get("updates_shared_at")}
 
 
-def send(tenant_id, email, memo_id, body):
+def send(tenant_id, email, memo_id, body, shown_as=None):
     """Share one memorandum with one address. Returns the grant as the list
     shows it, or None where the tenant has no such memorandum.
 
@@ -491,15 +491,16 @@ def send(tenant_id, email, memo_id, body):
 
     if existing and existing.get("status") == rules.ACTIVE:
         return _resend(tenant_id, email, existing, at, expires,
-                       tenant_expiry is not None, tenant_name, notify_now)
+                       tenant_expiry is not None, tenant_name, notify_now,
+                       shown_as)
 
     return _send_new(tenant_id, email, memo, recipient, viewer_id, grant_id,
                      existing, at, expires, tenant_expiry is not None, key,
-                     tenant_name, body, notify_now)
+                     tenant_name, body, notify_now, shown_as)
 
 
 def _resend(tenant_id, email, grant, at, expires, tenant_set, tenant_name,
-            notify_now=True):
+            notify_now=True, shown_as=None):
     """The same memorandum to the same address again: reinstate the grant if
     it was revoked, refresh its expiry, and send the same link. No allowance
     and no charge (decision of 1 October 2026, item 8)."""
@@ -529,7 +530,8 @@ def _resend(tenant_id, email, grant, at, expires, tenant_set, tenant_name,
     grant = dict(grant, revoked=False, sent_at=rules.iso(at),
                  expires_at=rules.iso(expires), expiry_set_by_tenant=tenant_set,
                  sent_by=email)
-    sent = _mail(email, tenant_name, grant) if notify_now else None
+    sent = (_mail(email, tenant_name, grant, shown_as=shown_as)
+            if notify_now else None)
     print("[share-resent] tenant=%s memo=%s reinstated=%s sent=%s" % (
         tenant_id, grant["memo_id"], was_revoked, sent))
     return dict(_view(grant), sent=sent, reinstated=was_revoked,
@@ -538,7 +540,7 @@ def _resend(tenant_id, email, grant, at, expires, tenant_set, tenant_name,
 
 def _send_new(tenant_id, email, memo, recipient, viewer_id, grant_id,
               pending, at, expires, tenant_set, key, tenant_name, body,
-              notify_now=True):
+              notify_now=True, shown_as=None):
     day = "d" + at.strftime("%Y-%m-%d")
     retry = bool(pending) and pending.get("idempotency_key") == key
 
@@ -688,7 +690,8 @@ def _send_new(tenant_id, email, memo, recipient, viewer_id, grant_id,
                                    ":now": rules.iso(rules.now())})
     item = dict(item, status=rules.ACTIVE, over=over, charged_cents=charged)
 
-    sent = (_mail(email, tenant_name, item, _updates_of(item))
+    sent = (_mail(email, tenant_name, item, _updates_of(item),
+                  shown_as=shown_as)
             if notify_now else None)
     print("[share-sent] tenant=%s memo=%s over=%s charged=%s sent=%s" % (
         tenant_id, memo["memo_id"], over, charged, sent))
@@ -696,7 +699,7 @@ def _send_new(tenant_id, email, memo, recipient, viewer_id, grant_id,
                 charged_cents=charged)
 
 
-def _mail(email, tenant_name, grant, updates=None):
+def _mail(email, tenant_name, grant, updates=None, shown_as=None):
     """The email, after everything else has happened - and never at its
     expense (mail.py). The grant stands whether SES accepts it or not, and
     the screen says which. A re-send passes no `updates`: the same
@@ -705,7 +708,7 @@ def _mail(email, tenant_name, grant, updates=None):
     subject, text = mail.share_invitation(
         email, tenant_name, grant["memo_label"], grant.get("subject"), link,
         grant["expires_at"], bool(grant.get("expiry_set_by_tenant")),
-        updates=updates)
+        updates=updates, shown_as=shown_as)
     # The sender is copied, BCC, on the same message (feature/share-sender-
     # copy): the real ARQEDIA email in their own inbox, to forward if they
     # wish. It opens nothing for them or anybody they forward it to - the
@@ -750,7 +753,7 @@ class AlreadyNotified(Exception):
     """A share in the request has had its email. 409."""
 
 
-def notify(tenant_id, email, grant_ids):
+def notify(tenant_id, email, grant_ids, shown_as=None):
     """One email for several shares to one recipient, the sender BCC'd.
 
     REFUSED, AND NOTHING SENT, where any share is not this tenant's, is not
@@ -811,7 +814,7 @@ def notify(tenant_id, email, grant_ids):
                "updates": _updates_of(g)}
               for g in grants]
     subject, text = mail.share_batch_invitation(
-        email, _tenant_name(tenant_id), shares)
+        email, _tenant_name(tenant_id), shares, shown_as=shown_as)
     # One button to each memorandum, named for it; a batch of one is the
     # single email, and its button says what the single email's does.
     buttons = ({shares[0]["link"]: "Open the memorandum"} if len(shares) == 1
@@ -902,7 +905,7 @@ def listing(tenant_id, workspace_id=None):
             "allowance": allowance(tenant_id)}
 
 
-def revoke(tenant_id, email, grant_id, notify=False):
+def revoke(tenant_id, email, grant_id, notify=False, shown_as=None):
     """End future access. Any seat, in every state, capped included
     (share_viewer_spec section 6).
 
@@ -946,7 +949,7 @@ def revoke(tenant_id, email, grant_id, notify=False):
     if notify and not was.get("revoked") and was.get("notified_at"):
         subject, text = mail.share_revoked(
             email, was.get("tenant_name") or _tenant_name(tenant_id),
-            was["memo_label"], was.get("subject"))
+            was["memo_label"], was.get("subject"), shown_as=shown_as)
         notified = mail.send(was["recipient_email"], subject, text,
                              reply_to=email)
         print("[share-revoke-notified] tenant=%s grant=%s sent=%s" % (
