@@ -1697,6 +1697,9 @@ a.add:hover { background: var(--paper); text-decoration: none; }
   padding: 28px 32px;
 }
 .step-panel .form-actions { margin-top: 28px; }
+/* Panel I, which carries the diagram: 30% wider than the welcome's 760
+   (6 November 2026). */
+.welcome:has(.step-wide) { max-width: 988px; }
 .step-panel ol li { margin-bottom: 10px; }
 .step-panel .step-figure {
   display: block; max-width: 100%; height: auto; margin: 18px 0 8px;

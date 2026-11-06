@@ -215,7 +215,7 @@ export function FirstRunSteps({ stopAtDraft, onStarted, onOpened }: {
   return (
     <div className="welcome">
       {step === "I" && (
-        <section className="step-panel">
+        <section className="step-panel step-wide">
           <p className="muted small">Draft copy</p>
           <h2>Welcome to ARQEDIA</h2>
           <p>
