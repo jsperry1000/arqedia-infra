@@ -854,6 +854,10 @@ function SharedWithMeRoute() {
 
 // --- shell -----------------------------------------------------------------
 
+/** Where a tenant with no workspace may be (6 November 2026): the steps, and
+ *  the signed-in invitation page, which only offers to sign out. */
+const SETUP_OPEN = ["/welcome", "/invitation"];
+
 export default function App() {
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [who, setWho] = useState("");
@@ -936,6 +940,13 @@ export default function App() {
     const timer = setTimeout(() => setSlowStart(true), 3000);
     return () => clearTimeout(timer);
   }, [signedIn, workspacesRead]);
+
+  /** THE STEPS ONLY: an administrator whose tenant holds no workspace, on a
+   *  read that answered. A member cannot make a workspace, so is not held
+   *  here. activeWs is set the moment the steps make one (adopt), before the
+   *  list is read again - so the hand-off to Configure is not sent back. */
+  const setupOnly = workspacesOk && workspaces.length === 0
+    && activeWs === null && role === "admin";
 
   const workspaceState: WorkspaceState = {
     workspaces,
@@ -1305,19 +1316,16 @@ export default function App() {
                     + "half a minute; your workspaces appear when it is done."
                   : "…"}
               </p>
+            ) : setupOnly && !SETUP_OPEN.includes(location.pathname) ? (
+              /* A TENANT WITH NO WORKSPACE HAS THE STEPS AND NOTHING ELSE
+                 (decided 6 November 2026). Every rail item, the mark, Home
+                 and Account management lead here until a workspace exists:
+                 the steps are what set up everything those screens need.
+                 Signing out is not a route and still works. */
+              <Navigate to="/welcome" replace />
             ) : (
             <Routes key={workspaceEpoch}>
-              {/* A TENANT WITH NO WORKSPACE IS SENT TO THE STEPS, however it
-                  arrived (6 November 2026). Until then only signing up went
-                  to /welcome; signing in went home, and an administrator
-                  whose tenant held nothing landed on Engagements with nothing
-                  to engage. Administrator only: a member cannot make a
-                  workspace, and keeps the note on Engagements that says
-                  whose it is. Only on a read that answered. */}
-              <Route path="/" element={
-                workspacesOk && workspaces.length === 0 && role === "admin"
-                  ? <Navigate to="/welcome" replace />
-                  : <EngagementsRoute />} />
+              <Route path="/" element={<EngagementsRoute />} />
               <Route path="/engagements/:id" element={<EngagementRoute />} />
               <Route path="/memos/:id" element={<MemoRoute />} />
               <Route path="/catalogue"

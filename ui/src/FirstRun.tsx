@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Pack, type TemplatePack, type Validation } from "./api";
 import { Working } from "./shell";
-import { UpgradePrompt } from "./upgrade";
 import { useWorkspace, workspacesChanged } from "./workspace";
 import { untitledReport, type OwnStart } from "./Catalogue";
 import type { Report } from "./Welcome";
@@ -30,6 +29,9 @@ import backbone from "./assets/backbone.png";
  *
  * C KEEPS TO THE PLAN'S LIMIT AND OFFERS AN UPGRADE (decided 6 November).
  * The limit is the shell's display copy; the server still refuses past it.
+ * The upgrade is a note, not a button: until a workspace exists, the shell
+ * opens nothing but these steps (App.tsx, setupOnly), so the plan table is
+ * reached once set up.
  *
  * D's NEXT DOES THE WORK, per chosen workspace: fork from our offering under
  * its name, take each ticked template, publish - the same three calls the
@@ -389,11 +391,15 @@ export function FirstRunSteps({ stopAtDraft, onStarted, onOpened }: {
 
           {atLimit && limit !== null
             && (offerings?.length ?? 0) > chosen.length && (
-            <UpgradePrompt>
+            /* A NOTE, NOT A BUTTON. Nothing but these steps opens until a
+               workspace exists (6 November 2026), so "See plans" would come
+               straight back here. The plan is changed once set up. */
+            <p className="revision-note">
               Your plan holds {limit}{" "}
-              {limit === 1 ? "workspace" : "workspaces"}. A bigger plan is how
-              a tenant gets more.
-            </UpgradePrompt>
+              {limit === 1 ? "workspace" : "workspaces"}. Once you are set up,
+              a bigger plan under Account management, Subscription is how you
+              add more.
+            </p>
           )}
 
           {error && <p className="error">{error}</p>}
