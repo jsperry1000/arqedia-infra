@@ -1698,6 +1698,9 @@ a.add:hover { background: var(--paper); text-decoration: none; }
 }
 .step-panel .form-actions { margin-top: 28px; }
 .step-panel ol li { margin-bottom: 10px; }
+.step-panel .step-figure {
+  display: block; max-width: 100%; height: auto; margin: 18px 0 8px;
+}
 .step-panel .inline-check { margin: 8px 0; white-space: normal; }
 @media (max-width: 900px) { .step-panel { padding: 20px 18px; } }
 

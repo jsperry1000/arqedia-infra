@@ -5,6 +5,9 @@ import { UpgradePrompt } from "./upgrade";
 import { useWorkspace, workspacesChanged } from "./workspace";
 import { untitledReport, type OwnStart } from "./Catalogue";
 import type { Report } from "./Welcome";
+// The backbone, from the Word draft of this copy (Draft copy.docx, 6
+// November 2026): workspace, document types, expected facts, templates.
+import backbone from "./assets/backbone.png";
 
 /**
  * A new tenant's first sign-in, as a sequence of step panels (onboarding
@@ -219,6 +222,10 @@ export function FirstRunSteps({ stopAtDraft, onStarted, onOpened }: {
             ARQEDIA allows you to Upload Documents &rarr; Extract Facts &rarr;
             Produce Reports from those Facts
           </p>
+          <img className="step-figure" src={backbone}
+               alt="A workspace holds many document types; each document type
+                    holds many expected facts; report templates each draw on
+                    many facts." />
 
           <h3>I. How ARQEDIA works &ndash; the backbone</h3>
           <ol>
