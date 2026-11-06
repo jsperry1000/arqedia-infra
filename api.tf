@@ -406,6 +406,11 @@ locals {
     "POST /workspaces/{workspace_id}/delete",
     "POST /workspaces/{workspace_id}/restore",
 
+    # Renaming one (6 November 2026). Administrators only, never one of
+    # ARQEDIA's offerings, and not to a name another live workspace holds -
+    # all refused in the handler.
+    "PUT /workspaces/{workspace_id}",
+
     # Sharing (share-recipient). Any seat may send and revoke - revoking
     # works in every state, capped included (share_viewer_spec section 6).
     # Sending opens from the memorandum's own page; the list is /shares.
