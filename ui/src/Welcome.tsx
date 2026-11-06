@@ -7,6 +7,7 @@ import { Working } from "./shell";
 import { SEATS, UpgradePrompt } from "./upgrade";
 import { useWorkspace, workspacesChanged } from "./workspace";
 import { untitledReport, type OwnStart } from "./Catalogue";
+import { FirstRunSteps } from "./FirstRun";
 
 /**
  * Get started (TPL-02 step 3). The front door, and where memoranda are chosen.
@@ -84,7 +85,24 @@ export type Report = {
 // worse than either. The list starts empty and the person chooses here, which
 // is the whole point of the screen.
 
-export function WelcomeView({ stopAtDraft = false, newWorkspace = false,
+type WelcomeProps = Parameters<typeof WelcomeForm>[0];
+
+/** A new tenant's first sign-in is the step panels (FirstRun.tsx); every
+ *  other arrival - Add a workspace, the rail's panel, the Catalogue's routes,
+ *  an offering - keeps the single form below. First run is read once, as the
+ *  form reads it, and held. */
+export function WelcomeView(props: WelcomeProps) {
+  const workspace = useWorkspace();
+  const [firstRun] = useState(() => workspace.workspaces.length === 0);
+  if (firstRun && !props.newWorkspace && !props.offering && !props.start) {
+    return <FirstRunSteps stopAtDraft={props.stopAtDraft ?? false}
+                          onStarted={props.onStarted}
+                          onOpened={props.onOpened} />;
+  }
+  return <WelcomeForm {...props} />;
+}
+
+function WelcomeForm({ stopAtDraft = false, newWorkspace = false,
                              offering = false,
                              start: startWith, onStarted, onOpened }: {
   stopAtDraft?: boolean;

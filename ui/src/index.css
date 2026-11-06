@@ -1697,6 +1697,25 @@ a.add:hover { background: var(--paper); text-decoration: none; }
 .template-sections:hover .sections-pop,
 .template-sections:focus-within .sections-pop { display: block; }
 
+/* A first sign-in step (onboarding steps, 6 November 2026): one panel at a
+   time, bordered in the deep, Next at its foot. The border width is to be
+   confirmed on the rendered screen. */
+.step-panel {
+  background: var(--paper);
+  border: 3px solid var(--deep); border-radius: var(--pill-radius);
+  padding: 28px 32px;
+}
+.step-panel .form-actions { margin-top: 28px; }
+/* Panel I, which carries the diagram: 30% wider than the welcome's 760
+   (6 November 2026). */
+.welcome:has(.step-wide) { max-width: 988px; }
+.step-panel ol li { margin-bottom: 10px; }
+.step-panel .step-figure {
+  display: block; max-width: 100%; height: auto; margin: 18px 0 8px;
+}
+.step-panel .inline-check { margin: 8px 0; white-space: normal; }
+@media (max-width: 900px) { .step-panel { padding: 20px 18px; } }
+
 /* Nothing ticked, nothing to do. The pill says so rather than going through
    the motions and failing on an empty list. */
 .start-pill.off {
