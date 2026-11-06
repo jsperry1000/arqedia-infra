@@ -889,6 +889,9 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<WorkspaceRef[]>([]);
   const [activeWs, setActiveWs] = useState<number | null>(null);
   const [workspacesRead, setWorkspacesRead] = useState(false);
+  // Whether that read ANSWERED. A failed read leaves the list empty, and an
+  // empty list must not be taken for a tenant with no workspace.
+  const [workspacesOk, setWorkspacesOk] = useState(false);
   // Bumped when a person CHOOSES another workspace, which remounts every
   // screen so each reads its own again. Not bumped when Get started makes
   // one: that screen is part-way through its work in the new workspace and
@@ -912,6 +915,7 @@ export default function App() {
         const id = chooseWorkspace(tenantId, held);
         setActiveWorkspace(tenantId, id);
         setActiveWs(id);
+        setWorkspacesOk(true);
       })
       .catch(() => undefined)
       .finally(() => setWorkspacesRead(true));
@@ -1303,7 +1307,17 @@ export default function App() {
               </p>
             ) : (
             <Routes key={workspaceEpoch}>
-              <Route path="/" element={<EngagementsRoute />} />
+              {/* A TENANT WITH NO WORKSPACE IS SENT TO THE STEPS, however it
+                  arrived (6 November 2026). Until then only signing up went
+                  to /welcome; signing in went home, and an administrator
+                  whose tenant held nothing landed on Engagements with nothing
+                  to engage. Administrator only: a member cannot make a
+                  workspace, and keeps the note on Engagements that says
+                  whose it is. Only on a read that answered. */}
+              <Route path="/" element={
+                workspacesOk && workspaces.length === 0 && role === "admin"
+                  ? <Navigate to="/welcome" replace />
+                  : <EngagementsRoute />} />
               <Route path="/engagements/:id" element={<EngagementRoute />} />
               <Route path="/memos/:id" element={<MemoRoute />} />
               <Route path="/catalogue"
