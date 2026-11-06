@@ -1665,8 +1665,33 @@ function Workspaces() {
   const [moveTo, setMoveTo] = useState<number | null>(null);
   const [panelError, setPanelError] = useState("");
 
+  // The one being renamed, and what is typed (6 November 2026).
+  const [renaming, setRenaming] = useState<number | null>(null);
+  const [newName, setNewName] = useState("");
+  const [renameError, setRenameError] = useState("");
+
   const load = () =>
     api.workspacesList().then(setList).catch((e) => setError(message(e)));
+
+  async function rename(w: HeldWorkspace) {
+    setRenameError("");
+    setSaid("");
+    setBusy("Renaming " + w.name);
+    try {
+      const out = await api.renameWorkspace(w.workspace_id, newName);
+      setRenaming(null);
+      if (out.name !== out.previous) {
+        setSaid(`${out.previous} is now called ${out.name}.`);
+      }
+      // The rail and the header read the list again.
+      workspacesChanged();
+      await load();
+    } catch (err) {
+      setRenameError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
 
   useEffect(() => { load(); }, []);
 
@@ -1738,6 +1763,9 @@ function Workspaces() {
   if (!list) return <p className="muted">Loading&hellip;</p>;
 
   const onlyOne = list.workspaces.length <= 1;
+  // The ARQEDIA workspace's list carries what keeps each offering; its
+  // offerings are not renamed here (decided 6 November 2026).
+  const offerings = list.workspaces.some((w) => w.clients !== undefined);
   const stranded = deleting
     ? [...deleting.members_only_here, ...deleting.invitations_only_here] : [];
   const others = deleting
@@ -1790,7 +1818,43 @@ function Workspaces() {
         <tbody>
           {list.workspaces.map((w) => (
             <tr key={w.workspace_id}>
-              <td>{w.name}</td>
+              <td>
+                {renaming === w.workspace_id ? (
+                  <form className="inline" style={{ marginTop: 0 }}
+                        onSubmit={(e) => { e.preventDefault(); void rename(w); }}>
+                    <input value={newName} autoFocus maxLength={128}
+                           aria-label={"New name for " + w.name}
+                           onChange={(e) => setNewName(e.target.value)}
+                           onKeyDown={(e) => {
+                             if (e.key === "Escape") setRenaming(null);
+                           }} />
+                    <button className="plain"
+                            disabled={!!busy || !newName.trim()}>
+                      Save
+                    </button>
+                    <a className="small" onClick={() => setRenaming(null)}>
+                      Cancel
+                    </a>
+                  </form>
+                ) : (
+                  <>
+                    {w.name}
+                    {!offerings && (
+                      <>
+                        {" "}
+                        <a className="small" onClick={() => {
+                          setRenaming(w.workspace_id);
+                          setNewName(w.name);
+                          setRenameError("");
+                        }}>Rename</a>
+                      </>
+                    )}
+                  </>
+                )}
+                {renaming === w.workspace_id && renameError && (
+                  <p className="error small">{renameError}</p>
+                )}
+              </td>
               <td className="ref">{w.engagements}</td>
               <td className="ref">{w.documents}</td>
               <td className="ref">{w.memos}</td>

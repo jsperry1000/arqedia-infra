@@ -1811,6 +1811,16 @@ export const api = {
   restoreWorkspace: (id: number) =>
     call(`/workspaces/${id}/restore`, { method: "POST" }),
 
+  /** A new name (6 November 2026). Administrator only. Refused with 409
+   *  where another live workspace of the tenant is already called that,
+   *  whatever its case, and for ARQEDIA's own offerings. */
+  renameWorkspace: (id: number, name: string):
+      Promise<{ workspace_id: number; name: string; previous: string }> =>
+    call(`/workspaces/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({ name }),
+    }),
+
   // --- the wallet ---------------------------------------------------------
 
   /** What is left, and what it is made of. Expired buckets are included and

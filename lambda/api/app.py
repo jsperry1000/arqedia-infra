@@ -104,6 +104,7 @@ workspace's offerings.
   POST /workspaces/{workspace_id}/delete        the name, the code, and where
                                                 its only members move
   POST /workspaces/{workspace_id}/restore       bring it back
+  PUT  /workspaces/{workspace_id}               rename it (not an offering)
 
 A suggestion, from the rail's We want your suggestions. Any seat.
   POST /suggestions                      email it to us, and thank the sender
@@ -4645,6 +4646,15 @@ def _dispatch(event, context):
         if route == "POST /workspaces/{workspace_id}/restore":
             out = workspaces.restore(tenant_id, email, role,
                                      params.get("workspace_id"))
+            return _reply(200, out) if out is not None \
+                else _reply(404, {"error": "not found"})
+
+        # Renaming one (6 November 2026). Administrators only; never an
+        # ARQEDIA offering; a name another live workspace holds is refused.
+        if route == "PUT /workspaces/{workspace_id}":
+            out = workspaces.rename(tenant_id, email, role,
+                                    params.get("workspace_id"),
+                                    json.loads(event.get("body") or "{}"))
             return _reply(200, out) if out is not None \
                 else _reply(404, {"error": "not found"})
 

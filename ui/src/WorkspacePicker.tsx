@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useWorkspace } from "./workspace";
+import { api } from "./api";
+import { useWorkspace, workspacesChanged } from "./workspace";
 import { PLANS } from "./upgrade";
 
 /**
@@ -22,6 +24,11 @@ import { PLANS } from "./upgrade";
  * IN THE ARQEDIA WORKSPACE EACH ONE IS AN OFFERING (PACK-02): what a client
  * starts a workspace from. The list is the same; adding one is called what
  * it is.
+ *
+ * RENAMING THE ACTIVE ONE (6 November 2026), an administrator's, from here
+ * as well as from Account management, Workspaces. Not an offering: ARQEDIA's
+ * own are not renamed. The server refuses a name another live workspace of
+ * the tenant already has.
  */
 export function WorkspaceRail({ admin, curator = false, onAdd }: {
   admin: boolean;
@@ -30,7 +37,30 @@ export function WorkspaceRail({ admin, curator = false, onAdd }: {
 }) {
   const state = useWorkspace();
   const navigate = useNavigate();
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   if (state.workspaces.length === 0) return null;
+
+  const active = state.workspaces.find((w) => w.workspace_id === state.active);
+
+  async function save() {
+    if (!active || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.renameWorkspace(active.workspace_id, text);
+      setEditing(false);
+      workspacesChanged();
+    } catch (err) {
+      let said = String((err as Error)?.message ?? err);
+      try { said = JSON.parse(said).error ?? said; } catch { /* as it came */ }
+      setError(said);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="rail-workspaces" role="group" aria-label="Workspace">
@@ -40,6 +70,27 @@ export function WorkspaceRail({ admin, curator = false, onAdd }: {
       </span>
       {state.workspaces.map((w) => {
         const on = w.workspace_id === state.active;
+        if (on && editing) {
+          return (
+            <form key={w.workspace_id} className="rail-rename"
+                  onSubmit={(e) => { e.preventDefault(); void save(); }}>
+              <input value={text} autoFocus maxLength={128}
+                     aria-label={"New name for " + w.name}
+                     disabled={busy}
+                     onChange={(e) => setText(e.target.value)}
+                     onKeyDown={(e) => {
+                       if (e.key === "Escape") setEditing(false);
+                     }} />
+              <span className="rail-rename-actions">
+                <a onClick={() => { void save(); }}>
+                  {busy ? "Saving…" : "Save"}
+                </a>
+                <a onClick={() => setEditing(false)}>Cancel</a>
+              </span>
+              {error && <span className="error small">{error}</span>}
+            </form>
+          );
+        }
         return (
           <a key={w.workspace_id} className={on ? "ws on" : "ws"}
              aria-current={on ? "true" : undefined}
@@ -49,6 +100,16 @@ export function WorkspaceRail({ admin, curator = false, onAdd }: {
           </a>
         );
       })}
+      {admin && !curator && active && !editing && (
+        <a className="ws ws-add" onClick={() => {
+          setText(active.name);
+          setError("");
+          setEditing(true);
+        }}>
+          <span className="tick" aria-hidden="true" />
+          Rename {active.name}
+        </a>
+      )}
       {/* AT THE PLAN'S LIMIT (PACK-02) the same place says so and goes to
           the plan table, as a full seat count does. The server refuses a
           workspace past it whatever this shows. */}

@@ -175,6 +175,15 @@ main:has(.wide-page) { max-width: 1560px; }
 .rail-workspaces > a.ws.on:hover { background: none; }
 .rail-workspaces > a.ws.ws-add { color: var(--medium); }
 .rail-workspaces .tick { flex: 0 0 12px; }
+/* Renaming the active workspace in place (6 November 2026): the name as a
+   field, Save and Cancel under it, inset as the names are. To be checked on
+   the rendered rail. */
+.rail-rename {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 4px 16px 6px 30px;
+}
+.rail-rename input { padding: 5px 8px; font-size: 13px; }
+.rail-rename-actions { display: flex; gap: 12px; font-size: 12px; }
 
 /* We want your suggestions (25 October 2026): at the foot of the rail, and
    the one entry on it drawn as a button rather than a destination, so it is
