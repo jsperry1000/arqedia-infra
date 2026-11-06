@@ -100,3 +100,98 @@ already have it.
 September, which carries the fix. There are twelve `archive_file` blocks, not
 the ten named here: `reconcile.tf` has `excludes`, and `admin_api.tf`
 (`lambda/admin`) does not. Not fixed on 28 September.
+
+---
+
+### Read, 26 October 2026 — Claude Code report (Prompt 1, ENV-01)
+
+Read in full: `versions.tf`, `main.tf`, `variables.tf`, `providers.tf`,
+`db/migrate.ps1`. Queried the live dev `schema_migration` table directly. Other
+`.tf` files were searched for name attributes, not read in full — the collision
+list below rests on that search, not a full read of each file.
+
+**1. Backend key.** `versions.tf:6`: `key = "arqedia/us-east-2/terraform.tfstate"`,
+bucket `arqedia-tfstate-667523685221`, workspace `default`. The key is fixed,
+not parameterised by environment. Applying with `environment = "prod"` from
+this directory would write to dev's state and plan to rename every
+`arqedia-dev-*` resource to `arqedia-prod-*` — for most resources, a
+destroy-and-recreate. It would turn dev into prod, not add a second stack.
+
+**2. What collides in one account.** Most names carry `${local.name_prefix}-…`
+and do not collide (Lambdas, IAM roles, secrets, SQS, S3, Aurora, DynamoDB,
+KMS, log groups, API Gateway, Cognito, the layer, EventBridge, the VPC,
+CloudFront OACs and function). Three things do collide:
+
+| Resource | Why |
+|---|---|
+| `aws_iam_openid_connect_provider.github` (`ci.tf:7`) | One account can hold only one provider for `token.actions.githubusercontent.com` |
+| CloudFront aliases `app.`, `admin.`, `arqedia.com`, `www.` (`frontend.tf:47`, `admin_frontend.tf:51`, `site.tf:64`) | A hostname sits on one distribution only; the hosts are fixed locals in `dns.tf:19-30` |
+| `aws_route53_zone.root` (`arqedia.com`) | Not refused — AWS creates a second hosted zone with the same name, but the registrar points at dev's zone, so prod's records would never be served |
+
+Shared rather than colliding (made outside Terraform or only read by it): SES
+identity `arqedia.com`, configuration set `my-first-configuration-set`
+(`share.tf:177`), SNS topic `ses-events`.
+
+Hard-coded to dev outside Terraform: the three deploy workflows (bucket/role
+defaults), `db/migrate.ps1:4`, `q.ps1:10`, `db/rerun_extraction.py:31,35` (dev
+cluster ARN and review bucket), `ui/src/config.ts:60-62` (pool, client, API ID).
+
+**3. Variables.** `environment` (default `dev`) feeds only `name_prefix`.
+`aws_region`, `extraction_model_id`, `composition_model_id` are used. `scope`
+is declared and never used. Fixed values that would need to vary: the backend
+key; `root_domain` and every `dns.tf` host (locals, not variables);
+`paddle_api_base = "https://sandbox-api.paddle.com"` and the hard-wired
+`config/paddle/sandbox.json` (`paddle.tf`); `ses_configuration_set`; the CI
+trust condition's `refs/heads/main` (`ci.tf:145`). Account ID 667523685221 is
+also fixed, in the provider's `allowed_account_ids`.
+
+**4. schema_migration.** Two columns: `filename varchar(255)` (primary key),
+`applied_at datetime`. Dev holds 46 rows, 001 (26 Aug) to 048 (23 Oct); no 003,
+no 041. No environment or cluster column — it cannot tell dev from prod by
+itself. The only separation is that each cluster holds its own copy of the
+table. `migrate.ps1` defaults to the dev cluster, so running it without
+`-Cluster` applies to dev regardless of intent.
+
+**5. Smallest changes — both paths, no preference stated.**
+
+*A second environment beside dev:* a state key per environment (workspaces,
+or `-backend-config="key=…"` at init); hostnames derived from environment
+(which environment keeps `app.arqedia.com` is a decision for the owner); the
+OIDC provider created once, read by the other stack (`count`, or a data
+source); Paddle base URL and catalogue file chosen by environment, with a
+`config/paddle/live.json`; workflows, `migrate.ps1`, `q.ps1`, `config.ts`
+taking environment as a parameter.
+
+*The same stack re-pointed (dev becomes prod):* one variable choosing Paddle
+sandbox or live (`paddle_api_base` and catalogue file); live values in the
+existing `arqedia-dev/paddle/*` secrets, plus a live webhook destination;
+`ui/.env` changed to a `live_` token with `production`, web rebuilt. Names,
+state, the backend, and `schema_migration` stay exactly as they are. Dev's
+existing tenants and their sandbox subscription IDs would then sit in what has
+become the production database.
+
+No branch, no commit. This was a read.
+
+---
+
+### Decided, 6 November 2026 — the same stack, re-pointed
+
+Live Paddle runs on the existing `arqedia-dev` stack. There is no second stack.
+This is the second path of the 26 October read, §5.
+
+What that means, from the read:
+
+- Names, state, the backend key and `schema_migration` stay as they are. There
+  is one cluster, so the per-environment migrations question (go-live list,
+  stage 1) does not arise; `schema_migration` is the record.
+- What changes: one variable choosing Paddle sandbox or live
+  (`paddle_api_base` and the catalogue file), live values in the existing
+  `arqedia-dev/paddle/*` secrets, a live webhook destination, and `ui/.env`
+  set to a `live_` token with `production`, with `web/` rebuilt.
+
+Not decided, and left open by this:
+
+- Dev's existing tenants and their sandbox subscription IDs would then sit in
+  what has become the production database. What happens to them is not settled.
+- After the switch there is no environment where a change can be wrong first.
+- The name `arqedia-dev` stays on a production stack.

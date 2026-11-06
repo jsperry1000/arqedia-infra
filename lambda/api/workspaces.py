@@ -405,6 +405,83 @@ def delete(tenant_id, email, role, workspace_id, body):
             "members_moved_to": target, "shares_suspended": suspended}
 
 
+# --- renaming (6 November 2026) --------------------------------------------
+#
+# DECIDED: an administrator renames a workspace their tenant holds; a name
+# another of the tenant's live workspaces already has, compared without
+# regard to case, is refused; and the ARQEDIA workspace's offerings are not
+# renamed here - only a workspace already taken into a tenancy, or made in
+# one, is.
+#
+# ONLY THE NAME CHANGES. Its rows, members, shares and revisions are keyed by
+# number. A memo's Workspace row is filled from the workspace row when the
+# memo is read (app.py _with_identity, and the renderer), so it reads the new
+# name.
+
+NAME_MAX = 128          # workspace.name is VARCHAR(128)
+
+
+def _name_taken(tenant_id, workspace_id, name):
+    """The name of another LIVE workspace of this tenant that is called
+    `name`, whatever its case, or None."""
+    taken = _sql(
+        "SELECT name FROM workspace WHERE tenant_id = :t "
+        "AND workspace_id <> :w AND deleted_at IS NULL "
+        "AND LOWER(name) = LOWER(:n) LIMIT 1",
+        [_p("t", tenant_id), _p("w", int(workspace_id)), _p("n", name)]
+    ).get("records", [])
+    return _col(taken[0], 0) if taken else None
+
+
+def rename(tenant_id, email, role, workspace_id, body):
+    """Give a live workspace a new name. Returns None where the tenant has no
+    such workspace."""
+    if role != "admin":
+        raise PermissionError("only an administrator may rename a workspace")
+    if int(tenant_id) == PACK_TENANT:
+        raise Refused("ARQEDIA's own workspaces are not renamed here.")
+    found = _workspace(tenant_id, workspace_id)
+    if found is None:
+        return None
+    if found["deleted_at"] is not None:
+        raise Refused("That workspace is deleted. Restore it first.")
+
+    name = " ".join(str((body or {}).get("name") or "").split())
+    if not name:
+        raise ValueError("A workspace needs a name.")
+    if any(ord(c) < 32 or ord(c) == 127 for c in name):
+        raise ValueError("A name cannot contain control characters.")
+    if len(name) > NAME_MAX:
+        raise ValueError("A name can be at most %d characters." % NAME_MAX)
+
+    ws = found["workspace_id"]
+    if name == found["name"]:
+        return {"workspace_id": ws, "name": name, "previous": found["name"]}
+
+    taken = _name_taken(tenant_id, ws, name)
+    if taken:
+        raise Refused("Another of your workspaces is already called %s."
+                      % taken)
+
+    # OLD MEMORANDA KEEP THE OLD NAME (decided 6 November 2026, migration
+    # 054). Stamped before the rename, so a failure between the two leaves
+    # memos stamped with the name the workspace still has - which reads the
+    # same.
+    stamped = _sql(
+        "UPDATE memo SET workspace_name = :old "
+        "WHERE tenant_id = :t AND workspace_id = :w "
+        "AND workspace_name IS NULL",
+        [_p("old", found["name"]), _p("t", tenant_id), _p("w", ws)]
+    ).get("numberOfRecordsUpdated", 0)
+
+    _sql("UPDATE workspace SET name = :n "
+         "WHERE tenant_id = :t AND workspace_id = :w",
+         [_p("n", name), _p("t", tenant_id), _p("w", ws)])
+    print("[workspace-renamed] tenant=%s workspace=%s memos_kept=%s by=%s" % (
+        tenant_id, ws, stamped, email))
+    return {"workspace_id": ws, "name": name, "previous": found["name"]}
+
+
 # --- restoring -------------------------------------------------------------
 
 def restore(tenant_id, email, role, workspace_id):
@@ -430,16 +507,35 @@ def restore(tenant_id, email, role, workspace_id):
                       "one first, or change the plan.")
 
     ws = found["workspace_id"]
+
+    # A NAME TAKEN SINCE IT WENT (decided 6 November 2026). A live workspace
+    # may have been given this name, or made with it, while this one was
+    # hidden. It comes back as "<name>-restored" - or "-restored-2" and on,
+    # should that be taken too - and the answer says so.
+    name = found["name"]
+    if _name_taken(tenant_id, ws, name):
+        n = 1
+        while True:
+            suffix = "-restored" if n == 1 else "-restored-%d" % n
+            candidate = name[:NAME_MAX - len(suffix)] + suffix
+            if not _name_taken(tenant_id, ws, candidate):
+                name = candidate
+                break
+            n += 1
+
     import share
     lifted = share.lift_workspace(tenant_id, ws)
     _sql("UPDATE workspace SET deleted_at = NULL, deleted_by = NULL, "
-         "remove_after = NULL WHERE tenant_id = :t AND workspace_id = :w",
-         [_p("t", tenant_id), _p("w", ws)])
+         "remove_after = NULL, name = :n "
+         "WHERE tenant_id = :t AND workspace_id = :w",
+         [_p("n", name), _p("t", tenant_id), _p("w", ws)])
     _sql("UPDATE workspace_deletion SET restored_at = NOW(), "
          "restored_by = :by WHERE tenant_id = :t AND workspace_id = :w "
          "AND deleted_at IS NOT NULL AND restored_at IS NULL",
          [_p("by", email), _p("t", tenant_id), _p("w", ws)])
-    print("[workspace-restored] tenant=%s workspace=%s shares=%d" % (
-        tenant_id, ws, lifted))
-    return {"workspace_id": ws, "name": found["name"],
+    print("[workspace-restored] tenant=%s workspace=%s shares=%d renamed=%s"
+          % (tenant_id, ws, lifted, name != found["name"]))
+    return {"workspace_id": ws, "name": name,
+            # Set where the name was taken and it came back under another.
+            "renamed_from": found["name"] if name != found["name"] else None,
             "shares_restored": lifted}

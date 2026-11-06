@@ -104,6 +104,7 @@ workspace's offerings.
   POST /workspaces/{workspace_id}/delete        the name, the code, and where
                                                 its only members move
   POST /workspaces/{workspace_id}/restore       bring it back
+  PUT  /workspaces/{workspace_id}               rename it (not an offering)
 
 A suggestion, from the rail's We want your suggestions. Any seat.
   POST /suggestions                      email it to us, and thank the sender
@@ -1894,7 +1895,11 @@ def get_memo(tenant_id, memo_id):
         """
         SELECT m.s3_bucket, m.s3_key, m.generated_at, m.generated_by,
                m.pdf_key, m.parent_memo_id, m.revision, m.modified_by,
-               m.modified_at, w.name, m.config_revision, m.workspace_id,
+               m.modified_at,
+               -- The name it was generated under, where a rename has
+               -- stamped one (migration 054); the name now where not.
+               COALESCE(m.workspace_name, w.name),
+               m.config_revision, m.workspace_id,
                e.name, COALESCE(e.display_name, e.name), m.template_key
         FROM memo m
         LEFT JOIN workspace w
@@ -2056,7 +2061,7 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
     parent = _sql(
         """
         SELECT s3_key, template_key, config_revision, parent_memo_id, revision,
-               engagement_id, state, workspace_id
+               engagement_id, state, workspace_id, workspace_name
         FROM memo WHERE tenant_id = :t AND memo_id = :m
         """,
         [_p("t", tenant_id), _p("m", int(memo_id))],
@@ -2080,6 +2085,9 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
     # And the workspace: a revision is written under its parent's
     # configuration series, and Update's revision is one of that series.
     parent_workspace = config.workspace_of(tenant_id, _col(records[0], 7))
+    # And the workspace name it was stamped with, if a rename has stamped
+    # one (migration 054): a revision reads the name its parent reads.
+    parent_workspace_name = _col(records[0], 8)
 
     # A citation naming a file that is not one of this memo's sources cannot
     # be checked against anything. Refuse the save rather than accept an
@@ -2217,17 +2225,19 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
     created = _sql(
         """
         INSERT INTO memo
-          (tenant_id, workspace_id, engagement_id, template_key,
-           config_revision, s3_bucket, s3_key, s3_version_id, sha256,
-           parent_memo_id, revision, state, modified_by, modified_at)
+          (tenant_id, workspace_id, workspace_name, engagement_id,
+           template_key, config_revision, s3_bucket, s3_key, s3_version_id,
+           sha256, parent_memo_id, revision, state, modified_by, modified_at)
         VALUES
-          (:tenant_id, :workspace_id, :engagement_id, :template_key,
-           :config_revision, :s3_bucket, :s3_key, :s3_version_id, :sha256,
-           :parent_memo_id, :revision, :state, :modified_by, UTC_TIMESTAMP())
+          (:tenant_id, :workspace_id, :workspace_name, :engagement_id,
+           :template_key, :config_revision, :s3_bucket, :s3_key,
+           :s3_version_id, :sha256, :parent_memo_id, :revision, :state,
+           :modified_by, UTC_TIMESTAMP())
         """,
         [
             _p("tenant_id", tenant_id),
             _p("workspace_id", parent_workspace),
+            _p("workspace_name", parent_workspace_name),
             _p("engagement_id", parent_engagement),
             _p("template_key", template_key),
             _p("config_revision", config_revision),
@@ -4645,6 +4655,15 @@ def _dispatch(event, context):
         if route == "POST /workspaces/{workspace_id}/restore":
             out = workspaces.restore(tenant_id, email, role,
                                      params.get("workspace_id"))
+            return _reply(200, out) if out is not None \
+                else _reply(404, {"error": "not found"})
+
+        # Renaming one (6 November 2026). Administrators only; never an
+        # ARQEDIA offering; a name another live workspace holds is refused.
+        if route == "PUT /workspaces/{workspace_id}":
+            out = workspaces.rename(tenant_id, email, role,
+                                    params.get("workspace_id"),
+                                    json.loads(event.get("body") or "{}"))
             return _reply(200, out) if out is not None \
                 else _reply(404, {"error": "not found"})
 
