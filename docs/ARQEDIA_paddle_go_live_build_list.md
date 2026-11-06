@@ -2,6 +2,9 @@
 
 **26 October 2026 · sandbox only; no live Paddle account exists**
 
+**Superseded 6 November 2026** by `ARQEDIA_paddle_go_live_list_2026-11-06.md`.
+Kept as it was.
+
 Sequential. Each stage depends on the one above it.
 
 ---
