@@ -1895,7 +1895,11 @@ def get_memo(tenant_id, memo_id):
         """
         SELECT m.s3_bucket, m.s3_key, m.generated_at, m.generated_by,
                m.pdf_key, m.parent_memo_id, m.revision, m.modified_by,
-               m.modified_at, w.name, m.config_revision, m.workspace_id,
+               m.modified_at,
+               -- The name it was generated under, where a rename has
+               -- stamped one (migration 054); the name now where not.
+               COALESCE(m.workspace_name, w.name),
+               m.config_revision, m.workspace_id,
                e.name, COALESCE(e.display_name, e.name), m.template_key
         FROM memo m
         LEFT JOIN workspace w
@@ -2057,7 +2061,7 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
     parent = _sql(
         """
         SELECT s3_key, template_key, config_revision, parent_memo_id, revision,
-               engagement_id, state, workspace_id
+               engagement_id, state, workspace_id, workspace_name
         FROM memo WHERE tenant_id = :t AND memo_id = :m
         """,
         [_p("t", tenant_id), _p("m", int(memo_id))],
@@ -2081,6 +2085,9 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
     # And the workspace: a revision is written under its parent's
     # configuration series, and Update's revision is one of that series.
     parent_workspace = config.workspace_of(tenant_id, _col(records[0], 7))
+    # And the workspace name it was stamped with, if a rename has stamped
+    # one (migration 054): a revision reads the name its parent reads.
+    parent_workspace_name = _col(records[0], 8)
 
     # A citation naming a file that is not one of this memo's sources cannot
     # be checked against anything. Refuse the save rather than accept an
@@ -2218,17 +2225,19 @@ def revise_memo(tenant_id, email, memo_id, markdown, rewrite_ids=None,
     created = _sql(
         """
         INSERT INTO memo
-          (tenant_id, workspace_id, engagement_id, template_key,
-           config_revision, s3_bucket, s3_key, s3_version_id, sha256,
-           parent_memo_id, revision, state, modified_by, modified_at)
+          (tenant_id, workspace_id, workspace_name, engagement_id,
+           template_key, config_revision, s3_bucket, s3_key, s3_version_id,
+           sha256, parent_memo_id, revision, state, modified_by, modified_at)
         VALUES
-          (:tenant_id, :workspace_id, :engagement_id, :template_key,
-           :config_revision, :s3_bucket, :s3_key, :s3_version_id, :sha256,
-           :parent_memo_id, :revision, :state, :modified_by, UTC_TIMESTAMP())
+          (:tenant_id, :workspace_id, :workspace_name, :engagement_id,
+           :template_key, :config_revision, :s3_bucket, :s3_key,
+           :s3_version_id, :sha256, :parent_memo_id, :revision, :state,
+           :modified_by, UTC_TIMESTAMP())
         """,
         [
             _p("tenant_id", tenant_id),
             _p("workspace_id", parent_workspace),
+            _p("workspace_name", parent_workspace_name),
             _p("engagement_id", parent_engagement),
             _p("template_key", template_key),
             _p("config_revision", config_revision),

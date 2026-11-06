@@ -1807,8 +1807,13 @@ export const api = {
       body: JSON.stringify({ name, code, move_members_to: moveMembersTo }),
     }),
 
-  /** Bring it back, before its date and where the plan has room. */
-  restoreWorkspace: (id: number) =>
+  /** Bring it back, before its date and where the plan has room. Where a
+   *  live workspace has taken its name meanwhile, it comes back as
+   *  "<name>-restored" and renamed_from says what it was called. */
+  restoreWorkspace: (id: number): Promise<{
+    workspace_id: number; name: string; renamed_from: string | null;
+    shares_restored: number;
+  }> =>
     call(`/workspaces/${id}/restore`, { method: "POST" }),
 
   /** A new name (6 November 2026). Administrator only. Refused with 409

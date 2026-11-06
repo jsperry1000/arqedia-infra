@@ -1748,8 +1748,13 @@ function Workspaces() {
     setSaid("");
     setBusy("Restoring " + name);
     try {
-      await api.restoreWorkspace(id);
-      setSaid(`${name} is back, with its shares.`);
+      const out = await api.restoreWorkspace(id);
+      // A name taken while it was gone comes back changed, and is said.
+      setSaid(out.renamed_from
+        ? `${out.renamed_from} is back, with its shares, as ${out.name}: `
+          + `another of your workspaces is called ${out.renamed_from} now. `
+          + "Rename either one if you want."
+        : `${name} is back, with its shares.`);
       workspacesChanged();
       await load();
     } catch (err) {

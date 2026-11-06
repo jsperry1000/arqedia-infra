@@ -1235,7 +1235,10 @@ def _memo(tenant_id, memo_id):
     result = _sql(
         """
         SELECT m.s3_bucket, m.s3_key, m.generated_at, m.parent_memo_id,
-               m.revision, w.name
+               m.revision,
+               -- The name it was generated under, where a rename has
+               -- stamped one (migration 054); the name now where not.
+               COALESCE(m.workspace_name, w.name)
         FROM memo m
         LEFT JOIN workspace w
                ON w.workspace_id = m.workspace_id
