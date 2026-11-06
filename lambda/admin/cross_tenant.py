@@ -95,6 +95,30 @@ def _records(result):
 # staff screen that showed one of them would be the place where the copy
 # having drifted from the original became invisible, so it shows both and
 # lets a person see they disagree.
+#
+# A TRIAL IS NOT A PLAN. Sign-up writes tenant.plan = 'base' for every new
+# tenant (lambda/signup/app.py) and leaves the plan to the subscription Paddle
+# reports; being on trial is having no subscription yet. So the Plan column
+# reads "base" for a trial, and only the standing below says it is one
+# (6 November 2026).
+#
+# STANDING IS wallet.classify_standing, IN SQL. The staff console shares no
+# code with the customer API (see the head of this file), so the rule is
+# restated here and must not drift from lambda/shared/wallet.py:
+#   tenant 0             arqedia: the workspace that curates what every other
+#                        tenant is offered, never a customer, so neither a
+#                        trial nor a subscription describes it
+#   no subscription      trial, or trial_ended once trial_ends_at has passed
+#                        (a missing date is not an ended trial)
+#   past_due             payment_failed
+#   paused               paused
+#   canceled, period over  cancelled
+#   anything else        active (a cancelled one still inside its paid
+#                        period included)
+# The customer API folds the three failures into purchased_only, which is
+# about what may be spent; staff are shown which of the three it is.
+# paddle_status, as wallet.standing reads - not s.status, which the Status
+# column shows.
 _TENANTS = """
 SELECT t.tenant_id,
        t.name,
@@ -104,7 +128,19 @@ SELECT t.tenant_id,
        (SELECT COUNT(*) FROM seat st WHERE st.tenant_id = t.tenant_id),
        t.created_at,
        t.trial_ends_at,
-       t.active_revision
+       t.active_revision,
+       CASE
+         WHEN t.tenant_id = 0 THEN 'arqedia'
+         WHEN s.tenant_id IS NULL THEN
+           CASE WHEN t.trial_ends_at IS NOT NULL AND t.trial_ends_at <= NOW()
+                THEN 'trial_ended' ELSE 'trial' END
+         WHEN s.paddle_status = 'past_due' THEN 'payment_failed'
+         WHEN s.paddle_status = 'paused' THEN 'paused'
+         WHEN s.paddle_status = 'canceled'
+              AND (s.current_period_ends_at IS NULL
+                   OR s.current_period_ends_at <= NOW()) THEN 'cancelled'
+         ELSE 'active'
+       END
 FROM tenant t
 LEFT JOIN subscription s ON s.tenant_id = t.tenant_id
 LEFT JOIN plan p ON p.plan_id = s.plan_id
@@ -167,6 +203,7 @@ def every_tenant():
             "created_at": r[6],
             "trial_ends_at": r[7],
             "active_revision": r[8],
+            "standing": r[9],
         }
         for r in _records(_read(_TENANTS))
     ]
