@@ -3,12 +3,14 @@ import { View, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Amplify } from 'aws-amplify';
-import { fetchUserAttributes, getCurrentUser, signOut } from 'aws-amplify/auth';
+import { fetchAuthSession, fetchUserAttributes, getCurrentUser, signOut } from 'aws-amplify/auth';
 import { config } from '@/config';
 import { colors } from '@/theme/colors';
 import { SessionProvider, type Session } from '@/auth/session';
 import SignInScreen from '@/auth/SignInScreen';
 import RootNavigator from '@/navigation/RootNavigator';
+import { WorkspaceProvider } from '@/workspace';
+import { api } from '@/api/client';
 
 // Amplify keeps the tokens in its own storage (AsyncStorage, through
 // @aws-amplify/react-native) and refreshes them; nothing here stores one.
@@ -21,6 +23,10 @@ Amplify.configure({
   },
 });
 
+// Held outside the component so the provider is not handed a new function,
+// and does not read again, on every render.
+const readWorkspaces = () => api.settings().then((s) => s.workspaces ?? []);
+
 export default function App() {
   // undefined while Amplify is asked; null when nobody is signed in.
   const [session, setSession] = useState<Session | null | undefined>(undefined);
@@ -29,8 +35,13 @@ export default function App() {
     try {
       await getCurrentUser();
       const attrs = await fetchUserAttributes();
+      // The tenant and role travel signed in the ID token, as on the web.
+      const claims: any = (await fetchAuthSession()).tokens?.idToken?.payload ?? {};
+      const role = String(claims['custom:role'] ?? '');
       setSession({
         email: attrs.email ?? '',
+        tenant: String(claims['custom:tenant_id'] ?? ''),
+        role: role === 'admin' || role === 'member' ? role : null,
         signOut: async () => {
           await signOut();
           setSession(null);
@@ -55,7 +66,9 @@ export default function App() {
         <SignInScreen onSignedIn={load} />
       ) : (
         <SessionProvider value={session}>
-          <RootNavigator />
+          <WorkspaceProvider tenant={session.tenant} read={readWorkspaces}>
+            <RootNavigator />
+          </WorkspaceProvider>
         </SessionProvider>
       )}
     </SafeAreaProvider>

@@ -40,6 +40,19 @@ export interface MemoRef {
   archived_at: string | null;
 }
 
+// ui/src/api.ts:661, Settings.workspaces.
+export interface WorkspaceRef {
+  workspace_id: number;
+  name: string;
+}
+
+// ui/src/api.ts:657. Only the fields the app reads.
+export interface Settings {
+  /** Every workspace for an administrator, a member's own. */
+  workspaces: WorkspaceRef[];
+  role: 'admin' | 'member';
+}
+
 // ui/src/api.ts:762
 export interface ShareAllowance {
   plan: string;

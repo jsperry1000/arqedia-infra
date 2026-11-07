@@ -7,6 +7,8 @@ import { colors } from '@/theme/colors';
 import { api } from '@/api/client';
 import { Engagement } from '@/types';
 import { RootStackParamList } from '@/navigation/RootNavigator';
+import { activeName, useWorkspace } from '@/workspace';
+import { useWorkspaceGate } from '@/screens/WorkspaceGate';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -18,23 +20,35 @@ export default function MemosScreen() {
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
+  const workspace = useWorkspace();
+  const gate = useWorkspaceGate();
+  const { active, epoch } = workspace;
 
+  // Read again whenever the workspace changes; the last one's engagements
+  // are cleared first, so they are never shown under the new name.
   const load = useCallback(async () => {
     setError('');
+    if (active === null) return;
     try {
       setEngagements((await api.engagements()).engagements);
     } catch (err: any) {
       setError(err?.message || String(err));
     }
-  }, []);
+  }, [active, epoch]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    setEngagements(null);
+    setQuery('');
+    load();
+  }, [load]);
 
   const onRefresh = async () => {
     setRefreshing(true);
     await load();
     setRefreshing(false);
   };
+
+  const name = activeName(workspace);
 
   const q = query.toLowerCase();
   const filtered = (engagements ?? []).filter((e) =>
@@ -46,8 +60,11 @@ export default function MemosScreen() {
     <SafeAreaView style={styles.screen} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.title}>Memos</Text>
+        {!!name && <Text style={styles.workspace} numberOfLines={1}>{name}</Text>}
         <Text style={styles.subtitle}>Choose an engagement</Text>
       </View>
+
+      {gate ?? (<>
 
       <View style={styles.searchWrap}>
         <TextInput
@@ -86,6 +103,7 @@ export default function MemosScreen() {
           </Pressable>
         )}
       />
+      </>)}
     </SafeAreaView>
   );
 }
@@ -95,6 +113,8 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
   title: { fontSize: 28, fontWeight: '700', color: colors.ink },
   subtitle: { fontSize: 14, color: colors.subtext, marginTop: 2 },
+  // The active workspace, chosen on the Account tab.
+  workspace: { fontSize: 15, fontWeight: '600', color: colors.mid, marginTop: 2 },
   searchWrap: { paddingHorizontal: 20, paddingBottom: 14 },
   search: {
     backgroundColor: colors.surface,

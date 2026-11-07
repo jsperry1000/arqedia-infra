@@ -5,6 +5,10 @@ import React, { createContext, useContext } from 'react';
 // the gate in App.tsx notice.
 export interface Session {
   email: string;
+  /** From the ID token's custom:tenant_id. Keys the remembered workspace. */
+  tenant: string;
+  /** From custom:role; null where the token carries neither. */
+  role: 'admin' | 'member' | null;
   signOut: () => Promise<void>;
 }
 
