@@ -8,6 +8,8 @@ import { RootStackParamList } from '@/navigation/RootNavigator';
 import { api, chargeKey, Capped, OverageRequired } from '@/api/client';
 import { openMemoPdf } from '@/api/pdf';
 import { Engagement, MemoRef, ShareAllowance, ShareGrant, ShareSent } from '@/types';
+import { activeName, useWorkspace } from '@/workspace';
+import { useWorkspaceGate } from '@/screens/WorkspaceGate';
 
 // Sending a memorandum, and taking it back. Follows ui/src/Share.tsx: the
 // allowance is shown before anything is pressed, the person affirms they are
@@ -90,7 +92,12 @@ export default function ShareScreen() {
   const [error, setError] = useState('');
   const [sent, setSent] = useState<ShareSent | null>(null);
 
+  const workspace = useWorkspace();
+  const gate = useWorkspaceGate();
+  const { active, epoch } = workspace;
+
   const loadShares = useCallback(async () => {
+    if (active === null) return;
     try {
       const r = await api.shares();
       setGrants(r.grants);
@@ -98,14 +105,29 @@ export default function ShareScreen() {
     } catch (err: any) {
       setError(err?.message || String(err));
     }
-  }, []);
+  }, [active, epoch]);
 
+  // A new workspace starts the screen over: an engagement, a memo or a
+  // price put to the person belongs to the workspace it was read in.
   useEffect(() => {
+    setEngagements(null);
+    setEngagement(null);
+    setMemos(null);
+    setMemo(null);
+    setGrants([]);
+    setAllowance(null);
+    setPrice(null);
+    setAccepted(false);
+    setSent(null);
+    setError('');
+    if (active === null) return;
     api.engagements()
       .then((r) => setEngagements(r.engagements))
       .catch((err) => setError(err?.message || String(err)));
     loadShares();
   }, [loadShares]);
+
+  const name = activeName(workspace);
 
   // Past the allowance already, and priced: the price is put to the person
   // before they press anything.
@@ -206,9 +228,11 @@ export default function ShareScreen() {
     <SafeAreaView style={styles.screen} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.title}>Share</Text>
+        {!!name && <Text style={styles.workspace} numberOfLines={1}>{name}</Text>}
         <Text style={styles.subtitle}>Send a memo to someone, right now</Text>
       </View>
 
+      {gate ?? (<>
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 12, gap: 18 }}>
         {allowance ? <AllowanceLine a={allowance} />
                    : !error && <Text style={styles.small}>Reading the allowance…</Text>}
@@ -378,6 +402,7 @@ export default function ShareScreen() {
                      </Text>}
         </Pressable>
       </View>
+      </>)}
     </SafeAreaView>
   );
 }
@@ -387,6 +412,8 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 14 },
   title: { fontSize: 28, fontWeight: '700', color: colors.ink },
   subtitle: { fontSize: 14, color: colors.subtext, marginTop: 2 },
+  // The active workspace, chosen on the Account tab.
+  workspace: { fontSize: 15, fontWeight: '600', color: colors.mid, marginTop: 2 },
   sectionLabel: {
     fontSize: 12, fontWeight: '600', letterSpacing: 0.6, color: colors.muted,
     textTransform: 'uppercase', marginBottom: 8,

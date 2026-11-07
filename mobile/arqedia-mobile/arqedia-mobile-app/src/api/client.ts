@@ -5,8 +5,9 @@
 import { fetchAuthSession } from 'aws-amplify/auth';
 import { randomUUID } from 'expo-crypto';
 import { config } from '@/config';
+import { activeWorkspace } from '@/workspace';
 import {
-  Engagement, MemoRef, ShareAllowance, ShareGrant, ShareSend, ShareSent,
+  Engagement, MemoRef, Settings, ShareAllowance, ShareGrant, ShareSend, ShareSent,
 } from '@/types';
 
 /** A refusal, carrying the status and the server's sentence. The handler
@@ -61,14 +62,28 @@ async function authHeaders(): Promise<Record<string, string>> {
   return { Authorization: token, 'content-type': 'application/json' };
 }
 
+/** The path with the active workspace on it, as ui/src/api.ts does it. Routes
+ *  with no use for it ignore it. A path naming its own workspace is left
+ *  as it is. */
+function scoped(path: string): string {
+  const id = activeWorkspace();
+  if (id === null || /[?&]workspace=/.test(path)) return path;
+  return path + (path.includes('?') ? '&' : '?') + 'workspace=' + id;
+}
+
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = await authHeaders();
-  const res = await fetch(config.apiUrl + path, { ...init, headers });
+  const res = await fetch(config.apiUrl + scoped(path), { ...init, headers });
   if (!res.ok) throw new ApiError(res.status, await res.text());
   return res.json();
 }
 
 export const api = {
+  /** The workspaces this person may work in, for the Account tab's list. */
+  settings(): Promise<Settings> {
+    return call('/settings');
+  },
+
   engagements(): Promise<{ engagements: Engagement[] }> {
     return call('/engagements');
   },
