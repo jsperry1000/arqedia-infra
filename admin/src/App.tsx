@@ -395,6 +395,17 @@ function when(value: string | null) {
   return value ? value.slice(0, 16) : "—";
 }
 
+/** A standing, in words. */
+const STANDING: Record<Tenant["standing"], string> = {
+  arqedia: "ARQEDIA",
+  trial: "Trial",
+  trial_ended: "Trial ended",
+  active: "Active",
+  payment_failed: "Payment failed",
+  paused: "Paused",
+  cancelled: "Cancelled",
+};
+
 function Tenants({ onSeats }: { onSeats: (t: Tenant) => void }) {
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [error, setError] = useState("");
@@ -413,13 +424,15 @@ function Tenants({ onSeats }: { onSeats: (t: Tenant) => void }) {
       <h1>Tenants</h1>
       <p className="note">{tenants.length} in the system. Plan is shown twice:
         the tenant&rsquo;s own copy and the subscription&rsquo;s. Where they
-        disagree, the subscription is the plan.</p>
+        disagree, the subscription is the plan. A trial has no subscription
+        and carries &ldquo;base&rdquo; as its copy until it subscribes;
+        Standing is what says it is a trial.</p>
       <table>
         <thead>
           <tr>
-            <th>#</th><th>Name</th><th>Plan</th><th>Subscription</th>
-            <th>Status</th><th>Seats</th><th>Created</th><th>Trial ends</th>
-            <th>Revision</th><th></th>
+            <th>#</th><th>Name</th><th>Standing</th><th>Plan</th>
+            <th>Subscription</th><th>Paddle status</th><th>Seats</th>
+            <th>Created</th><th>Trial ends</th><th>Revision</th><th></th>
           </tr>
         </thead>
         <tbody>
@@ -429,6 +442,7 @@ function Tenants({ onSeats }: { onSeats: (t: Tenant) => void }) {
               <tr key={t.tenant_id}>
                 <td className="number">{t.tenant_id}</td>
                 <td>{t.name}</td>
+                <td>{STANDING[t.standing] ?? t.standing}</td>
                 <td className={drift ? "disagrees" : undefined}>{t.plan ?? "—"}</td>
                 <td>{t.subscription_plan ?? "—"}</td>
                 <td>{t.subscription_status ?? "—"}</td>

@@ -27,6 +27,11 @@ export type Tenant = {
   created_at: string | null;
   trial_ends_at: string | null;
   active_revision: number | null;
+  /** What the tenant is, worked out as the customer API's standing is
+   *  (6 November 2026). A trial carries plan "base" and no subscription;
+   *  this is what says it is a trial. */
+  standing: "arqedia" | "trial" | "trial_ended" | "active"
+    | "payment_failed" | "paused" | "cancelled";
 };
 
 export type Seat = {
