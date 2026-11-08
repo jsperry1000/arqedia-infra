@@ -422,6 +422,41 @@ REWRITE_PROMPT = (
     "- no heading, no preamble, no commentary on what you changed."
 )
 
+# The section's bound facts, given to a rewrite (8 November 2026). A rewrite
+# saw only the section's text, so an instruction to "include the date of
+# incorporation" could do nothing once that date had been read from a document
+# filed after the section was written: the fact was on file and the rewrite
+# could not see it. Updating a memo with new information by asking for it was
+# impossible, and that was the complaint.
+#
+# The facts are the values read for this section under the configuration in
+# use, as Update writes from, each with its citation token. They widen rule 1
+# of REWRITE_PREAMBLE and nothing else: a fact comes in only where the
+# instruction asks for it and only with its token, and a fact on file that
+# differs from the section is stated beside it, never put in its place.
+REWRITE_FACTS = (
+    "\n"
+    "FACTS ON FILE\n"
+    "You are also given FACTS ON FILE: the values read from the documents now "
+    "on file for this section, each with its citation token. They widen rule "
+    "1, and only this far:\n"
+    "- Where the instruction asks for something the section does not state "
+    "and FACTS ON FILE does, add it, carrying the token or tokens FACTS ON "
+    "FILE gives for it. Do not add a fact without its token.\n"
+    "- Add nothing from FACTS ON FILE that the instruction does not ask for.\n"
+    "- Where FACTS ON FILE states a fact differently from the section - a "
+    "different figure, date, name, holding or status for the same thing - do "
+    "not choose between them and do not change the section's statement. Keep "
+    "it, and add one sentence saying what the section states and what the "
+    "documents now on file state, citing both.\n"
+    "- A gap the instruction asks to be answered, and FACTS ON FILE answers, "
+    "may be replaced by the fact with its token. Keep every other gap.\n"
+    "- Use only what FACTS ON FILE states. Do not compute anything from it.\n"
+    "- FACTS ON FILE labels material with its field key in brackets, for "
+    "example 'Trade Flows (f_trade_flows)'. The instruction may refer to it by "
+    "that key. Never write a field key in your output.\n"
+)
+
 
 # Update. A person has saved their own text of a memorandum, and the
 # configuration or the documents have moved on since. The section is written

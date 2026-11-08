@@ -2727,6 +2727,27 @@ def _update_revision(tenant_id, memo_id, rewrite_ids):
     return revisions.pop() if revisions else None
 
 
+def _rewrites_with_facts(tenant_id, memo_id, rewrite_ids):
+    """Whether a save accepts a rewrite that was given the facts on file
+    (8 November 2026). Composition stamps such a rewrite with the revision
+    it read them under; one without facts carries none."""
+    wanted = sorted({int(r) for r in (rewrite_ids or [])})
+    if not wanted:
+        return False
+    slots, params = _in_list(wanted, "r")
+    found = _sql(
+        """
+        SELECT COUNT(*) FROM memo_rewrite
+        WHERE tenant_id = :t AND memo_id = :m
+          AND (source IS NULL OR source <> 'update')
+          AND config_revision IS NOT NULL
+          AND rewrite_id IN (%s)
+        """ % slots,
+        [_p("t", tenant_id), _p("m", int(memo_id))] + params,
+    ).get("records", [])
+    return bool(found and int(_col(found[0], 0) or 0) > 0)
+
+
 # --- work in progress on a memo -------------------------------------------
 #
 # Prompts typed, rewrites accepted, hand edits - everything short of a saved
@@ -4685,11 +4706,18 @@ def _dispatch(event, context):
             # from the request.
             from_update = _update_revision(tenant_id, params.get("memo_id"),
                                            body.get("rewrites") or [])
+            # A rewrite given the facts on file brings in documents filed
+            # since as an Update does, and the save takes them in the same
+            # way. It does not move the memo's revision: that stays an
+            # Update's to say.
+            with_facts = _rewrites_with_facts(tenant_id, params.get("memo_id"),
+                                              body.get("rewrites") or [])
             revised = revise_memo(tenant_id, email, params.get("memo_id"),
                                   body.get("markdown", ""),
                                   body.get("rewrites") or [],
                                   config_revision=from_update,
-                                  add_sources=from_update is not None)
+                                  add_sources=from_update is not None
+                                  or with_facts)
             if revised is None:
                 return _reply(404, {"error": "not found"})
             return _reply(201, revised)
