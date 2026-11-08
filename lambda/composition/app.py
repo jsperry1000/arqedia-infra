@@ -658,6 +658,70 @@ def _split_heading(markdown):
     return "", text
 
 
+def _rewrite_facts(tenant_id, memo_id, heading):
+    """The facts on file for the section a rewrite is of, as Update would
+    write them now: (markdown, revision), or ("", None) where there are none.
+
+    THE CONFIGURATION IN USE, not the memo's own (8 November 2026). A fact
+    added to the configuration since the memo was written is the case this
+    exists for, and the memo's revision does not have it. The heading is
+    found in the memo's own revision, as Update finds it, so a section
+    renamed since still resolves; then in the one in use, for a section the
+    memo took in from an Update.
+
+    AN ASSEMBLED SECTION gives its bound facts. A COMPOSED one has none of
+    its own and is drafted from the sections it reads, so it gives theirs -
+    the assembled ones; a composed section it reads was itself drafted, and
+    is not a fact on file."""
+    found = _sql(
+        "SELECT template_key, config_revision, engagement_id, workspace_id "
+        "FROM memo WHERE tenant_id = :t AND memo_id = :m",
+        [_p("t", tenant_id), _p("m", int(memo_id))]).get("records", [])
+    if not found or not heading:
+        return "", None
+    template_key = _col(found[0], 0)
+    from_revision = int(_col(found[0], 1) or 1)
+    engagement_id = _col(found[0], 2)
+    if engagement_id is None:
+        return "", None
+    workspace_id = config.workspace_of(tenant_id, _col(found[0], 3))
+
+    revision = config.active_revision(tenant_id, workspace_id)
+    registry = config.load(tenant_id, workspace_id, revision)
+    if not registry.has_template(template_key):
+        return "", None
+    norm = _heading_norm(heading)
+    key = (_keys_by_heading(config.load(tenant_id, workspace_id,
+                                        from_revision), template_key).get(norm)
+           or _keys_by_heading(registry, template_key).get(norm))
+    section = next((s for s in registry.sections_for(template_key)
+                    if s["key"] == key), None)
+    if section is None:
+        return "", None
+
+    values = _load_values(tenant_id, workspace_id, engagement_id)
+    if not values:
+        return "", None
+
+    if section["kind"] == "composed":
+        extracts = {s["key"]: s
+                    for s in registry.sections_of_kind("extract", template_key)}
+        parts = []
+        for k in section.get("context_sections", []):
+            if k in extracts:
+                markdown, _ = _assemble_extract(registry, extracts[k], values)
+                if markdown.strip():
+                    parts.append("## " + extracts[k]["title"] + "\n\n"
+                                 + markdown)
+        facts = "\n\n".join(parts)
+    else:
+        facts, _ = _assemble_extract(registry, section, values)
+
+    if not facts.strip():
+        return "", None
+    return facts, revision
+
+
 def _rewrite(event):
     """Rewrite one section of a memo at a person's prompt.
 
@@ -686,7 +750,7 @@ def _rewrite(event):
 
     found = _sql(
         """
-        SELECT memo_id, prompt, input_text, status
+        SELECT memo_id, prompt, input_text, status, section_heading
         FROM memo_rewrite
         WHERE tenant_id = :t AND rewrite_id = :r
         """,
@@ -699,6 +763,7 @@ def _rewrite(event):
     instruction = (_col(found[0], 1) or "").strip()
     section = _col(found[0], 2) or ""
     status = _col(found[0], 3)
+    row_heading = _col(found[0], 4) or ""
 
     # Finished already. A second delivery of the same event must not call the
     # model twice.
@@ -736,6 +801,27 @@ def _rewrite(event):
                         % (len(body), _SECTION_INPUT_CHARS))
 
         masked, tokens = _mask_citations(body)
+        # The section's own citations. A fact on file the rewrite did not
+        # use is not a citation it dropped.
+        section_cites = set(tokens.values())
+
+        # The section's facts on file (8 November 2026), masked with the
+        # same numbering, so a source the section already cites is one
+        # token in both. Without them the rewrite runs as it always did: a
+        # fault reading them costs the person the new facts, not the
+        # rewrite, and is logged.
+        try:
+            facts, facts_revision = _rewrite_facts(
+                tenant_id, memo_id, row_heading or heading)
+        except Exception as exc:  # noqa: BLE001 - logged; rewrite goes on
+            print("[rewrite-facts-error] tenant=%s memo=%s rewrite=%s %r" % (
+                tenant_id, memo_id, rewrite_id, exc))
+            facts, facts_revision = "", None
+        if len(facts) > _SECTION_INPUT_CHARS:
+            print("[rewrite-facts-cut] rewrite=%s chars=%d limit=%d" % (
+                rewrite_id, len(facts), _SECTION_INPUT_CHARS))
+            facts = facts[:_SECTION_INPUT_CHARS]
+        facts_masked = _mask_citations(facts, tokens)[0] if facts else ""
 
         prompt = (
             cleanup.REWRITE_PROMPT
@@ -743,6 +829,8 @@ def _rewrite(event):
             + instruction
             + "\n"
             + cleanup.CITATION_TOKENS
+            + ("\n\n--- FACTS ON FILE START ---\n" + facts_masked
+               + "\n--- FACTS ON FILE END ---" if facts_masked else "")
             + "\n\n--- SECTION START ---\n"
             + (heading + "\n\n" if heading else "")
             + masked
@@ -756,10 +844,11 @@ def _rewrite(event):
         # but its own row.
         text, usage = _invoke(prompt,
                               system=cleanup.REWRITE_PREAMBLE
+                              + (cleanup.REWRITE_FACTS if facts_masked else "")
                               + cleanup.subject_rule(
                                   _subject_of_memo(tenant_id, memo_id)),
                               stage="rewrite", section=str(rewrite_id),
-                              chars_in=len(body))
+                              chars_in=len(body) + len(facts))
         tokens_in = usage.get("input_tokens", 0)
         tokens_out = usage.get("output_tokens", 0)
 
@@ -768,6 +857,7 @@ def _rewrite(event):
                         "off", tokens_in, tokens_out)
 
         text, dropped = _restore_citations(text, tokens)
+        dropped = [d for d in dropped if d in section_cites]
 
         # Written anyway, despite being told not to. Ours goes back instead.
         _, text = _split_heading(text)
@@ -776,24 +866,30 @@ def _rewrite(event):
 
         output = (heading + "\n\n" if heading else "") + text.strip() + "\n"
 
+        # config_revision says the rewrite was given facts on file, and under
+        # which revision. A save accepting it may then cite a document filed
+        # since the memo was written, as a save accepting an Update may.
         _sql(
             """
             UPDATE memo_rewrite
             SET status = 'done', output_text = :output,
                 citations_dropped = :dropped, model_id = :model,
                 tokens_in = :tokens_in, tokens_out = :tokens_out,
+                config_revision = :revision,
                 completed_at = UTC_TIMESTAMP()
             WHERE tenant_id = :t AND rewrite_id = :r AND status = 'running'
             """,
             [_p("output", output), _p("dropped", len(dropped)),
              _p("model", MODEL_ID), _p("tokens_in", tokens_in),
-             _p("tokens_out", tokens_out),
+             _p("tokens_out", tokens_out), _p("revision", facts_revision),
              _p("t", tenant_id), _p("r", rewrite_id)],
         )
 
         print("[rewrite] tenant=%s memo=%s rewrite=%s status=done "
-              "citations_dropped=%d of %d tokens_in=%s tokens_out=%s" % (
-                  tenant_id, memo_id, rewrite_id, len(dropped), len(tokens),
+              "citations_dropped=%d of %d facts_revision=%s facts_chars=%d "
+              "tokens_in=%s tokens_out=%s" % (
+                  tenant_id, memo_id, rewrite_id, len(dropped),
+                  len(section_cites), facts_revision, len(facts),
                   tokens_in, tokens_out))
 
         return {"status": "done", "rewrite_id": rewrite_id,
