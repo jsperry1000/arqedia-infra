@@ -732,8 +732,14 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   const [placing, setPlacing] = useState<number[]>([]);
   // Images in storage, waiting to go into the memo together; or a page break
   // from a new paragraph's box, waiting for what was typed there to go in.
+  // `open`: the first block opens for typing once it is in - a gap, which is
+  // put in to be written.
   const [arrived, setArrived] = useState<{ at: number; blocks: Block[];
-                                           act?: Act } | null>(null);
+                                           act?: Act; open?: boolean } | null>(null);
+  // A block put in through `arrived` to be opened, and the source it went in
+  // with. Opened only once the memo read back holds that source at that
+  // place: the render in between still has the block that was there before.
+  const openArrived = useRef<{ at: number; source: string } | null>(null);
 
   /** An image dropped or pasted: into storage first, then into the memo
    *  between blocks, on a line of its own. One act to undo. */
@@ -769,13 +775,28 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
     const at = Math.min(arrived.at, blocks.length);
     // One blank line after each: a source ending "\n" is its line and one
     // blank one, once joined.
+    const placed = arrived.blocks.map((b) => ({ ...b, source: blockToMarkdown(b, "\n") }));
+    if (arrived.open && placed.length > 0) {
+      openArrived.current = { at, source: placed[0].source };
+    }
     onChange(serializeBlocks([
       ...blocks.slice(0, at),
-      ...arrived.blocks.map((b) => ({ ...b, source: blockToMarkdown(b, "\n") })),
+      ...placed,
       ...blocks.slice(at),
     ]), arrived.act ?? "image");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arrived]);
+
+  useEffect(() => {
+    const want = openArrived.current;
+    if (!want) return;
+    const block = blocks[want.at];
+    // Read back as a last block it has lost its blank line; the line is it.
+    if (!block || block.source.trimEnd() !== want.source.trimEnd()) return;
+    openArrived.current = null;
+    setEditing(block.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markdown]);
 
   /** The gap nearest the pointer. Every gap has an insert point. */
   function gapAt(y: number): number {
@@ -1276,6 +1297,19 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                     title="Start a new page of the PDF here">
               Insert page break
             </button>
+            {/* A gap callout, as composition writes one: "> **Gap.**", opened
+                for the gap to be written. Through setArrived for the same
+                reason as the page break. */}
+            <button type="button" className="tool"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={(e) => setArrived({
+                      at: leaveNew(e.currentTarget, index),
+                      blocks: [{ id: "new", source: "", kind: "quote",
+                                 inlines: [{ kind: "bold", text: "Gap." }] }],
+                      act: "gap", open: true })}
+                    title="Put in a gap here: something missing, said as the memo says one">
+              Insert GAP
+            </button>
           </span>
         </p>
         </>
@@ -1410,7 +1444,12 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
               <div key={block.id} className={"callout " + calloutKind(block.inlines)}>
                 <p>
                   {editing === block.id ? (
-                    <Editable html={inlinesToHtml(block.inlines, goneRef)}
+                    // A callout ending on its bold word - "Gap." and nothing
+                    // yet - takes a space after it, so the caret is outside
+                    // the bold and what is typed reads plain. The space is
+                    // not kept: a line's trailing space is dropped on writing.
+                    <Editable html={inlinesToHtml(block.inlines, goneRef)
+                                    + (block.inlines.at(-1)?.kind === "bold" ? "&nbsp;" : "")}
                               onEdit={commitInlines(block.id, (b, nodes) =>
                                 ({ ...b, inlines: nodes } as Block))} />
                   ) : inlinesOf(block, block.inlines)}
