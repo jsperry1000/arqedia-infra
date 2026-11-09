@@ -508,6 +508,54 @@ export function toggleBullets(block: Block): Block[] {
   return [block];
 }
 
+/**
+ * Moving a block by its grip (9 November 2026): a paragraph, a callout, a
+ * list, a table, an image or a page break, up or down WITHIN ITS OWN
+ * SECTION. A section runs from one heading at level one or two to the next;
+ * a heading at three or below is inside it and can be moved past. Headings
+ * themselves do not move.
+ */
+export const MOVABLE: ReadonlySet<Block["kind"]> =
+  new Set(["para", "quote", "list", "table", "image", "pagebreak"]);
+
+/** The gaps a block at `i` may be dropped into: from `lo`, the gap after
+ *  the heading above it, to `hi`, the gap before the next. A gap is counted
+ *  as the index of the block it goes before. */
+export function sectionBounds(blocks: Block[], i: number): { lo: number; hi: number } {
+  const bound = (b: Block) => b.kind === "heading" && b.level <= 2;
+  let lo = i;
+  while (lo > 0 && !bound(blocks[lo - 1])) lo--;
+  let hi = i + 1;
+  while (hi < blocks.length && !bound(blocks[hi])) hi++;
+  return { lo, hi };
+}
+
+/** The memo with the block at `from` put into gap `to`, or null where that
+ *  leaves it where it was or takes it out of its section.
+ *
+ *  THE SPACING BELONGS TO THE PLACE, NOT THE BLOCK. Each block keeps its
+ *  text and takes the blank lines that followed whatever stood at its new
+ *  position, so the last block still ends the memo as the last one did.
+ *  Where two blocks meet that did not before, at least one blank line goes
+ *  between them: a paragraph that ran straight on into a table would
+ *  otherwise run on into whatever paragraph now follows it. */
+export function moveBlock(blocks: Block[], from: number, to: number): string | null {
+  if (to === from || to === from + 1) return null;
+  const { lo, hi } = sectionBounds(blocks, from);
+  if (to < lo || to > hi || !MOVABLE.has(blocks[from]?.kind)) return null;
+  const order = blocks.map((_, k) => k);
+  const [moved] = order.splice(from, 1);
+  order.splice(to > from ? to - 1 : to, 0, moved);
+  const trails = blocks.map((b) => trailingOf(b.source));
+  return order.map((k, pos) => {
+    const body = blocks[k].source.trimEnd();
+    let trail = trails[pos];
+    const last = pos === order.length - 1;
+    if (!last && order[pos + 1] !== k + 1 && !trail.includes("\n")) trail = "\n";
+    return body + trail;
+  }).join("\n");
+}
+
 /** The blank space a block's source ends with, so an edit keeps the spacing
  *  around it and the document does not close up.
  *

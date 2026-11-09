@@ -2,7 +2,8 @@ import { Fragment, useEffect, useMemo, useRef, useState,
          type DragEvent } from "react";
 import { parseBlocks, serializeBlocks, blockToMarkdown, trailingOf, citationsIn,
          isCitable, footnoteRef, indentLevel, indentOf, reindent,
-         toggleBullets, type Block, type Inline } from "./memodoc";
+         toggleBullets, MOVABLE, moveBlock, sectionBounds,
+         type Block, type Inline } from "./memodoc";
 import { citeChipHtml, inlinesToHtml, nodesToInlines } from "./memoedit";
 import type { Act } from "./undo";
 import { api, type DocumentDetail } from "./api";
@@ -675,6 +676,10 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   const [dropRow, setDropRow] = useState<{ r: number; below: boolean } | null>(null);
   // Counts the rows moved, for the rows' key: see the table below.
   const [moved, setMoved] = useState(0);
+  // A whole block being dragged by its grip (9 November 2026): where it was,
+  // and the gaps of its own section it may go into. Where it would go is
+  // dropAt, the line an image held over the memo also draws.
+  const blockDrag = useRef<{ from: number; lo: number; hi: number } | null>(null);
   // A footnote being chosen, and the cursor it goes at: taken when Insert
   // footnote is pressed, because the search box takes the focus after.
   const [picking, setPicking] = useState(false);
@@ -1337,6 +1342,19 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
       // Dropped anywhere on the memo, an image goes into the gap nearest the
       // pointer, marked while it is held over it.
       onDragOver={(e) => {
+        // A block by its grip: only into a gap of its own section, and no
+        // line where the drop would leave it where it is.
+        const moving = blockDrag.current;
+        if (moving) {
+          const at = gapAt(e.clientY);
+          const ok = at >= moving.lo && at <= moving.hi
+            && at !== moving.from && at !== moving.from + 1;
+          if (!ok) { if (dropAt !== null) setDropAt(null); return; }
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          if (at !== dropAt) setDropAt(at);
+          return;
+        }
         if (!takesFiles(e.dataTransfer)) return;
         e.preventDefault();
         const at = gapAt(e.clientY);
@@ -1346,6 +1364,22 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropAt(null);
       }}
       onDrop={(e) => {
+        const moving = blockDrag.current;
+        if (moving) {
+          e.preventDefault();
+          blockDrag.current = null;
+          const at = dropAt;
+          setDropAt(null);
+          const next = at === null ? null : moveBlock(blocks, moving.from, at);
+          if (next !== null && onChange) {
+            // Block ids are positions, so an open box would be the wrong
+            // block once this one has moved. Its text went in on the press.
+            setEditing(null);
+            setAdding(null);
+            onChange(next, "move");
+          }
+          return;
+        }
         if (!takesFiles(e.dataTransfer)) return;
         // Not the browser's: an open block would take the file as a picture
         // of its own, and anywhere else the page would leave for the file.
@@ -1626,10 +1660,40 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
         })();
         // A place to start a paragraph before every block, and one at the
         // end, so there is nowhere in the memo a new one cannot go.
+        //
+        // A block that can be moved carries a grip in the margin to its left,
+        // shown while the pointer is over the block (9 November 2026). Not
+        // on the block that is open: its text is being typed in.
+        const movable = editable && MOVABLE.has(block.kind);
         return (
           <Fragment key={block.id}>
             {insertAt(index)}
-            {content}
+            {movable ? (
+              <div className={editing === block.id ? "block-move open" : "block-move"}>
+                <span className="block-grip" draggable
+                      title="Drag to move this up or down within its section"
+                      // Whatever is being typed elsewhere is written in first,
+                      // so the move carries it.
+                      onMouseDown={() =>
+                        (document.activeElement as HTMLElement | null)?.blur()}
+                      onDragStart={(e) => {
+                        const { lo, hi } = sectionBounds(blocks, index);
+                        blockDrag.current = { from: index, lo, hi };
+                        e.dataTransfer.effectAllowed = "move";
+                        // Firefox starts no drag carrying nothing. A type of
+                        // our own, so no other page or program takes it.
+                        e.dataTransfer.setData("application/x-arqedia-block",
+                                               String(index));
+                        const box = e.currentTarget.parentElement;
+                        if (box) e.dataTransfer.setDragImage(box, 12, 12);
+                      }}
+                      onDragEnd={() => {
+                        blockDrag.current = null;
+                        setDropAt(null);
+                      }}>&#x283F;</span>
+                {content}
+              </div>
+            ) : content}
           </Fragment>
         );
       })}
