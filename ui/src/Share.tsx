@@ -12,16 +12,29 @@ import { recipientSuggestions } from "./recipients";
 /** The recipient field, offering the addresses this workspace has shared
  *  with (5 November 2026). A native datalist: typing filters it, and an
  *  address nobody has been sent is typed as before. */
-export function RecipientInput({ value, onChange, grants, id }: {
+export function RecipientInput({ value, onChange, grants, id, several = false }: {
   value: string;
   onChange: (v: string) => void;
   grants: ShareGrant[];
   id: string;
+  /** A comma-separated list (9 November 2026). A datalist choice replaces
+   *  the whole field, so each suggestion carries the addresses already
+   *  typed before the last comma, and one already listed is not offered. */
+  several?: boolean;
 }) {
-  const known = recipientSuggestions(grants);
+  let known = recipientSuggestions(grants);
+  if (several) {
+    const cut = value.lastIndexOf(",");
+    const typed = cut < 0 ? "" : value.slice(0, cut);
+    const listed = new Set(typed.split(",").map((a) => a.trim().toLowerCase()));
+    const head = typed.trim() ? typed.trim() + ", " : "";
+    known = known.filter((a) => !listed.has(a.toLowerCase())).map((a) => head + a);
+  }
   return (
     <>
-      <input placeholder="name@firm.com" value={value} list={id}
+      <input placeholder={several ? "name@firm.com, other@firm.com"
+                                  : "name@firm.com"}
+             value={value} list={id}
              autoComplete="off"
              onChange={(e) => onChange(e.target.value)} />
       <datalist id={id}>
@@ -102,21 +115,20 @@ export function Scope() {
 }
 
 /** §7.2. The tenant's own assurance, at the moment of sending. */
-export function Authority({ checked, onChange, several = false }: {
+export function Authority({ checked, onChange, several = false, people = false }: {
   checked: boolean; onChange: (v: boolean) => void; several?: boolean;
+  /** More than one recipient. */
+  people?: boolean;
 }) {
   return (
     <label className="affirm">
       <input type="checkbox" checked={checked}
              onChange={(e) => onChange(e.target.checked)} />
       <span>
-        {several
-          ? "I am entitled to share these memoranda with this person. They "
-            + "carry third-party identity material, and that assurance is "
-            + "mine to give."
-          : "I am entitled to share this memorandum with this person. It "
-            + "carries third-party identity material, and that assurance is "
-            + "mine to give."}
+        {`I am entitled to share ${several ? "these memoranda" : "this memorandum"} `
+          + `with ${people ? "these people" : "this person"}. `
+          + `${several ? "They carry" : "It carries"} third-party identity `
+          + "material, and that assurance is mine to give."}
       </span>
     </label>
   );

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  MAX_BATCH, NO_FILTER, filterHistory, filterMemos, planBatch, resendsFor,
-  sharesByMemo, sortRows, toggle, type BatchMemo,
+  MAX_BATCH, MAX_RECIPIENTS, NO_FILTER, filterHistory, filterMemos,
+  parseRecipients, planBatch, planShares, resendsFor, sharesByMemo, sortRows,
+  toggle, type BatchMemo,
 } from "./shareBatch";
 
 const memo = (id: number, extra: Partial<BatchMemo> = {}): BatchMemo => ({
@@ -164,5 +165,38 @@ describe("filtering History", () => {
     expect(filterHistory(grants, { ...NO_FILTER, text: "lender" })).toHaveLength(1);
     expect(filterHistory(grants, { text: "", from: "2026-10-05", to: "" })
       .map((g) => g.recipient_email)).toEqual(["b@y.test"]);
+  });
+});
+
+describe("several recipients", () => {
+  const priced = { allowance: 10, remaining: 3, overage_cents: 100 };
+
+  it("reads a comma-separated list, trimmed, a repeat taken once", () => {
+    const r = parseRecipients(" a@x.com, B@y.com ,,a@X.com; c@z.com ");
+    expect(r.recipients).toEqual(["a@x.com", "B@y.com", "c@z.com"]);
+    expect(r.problem).toBeNull();
+  });
+
+  it("names an address that is not one", () => {
+    expect(parseRecipients("a@x.com, bob").problem).toMatch(/bob/);
+  });
+
+  it(`refuses more than ${MAX_RECIPIENTS}`, () => {
+    const six = [1, 2, 3, 4, 5, 6].map((n) => `p${n}@x.com`).join(", ");
+    expect(parseRecipients(six).problem).toMatch(/At most 5/);
+  });
+
+  it("plans every memorandum to every person, person by person", () => {
+    const plan = planShares([1, 2], ["a@x.com", "b@y.com"], priced, []);
+    expect(plan.rows.map((r) => `${r.recipient}:${r.memo_id}:${r.kind}`)).toEqual([
+      "a@x.com:1:included", "a@x.com:2:included",
+      "b@y.com:1:included", "b@y.com:2:paid"]);
+    expect(plan.totalCents).toBe(100);
+  });
+
+  it("a re-send is free for the person it went to, not for the others", () => {
+    const plan = planShares([1], ["a@x.com", "b@y.com"], priced,
+                            [{ memo_id: 1, recipient_email: "A@x.com" }]);
+    expect(plan.rows.map((r) => r.kind)).toEqual(["resend", "included"]);
   });
 });
