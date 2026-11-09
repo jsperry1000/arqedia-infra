@@ -12,7 +12,7 @@ import { parseBlocks } from "./memodoc";
 
 export type Act = "edit" | "add" | "split" | "delete" | "drop-empty" | "row"
   | "accept" | "put-back" | "discard" | "image" | "page-break" | "indent"
-  | "bullets" | "gap";
+  | "bullets" | "gap" | "move";
 
 export type Step = {
   act: Act;
@@ -47,6 +47,7 @@ export const ACT_SAID: Record<Act, string> = {
   "indent": "an indent",
   "bullets": "bullets on or off",
   "gap": "put in a gap",
+  "move": "move a block",
 };
 
 /** The block sources of a text. Joined with "\n" they are the text again
