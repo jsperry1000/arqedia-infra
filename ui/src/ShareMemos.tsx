@@ -9,20 +9,22 @@ import {
   day, errorText, money, useSort,
 } from "./Share";
 import {
-  MAX_BATCH, NO_FILTER, filterMemos, planBatch, resendsFor, sharesByMemo,
-  sortRows, toggle,
+  MAX_BATCH, MAX_RECIPIENTS, NO_FILTER, filterMemos, parseRecipients,
+  planShares, sharesByMemo, sortRows, toggle,
   type BatchMemo, type Filter, type Plan,
 } from "./shareBatch";
 
 /**
  * Share a memo (feature/share-multi-memo). Up to five memoranda, from any
- * engagement, to one person, in one email.
+ * engagement, to one person, in one email. Since 9 November 2026 to up to
+ * five people, comma-separated: every memorandum to every person, each pair
+ * its own share, and one email to each person.
  *
  * EACH MEMORANDUM IS STILL ITS OWN SHARE. They go one at a time through the
  * same route the memo page uses - its own grant, its own place in the
  * allowance, its own charge and idempotency key - with notify: false. Once
- * they have all been answered, ONE email carries the links of those that
- * went (POST /shares/notify). A retry of the ones that failed gets an email
+ * they have all been answered, ONE email to each person carries the links of
+ * those that went to them (POST /shares/notify). A retry of the ones that failed gets an email
  * of its own.
  *
  * NOTHING IS SENT OR CHARGED UNTIL A BUTTON SAYS SO. Where the batch runs
@@ -35,6 +37,7 @@ type MemoKey = "label" | "engagement_shown" | "generated_at" | "number";
 
 type Outcome = {
   memo_id: number;
+  recipient: string;
   ok: boolean;
   grant_id?: string;
   charged_cents?: number;
@@ -44,7 +47,14 @@ type Outcome = {
   price?: number;
 };
 
-type Notified = { grantIds: string[]; sent: boolean | null; error?: string };
+type Notified = { recipient: string; grantIds: string[]; sent: boolean | null;
+                  error?: string };
+
+type Row = { memo_id: number; recipient: string; accept: number | null };
+
+/** One share: a memorandum to a person. Keys, prices and outcomes by it. */
+const pair = (r: { memo_id: number; recipient: string }) =>
+  `${r.recipient.toLowerCase()}|${r.memo_id}`;
 
 export function ShareBatchView({ onBack, onHistory, onTopUp }: {
   onBack: () => void;
@@ -71,11 +81,11 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
   // The plan shown when the batch runs past the allowance. Null until Send.
   const [shortfall, setShortfall] = useState<Plan | null>(null);
   const [sending, setSending] = useState(false);
-  // One key per memorandum, minted when the batch is first sent and kept
-  // for its retries, so a retry is answered rather than charged twice.
-  const [keys, setKeys] = useState<Record<number, string>>({});
+  // One key per share, minted when the batch is first sent and kept for its
+  // retries, so a retry is answered rather than charged twice.
+  const [keys, setKeys] = useState<Record<string, string>>({});
   // What each send was asked to accept, kept for a retry.
-  const [accepts, setAccepts] = useState<Record<number, number | null>>({});
+  const [accepts, setAccepts] = useState<Record<string, number | null>>({});
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const [notified, setNotified] = useState<Notified[]>([]);
 
@@ -121,12 +131,18 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
   }
 
   const started = outcomes.length > 0;
-  const ready = selected.length > 0 && !!to.trim() && affirmed && !sending
-    && !!allowance && !allowance.capped && !started;
+  const { recipients: people, problem } = parseRecipients(to);
+  // Every share counts against the day's limit, a re-send too, so a batch
+  // past what is left of it is stopped here rather than half sent.
+  const shares = selected.length * people.length;
+  const dayLeft = allowance ? Math.max(0, allowance.daily_limit - allowance.today) : 0;
+  const overDay = !!allowance && shares > dayLeft;
+  const ready = selected.length > 0 && people.length > 0 && !problem && !overDay
+    && affirmed && !sending && !!allowance && !allowance.capped && !started;
 
-  function plan(): Plan | null {
+  function plan(memoIds: number[] = selected): Plan | null {
     if (!allowance) return null;
-    return planBatch(selected, allowance, resendsFor(to, grants));
+    return planShares(memoIds, people, allowance, grants);
   }
 
   /** Send pressed. Within the allowance it goes; past it, it stops and
@@ -135,19 +151,20 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
     const p = plan();
     if (!p) return;
     if (p.paid > 0) { setShortfall(p); return; }
-    sendRows(p.rows.map((r) => ({ memo_id: r.memo_id, accept: null })));
+    sendRows(p.rows.map((r) => ({ memo_id: r.memo_id, recipient: r.recipient,
+                                   accept: null })));
   }
 
   /** One at a time, through the memo page's own route, then one email. */
-  async function sendRows(rows: { memo_id: number; accept: number | null }[]) {
+  async function sendRows(rows: Row[]) {
     setSending(true);
     setShortfall(null);
     setError("");
     const k = { ...keys };
     const a = { ...accepts };
     for (const r of rows) {
-      k[r.memo_id] ??= chargeKey();
-      a[r.memo_id] = r.accept;
+      k[pair(r)] ??= chargeKey();
+      a[pair(r)] = r.accept;
     }
     setKeys(k);
     setAccepts(a);
@@ -156,14 +173,15 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
     for (const r of rows) {
       try {
         const sent = await api.sendShare(r.memo_id, {
-          recipient: to.trim(),
+          recipient: r.recipient,
           authority_affirmed: affirmed,
           expiry_days: expiry === "default" ? null : Number(expiry),
-          idempotency_key: k[r.memo_id],
+          idempotency_key: k[pair(r)],
           accept_overage_cents: r.accept,
           notify: false,
         });
-        results.push({ memo_id: r.memo_id, ok: true, grant_id: sent.grant_id,
+        results.push({ memo_id: r.memo_id, recipient: r.recipient,
+                       ok: true, grant_id: sent.grant_id,
                        charged_cents: sent.charged_cents,
                        reinstated: sent.reinstated });
       } catch (err) {
@@ -174,30 +192,36 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
             if (typeof body.overage_cents === "number") price = body.overage_cents;
           } catch { /* not the price refusal */ }
         }
-        results.push({ memo_id: r.memo_id, ok: false, error: errorText(err), price });
+        results.push({ memo_id: r.memo_id, recipient: r.recipient, ok: false,
+                       error: errorText(err), price });
       }
       // Shown as they arrive, so five renders are not a blank wait.
       // A retried row keeps its place in the list.
       setOutcomes((prev) => {
-        const rows = new Map(prev.map((o) => [o.memo_id, o]));
-        for (const x of results) rows.set(x.memo_id, x);
+        const rows = new Map(prev.map((o) => [pair(o), o]));
+        for (const x of results) rows.set(pair(x), x);
         return [...rows.values()];
       });
     }
 
-    const ids = results.filter((o) => o.ok && o.grant_id).map((o) => o.grant_id!);
-    if (ids.length > 0) await notify(ids);
+    // One email to each person, carrying the links of what went to them.
+    const byPerson = new Map<string, string[]>();
+    for (const o of results) {
+      if (!o.ok || !o.grant_id) continue;
+      byPerson.set(o.recipient, [...(byPerson.get(o.recipient) ?? []), o.grant_id]);
+    }
+    for (const [recipient, ids] of byPerson) await notify(recipient, ids);
     setSending(false);
     load();
   }
 
-  async function notify(grantIds: string[]) {
+  async function notify(recipient: string, grantIds: string[]) {
     let entry: Notified;
     try {
       const r = await api.notifyShares(grantIds);
-      entry = { grantIds, sent: r.sent };
+      entry = { recipient, grantIds, sent: r.sent };
     } catch (err) {
-      entry = { grantIds, sent: false, error: errorText(err) };
+      entry = { recipient, grantIds, sent: false, error: errorText(err) };
     }
     setNotified((prev) => [
       ...prev.filter((n) => n.grantIds.join() !== grantIds.join()), entry]);
@@ -205,7 +229,7 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
 
   async function emailAgain(n: Notified) {
     setSending(true);
-    await notify(n.grantIds);
+    await notify(n.recipient, n.grantIds);
     setSending(false);
   }
 
@@ -213,11 +237,12 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
   // A retry of a share refused at a price it now costs accepts that price,
   // and the button says so before it is pressed.
   const retryCost = failed.reduce((sum, o) =>
-    sum + (o.price ?? accepts[o.memo_id] ?? 0), 0);
+    sum + (o.price ?? accepts[pair(o)] ?? 0), 0);
 
   function retry() {
     sendRows(failed.map((o) => ({
-      memo_id: o.memo_id, accept: o.price ?? accepts[o.memo_id] ?? null })));
+      memo_id: o.memo_id, recipient: o.recipient,
+      accept: o.price ?? accepts[pair(o)] ?? null })));
   }
 
   function startAgain() {
@@ -237,7 +262,8 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
       <h2>Share a memo</h2>
       <p className="muted">
         Tick up to {MAX_BATCH} memoranda, from any engagement, and send them to
-        one person. They get one email with a link to each.{" "}
+        up to {MAX_RECIPIENTS} people, separated by commas. Each person gets
+        one email with a link to each memorandum.{" "}
         <a onClick={onHistory}>History</a> shows what has been shared.
       </p>
 
@@ -257,8 +283,16 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
             <label className="row">
               <span>Recipient email</span>
               <RecipientInput value={to} grants={grants} id="batch-recipients"
+                              several
                               onChange={(v) => { setTo(v); setShortfall(null); }} />
             </label>
+            {problem && <p className="warn">{problem}</p>}
+            {!problem && overDay && (
+              <p className="warn">
+                That is {shares} shares ({selected.length} memoranda to{" "}
+                {people.length} people). {dayLeft} more can be sent today.
+              </p>
+            )}
 
             <label className="row">
               <span>Access</span>
@@ -277,14 +311,18 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
             <CannotRecall />
 
             <Authority checked={affirmed} onChange={setAffirmed}
-                       several={selected.length > 1} />
+                       several={selected.length > 1} people={people.length > 1} />
 
             {!shortfall && (
               <div className="form-actions">
                 <button onClick={onSend} disabled={!ready}
                         title={!affirmed ? "Confirm you are entitled to share them first."
                                          : undefined}>
-                  {selected.length > 1 ? `Send ${selected.length} memoranda` : "Send"}
+                  {people.length > 1
+                    ? `Send ${selected.length === 1 ? "1 memorandum"
+                                                    : `${selected.length} memoranda`}`
+                      + ` to ${people.length} people`
+                    : selected.length > 1 ? `Send ${selected.length} memoranda` : "Send"}
                 </button>
               </div>
             )}
@@ -296,15 +334,15 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
                          const next = selected.filter((x) => x !== id);
                          setSelected(next);
                          setRefused(null);
-                         const p = allowance
-                           ? planBatch(next, allowance, resendsFor(to, grants)) : null;
+                         const p = plan(next);
                          setShortfall(p && p.paid > 0 ? p : null);
                        }}
                        onIncludedOnly={() => sendRows(shortfall.rows
                          .filter((r) => r.kind !== "paid")
-                         .map((r) => ({ memo_id: r.memo_id, accept: null })))}
+                         .map((r) => ({ memo_id: r.memo_id, recipient: r.recipient,
+                                        accept: null })))}
                        onAll={() => sendRows(shortfall.rows.map((r) => ({
-                         memo_id: r.memo_id,
+                         memo_id: r.memo_id, recipient: r.recipient,
                          accept: r.kind === "paid" ? shortfall.unitCents : null })))}
                        onTopUp={onTopUp}
                        onCancel={() => setShortfall(null)} />
@@ -383,12 +421,13 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
 
       {started && (
         <div className="form">
-          <h4>Sent to {to.trim()}</h4>
+          <h4>Sent to {people.join(", ")}</h4>
           <table className="docs">
             <tbody>
               {outcomes.map((o) => (
-                <tr key={o.memo_id}>
+                <tr key={pair(o)}>
                   <td>{name(o.memo_id)}</td>
+                  {people.length > 1 && <td className="small">{o.recipient}</td>}
                   <td>
                     {o.ok
                       ? <>{o.reinstated ? "shared again, access restored" : "shared"}
@@ -410,9 +449,10 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
             <p key={n.grantIds.join()}
                className={n.sent ? "revision-note" : "warn"}>
               {n.sent
-                ? `One email sent with ${n.grantIds.length === 1
+                ? `One email sent to ${n.recipient} with ${n.grantIds.length === 1
                     ? "the link" : `${n.grantIds.length} links`}.`
-                : <>The email could not be sent{n.error ? `: ${n.error}` : "."}{" "}
+                : <>The email to {n.recipient} could not be sent
+                    {n.error ? `: ${n.error}` : "."}{" "}
                     The shares stand.{" "}
                     <a onClick={() => !sending && emailAgain(n)}>Email them again</a></>}
             </p>
@@ -448,6 +488,7 @@ function Shortfall({ plan, name, onRemove, onIncludedOnly, onAll, onTopUp,
   onCancel: () => void;
 }) {
   const free = plan.included + plan.resend;
+  const several = new Set(plan.rows.map((r) => r.recipient.toLowerCase())).size > 1;
   const kindText = (k: string) =>
     k === "included" ? "included in your plan"
     : k === "resend" ? "already shared with them — sent again, free"
@@ -466,10 +507,17 @@ function Shortfall({ plan, name, onRemove, onIncludedOnly, onAll, onTopUp,
       <table className="docs">
         <tbody>
           {plan.rows.map((r) => (
-            <tr key={r.memo_id}>
+            <tr key={pair(r)}>
               <td>{name(r.memo_id)}</td>
+              {several && <td className="small">{r.recipient}</td>}
               <td className="small">{kindText(r.kind)}</td>
-              <td><a className="secondary" onClick={() => onRemove(r.memo_id)}>Remove</a></td>
+              <td>
+                <a className="secondary" onClick={() => onRemove(r.memo_id)}
+                   title={several ? "Takes this memorandum out for everyone"
+                                  : undefined}>
+                  Remove
+                </a>
+              </td>
             </tr>
           ))}
         </tbody>

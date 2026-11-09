@@ -63,8 +63,10 @@ export type Allowance = {
 
 export type PlanKind = "included" | "paid" | "resend";
 
+export type PlanRow = { memo_id: number; recipient: string; kind: PlanKind };
+
 export type Plan = {
-  rows: { memo_id: number; kind: PlanKind }[];
+  rows: PlanRow[];
   included: number;
   paid: number;
   resend: number;
@@ -75,7 +77,7 @@ export type Plan = {
 };
 
 /** Which of a batch fall inside the allowance, which would be charged, and
- *  which are re-sends - in the order they were ticked.
+ *  which are re-sends - in the order given.
  *
  *  A RE-SEND IS FREE. A memorandum already shared with this recipient is the
  *  same grant sent again (reinstated if revoked): no allowance, no charge -
@@ -85,22 +87,76 @@ export type Plan = {
  *  rest. Nothing here is a promise: the server counts each share as it
  *  arrives, and one that has become paid since this was planned is refused
  *  with its price rather than charged. */
-export function planBatch(selected: number[], allowance: Allowance,
-                          resendIds: Set<number>): Plan {
+function planPairs(pairs: { memo_id: number; recipient: string }[],
+                   allowance: Allowance,
+                   isResend: (memoId: number, recipient: string) => boolean): Plan {
   let left = allowance.allowance === null ? Infinity
                                           : Math.max(0, allowance.remaining ?? 0);
-  const rows = selected.map((memo_id) => {
+  const rows = pairs.map(({ memo_id, recipient }) => {
     let kind: PlanKind;
-    if (resendIds.has(memo_id)) kind = "resend";
+    if (isResend(memo_id, recipient)) kind = "resend";
     else if (left > 0) { kind = "included"; left -= 1; }
     else kind = "paid";
-    return { memo_id, kind };
+    return { memo_id, recipient, kind };
   });
   const count = (k: PlanKind) => rows.filter((r) => r.kind === k).length;
   const paid = count("paid");
   const unitCents = allowance.overage_cents;
   return { rows, included: count("included"), paid, resend: count("resend"),
            unitCents, totalCents: unitCents === null ? 0 : paid * unitCents };
+}
+
+/** One recipient: the memoranda in the order they were ticked. */
+export function planBatch(selected: number[], allowance: Allowance,
+                          resendIds: Set<number>, recipient = ""): Plan {
+  return planPairs(selected.map((memo_id) => ({ memo_id, recipient })),
+                   allowance, (id) => resendIds.has(id));
+}
+
+/** Several recipients (9 November 2026): every ticked memorandum to every
+ *  recipient, each pair its own share. Recipient by recipient, so where the
+ *  included shares run out, the first recipients have the whole batch. */
+export function planShares(selected: number[], recipients: string[],
+                           allowance: Allowance,
+                           grants: { memo_id: number; recipient_email: string }[]):
+    Plan {
+  const sent = new Map(recipients.map((r) => [r, resendsFor(r, grants)]));
+  return planPairs(
+    recipients.flatMap((recipient) =>
+      selected.map((memo_id) => ({ memo_id, recipient }))),
+    allowance, (id, r) => sent.get(r)?.has(id) ?? false);
+}
+
+// --- recipients --------------------------------------------------------------
+
+/** At most this many recipients for one batch. */
+export const MAX_RECIPIENTS = 5;
+
+const EMAIL = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
+
+/** The recipient field read as a list: split on commas (or semicolons, as a
+ *  mail client pastes them), trimmed, a repeat taken once ignoring case.
+ *  `problem` says what keeps it from being sent, or is null. */
+export function parseRecipients(text: string):
+    { recipients: string[]; problem: string | null } {
+  const seen = new Set<string>();
+  const recipients: string[] = [];
+  for (const part of text.split(/[,;]/)) {
+    const address = part.trim();
+    if (!address || seen.has(address.toLowerCase())) continue;
+    seen.add(address.toLowerCase());
+    recipients.push(address);
+  }
+  const bad = recipients.filter((a) => !EMAIL.test(a));
+  if (bad.length > 0) {
+    return { recipients, problem: `Not an email address: ${bad.join(", ")}.` };
+  }
+  if (recipients.length > MAX_RECIPIENTS) {
+    return { recipients,
+             problem: `At most ${MAX_RECIPIENTS} recipients at once; `
+                      + `${recipients.length} are listed.` };
+  }
+  return { recipients, problem: null };
 }
 
 /** Memoranda already shared with this address - the re-sends of a batch. */
