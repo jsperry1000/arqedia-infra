@@ -165,6 +165,17 @@ export type DeletedWorkspace = {
   restorable: boolean;
 };
 
+/** The organization profile (9 November 2026). Only the name is
+ *  required. signed_in_email is offered as the contact email while none is
+ *  set; it is never stored by reading. */
+export type Organization = {
+  name: string;
+  address: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  signed_in_email: string;
+};
+
 export type WorkspaceList = {
   workspaces: HeldWorkspace[];
   deleted: DeletedWorkspace[];
@@ -1795,6 +1806,13 @@ export const api = {
   /** Every workspace with what it holds, and the deleted ones. Administrator
    *  only. */
   workspacesList: (): Promise<WorkspaceList> => call("/workspaces"),
+
+  /** The organization profile. Administrator only, reading and writing. */
+  organization: (): Promise<Organization> => call("/organization"),
+  saveOrganization: (body: { name: string; address: string;
+                             contact_email: string; contact_phone: string }):
+      Promise<Organization> =>
+    call("/organization", { method: "PUT", body: JSON.stringify(body) }),
 
   /** Email the administrator the code deleting needs. One a minute. */
   workspaceDeletionCode: (id: number):

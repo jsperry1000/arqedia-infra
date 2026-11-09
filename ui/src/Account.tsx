@@ -7,7 +7,8 @@ import { ENTERPRISE_COLUMN, EnterpriseLink, UpgradePrompt,
 import { api, chargeKey, type Wallet, type LedgerEntry,
          type Seats as SeatState, type Invited,
          type SubscriptionView, type Plan, type Invoice, type InvoicePage,
-         type WorkspaceList, type HeldWorkspace } from "./api";
+         type WorkspaceList, type HeldWorkspace,
+         type Organization } from "./api";
 import { openCheckout } from "./paddle";
 import { LEGAL } from "./legal";
 import { useWorkspace, workspacesChanged } from "./workspace";
@@ -159,10 +160,15 @@ const ROWS: PlanRow[] = [
  * checkout is ASK AGAIN, and say plainly that the answer may take a moment.
  */
 
-type Tab = "subscription" | "balance" | "seats" | "workspaces" | "password";
+type Tab = "subscription" | "balance" | "seats" | "workspaces"
+  | "organization" | "password";
 
 const TABS: Tab[] = ["subscription", "balance", "seats", "workspaces",
-                     "password"];
+                     "organization", "password"];
+
+// The tabs only an administrator is shown: every route behind them refuses
+// a member.
+const ADMIN_TABS: Tab[] = ["workspaces", "organization"];
 
 /**
  * THE TAB IS IN THE ADDRESS (11.1). It was local state, so every arrival
@@ -183,7 +189,7 @@ export function AccountView({ onBack }: { onBack: () => void }) {
   const role = useRole();
   const admin = role === "admin";
   const tab: Tab = asked && TABS.includes(asked)
-    && (asked !== "workspaces" || admin) ? asked : "subscription";
+    && (!ADMIN_TABS.includes(asked) || admin) ? asked : "subscription";
   const setTab = (to: Tab) => setParams({ tab: to }, { replace: true });
 
   return (
@@ -201,6 +207,10 @@ export function AccountView({ onBack }: { onBack: () => void }) {
           <button className={tab === "workspaces" ? "on" : undefined}
                   onClick={() => setTab("workspaces")}>Workspaces</button>
         )}
+        {admin && (
+          <button className={tab === "organization" ? "on" : undefined}
+                  onClick={() => setTab("organization")}>Organization</button>
+        )}
         <button className={tab === "password" ? "on" : undefined}
                 onClick={() => setTab("password")}>Password</button>
       </nav>
@@ -209,6 +219,7 @@ export function AccountView({ onBack }: { onBack: () => void }) {
       {tab === "balance" && <Balance />}
       {tab === "seats" && <Seats />}
       {tab === "workspaces" && <Workspaces />}
+      {tab === "organization" && <OrganizationProfile />}
       {tab === "password" && <Password />}
     </div>
   );
@@ -2101,6 +2112,114 @@ function Workspaces() {
  * opinion about that and a mistyped new password locks somebody out of their
  * own account.
  */
+// --- organization profile ----------------------------------------------------
+
+/**
+ * The organization profile (9 November 2026). Name, address, contact email
+ * and phone; only the name is required. The name is what the organization
+ * is called wherever it is named - a share's watermark and email among
+ * them - and until now it was whatever was typed at sign-up, for good.
+ *
+ * THE CONTACT EMAIL STARTS AS THE ADMINISTRATOR'S OWN, while none is kept:
+ * filled in the field, and stored only when Save is pressed.
+ */
+function OrganizationProfile() {
+  const [loaded, setLoaded] = useState<Organization | null>(null);
+  const [name, setName] = useState("");
+  const [address, setAddress] = useState("");
+  const [contact, setContact] = useState("");
+  const [phone, setPhone] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  function fill(o: Organization) {
+    setLoaded(o);
+    setName(o.name ?? "");
+    setAddress(o.address ?? "");
+    setContact(o.contact_email ?? o.signed_in_email ?? "");
+    setPhone(o.contact_phone ?? "");
+  }
+
+  useEffect(() => {
+    api.organization().then(fill).catch((e) => setError(message(e)));
+  }, []);
+
+  async function save() {
+    setBusy(true);
+    setError("");
+    setSaved(false);
+    try {
+      fill(await api.saveOrganization({ name, address,
+                                        contact_email: contact,
+                                        contact_phone: phone }));
+      setSaved(true);
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!loaded) {
+    return error ? <p className="error">{error}</p>
+                 : <Working what="Reading the organization profile" />;
+  }
+
+  return (
+    <>
+      {error && <p className="error">{error}</p>}
+      {saved && !busy && <p className="saved">Organization profile saved.</p>}
+
+      <h3>Organization profile</h3>
+      <p className="muted small">
+        The name is how your organization is named on what it shares &mdash;
+        the watermark and the email a recipient gets. A change reaches what
+        is shared after it; a share already sent keeps the name it was sent
+        with. Only the name is required.
+      </p>
+
+      <div className="form">
+        <label className="row">
+          <span>Name</span>
+          <input value={name} maxLength={255} disabled={busy}
+                 onChange={(e) => { setName(e.target.value); setSaved(false); }} />
+        </label>
+        <label className="row">
+          <span>Address</span>
+          <textarea value={address} rows={4} maxLength={500} disabled={busy}
+                    onChange={(e) => { setAddress(e.target.value); setSaved(false); }} />
+        </label>
+        <label className="row">
+          <span>Contact email</span>
+          <input type="email" value={contact} maxLength={255} disabled={busy}
+                 onChange={(e) => { setContact(e.target.value); setSaved(false); }} />
+        </label>
+        <label className="row">
+          <span>Contact phone</span>
+          <input type="tel" value={phone} maxLength={40} disabled={busy}
+                 onChange={(e) => { setPhone(e.target.value); setSaved(false); }} />
+        </label>
+        <div className="form-actions">
+          <button onClick={save} disabled={busy || !name.trim()}>
+            {busy ? "Saving…" : "Save"}
+          </button>
+          {!name.trim() && (
+            <span className="muted small">The organization needs a name.</span>
+          )}
+          {loaded.contact_email === null && contact === loaded.signed_in_email
+            && name.trim() && (
+            <span className="muted small">
+              The contact email is your own sign-in address until you change
+              it; it is kept when you save.
+            </span>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 function Password() {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
