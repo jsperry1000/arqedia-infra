@@ -3235,6 +3235,89 @@ def update_settings(tenant_id, role, body):
     return get_settings(tenant_id, role)
 
 
+# --- the organization profile (9 November 2026, migration 056) -------------
+#
+# An administrator keeps the organization's name, address, contact email and
+# contact phone. Only the name is required. The name is tenant.name, set at
+# sign-up and read wherever the organization is named - the watermark and
+# the email of a share among them - so a change reaches what is sent after
+# it; a share already sent keeps the name it was stamped with.
+
+ORG_NAME_MAX = 255       # tenant.name is VARCHAR(255)
+ORG_ADDRESS_MAX = 500
+ORG_PHONE_MAX = 40
+_ORG_EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+_ORG_PHONE = re.compile(r"^[0-9+()./ -]+$")
+
+
+def get_organization(tenant_id, email, role):
+    """The organization profile, and the signed-in address, which the screen
+    offers as the contact email while none is set."""
+    if role != "admin":
+        raise PermissionError("only an administrator may see the "
+                              "organization profile")
+    found = _sql(
+        "SELECT name, address, contact_email, contact_phone "
+        "FROM tenant WHERE tenant_id = :t",
+        [_p("t", tenant_id)]).get("records", [])
+    if not found:
+        return None
+    r = found[0]
+    return {"name": _col(r, 0), "address": _col(r, 1),
+            "contact_email": _col(r, 2), "contact_phone": _col(r, 3),
+            "signed_in_email": email}
+
+
+def _org_line(value, label, most):
+    """One line: spaces tidied, no control characters, at most `most`."""
+    text = " ".join(str(value or "").split())
+    if any(ord(c) < 32 or ord(c) == 127 for c in text):
+        raise ValueError("%s cannot contain control characters." % label)
+    if len(text) > most:
+        raise ValueError("%s can be at most %d characters." % (label, most))
+    return text
+
+
+def update_organization(tenant_id, email, role, body):
+    """Set the profile. The name is required; the rest may be left empty,
+    which stores nothing."""
+    if role != "admin":
+        raise PermissionError("only an administrator may change the "
+                              "organization profile")
+    body = body if isinstance(body, dict) else {}
+
+    name = _org_line(body.get("name"), "The name", ORG_NAME_MAX)
+    if not name:
+        raise ValueError("The organization needs a name.")
+
+    # The address keeps its lines; each is tidied as a line of its own.
+    lines = [" ".join(l.split())
+             for l in str(body.get("address") or "").splitlines()]
+    address = "\n".join(l for l in lines if l)
+    if any(ord(c) < 32 and c != "\n" or ord(c) == 127 for c in address):
+        raise ValueError("The address cannot contain control characters.")
+    if len(address) > ORG_ADDRESS_MAX:
+        raise ValueError("The address can be at most %d characters."
+                         % ORG_ADDRESS_MAX)
+
+    contact = _org_line(body.get("contact_email"), "The contact email", 255)
+    if contact and not _ORG_EMAIL.match(contact):
+        raise ValueError("The contact email is not an email address.")
+
+    phone = _org_line(body.get("contact_phone"), "The phone number",
+                      ORG_PHONE_MAX)
+    if phone and not _ORG_PHONE.match(phone):
+        raise ValueError("A phone number may hold digits, spaces and "
+                         "+ ( ) - . / only.")
+
+    _sql("UPDATE tenant SET name = :n, address = :a, contact_email = :e, "
+         "contact_phone = :p WHERE tenant_id = :t",
+         [_p("n", name), _p("a", address or None), _p("e", contact or None),
+          _p("p", phone or None), _p("t", tenant_id)])
+    print("[organization-updated] tenant=%s by=%s" % (tenant_id, email))
+    return get_organization(tenant_id, email, role)
+
+
 def render_memo(tenant_id, memo_id):
     """Render the PDF now and return a link to it.
 
@@ -4816,6 +4899,15 @@ def _dispatch(event, context):
 
         if route == "GET /memos/{memo_id}/pdf":
             return _reply(200, render_memo(tenant_id, params.get("memo_id")))
+
+        if route == "GET /organization":
+            out = get_organization(tenant_id, email, role)
+            return _reply(200, out) if out is not None \
+                else _reply(404, {"error": "not found"})
+
+        if route == "PUT /organization":
+            return _reply(200, update_organization(
+                tenant_id, email, role, json.loads(event.get("body") or "{}")))
 
         if route == "GET /settings/preview":
             return _reply(200, preview_branding(tenant_id))

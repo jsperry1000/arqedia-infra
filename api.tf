@@ -297,6 +297,10 @@ locals {
     "POST /uploads",
     "GET /settings",
     "POST /settings",
+    # The organization profile (9 November 2026). Administrators only,
+    # refused in the handler.
+    "GET /organization",
+    "PUT /organization",
     "GET /settings/preview",
     "POST /settings/logo",
     "POST /settings/logo/confirm",
