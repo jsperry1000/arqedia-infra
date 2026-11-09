@@ -1670,8 +1670,34 @@ function Workspaces() {
   const [newName, setNewName] = useState("");
   const [renameError, setRenameError] = useState("");
 
+  // The one whose watermark is being set, and what is typed
+  // (9 November 2026).
+  const [marking, setMarking] = useState<number | null>(null);
+  const [markText, setMarkText] = useState("");
+  const [markError, setMarkError] = useState("");
+
   const load = () =>
     api.workspacesList().then(setList).catch((e) => setError(message(e)));
+
+  async function saveMark(w: HeldWorkspace) {
+    setMarkError("");
+    setSaid("");
+    setBusy("Setting the watermark for " + w.name);
+    try {
+      const out = await api.setWorkspaceWatermark(w.workspace_id, markText);
+      setMarking(null);
+      setSaid(out.watermark_text
+        ? `What ${w.name} shares from now on is marked "${out.watermark_text}". `
+          + "Shares already sent keep the mark they were sent with."
+        : `${w.name}'s own watermark text is removed. Shares already sent `
+          + "keep the mark they were sent with.");
+      await load();
+    } catch (err) {
+      setMarkError(message(err));
+    } finally {
+      setBusy("");
+    }
+  }
 
   async function rename(w: HeldWorkspace) {
     setRenameError("");
@@ -1814,11 +1840,18 @@ function Workspaces() {
         {list.keep_months} months later, and until then it can be restored
         below. Nothing charged is refunded.
       </p>
+      <p className="muted small">
+        A watermark is text of your own, put in front of the recipient's
+        address on every page of what the workspace shares. The address is
+        always there. It reaches shares sent after you set it; a share
+        already sent keeps the mark it was sent with.
+      </p>
       <TableScroll label="Workspaces">
       <table className="docs">
         <thead>
           <tr><th>Workspace</th><th>Engagements</th><th>Documents</th>
-              <th>Memoranda</th><th>Live shares</th><th></th></tr>
+              <th>Memoranda</th><th>Live shares</th><th>Watermark</th>
+              <th></th></tr>
         </thead>
         <tbody>
           {list.workspaces.map((w) => (
@@ -1864,6 +1897,42 @@ function Workspaces() {
               <td className="ref">{w.documents}</td>
               <td className="ref">{w.memos}</td>
               <td className="ref">{w.shares}</td>
+              <td className="small">
+                {marking === w.workspace_id ? (
+                  <form className="inline" style={{ marginTop: 0 }}
+                        onSubmit={(e) => { e.preventDefault(); void saveMark(w); }}>
+                    <input value={markText} autoFocus maxLength={60}
+                           placeholder="STRICTLY CONFIDENTIAL"
+                           aria-label={"Watermark for " + w.name}
+                           onChange={(e) => setMarkText(e.target.value)}
+                           onKeyDown={(e) => {
+                             if (e.key === "Escape") setMarking(null);
+                           }} />
+                    <button className="plain" disabled={!!busy}>Save</button>
+                    <a className="small" onClick={() => setMarking(null)}>
+                      Cancel
+                    </a>
+                    {/* How the mark reads, with an address for the
+                        recipient's. */}
+                    <div className="muted">
+                      {markText.trim() ? `${markText.trim()}  ·  ` : ""}
+                      name@firm.com  ·  shared by your organisation
+                    </div>
+                    {markError && <p className="error small">{markError}</p>}
+                  </form>
+                ) : (
+                  <>
+                    {w.watermark_text
+                      ? w.watermark_text
+                      : <span className="muted">none</span>}{" "}
+                    <a className="small" onClick={() => {
+                      setMarking(w.workspace_id);
+                      setMarkText(w.watermark_text ?? "");
+                      setMarkError("");
+                    }}>Edit</a>
+                  </>
+                )}
+              </td>
               <td>
                 {/* An offering something depends on is kept, and says why
                     (amended 23 October 2026). The server refuses it too. */}

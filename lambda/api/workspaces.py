@@ -227,13 +227,14 @@ def listing(tenant_id, role):
     _require_admin(tenant_id, role)
     rows = _sql(
         "SELECT workspace_id, name, deleted_at, deleted_by, remove_after, "
-        "remove_after > NOW() FROM workspace WHERE tenant_id = :t "
-        "ORDER BY workspace_id",
+        "remove_after > NOW(), watermark_text FROM workspace "
+        "WHERE tenant_id = :t ORDER BY workspace_id",
         [_p("t", tenant_id)]).get("records", [])
     live, hidden = [], []
     for r in rows:
         w = {"workspace_id": int(_col(r, 0)), "name": _col(r, 1)}
         if _col(r, 2) is None:
+            w["watermark_text"] = _col(r, 6)
             seats, invitations = _only_here(tenant_id, w["workspace_id"])
             w.update(_counts(tenant_id, w["workspace_id"]))
             w["members_only_here"] = [e for _, e in seats]
@@ -480,6 +481,49 @@ def rename(tenant_id, email, role, workspace_id, body):
     print("[workspace-renamed] tenant=%s workspace=%s memos_kept=%s by=%s" % (
         tenant_id, ws, stamped, email))
     return {"workspace_id": ws, "name": name, "previous": found["name"]}
+
+
+# --- the watermark's own text (9 November 2026, migration 055) -------------
+#
+# Put in front of the diagonal mark on what this workspace shares from now
+# on: "<text>  ·  <recipient>  ·  shared by <tenant>". The recipient's
+# address is never the workspace's to remove, so an onward copy stays
+# attributable; only text in front of it is set here. Shares already sent
+# keep the mark they were sent with.
+
+WATERMARK_MAX = 60      # workspace.watermark_text is VARCHAR(60)
+
+
+def set_watermark(tenant_id, email, role, workspace_id, body):
+    """Set, or clear with an empty text, a live workspace's own watermark
+    text. Returns None where the tenant has no such workspace."""
+    if role != "admin":
+        raise PermissionError("only an administrator may set a watermark")
+    found = _workspace(tenant_id, workspace_id)
+    if found is None:
+        return None
+    if found["deleted_at"] is not None:
+        raise Refused("That workspace is deleted. Restore it first.")
+
+    text = " ".join(str((body or {}).get("watermark_text") or "").split())
+    if any(ord(c) < 32 or ord(c) == 127 for c in text):
+        raise ValueError("A watermark cannot contain control characters.")
+    if len(text) > WATERMARK_MAX:
+        raise ValueError("A watermark can be at most %d characters."
+                         % WATERMARK_MAX)
+
+    ws = found["workspace_id"]
+    params = [_p("t", tenant_id), _p("w", ws)]
+    if text:
+        _sql("UPDATE workspace SET watermark_text = :x "
+             "WHERE tenant_id = :t AND workspace_id = :w",
+             params + [_p("x", text)])
+    else:
+        _sql("UPDATE workspace SET watermark_text = NULL "
+             "WHERE tenant_id = :t AND workspace_id = :w", params)
+    print("[workspace-watermark] tenant=%s workspace=%s chars=%d by=%s" % (
+        tenant_id, ws, len(text), email))
+    return {"workspace_id": ws, "watermark_text": text or None}
 
 
 # --- restoring -------------------------------------------------------------

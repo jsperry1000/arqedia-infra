@@ -1238,7 +1238,8 @@ def _memo(tenant_id, memo_id):
                m.revision,
                -- The name it was generated under, where a rename has
                -- stamped one (migration 054); the name now where not.
-               COALESCE(m.workspace_name, w.name)
+               COALESCE(m.workspace_name, w.name),
+               m.workspace_id
         FROM memo m
         LEFT JOIN workspace w
                ON w.workspace_id = m.workspace_id
@@ -1257,7 +1258,21 @@ def _memo(tenant_id, memo_id):
         "number": _col(records[0], 3) or memo_id,
         "version": _col(records[0], 4),
         "workspace": _col(records[0], 5),
+        "workspace_id": _col(records[0], 6),
     }
+
+
+def _watermark_text(tenant_id, workspace_id):
+    """The workspace's own text for the front of a share's diagonal mark
+    (migration 055), or None. Read only when a share is rendered."""
+    if workspace_id is None:
+        return None
+    found = _sql(
+        "SELECT watermark_text FROM workspace "
+        "WHERE tenant_id = :t AND workspace_id = :w",
+        [_p("t", tenant_id), _p("w", int(workspace_id))]).get("records", [])
+    text = _col(found[0], 0) if found else None
+    return (text or "").strip() or None
 
 
 def _front(markdown, field):
@@ -1358,7 +1373,7 @@ def _build(tenant, markdown, memo=None, image_bytes=None):
 
 # --- sharing ---------------------------------------------------------------
 
-def _share(tenant_id, memo_id, tenant, pdf, share):
+def _share(tenant_id, memo_id, tenant, pdf, share, own_text=None):
     """Two PDFs for one recipient, rendered and watermarked once, at send.
 
     base.pdf   the memorandum with the recipient and the tenant burned across
@@ -1396,8 +1411,12 @@ def _share(tenant_id, memo_id, tenant, pdf, share):
     if not recipient or not shared_at:
         return {"status": "bad-share"}
 
-    base = stamp.stamp(pdf, diagonal=stamp.diagonal_text(recipient,
-                                                         tenant["name"]))
+    # The workspace's own text goes in front (9 November 2026); the
+    # recipient and the tenant are always there after it.
+    diagonal = stamp.diagonal_text(recipient, tenant["name"])
+    if own_text:
+        diagonal = "%s  ·  %s" % (own_text, diagonal)
+    base = stamp.stamp(pdf, diagonal=diagonal)
     view = stamp.stamp(base, line=stamp.shared_line(recipient, tenant["name"],
                                                     shared_at))
 
@@ -1455,7 +1474,8 @@ def lambda_handler(event, context):
                  None if preview else image_bytes)
 
     if not preview and event.get("share"):
-        return _share(tenant_id, memo_id, tenant, pdf, event["share"])
+        return _share(tenant_id, memo_id, tenant, pdf, event["share"],
+                      _watermark_text(tenant_id, memo.get("workspace_id")))
 
     pdf_key = memo["key"].rsplit(".", 1)[0] + ".pdf"
 

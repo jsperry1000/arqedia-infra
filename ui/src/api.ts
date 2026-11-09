@@ -146,6 +146,9 @@ export type HeldWorkspace = {
    *  Deleting it moves them; the administrator says where. */
   members_only_here: string[];
   invitations_only_here: string[];
+  /** Its own text in front of the diagonal mark on what it shares
+   *  (9 November 2026); null where it has none. */
+  watermark_text?: string | null;
   /** The ARQEDIA workspace's offerings only: client workspaces started from
    *  it, and memoranda it offers. Either keeps it from being deleted. */
   clients?: number;
@@ -1824,6 +1827,15 @@ export const api = {
     call(`/workspaces/${id}`, {
       method: "PUT",
       body: JSON.stringify({ name }),
+    }),
+
+  /** Its own watermark text (9 November 2026), or "" to clear it.
+   *  Administrator only. Reaches shares sent after it, none before. */
+  setWorkspaceWatermark: (id: number, text: string):
+      Promise<{ workspace_id: number; watermark_text: string | null }> =>
+    call(`/workspaces/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({ watermark_text: text }),
     }),
 
   // --- the wallet ---------------------------------------------------------
