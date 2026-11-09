@@ -251,6 +251,65 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
 
       {memos !== null && memos.length > 0 && !started && (
         <>
+          {/* The panel first, the list below it (9 November 2026): the
+              list runs long, and the panel was below every memorandum. */}
+          <div className="form">
+            <label className="row">
+              <span>Recipient email</span>
+              <RecipientInput value={to} grants={grants} id="batch-recipients"
+                              onChange={(v) => { setTo(v); setShortfall(null); }} />
+            </label>
+
+            <label className="row">
+              <span>Access</span>
+              <select value={expiry} onChange={(e) => setExpiry(e.target.value)}>
+                <option value="default">
+                  2 weeks, or 6 months if they register (default)
+                </option>
+                <option value="30">30 days, fixed</option>
+                <option value="90">90 days, fixed</option>
+              </select>
+            </label>
+
+            <h4>What the recipient gets</h4>
+            <Scope />
+
+            <CannotRecall />
+
+            <Authority checked={affirmed} onChange={setAffirmed}
+                       several={selected.length > 1} />
+
+            {!shortfall && (
+              <div className="form-actions">
+                <button onClick={onSend} disabled={!ready}
+                        title={!affirmed ? "Confirm you are entitled to share them first."
+                                         : undefined}>
+                  {selected.length > 1 ? `Send ${selected.length} memoranda` : "Send"}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {shortfall && (
+            <Shortfall plan={shortfall} name={name}
+                       onRemove={(id) => {
+                         const next = selected.filter((x) => x !== id);
+                         setSelected(next);
+                         setRefused(null);
+                         const p = allowance
+                           ? planBatch(next, allowance, resendsFor(to, grants)) : null;
+                         setShortfall(p && p.paid > 0 ? p : null);
+                       }}
+                       onIncludedOnly={() => sendRows(shortfall.rows
+                         .filter((r) => r.kind !== "paid")
+                         .map((r) => ({ memo_id: r.memo_id, accept: null })))}
+                       onAll={() => sendRows(shortfall.rows.map((r) => ({
+                         memo_id: r.memo_id,
+                         accept: r.kind === "paid" ? shortfall.unitCents : null })))}
+                       onTopUp={onTopUp}
+                       onCancel={() => setShortfall(null)} />
+          )}
+
           <FilterRow filter={filter} onChange={setFilter}
                      placeholder="Memo, engagement or recipient"
                      dateLabel="Generated" />
@@ -319,62 +378,6 @@ export function ShareBatchView({ onBack, onHistory, onTopUp }: {
             </TableScroll>
           )}
 
-          <div className="form">
-            <label className="row">
-              <span>Recipient email</span>
-              <RecipientInput value={to} grants={grants} id="batch-recipients"
-                              onChange={(v) => { setTo(v); setShortfall(null); }} />
-            </label>
-
-            <label className="row">
-              <span>Access</span>
-              <select value={expiry} onChange={(e) => setExpiry(e.target.value)}>
-                <option value="default">
-                  2 weeks, or 6 months if they register (default)
-                </option>
-                <option value="30">30 days, fixed</option>
-                <option value="90">90 days, fixed</option>
-              </select>
-            </label>
-
-            <h4>What the recipient gets</h4>
-            <Scope />
-
-            <CannotRecall />
-
-            <Authority checked={affirmed} onChange={setAffirmed}
-                       several={selected.length > 1} />
-
-            {!shortfall && (
-              <div className="form-actions">
-                <button onClick={onSend} disabled={!ready}
-                        title={!affirmed ? "Confirm you are entitled to share them first."
-                                         : undefined}>
-                  {selected.length > 1 ? `Send ${selected.length} memoranda` : "Send"}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {shortfall && (
-            <Shortfall plan={shortfall} name={name}
-                       onRemove={(id) => {
-                         const next = selected.filter((x) => x !== id);
-                         setSelected(next);
-                         setRefused(null);
-                         const p = allowance
-                           ? planBatch(next, allowance, resendsFor(to, grants)) : null;
-                         setShortfall(p && p.paid > 0 ? p : null);
-                       }}
-                       onIncludedOnly={() => sendRows(shortfall.rows
-                         .filter((r) => r.kind !== "paid")
-                         .map((r) => ({ memo_id: r.memo_id, accept: null })))}
-                       onAll={() => sendRows(shortfall.rows.map((r) => ({
-                         memo_id: r.memo_id,
-                         accept: r.kind === "paid" ? shortfall.unitCents : null })))}
-                       onTopUp={onTopUp}
-                       onCancel={() => setShortfall(null)} />
-          )}
         </>
       )}
 
