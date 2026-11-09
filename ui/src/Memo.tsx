@@ -289,14 +289,23 @@ export function MemoView({ memoId, onBack, onOpen }: {
   // Set when the kept copy could not be read. Keeping anything then would
   // overwrite a copy the person has not seen, so nothing is kept.
   const keepBlocked = useRef(false);
+  // Set from the press of Save until it fails (9 November 2026). The server
+  // clears the working copy with the save; a keep written after that - the
+  // pause timer firing while the save was out, or a keep already on its way
+  // - put the copy back, and the memo saved from said "unsaved changes".
+  const savingNow = useRef(false);
+  // The keep on its way, so Save can wait for it to land before clearing.
+  const keepOut = useRef<Promise<unknown> | null>(null);
 
   function keepNow(id: number, payload: string) {
-    if (keepBlocked.current) return;
+    if (keepBlocked.current || savingNow.current) return;
     if (kept.current.id === id && kept.current.payload === payload) return;
     if (sending.current?.id === id && sending.current.payload === payload) return;
     sending.current = { id, payload };
     setKeeping("keeping");
-    api.keepMemoWorking(id, JSON.parse(payload))
+    const out = api.keepMemoWorking(id, JSON.parse(payload));
+    keepOut.current = out.catch(() => undefined);
+    out
       .then(() => {
         kept.current = { id, payload };
         if (latest.current.id === id) setKeeping("kept");
@@ -327,6 +336,8 @@ export function MemoView({ memoId, onBack, onOpen }: {
     setUpdated(null);
 
     keepBlocked.current = false;
+    // A save that opened this memo is over; what is typed here is kept.
+    savingNow.current = false;
     const working = api.memoWorking(memoId).catch(() => null);
 
     Promise.all([api.memo(memoId), working]).then(([m, w]) => {
@@ -930,7 +941,11 @@ export function MemoView({ memoId, onBack, onOpen }: {
     }
     setSaving(true);
     setSaveError("");
+    savingNow.current = true;
     try {
+      // A keep already sent lands first, so the save's clear is the last
+      // word on the working copy.
+      await keepOut.current;
       const revised = await api.revise(memoId, draft, acceptedIds);
       // The server clears the working copy with the save. Nothing is left to
       // keep, so leaving must not write the old one back.
@@ -947,6 +962,9 @@ export function MemoView({ memoId, onBack, onOpen }: {
       // refused rather than saved. The message names which.
       setSaveError(errorText(err));
       setSaving(false);
+      // Not saved, so the work is kept again.
+      savingNow.current = false;
+      keepNow(latest.current.id, latest.current.payload);
     }
   }
 
