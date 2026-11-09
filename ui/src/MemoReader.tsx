@@ -241,7 +241,8 @@ function calloutKind(inlines: Inline[]): string {
  * short pause after typing stops, and again the moment focus leaves. By the
  * time anything else happens the edit is already in.
  */
-function Editable({ html, onEdit, onSplit, onIndent, deferred, className }: {
+function Editable({ html, onEdit, onSplit, onIndent, deferred, className,
+                   focus = true }: {
   html: string;
   onEdit: (root: HTMLElement) => void;
   // A paragraph that does not exist yet is read out only when it is finished,
@@ -251,8 +252,12 @@ function Editable({ html, onEdit, onSplit, onIndent, deferred, className }: {
   // Enter, where the block can be broken in two: what is before the caret
   // stays, what is after it begins the next paragraph or item. Absent -
   // a heading, a table cell - Enter does nothing, because a heading on two
-  // lines is not a thing a memorandum has.
-  onSplit?: (before: HTMLElement, after: HTMLElement) => void;
+  // lines is not a thing a memorandum has. False where the split was not
+  // taken and the box goes on being typed in.
+  onSplit?: (before: HTMLElement, after: HTMLElement) => boolean | void;
+  // Whether the box takes the caret when it opens. A list opens a box per
+  // item, and the last to open had it; broken in two, the new item should.
+  focus?: boolean;
   // Tab and Shift+Tab, where the block can be indented: a paragraph or a list
   // item. Handed the box itself, so what is in it is read as it stands.
   // Absent, Tab moves on as it does anywhere else.
@@ -267,16 +272,28 @@ function Editable({ html, onEdit, onSplit, onIndent, deferred, className }: {
   const read = useRef(onEdit);
   read.current = onEdit;
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set once Enter has handed this box's text on (9 November 2026). The
+  // split wrote both halves; this box holds only the first, and is about to
+  // go. A list item's box goes in the same render that wrote the split - the
+  // list's items are keyed by their count - so the reader it last had is the
+  // one from BEFORE the split, and reading the half left in it through that
+  // wrote the list back without the new item: the rest of the bullet
+  // vanished, and Undo brought it back. Nothing is read from it after.
+  const handed = useRef(false);
 
   const commit = () => {
     if (pending.current) { clearTimeout(pending.current); pending.current = null; }
-    if (box.current) read.current(box.current);
+    if (box.current && !handed.current) read.current(box.current);
   };
 
   useEffect(() => {
     const el = box.current;
     if (!el) return;
     el.innerHTML = html;
+    if (!focus) return () => {
+      if (pending.current) clearTimeout(pending.current);
+      if (!handed.current) read.current(el);
+    };
     el.focus();
     // The caret at the end of what is there, not the start: a person clicking
     // into a paragraph is usually adding to it.
@@ -290,7 +307,7 @@ function Editable({ html, onEdit, onSplit, onIndent, deferred, className }: {
     // last commit and the block closing.
     return () => {
       if (pending.current) clearTimeout(pending.current);
-      read.current(el);
+      if (!handed.current) read.current(el);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -345,7 +362,7 @@ function Editable({ html, onEdit, onSplit, onIndent, deferred, className }: {
           const after = document.createElement("span");
           after.appendChild(tail.extractContents());
           if (pending.current) clearTimeout(pending.current);
-          onSplit(el, after);
+          if (onSplit(el, after) !== false) handed.current = true;
           return;
         }
         // A paste of formatted text arrives as text; see nodesToInlines.
@@ -665,6 +682,9 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   // Where a block was just added, so it can be opened once the document has
   // been read back and the blocks renumbered.
   const opening = useRef<number | null>(null);
+  // The list item a split has just made, to take the caret when the list's
+  // boxes open again. Null: the last box to open takes it, as before.
+  const focusItem = useRef<number | null>(null);
   // Where a new paragraph is being typed, before it is part of the memo.
   const [adding, setAdding] = useState<number | null>(null);
   // What that box opens holding: what followed the cursor when Enter was
@@ -998,6 +1018,9 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
   }
 
   useEffect(() => {
+    // The new item's box has opened with the caret in it by now: a child's
+    // effects run before this one.
+    focusItem.current = null;
     const at = opening.current;
     if (at === null) return;
     opening.current = null;
@@ -1016,6 +1039,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
     const index = blocks.findIndex((b) => b.id === block.id);
 
     if (block.kind === "list" && item !== undefined) {
+      focusItem.current = item + 1;
       const items = block.items.slice();
       items[item] = { ...items[item], inlines: head };
       items.splice(item + 1, 0, { prefix: items[item].prefix, inlines: tail });
@@ -1259,7 +1283,7 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                       // was lifted out goes back and the box stays.
                       if (!addParagraph(index, before)) {
                         before.append(...Array.from(after.childNodes));
-                        return;
+                        return false;
                       }
                       // Enter finishes this one and offers the next, holding
                       // what followed the cursor.
@@ -1500,6 +1524,8 @@ export function MemoDocument({ markdown, byFilename, gone, onOpen, onChange,
                   style={indentStyle(it.prefix)}>
                 {editing === block.id ? (
                   <Editable html={inlinesToHtml(it.inlines, goneRef)}
+                            focus={focusItem.current === null
+                                   || focusItem.current === k}
                             onEdit={(root) => replace(block.id, (b) => {
                               if (b.kind !== "list") return b;
                               const next = b.items.slice();
