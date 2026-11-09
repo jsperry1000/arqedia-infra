@@ -4681,10 +4681,15 @@ def _dispatch(event, context):
 
         # Renaming one (6 November 2026). Administrators only; never an
         # ARQEDIA offering; a name another live workspace holds is refused.
+        # Its watermark text (9 November 2026) goes through the same
+        # route: a body naming watermark_text sets that and nothing else.
         if route == "PUT /workspaces/{workspace_id}":
-            out = workspaces.rename(tenant_id, email, role,
-                                    params.get("workspace_id"),
-                                    json.loads(event.get("body") or "{}"))
+            body = json.loads(event.get("body") or "{}")
+            change = workspaces.set_watermark \
+                if isinstance(body, dict) and "watermark_text" in body \
+                else workspaces.rename
+            out = change(tenant_id, email, role,
+                         params.get("workspace_id"), body)
             return _reply(200, out) if out is not None \
                 else _reply(404, {"error": "not found"})
 
